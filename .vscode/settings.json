@@ -1,0 +1,9 @@
+{
+  "java.import.exclusions": [
+    "**/resources/**"
+  ],
+  "files.exclude": {
+    "resources/boilerplate/**/*.java": true,
+    "resources/boilerplate/**/*.py": true
+  }
+}

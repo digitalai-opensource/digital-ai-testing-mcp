@@ -1,0 +1,40 @@
+# Environment — NEVER commit
+.env
+.env.local
+.env.*.local
+
+# Build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials — NEVER commit
+*.p12
+*.mobileprovision
+*.pem
+*.key
+*.cer
+*.crt
+.npmrc
+
+# Test artifacts
+tests/fixtures/
+coverage/
+
+# Claude Code local state
+.claude/
+
+# Docs — only examples.md and limitations.md ship with the product;
+# everything else (gap analyses, UAT suite, API mapping, publishing guide)
+# is internal tooling kept locally.
+docs/*.md
+!docs/examples.md
+!docs/limitations.md

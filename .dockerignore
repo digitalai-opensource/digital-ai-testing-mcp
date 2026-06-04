@@ -1,0 +1,35 @@
+# Credentials — NEVER in image
+.env
+.env.*
+*.p12
+*.mobileprovision
+*.pem
+*.key
+*.cer
+*.crt
+.npmrc
+
+# VCS / tooling
+.git/
+.gitignore
+.dockerignore
+.vscode/
+.github/
+
+# Dependencies and build output (rebuilt inside image)
+node_modules/
+dist/
+
+# Test and dev tooling
+tests/
+vitest.config.ts
+tsconfig.test.json
+eslint.config.js
+coverage/
+
+# Docs and orchestration (not needed at runtime)
+*.log
+*.md
+docs/
+API-Docs/
+docker-compose.yml
