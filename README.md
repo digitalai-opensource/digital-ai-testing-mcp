@@ -833,8 +833,3 @@ This prevents accidental data loss when AI assistants misinterpret intent.
 
 See [docs/limitations.md](docs/limitations.md) for the full list.
 
----
-
-## Publishing to Your Team
-
-See [docs/publishing.md](docs/publishing.md) for GitHub setup instructions.
