@@ -122,7 +122,7 @@ No cloning or building required. Use this for standard deployment.
 
 **Step 1 — Authenticate with GHCR (one-time per machine)**
 
-Generate a GitHub Personal Access Token with `read:packages` scope at https://github.com/settings/tokens, then:
+Generate a GitHub **classic** Personal Access Token with `read:packages` scope at https://github.com/settings/tokens/new, then:
 
 ```bash
 echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
