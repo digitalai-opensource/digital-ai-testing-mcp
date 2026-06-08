@@ -155,7 +155,7 @@ export function registerTestViewTools(server: McpServer): void {
     {
       id: z.number().int().describe('The numeric test view group ID.'),
       filter: z
-        .record(z.string())
+        .record(z.string(), z.string())
         .optional()
         .describe(
           'Optional key-value filter to scope the counts, e.g. {"device.os":"Android"}.'
