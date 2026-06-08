@@ -60,8 +60,9 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
 
 ## Prerequisites
 
-- **Docker** — required to run the server from an AI client
-- **Node.js 20+** — required only for local development
+- **Docker** — required to run the server
+- **Node.js 20+** — required only if building from source (see Installation, Option B)
+- **GitHub org membership** — required to pull the pre-built image from GHCR (see Installation, Option A)
 - **Digital.ai Continuous Testing account** with a valid access key
 
 ---
@@ -115,6 +116,42 @@ The switch takes effect immediately — no restart needed.
 
 ## Installation
 
+### Option A — Pull from GitHub Container Registry (Recommended)
+
+No cloning or building required. Use this for standard deployment.
+
+**Step 1 — Authenticate with GHCR (one-time per machine)**
+
+Generate a GitHub Personal Access Token with `read:packages` scope at https://github.com/settings/tokens, then:
+
+```bash
+echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+**Step 2 — Pull the image**
+
+```bash
+docker pull ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+```
+
+**Step 3 — Set up your `.env`**
+
+```bash
+curl -O https://raw.githubusercontent.com/dai-continuous-testing/digital-ai-testing-mcp/main/.env.example
+cp .env.example .env
+# Edit .env — set DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY
+```
+
+Use `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` as the image name in your AI client configuration below.
+
+> To update: `docker pull ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest`
+
+---
+
+### Option B — Build from source
+
+Required only for local development or modifying the server.
+
 ```bash
 git clone https://github.com/dai-continuous-testing/digital-ai-testing-mcp
 cd digital-ai-testing-mcp
@@ -123,9 +160,9 @@ cp .env.example .env
 docker build -t digital-ai-testing-mcp:latest .
 ```
 
-The Docker build compiles the TypeScript source and packages the server. Once built, the image lives in Docker's local registry — AI clients can launch it by name without needing access to the source directory at runtime.
+Use `digital-ai-testing-mcp:latest` as the image name in your AI client configuration below.
 
-> Rebuild the image after pulling updates or making changes to the server code.
+> Rebuild after making changes: `docker build -t digital-ai-testing-mcp:latest .`
 
 ---
 
@@ -146,7 +183,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ## Connecting AI Clients
 
-All clients launch the server as a Docker container. Replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file in each configuration below.
+All clients launch the server as a Docker container. Replace `IMAGE_NAME` with `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` (Option A) or `digital-ai-testing-mcp:latest` (Option B), and replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file.
 
 ### Claude Desktop
 
@@ -162,7 +199,7 @@ Find your config file:
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "digital-ai-testing-mcp:latest"
+        "IMAGE_NAME"
       ]
     }
   }
@@ -192,7 +229,7 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
         "args": [
           "run", "--rm", "-i",
           "--env-file", "/ABSOLUTE/PATH/TO/.env",
-          "digital-ai-testing-mcp:latest"
+          "IMAGE_NAME"
         ]
       }
     }
@@ -210,7 +247,7 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "digital-ai-testing-mcp:latest"
+        "IMAGE_NAME"
       ]
     }
   }
