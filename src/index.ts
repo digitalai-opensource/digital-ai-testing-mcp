@@ -27,7 +27,7 @@ import { registerCoverageTools } from './tools/coverage-tools.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const REQUIRED_ENV = ['DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY'];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
