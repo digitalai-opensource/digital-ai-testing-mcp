@@ -191,7 +191,7 @@ All clients launch the server as a Docker container. The examples below use the 
 
 Find your config file:
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Windows:** Open Claude Desktop → Settings → Developer → **Edit Config** (the path varies by install method — Windows Store vs. direct installer)
 
 ```json
 {
@@ -207,6 +207,8 @@ Find your config file:
   }
 }
 ```
+
+> **Built from source?** Replace `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest`.
 
 Restart Claude Desktop after editing — the tools appear automatically.
 
