@@ -349,14 +349,11 @@ works with standalone Appium Server. `self.driver.capabilities` is correct for O
 
 ## Node.js Version & Vitest Pin
 
-**Current local Node.js: 20.11.1** — too old for some dependencies in the tree.
-Engine warnings from `eslint-visitor-keys@5` and `rolldown` (vitest 4.x's bundler) both require Node ≥ 20.12.0.
+**Current local Node.js: 22 LTS** — all engine requirements satisfied.
 
-**Do NOT run `npm audit fix --force`** — it upgrades vitest to 4.x, which breaks the VS Code Vitest Explorer on Node 20.11.1 with `SyntaxError: The requested module 'node:util' does not provide an export named 'styleText'`.
+`vitest` is pinned to `^3.x` deliberately. The outstanding `npm audit` finding (`GHSA-5xrq-8626-4rwp`) is a Vitest UI server vulnerability. This project never runs the UI server (`vitest run` only), so there is no attack surface. `npm audit --omit=dev` reports zero vulnerabilities.
 
-`vitest` is pinned to `^3.x` deliberately. The outstanding `npm audit` critical (`GHSA-5xrq-8626-4rwp`) is a Vitest UI server vulnerability. This project never runs the UI server (`vitest run` only), so there is no attack surface. `npm audit --omit=dev` reports zero vulnerabilities.
-
-**To fully resolve:** upgrade local Node.js to 22 LTS, then `npm install vitest@^4 --save-dev`.
+**To upgrade vitest:** run `npm install vitest@^4 --save-dev`. No Node version constraint — Node 22 supports vitest 4.x fully.
 
 ## Adding a New Tool
 

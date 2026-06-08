@@ -61,7 +61,7 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
 ## Prerequisites
 
 - **Docker** — required to run the server
-- **Node.js 20+** — required only if building from source (see Installation, Option B)
+- **Node.js 22+** — required only if building from source (see Installation, Option B)
 - **GitHub org membership** — required to pull the pre-built image from GHCR (see Installation, Option A)
 - **Digital.ai Continuous Testing account** with a valid access key
 
