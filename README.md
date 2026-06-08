@@ -144,6 +144,8 @@ cp .env.example .env
 
 Use `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` as the image name in your AI client configuration below.
 
+> Images are published when a GitHub Release is created — not on every commit. If `latest` is not available yet, use [Option B](#option-b--build-from-source) to build from source.
+
 > To update: `docker pull ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest`
 
 ---
@@ -183,7 +185,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ## Connecting AI Clients
 
-All clients launch the server as a Docker container. Replace `IMAGE_NAME` with `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` (Option A) or `digital-ai-testing-mcp:latest` (Option B), and replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file.
+All clients launch the server as a Docker container. The examples below use the GHCR image name (Option A). If you built from source (Option B), replace the image name with `digital-ai-testing-mcp:latest`. Replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file in all cases.
 
 ### Claude Desktop
 
@@ -199,7 +201,7 @@ Find your config file:
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "IMAGE_NAME"
+        "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
       ]
     }
   }
@@ -229,7 +231,7 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
         "args": [
           "run", "--rm", "-i",
           "--env-file", "/ABSOLUTE/PATH/TO/.env",
-          "IMAGE_NAME"
+          "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
         ]
       }
     }
@@ -247,7 +249,7 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "IMAGE_NAME"
+        "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
       ]
     }
   }
