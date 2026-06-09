@@ -19,7 +19,9 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
 - [Connecting AI Clients](#connecting-ai-clients)
   - [Claude Desktop](#claude-desktop)
   - [Claude Code (VS Code)](#claude-code-vs-code)
+  - [Claude Code (JetBrains / Android Studio)](#claude-code-jetbrains--android-studio)
   - [GitHub Copilot (VS Code)](#github-copilot-vs-code)
+  - [Cursor](#cursor)
 - [Tool Reference](#tool-reference)
   - [Users](#users)
   - [Devices](#devices)
@@ -218,6 +220,20 @@ Restart Claude Desktop after editing — the tools appear automatically.
 2. Go to **Settings → MCP Servers**
 3. Add a new server with the Docker command above
 
+### Claude Code (JetBrains / Android Studio)
+
+Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then open your project and run this command from the project root:
+
+```bash
+claude mcp add digital-ai-testing -- docker run --rm -i --env-file /ABSOLUTE/PATH/TO/.env ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+```
+
+This stores the server configuration in `~/.claude.json` scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same Docker command used for Claude Desktop.
+
+> **Built from source?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
+
+Restart the Claude Code panel after adding the server — the tools appear automatically.
+
 ### GitHub Copilot (VS Code)
 
 GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in one of two scopes:
@@ -263,6 +279,31 @@ Committing `.vscode/mcp.json` to source control shares the server configuration 
 To use the tools: open Copilot Chat (`Ctrl+Alt+I`), switch the mode dropdown to **Agent**, and type your request.
 
 > GitHub Copilot on the web (`github.com/copilot`) does not support external MCP servers. VS Code is required.
+
+### Cursor
+
+Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → MCP** (or `Cursor Settings → Features → MCP`) using the same Docker command:
+
+```json
+{
+  "mcpServers": {
+    "digital-ai-testing": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--env-file", "/ABSOLUTE/PATH/TO/.env",
+        "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+Alternatively, create a `.cursor/mcp.json` file in your project root with the same `mcpServers` object — this scopes the server to that workspace and can be committed to share it with your team.
+
+> **Built from source?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
+
+> Cursor is available on macOS, Windows, and Linux. It is the recommended option for iOS developers on macOS where Xcode is the primary IDE but does not natively support MCP.
 
 ---
 
