@@ -347,6 +347,30 @@ works with standalone Appium Server. `self.driver.capabilities` is correct for O
 
 `requirements.txt` files must be proper package manifests (one package per line, no `pip install` prefix).
 
+## Boilerplate Generation — Device Routing
+
+### `region` parameter (v23+)
+
+`get_test_boilerplate` accepts an optional `region` parameter. When provided, it appends `and @region='<value>'` to the generated `digitalai:deviceQuery` capability for all platforms and languages.
+
+**Recommended pre-run flow:**
+```
+find_available_device(os=android)  →  read region from response (e.g. "US2")
+get_test_boilerplate(platform=android, ..., region="US2")
+  → generates: "@os='android' and @category='PHONE' and @region='US2'"
+```
+
+Without `region`, the deviceQuery is evaluated against all devices in all regions — including devices that have been offline for weeks — producing silent routing failures.
+
+### `NoSuchElementException` diagnostic rule
+
+**Pattern:** Session connects successfully + app launches + `NoSuchElementException` on elements that other tests in the same suite find — and the failure is consistent across re-runs.
+
+**This is a device health signal, not a code or timing issue.** The device is likely in an unexpected state (wrong Activity from a previous session, or offline entirely but still in the project pool).
+
+**Do NOT:** increase `implicitly_wait`, add `noReset`, or re-run tests before checking device health.
+**Do:** run `get_device_health_summary` or `list_devices` filtered to the project. Look for devices with `statusAge > 1440 minutes` (24 h) and status `Offline` — these should not be in the pool. If found, update the `deviceQuery` to add `@region='<healthy-region>'` to exclude the problem device.
+
 ## Node.js Version & Vitest Pin
 
 **Current local Node.js: 22 LTS** — all engine requirements satisfied.

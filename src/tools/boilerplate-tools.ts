@@ -188,6 +188,7 @@ function substitute(
     mainActivity?: string;
     bundleIdentifier?: string;
     clearTestBody?: boolean;
+    region?: string;
   }
 ): string {
   let result = content;
@@ -224,6 +225,14 @@ function substitute(
   }
   if (vars.bundleIdentifier) {
     result = result.replaceAll('com.experitest.ExperiBank', vars.bundleIdentifier);
+  }
+
+  if (vars.region) {
+    // Append region to the deviceQuery — fires after the PHONE/TABLET substitution has already run.
+    result = result.replace(
+      /@category='(PHONE|TABLET)'/g,
+      `@category='$1' and @region='${vars.region}'`
+    );
   }
 
   return result;
@@ -288,12 +297,19 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
       );
     case 'python':
       return isAppiumOss
-        ? 'Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client>=4.0.0), then run: python -m pytest'
+        ? 'Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client>=4.0.0), then run: python -m pytest\n\n' +
+          'Parallel execution (recommended on device farms — each test gets its own device):\n' +
+          '  pip install pytest-xdist\n' +
+          '  pytest -n auto -v   # spawns one worker per test method; each creates its own Appium session'
         : '⚠️  APPIUM GRID (LEGACY): This project uses Appium Grid — a proprietary Experitest framework\n' +
           'that predates the W3C WebDriver standard. It is NOT the same as standard Appium Server.\n' +
           'All workarounds below exist because of this protocol difference, not Python version conflicts.\n\n' +
           'Install: pip install -r requirements.txt  (appium-python-client==2.2.0 + selenium==4.9.0)\n' +
           'Run:     python -m pytest\n\n' +
+          'Parallel execution (recommended — each test method gets its own device from the farm pool):\n' +
+          '  pip install pytest-xdist\n' +
+          '  pytest -n auto -v   # safe: each worker process creates its own setUp/tearDown session\n' +
+          '  Check project concurrency limits first: get_project_admin_settings → maxDevelopmentLicense\n\n' +
           'Protocol requirements (Appium Grid only):\n' +
           '  • desired_capabilities= dict (JWP format) — W3C options= triggers grid rejection\n' +
           '  • Both packages must be pinned — Selenium 4.10+ removed desired_capabilities entirely\n' +
@@ -333,13 +349,18 @@ export function registerBoilerplateTools(server: McpServer): void {
     'Returns a complete, pre-configured test script boilerplate for the chosen mobile platform and programming language. ' +
     'The Digital.ai access key and server URL are pre-filled from the MCP environment. ' +
     'BEFORE calling this tool: (1) call list_applications to find the appId for the target app; ' +
-    '(2) call find_available_device for each OS tier you plan to test — read osVersion from the RESPONSE and use ' +
-    'that exact value (e.g. "14.0") in your @version query strings. Do not guess OS versions or use @osVersion/@deviceName (unsupported fields). ' +
+    '(2) call find_available_device for each OS tier you plan to test — read the region from the RESPONSE and pass it ' +
+    'as the region parameter so the generated deviceQuery routes only to healthy devices in that region. ' +
+    'Also read osVersion from the find_available_device response and use that exact value (e.g. "14.0") in any @version ' +
+    'query strings. Do not guess OS versions or use @osVersion/@deviceName (unsupported fields). ' +
     'Provide appId (from list_applications) to auto-resolve app capabilities from the platform record and generate a ' +
     'guided test body placeholder — this is the recommended path for real apps. ' +
     'Alternatively, provide packageName (Android) or bundleIdentifier (iOS) directly. ' +
     'Use projectType to control the output structure: standalone-gradle (default), standalone-maven, or android-gradle-submodule. ' +
-    'Returns all files needed to run the test (source file + build/dependency file) with dependency management options where applicable.',
+    'Returns all files needed to run the test (source file + build/dependency file) with dependency management options where applicable. ' +
+    'DIAGNOSTIC: If a test suite that previously passed begins failing with NoSuchElementException on elements that other ' +
+    'tests in the same run find without issue (session connects and app launches normally), this is a device health signal — ' +
+    'NOT a code or timing issue. Check device health first with get_device_health_summary or list_devices before modifying test code.',
     {
       platform: z
         .enum(['android', 'ios'])
@@ -387,9 +408,19 @@ export function registerBoilerplateTools(server: McpServer): void {
           'standalone-maven: src/test/java/ layout with pom.xml only. ' +
           'android-gradle-submodule: paths scoped to e2e-tests/ (e2e-tests/src/test/java/ + e2e-tests/build.gradle) for embedding inside an existing Android Studio project.'
         ),
+      region: z
+        .string()
+        .optional()
+        .describe(
+          'Region code to scope the generated deviceQuery (e.g. "US2", "SG1"). ' +
+          'When provided, appends `and @region=\'<value>\'` to the digitalai:deviceQuery capability in the output. ' +
+          'STRONGLY RECOMMENDED: pass the region returned by find_available_device. Without this, the deviceQuery ' +
+          'is evaluated against all devices in all regions — including devices that have been offline for days or weeks — ' +
+          'producing silent routing failures that look like test logic errors at the Python/Java level.'
+        ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, outputFormat }) => {
       const accessKey = process.env.DIGITAL_AI_ACCESS_KEY ?? '';
       const rawBaseUrl = (process.env.DIGITAL_AI_BASE_URL ?? '').replace(/\/$/, '');
 
@@ -451,6 +482,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         mainActivity: platform === 'android' ? resolvedMainActivity : undefined,
         bundleIdentifier: platform === 'ios' ? resolvedBundleIdentifier : undefined,
         clearTestBody,
+        region,
       };
 
       const files = getFilesForVariant(platform, language, isAppiumOss, projectType);
@@ -470,11 +502,18 @@ export function registerBoilerplateTools(server: McpServer): void {
             ? 'Appium Server (OSS) — standard W3C WebDriver protocol'
             : 'Appium Grid (legacy) — proprietary Experitest JWP-era protocol, NOT standard Appium Server. All workarounds in this boilerplate exist because of this protocol difference.',
           deviceCategory,
+          region: region ?? null,
+          deviceQueryNote: region
+            ? `deviceQuery scoped to region '${region}' — sessions will only route to devices in that region.`
+            : "deviceQuery is region-unscoped. Sessions may route to devices in any region, including devices that have been offline for extended periods. Call find_available_device first to get a healthy region, then re-call get_test_boilerplate with that region value.",
           testName,
           projectType: projectType ?? 'standalone-gradle',
           files: resolved.map(f => ({ filename: f.filename, content: f.content })),
           setupNote: setupNote(language, isAppiumOss, projectType),
           appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
+          parallelNote: language === 'python'
+            ? 'Device farms support parallel test execution. Each test method already has its own setUp/tearDown session — no code changes needed. Install pytest-xdist (pip install pytest-xdist) and run: pytest -n auto -v. Check maxDevelopmentLicense via get_project_admin_settings to confirm your concurrency limit before scaling workers.'
+            : null,
         };
 
         const platformLabel = platform === 'android' ? 'Android' : 'iOS';
@@ -486,11 +525,13 @@ export function registerBoilerplateTools(server: McpServer): void {
         };
 
         const serverModeLabel = isAppiumOss ? 'Appium Server (OSS)' : 'Appium Grid';
+        const regionLabel = region ? `Region: ${region}` : 'Region: unscoped (all regions)';
         const lines: string[] = [
           `# ${platformLabel} — ${langLabel[language]} Boilerplate (${serverModeLabel})`,
           '',
           `> **Setup:** ${setupNote(language, isAppiumOss, projectType)}`,
           `> **App:** ${appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId)}`,
+          `> **Device query:** ${regionLabel}${region ? '' : ' — re-call with region=<value> from find_available_device to scope to healthy devices only.'}`,
           '',
         ];
 

@@ -593,9 +593,11 @@ export function registerDeviceTools(server: McpServer): void {
     'Filtering by os and category is applied server-side for speed; manufacturer, tags, model, and osVersion are ' +
     'applied client-side (the API @manufacturer and @tag query fields do not work). ' +
     'Returns the device immediately if one is free, or reports how many matching devices exist and their current statuses if none are available. ' +
-    'IMPORTANT: Call this tool before generating any digitalai:deviceQuery capability strings — use the osVersion value ' +
-    'from the RESPONSE (not the parameter you passed) verbatim in your @version query. ' +
-    'The osVersion parameter is a minimum filter (≥), so the returned device may be running a higher version than requested.',
+    'IMPORTANT: Call this tool before generating any digitalai:deviceQuery capability strings — use the osVersion AND region values ' +
+    'from the RESPONSE (not the parameters you passed) when calling get_test_boilerplate. ' +
+    'The osVersion parameter is a minimum filter (≥), so the returned device may be running a higher version than requested. ' +
+    'Use preferRegions to bias selection toward regions geographically close to your Digital.ai server ' +
+    '(e.g. ["US1","US2"] for uscloud.experitest.com, ["SG1","AU1"] for apcloud, ["DE1","UK1"] for eucloud).',
     {
       os: z
         .enum(['iOS', 'Android'])
@@ -626,9 +628,19 @@ export function registerDeviceTools(server: McpServer): void {
         .enum(['PHONE', 'TABLET', 'WATCH'])
         .optional()
         .describe('Device form factor. Applied server-side.'),
+      preferRegions: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Region codes in preference order (e.g. ["US1","US2"]). When provided, the tool returns the first ' +
+          'available device in the highest-priority region that has one. Falls back to any available device if ' +
+          'none of the preferred regions have a healthy device. Use this to avoid cross-region session latency: ' +
+          'uscloud.experitest.com → ["US1","US2"]; apcloud.experitest.com → ["SG1","AU1"]; ' +
+          'eucloud.experitest.com → ["DE1","UK1"]. The response includes regionPreferenceApplied to confirm which case applied.'
+        ),
       outputFormat: outputFormatParam,
     },
-    async ({ os, osVersion, manufacturer, model, tags, category, outputFormat }) => {
+    async ({ os, osVersion, manufacturer, model, tags, category, preferRegions, outputFormat }) => {
       try {
         // Only @os, @category, and @emulator are confirmed to work server-side.
         // @manufacturer and @tag look valid but silently return 0 results from the API
@@ -660,7 +672,22 @@ export function registerDeviceTools(server: McpServer): void {
         );
 
         if (available.length > 0) {
-          const d = available[0];
+          // Apply region preference: pick first available device in the highest-priority region.
+          let d = available[0];
+          let regionPreferenceApplied = false;
+          let preferredRegionUsed: string | null = null;
+          if (preferRegions && preferRegions.length > 0) {
+            for (const preferredRegion of preferRegions) {
+              const inRegion = available.filter(dev => dev.region === preferredRegion);
+              if (inRegion.length > 0) {
+                d = inRegion[0];
+                regionPreferenceApplied = true;
+                preferredRegionUsed = preferredRegion;
+                break;
+              }
+            }
+          }
+
           const structured = {
             found: true,
             device: {
@@ -670,20 +697,28 @@ export function registerDeviceTools(server: McpServer): void {
               osVersion: d.osVersion,
               model: d.model,
               manufacturer: d.manufacturer,
+              region: d.region,
               agentName: d.agentName,
               tags: d.tags,
             },
             alternativesAvailable: available.length - 1,
+            regionPreferenceApplied,
+            preferredRegionUsed,
           };
+          const regionNote = preferRegions && preferRegions.length > 0 && !regionPreferenceApplied
+            ? `\n⚠️  None of the preferred regions (${preferRegions.join(', ')}) had available devices — returned device is from region: ${d.region}`
+            : '';
           const humanText = [
             `✅ Available device found:`,
             `  Name:         ${d.deviceName} (ID: ${d.id})`,
             `  OS:           ${d.deviceOs} ${d.osVersion}`,
             `  Model:        ${d.model}${d.modelName ? ` (${d.modelName})` : ''}`,
             `  Manufacturer: ${d.manufacturer}`,
+            `  Region:       ${d.region}`,
             `  Agent:        ${d.agentName}`,
             `  Tags:         ${d.tags.length > 0 ? d.tags.join(', ') : 'none'}`,
             available.length > 1 ? `\n${available.length - 1} other matching device(s) also available.` : '',
+            regionNote,
           ].filter(Boolean).join('\n');
           return respond(outputFormat, structured, humanText);
         }
