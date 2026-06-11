@@ -347,6 +347,82 @@ works with standalone Appium Server. `self.driver.capabilities` is correct for O
 
 `requirements.txt` files must be proper package manifests (one package per line, no `pip install` prefix).
 
+## Remote Debug (`get_remote_debug_command`)
+
+### Output format — script file, not inline command
+
+The tool generates `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) and outputs the script content for the agent to write to the project root. It does **not** emit an inline shell command. Reason: multi-line commands with line-continuation characters (`^` / `` ` ``) break silently on copy-paste due to invisible trailing spaces, and `&&` is not valid in PowerShell 5.1.
+
+The script reads `DIGITAL_AI_ACCESS_KEY` from `.env` if present (avoids persisting credentials on disk), falls back to the hardcoded key from the MCP environment.
+
+### Install-before-connect constraint
+
+`install_application` **fails while a device is reserved via rdb**. The correct sequence is:
+
+```
+install_application(appId, deviceId)     ← device must be Available, not reserved
+get_remote_debug_command(serialNumber)   ← device is now reserved
+adb shell am start -n <pkg>/<activity>  ← launch the app
+[inspect / iterate]
+get_test_boilerplate(...)               ← generate reusable script
+```
+
+If the agent calls `install_application` after `get_remote_debug_command`, it will get a 400 error. Correct order: install first, connect second.
+
+### UI element ID extraction
+
+**Primary — UIAutomator dump:**
+```
+adb shell uiautomator dump /data/local/tmp/ui.xml
+adb pull /data/local/tmp/ui.xml
+```
+Parse the XML for `resource-id` attributes.
+
+**Fallback — APK inspection (when UIAutomator silently exits with no output):**
+Known to fail silently on Android 15+ Samsung devices (OS restriction on UiAutomation). Also observed on Samsung Galaxy S20 Ultra (Android 13). On these devices, prefer `open_mobile_studio` (no ADB required) or Android Studio Layout Inspector over the APK path below.
+```
+adb shell pm path <package>
+adb pull <path> app.apk
+aapt dump xmltree app.apk res/layout/activity_login.xml
+aapt dump resources app.apk | grep ":id/"
+```
+`aapt` is in `%LOCALAPPDATA%\Android\Sdk\build-tools\<version>\` (Windows) or `~/Library/Android/sdk/build-tools/<version>/` (Mac).
+
+**Android Studio Layout Inspector:** accessible via **Tools → Layout Inspector** — does not require an Android app module. If the device is not detected after rdb connects: `adb kill-server && adb start-server`.
+
+### Windows path requirements
+
+Use `$env:USERPROFILE` (PowerShell variable) inside `.ps1` scripts — correct and expands at runtime.
+Use `C:\Users\<username>\...` (literal) in any GUI-facing text (e.g. "Extract to this folder") — Windows Explorer does not expand `%USERPROFILE%`.
+Never use `%USERPROFILE%` in paths passed to `claude mcp add` or stored in `~/.claude.json` — use forward slashes (`C:/path/to/.env`).
+
+## Performance Transactions — `executeScript` Syntax
+
+`seetest:client` commands use **dot-notation**: the method name is part of the script string, arguments are separate parameters.
+
+```java
+// Java — correct
+driver.executeScript("seetest:client.startPerformanceTransaction", "3G-average");
+driver.executeScript("seetest:client.endPerformanceTransaction", "Login");
+
+// Java — WRONG (rejected on both Grid and OSS)
+driver.executeScript("seetest:client", new Object[]{"startPerformanceTransaction", "3G-average"});
+```
+
+```python
+# Python — correct
+self.driver.execute_script("seetest:client.startPerformanceTransaction", "3G-average")
+```
+
+```js
+// Node.js — correct
+await browser.execute('seetest:client.startPerformanceTransaction', '3G-average');
+```
+
+**NV throttling warning:** `startPerformanceTransaction` activates network throttling immediately. If the app has background network calls during initialization (analytics, config fetches), start the transaction AFTER the UI is stable — or the app may ANR/crash. Use this to measure a specific action (e.g. button tap → next screen), not the full session.
+
+**NV profile names:** Must be configured on the NV server and obtained from your platform admin. `"wifi"` and `"3G-average"` are common but not guaranteed to exist on all deployments.
+
 ## Boilerplate Generation — Device Routing
 
 ### `region` parameter (v23+)

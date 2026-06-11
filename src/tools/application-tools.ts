@@ -328,7 +328,12 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'install_application',
-    "Installs an app on one or more devices. The device(s) must be available. For Android, use keepData: true to upgrade the app without losing existing app data.",
+    'Installs an app on one or more devices. The device(s) must be available and not reserved. ' +
+    'IMPORTANT: If you plan to use get_remote_debug_command, install the app FIRST — installation fails ' +
+    'while a device is reserved via an rdb tunnel. ' +
+    'PREREQUISITE: The app must be assigned to a project that contains the target device. ' +
+    'If you get a 400 error, call assign_app_to_project(projectId, applicationId) first, then retry. ' +
+    'For Android, use keepData: true to upgrade the app without losing existing app data.',
     {
       applicationId: z.number().describe('The numeric application ID.'),
       deviceId: z.string().optional().describe('Single device ID to install on.'),
@@ -377,7 +382,12 @@ export function registerApplicationTools(server: McpServer): void {
           ],
         };
       } catch (e) {
-        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+        const msg = (e as Error).message ?? String(e);
+        const hint = msg.includes('400')
+          ? ' — 400 errors on install usually mean the app is not assigned to the target device\'s project. ' +
+            'Call assign_app_to_project(projectId, applicationId) and retry.'
+          : '';
+        return { content: [{ type: 'text', text: `Error: ${msg}${hint}` }], isError: true };
       }
     }
   );

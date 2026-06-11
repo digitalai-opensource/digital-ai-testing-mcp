@@ -6,7 +6,7 @@
 
 # Digital.ai Continuous Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **140 tools**, **2 resources**, and **4 prompts** covering 22 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, and more.
+An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **141 tools**, **2 resources**, and **4 prompts** covering 22 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, and more.
 
 ---
 
@@ -44,6 +44,7 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
   - [Environment Management](#environment-management)
   - [Workflows](#workflows)
   - [Boilerplate Generation](#boilerplate-generation)
+  - [Remote Debug](#remote-debug)
   - [Resources & Prompts](#resources--prompts)
 - [Workflow Reference](#workflow-reference)
   - [POC Lifecycle](#poc-lifecycle)
@@ -56,6 +57,7 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
 - [Diagnostics](#diagnostics)
 - [Safety Guards](#safety-guards)
 - [Development](#development)
+- [Troubleshooting](#troubleshooting)
 - [Known Limitations](#known-limitations)
 
 ---
@@ -225,10 +227,16 @@ Restart Claude Desktop after editing — the tools appear automatically.
 Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then open your project and run this command from the project root:
 
 ```bash
-claude mcp add digital-ai-testing -- docker run --rm -i --env-file /ABSOLUTE/PATH/TO/.env ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+# macOS / Linux
+claude mcp add digital-ai-testing -- docker run --rm -i --env-file /absolute/path/to/.env ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+
+# Windows (use forward slashes — backslashes are stripped by Claude Code)
+claude mcp add digital-ai-testing -- docker run --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
 ```
 
-This stores the server configuration in `~/.claude.json` scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same Docker command used for Claude Desktop.
+> **Windows users:** Always use forward slashes (`C:/path/to/.env`), never backslashes — regardless of whether you register via the CLI command above or through the Claude Code panel (**Settings → MCP Servers**). Backslashes are silently stripped when Claude Code writes the configuration to `~/.claude.json`, resulting in a broken path and a cryptic `-32000` reconnection error.
+
+This stores the server configuration in `~/.claude.json` scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same Docker command used for Claude Desktop (using forward slashes for the path on Windows).
 
 > **Built from source?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
 
@@ -337,7 +345,7 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 | `reboot_device` | Remote reboot | — | Cloud Admin |
 | `reset_device_usb` | Reset USB connection | — | Cloud Admin |
 | `start_device_web_control` | Open a browser-based control session | — | Cloud Admin |
-| `open_mobile_studio` | Open Mobile Studio for a device | — | Any |
+| `open_mobile_studio` | Open the platform's browser-based UI Inspector for a device — shows live element tree with resource IDs, XPaths, and accessibility IDs. **Primary tool for element locator discovery before writing test code.** | — | Any |
 | `create_mobile_manual_test` | Create a structured manual test session | — | Any |
 | `download_ios_app_container` | Download an iOS app data container | — | Cloud Admin |
 | `get_device_health_summary` | Device farm health overview | — | Any |
@@ -399,7 +407,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `upload_application_from_url` | Upload from a direct-download URL | — | Cloud Admin |
 | `delete_application` | Delete an app from the repository | — | Cloud Admin |
 | `update_application_plugins` | Update iOS plugin signing profiles | — | Cloud Admin |
-| `install_application` | Install an app on one or more devices | — | Any |
+| `install_application` | Install an app on one or more devices. The app must be assigned to a project containing the target device — call `assign_app_to_project` first if you get a 400 error. | — | Any |
 | `uninstall_application` | Uninstall from one or more devices | — | Any |
 | `uninstall_application_by_package` | Uninstall by package name on a single device | — | Any |
 | `uninstall_application_by_package_from_devices` | Uninstall by package name across multiple devices | — | Any |
@@ -591,6 +599,42 @@ Six tools cover POC and general project lifecycle management. See [Workflow Refe
 |---|---|---|
 | `get_test_boilerplate` | Generate a complete, pre-configured Appium test script. See [Boilerplate Generation](#boilerplate-generation-1) below for full documentation. | Any |
 
+### Remote Debug
+
+| Tool | What it does | Admin Required? |
+|---|---|---|
+| `get_remote_debug_command` | Generate a ready-to-run `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) script that connects a cloud device as a locally attached ADB/USB device. Install the app first — `install_application` fails while a device is reserved via rdb. Also useful for device diagnostics (ping, nslookup, dumpsys) before NV-dependent tests. **Requires Cloud Admin credentials for reliable serial resolution** — a project API key may produce an internal device ID that rdb rejects. | Any¹ |
+
+> ¹ Callable with any API key, but **Cloud Admin JWT recommended** for reliable device serial resolution. If called with a project API key and rdb fails with `"validation error / Failed to reserve device"`, switch to your Cloud Admin profile first: `switch_environment("default")` → `get_remote_debug_command` → switch back.
+
+**rdb connects the cloud device as a locally attached ADB/USB device.** Once the tunnel is running, the device is visible to Android Studio, Xcode, Appium MCP, and command-line ADB — without any reconfiguration. This makes rdb useful for two distinct workflows:
+
+**1. Test script development** — discover element selectors before writing code:
+
+```
+install_application(appId, deviceId)          # install while device is Available
+get_remote_debug_command(serialNumber, ...)   # device is now reserved
+adb shell am start -n <package>/<activity>    # launch the app
+open_mobile_studio(...)                       # OR: use UI Inspector in the browser
+adb shell uiautomator dump ...                # OR: dump element hierarchy via ADB
+get_test_boilerplate(appId, region, ...)      # generate reusable script with discovered IDs
+```
+
+> `install_application` fails while a device is reserved via rdb — install first, then connect.
+
+**2. Device health diagnostics** — verify device state before committing to a test run:
+
+```bash
+adb shell ping -c 3 8.8.8.8                  # internet connectivity
+adb shell nslookup google.com                # DNS resolution
+adb shell dumpsys activity activities | grep topResumedActivity   # foreground activity
+adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS  # dismiss overlays
+```
+
+Network checks are especially important before NV-dependent tests (`startPerformanceTransaction`): a device with broken DNS will crash the app immediately when network throttling activates, producing a misleading `NoSuchElementException`.
+
+> **Android 15 note:** `adb shell uiautomator dump` exits silently on Android 15+ Samsung devices. Use `open_mobile_studio` (the platform's UI Inspector) instead — it requires no local tooling and is unaffected by this OS restriction.
+
 ### Resources & Prompts
 
 **Resources** — ambient context the AI can pull on demand:
@@ -765,10 +809,31 @@ Generates a complete, pre-configured Appium test script. The Digital.ai server U
 | `packageName` | Android package name (e.g. `com.mycompany.app`) | _(optional)_ |
 | `mainActivity` | Android main activity (e.g. `.MainActivity`) | _(optional)_ |
 | `bundleIdentifier` | iOS bundle ID (e.g. `com.mycompany.app`) | _(optional)_ |
+| `region` | Region code from `find_available_device` response (e.g. `US2`, `SG1`) | _(optional, strongly recommended)_ |
 | `projectType` | `standalone-gradle` \| `standalone-maven` \| `android-gradle-submodule` | `standalone-gradle` |
+| `includePerformanceTransactions` | `true` \| `false` | `false` |
+| `includeAxeScan` | `true` \| `false` | `false` |
 | `outputFormat` | `json` \| `human` | `json` |
 
-**Recommended flow:** call `list_applications` to get the `appId`, then pass it to `get_test_boilerplate`. The server fetches the app record and pre-fills `appPackage`/`appActivity` (Android) or `bundleId` (iOS). Providing `packageName`/`bundleIdentifier` directly also works if the app is not yet in the repository.
+**Recommended workflow** for building a new test:
+
+1. `get_application_info` — confirm package name, launch activity, and app ID
+2. `get_test_boilerplate` — generate starter test with capabilities pre-filled (this step)
+3. `open_mobile_studio` or `get_automation_properties` — inspect live element IDs (no ADB required)
+4. `release_orphaned_sessions(maxAgeHours=4, dryRun=true)` — pre-flight device check
+5. `find_available_device` — select a healthy device and read its `region`
+6. Write/run the test
+7. `release_device` — explicit cleanup
+
+**Performance transactions:** Pass `includePerformanceTransactions: true` to bracket the test body with `startPerformanceTransaction` / `endPerformanceTransaction` calls. The platform records CPU, memory, battery, and network metrics; results appear in the reporter Transactions tab and are queryable via `list_transactions`. NV profile defaults to `"3G-average"` — change it if needed. Note: NV throttling activates immediately when `startPerformanceTransaction` is called; start it only after the UI is stable to avoid ANR/crashes in apps with background network activity.
+
+**Accessibility scanning:** Pass `includeAxeScan: true` to inject a Deque Axe DevTools Mobile accessibility scan (`mobile: axeScan` executeScript call). Sets the required `appium:automationName` capability automatically (`AxeUiAutomator2` for Android, `AxeXCUITest` for iOS). Requires `AXE_DEVTOOLS_API_KEY` in the MCP environment.
+
+Both flags can be combined — the Axe scan runs inside the performance transaction boundary.
+
+**Element locators:** Use `open_mobile_studio` first — it is the platform's native UI Inspector and requires no local tooling. For scenarios requiring direct ADB access (file push, shell commands), use `get_remote_debug_command` to connect the device locally.
+
+> ⚠️ The generated script is an **end-product artifact** — do not execute it as a discovery step. Running it without known element selectors creates Incomplete sessions visible to the whole team. Discover selectors with `open_mobile_studio` first.
 
 `projectType` controls the Java output layout only (ignored for Node.js and Python): `standalone-gradle` produces `src/test/java/` with both `build.gradle` and `pom.xml`; `standalone-maven` produces `pom.xml` only; `android-gradle-submodule` scopes files under `e2e-tests/` for embedding in an existing Android Studio project.
 
@@ -974,6 +1039,12 @@ npm run test:infrastructure   # agents / regions / NV servers / sessions
 Tests can also be run from VS Code: `Ctrl+Shift+P` → "Tasks: Run Task".
 
 ---
+
+## Troubleshooting
+
+### `Failed to reconnect to digital-ai-testing: -32000`
+
+On Windows this usually means the `--env-file` path was stored with backslashes stripped. Open `~/.claude.json`, find the `mcpServers` entry for this project, and check that the env file path looks correct (e.g. `C:/projects/digital-ai-testing-mcp/.env`). If it shows something like `C:projectsdigital-ai-testing-mcp.env`, the backslashes were eaten. Fix the path in the file directly (use forward slashes), then run `/mcp` in Claude Code to reconnect.
 
 ## Known Limitations
 

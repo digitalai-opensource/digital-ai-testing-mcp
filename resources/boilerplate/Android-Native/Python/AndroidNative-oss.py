@@ -18,8 +18,12 @@ class LocalAndroidTest(unittest.TestCase):
         options.set_capability('appActivity', '.LoginActivity')
         options.set_capability('platformName', 'android')
         options.set_capability('digitalai:deviceQuery', "@os='android' and @category='[Enter PHONE/TABLET here]'")
+        options.set_capability('autoDismissAlerts', True)
+        options.set_capability('autoGrantPermissions', True)
         self.driver = webdriver.Remote("[Enter Instance here]/wd/hub", options=options)
         self.driver.implicitly_wait(10)
+        # System-level overlays (charging dialog, USB prompt) are NOT caught by autoDismissAlerts.
+        # If they block tests: self.driver.execute_script("mobile: shell", {"command": "am", "args": ["broadcast", "-a", "android.intent.action.CLOSE_SYSTEM_DIALOGS"]})
 
     def testQuickStartAndroidNativeDemo(self):
         # [BEGIN_DEMO_STEPS]

@@ -304,7 +304,11 @@ export function registerDeviceTools(server: McpServer): void {
 
   server.tool(
     'open_mobile_studio',
-    "Opens Mobile Studio (the browser-based device control interface) for a device matching the query. Available to all users. Returns a session link.",
+    'PRIMARY tool for element inspection and locator discovery on a live cloud device. ' +
+    "Opens Mobile Studio — the platform's browser-based UI Inspector — which shows a live interactive element tree " +
+    'with resource IDs, XPaths, and accessibility IDs. No local tooling or ADB required. ' +
+    'Use this BEFORE writing test code to discover element selectors for any app, and BEFORE calling get_test_boilerplate. ' +
+    'Available to all users. Returns a session link.',
     {
       deviceQuery: z
         .string()

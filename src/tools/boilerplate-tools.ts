@@ -101,6 +101,70 @@ function getFilesForVariant(
 // Pattern matches the [BEGIN_DEMO_STEPS] ... [END_DEMO_STEPS] block including its leading indent.
 const DEMO_STEP_PATTERN = /([^\S\n]*)(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n[\s\S]*?[^\S\n]*(?:\/\/|#) \[END_DEMO_STEPS\]/;
 
+// Pattern to capture the content between the demo step markers (for wrapping without clearing).
+const DEMO_INNER_PATTERN = /(?<=(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n)([\s\S]*?)(?=\n[^\S\n]*(?:\/\/|#) \[END_DEMO_STEPS\])/;
+
+function wrapWithPerformanceTransaction(language: Language, indent: string, core: string): string {
+  if (language === 'java-junit5' || language === 'java-testng') {
+    return [
+      `${indent}// WARNING: startPerformanceTransaction activates NV throttling immediately.`,
+      `${indent}// If your app makes background network calls during screen init (analytics, config fetches, auth pre-checks),`,
+      `${indent}// wait for the UI to be stable first — or the app may ANR/crash. Measure only the specific action`,
+      `${indent}// you care about (e.g. fill credentials first with no NV active, then start around the button tap).`,
+      `${indent}driver.executeScript("seetest:client.startPerformanceTransaction", "3G-average");`,
+      core,
+      `${indent}String perfData = (String) driver.executeScript("seetest:client.endPerformanceTransaction", "My Transaction");`,
+      `${indent}// perfData contains the JSON performance report — also visible in the reporter Transactions tab.`,
+    ].join('\n');
+  }
+  if (language === 'python') {
+    return [
+      `${indent}# WARNING: startPerformanceTransaction activates NV throttling immediately.`,
+      `${indent}# If your app makes background network calls during screen init, wait for the UI to be stable first.`,
+      `${indent}self.driver.execute_script("seetest:client.startPerformanceTransaction", "3G-average")`,
+      core,
+      `${indent}perf_data = self.driver.execute_script("seetest:client.endPerformanceTransaction", "My Transaction")`,
+      `${indent}# perf_data contains the JSON performance report — also visible in the reporter Transactions tab.`,
+    ].join('\n');
+  }
+  // nodejs
+  return [
+    `${indent}// WARNING: startPerformanceTransaction activates NV throttling immediately.`,
+    `${indent}// If your app makes background network calls during screen init, wait for the UI to be stable first.`,
+    `${indent}await browser.execute('seetest:client.startPerformanceTransaction', '3G-average');`,
+    core,
+    `${indent}const perfData = await browser.execute('seetest:client.endPerformanceTransaction', 'My Transaction');`,
+    `${indent}// perfData contains the JSON performance report — also visible in the reporter Transactions tab.`,
+  ].join('\n');
+}
+
+function appendAxeScan(language: Language, indent: string, apiKey: string): string {
+  const key = apiKey || '[Enter AXE_DEVTOOLS_API_KEY here]';
+  if (language === 'java-junit5' || language === 'java-testng') {
+    return [
+      `${indent}// Axe DevTools accessibility scan — scans the current screen state`,
+      `${indent}java.util.Map<String, Object> axeSettings = new java.util.HashMap<>();`,
+      `${indent}axeSettings.put("apiKey", "${key}");`,
+      `${indent}axeSettings.put("scanName", "Accessibility Scan");`,
+      `${indent}axeSettings.put("tags", new java.util.ArrayList<>());`,
+      `${indent}driver.executeScript("mobile: axeScan", axeSettings);`,
+    ].join('\n');
+  }
+  if (language === 'python') {
+    return [
+      `${indent}# Axe DevTools accessibility scan — scans the current screen state`,
+      `${indent}axe_settings = {"apiKey": "${key}", "scanName": "Accessibility Scan", "tags": []}`,
+      `${indent}self.driver.execute_script("mobile: axeScan", axe_settings)`,
+    ].join('\n');
+  }
+  // nodejs
+  return [
+    `${indent}// Axe DevTools accessibility scan — scans the current screen state`,
+    `${indent}const axeSettings = { apiKey: '${key}', scanName: 'Accessibility Scan', tags: [] };`,
+    `${indent}await browser.execute('mobile: axeScan', axeSettings);`,
+  ].join('\n');
+}
+
 function buildPlaceholder(language: Language, platform: Platform, indent: string, appIdentifier?: string): string {
   const c = language === 'python' ? '#' : '//';
   const pkg = appIdentifier ?? 'com.yourpackage';
@@ -189,6 +253,10 @@ function substitute(
     bundleIdentifier?: string;
     clearTestBody?: boolean;
     region?: string;
+    performanceTransactions?: boolean;
+    axeScan?: boolean;
+    axeApiKey?: string;
+    isAppiumOss?: boolean;
   }
 ): string {
   let result = content;
@@ -196,11 +264,29 @@ function substitute(
   // Handle demo step markers before other substitutions so package name replacement
   // doesn't corrupt the placeholder comment text.
   if (DEMO_STEP_PATTERN.test(result)) {
+    const indentMatch = result.match(/([^\S\n]*)(?:\/\/|#) \[BEGIN_DEMO_STEPS\]/);
+    const indent = indentMatch?.[1] ?? '        ';
     if (vars.clearTestBody) {
-      const indentMatch = result.match(/([^\S\n]*)(?:\/\/|#) \[BEGIN_DEMO_STEPS\]/);
-      const indent = indentMatch?.[1] ?? '        ';
-      const placeholder = buildPlaceholder(language, platform, indent, vars.packageName ?? vars.bundleIdentifier);
+      let placeholder = buildPlaceholder(language, platform, indent, vars.packageName ?? vars.bundleIdentifier);
+      if (vars.axeScan) {
+        placeholder += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
+      }
+      if (vars.performanceTransactions) {
+        placeholder = wrapWithPerformanceTransaction(language, indent, placeholder);
+      }
       result = result.replace(DEMO_STEP_PATTERN, placeholder);
+    } else if (vars.performanceTransactions || vars.axeScan) {
+      result = result.replace(DEMO_INNER_PATTERN, (inner) => {
+        let content = inner;
+        if (vars.axeScan) {
+          content += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
+        }
+        return vars.performanceTransactions
+          ? wrapWithPerformanceTransaction(language, indent, content)
+          : content;
+      });
+      result = result.replace(/[^\S\n]*(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n/, '');
+      result = result.replace(/\n[^\S\n]*(?:\/\/|#) \[END_DEMO_STEPS\]/, '');
     } else {
       // Strip markers, keep content unchanged.
       result = result.replace(/[^\S\n]*(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n/, '');
@@ -233,6 +319,44 @@ function substitute(
       /@category='(PHONE|TABLET)'/g,
       `@category='$1' and @region='${vars.region}'`
     );
+  }
+
+  if (vars.axeScan) {
+    const automationName = platform === 'android' ? 'AxeUiAutomator2' : 'AxeXCUITest';
+    if (language === 'java-junit5' || language === 'java-testng') {
+      const obj = vars.isAppiumOss ? 'options' : 'dc';
+      result = result.replace(
+        /\n( +)(driver = new (?:Android|iOS)Driver)/,
+        (_m, sp, line) =>
+          `\n${sp}${obj}.setCapability("appium:automationName", "${automationName}");\n` +
+          `${sp}${obj}.setCapability("appiumVersion", "2.16.2");\n` +
+          `${sp}${line}`
+      );
+    } else if (language === 'python') {
+      if (result.includes('options=options')) {
+        result = result.replace(
+          /\n( +)(self\.driver = webdriver\.Remote\()/,
+          (_m, sp, line) =>
+            `\n${sp}options.set_capability('appium:automationName', '${automationName}')\n` +
+            `${sp}options.set_capability('appiumVersion', '2.16.2')\n` +
+            `${sp}${line}`
+        );
+      } else {
+        result = result.replace(
+          /\n( +)(self\.driver = webdriver\.Remote\()/,
+          (_m, sp, line) =>
+            `\n${sp}desired_caps['appium:automationName'] = '${automationName}'\n` +
+            `${sp}desired_caps['appiumVersion'] = '2.16.2'\n` +
+            `${sp}${line}`
+        );
+      }
+    } else if (language === 'nodejs') {
+      result = result.replace(
+        /('digitalai:deviceQuery': [^\n]+)/,
+        (match) =>
+          `${match}\n        'appium:automationName': '${automationName}',\n        'appiumVersion': '2.16.2',`
+      );
+    }
   }
 
   return result;
@@ -301,7 +425,7 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
           'Parallel execution (recommended on device farms — each test gets its own device):\n' +
           '  pip install pytest-xdist\n' +
           '  pytest -n auto -v   # spawns one worker per test method; each creates its own Appium session'
-        : '⚠️  APPIUM GRID (LEGACY): This project uses Appium Grid — a proprietary Experitest framework\n' +
+        : '⚠️  APPIUM GRID (LEGACY): This project uses Appium Grid — a legacy Digital.ai framework\n' +
           'that predates the W3C WebDriver standard. It is NOT the same as standard Appium Server.\n' +
           'All workarounds below exist because of this protocol difference, not Python version conflicts.\n\n' +
           'Install: pip install -r requirements.txt  (appium-python-client==2.2.0 + selenium==4.9.0)\n' +
@@ -346,10 +470,30 @@ function appNote(
 export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'get_test_boilerplate',
-    'Returns a complete, pre-configured test script boilerplate for the chosen mobile platform and programming language. ' +
+    'Use this when you already have the app identifiers (packageName/bundleIdentifier, mainActivity) and want a ' +
+    'complete, non-interactive test script ready to trigger against the cloud farm via RemoteWebDriver — ' +
+    'no local debug session required. Typical entry points: "generate a test script I can run later", ' +
+    '"create a reusable automated test", "set up a CI test for this app".\n\n' +
+    'RECOMMENDED WORKFLOW — build a new test for an app:\n' +
+    '  1. get_application_info — confirm package name, launch activity, and app ID\n' +
+    '  2. get_test_boilerplate — generate starter test with capabilities pre-filled (this tool)\n' +
+    '  3. open_mobile_studio OR get_automation_properties — inspect live element IDs (no ADB required)\n' +
+    '  4. list_active_sessions + release_orphaned_sessions(maxAgeHours=4, dryRun=true) — pre-flight device check\n' +
+    '  5. find_available_device — select a healthy device in a known region\n' +
+    '  6. [write / run test]\n' +
+    '  7. release_device — explicit cleanup on completion\n\n' +
+    'ELEMENT INSPECTION — preferred path: call open_mobile_studio first. It is the platform\'s native UI Inspector — ' +
+    'shows resource IDs, XPaths, and accessibility IDs in a live interactive tree with zero local tooling. ' +
+    'For programmatic extraction, use get_automation_properties. ' +
+    'rdb / adb is a fallback for scenarios that need direct shell access (file push, side-loaded installs). ' +
+    'Do NOT use adb shell uiautomator dump on Android 15+ Samsung devices — it exits silently without output on those devices; use open_mobile_studio instead.\n\n' +
+    'IMPORTANT: The generated script is an end-product artifact — do NOT execute it as a discovery or inspection step. ' +
+    'Running it without known element selectors creates Incomplete sessions in the reporter (visible to the whole team) ' +
+    'that cannot be retroactively closed. Use open_mobile_studio or get_automation_properties for any live inspection before this tool.\n\n' +
     'The Digital.ai access key and server URL are pre-filled from the MCP environment. ' +
-    'BEFORE calling this tool: (1) call list_applications to find the appId for the target app; ' +
-    '(2) call find_available_device for each OS tier you plan to test — read the region from the RESPONSE and pass it ' +
+    'BEFORE calling this tool: (1) call get_application_info or list_applications to find the appId and confirm package/activity; ' +
+    '(2) run release_orphaned_sessions(maxAgeHours=4, dryRun=true) to surface device contention before reserving; ' +
+    '(3) call find_available_device for each OS tier you plan to test — read the region from the RESPONSE and pass it ' +
     'as the region parameter so the generated deviceQuery routes only to healthy devices in that region. ' +
     'Also read osVersion from the find_available_device response and use that exact value (e.g. "14.0") in any @version ' +
     'query strings. Do not guess OS versions or use @osVersion/@deviceName (unsupported fields). ' +
@@ -358,6 +502,13 @@ export function registerBoilerplateTools(server: McpServer): void {
     'Alternatively, provide packageName (Android) or bundleIdentifier (iOS) directly. ' +
     'Use projectType to control the output structure: standalone-gradle (default), standalone-maven, or android-gradle-submodule. ' +
     'Returns all files needed to run the test (source file + build/dependency file) with dependency management options where applicable. ' +
+    'Pass includePerformanceTransactions: true to bracket the test body with startPerformanceTransaction / endPerformanceTransaction calls — ' +
+    'the platform records CPU, memory, battery, and network metrics for the enclosed flow; results appear in the reporter Transactions tab. ' +
+    'Pass includeAxeScan: true to add a Deque Axe DevTools accessibility scan (sets the required automationName capability and injects the mobile: axeScan call). ' +
+    'Both flags can be combined. ' +
+    'JAVA PITFALL (Appium Client 7.x / Grid): In WebDriverWait lambdas, the parameter d is typed as WebDriver — ' +
+    'do NOT call AndroidDriver-specific methods (e.g. currentActivity()) on it. ' +
+    'Reference the outer driver field instead: wait.until(d -> !driver.currentActivity().contains("LoginActivity")). ' +
     'DIAGNOSTIC: If a test suite that previously passed begins failing with NoSuchElementException on elements that other ' +
     'tests in the same run find without issue (session connects and app launches normally), this is a device health signal — ' +
     'NOT a code or timing issue. Check device health first with get_device_health_summary or list_devices before modifying test code.',
@@ -418,9 +569,32 @@ export function registerBoilerplateTools(server: McpServer): void {
           'is evaluated against all devices in all regions — including devices that have been offline for days or weeks — ' +
           'producing silent routing failures that look like test logic errors at the Python/Java level.'
         ),
+      includePerformanceTransactions: z
+        .boolean()
+        .optional()
+        .describe(
+          'Wrap the generated test body with startPerformanceTransaction / endPerformanceTransaction calls. ' +
+          'When enabled, the test steps are bracketed by driver.executeScript("seetest:client", ...) calls ' +
+          'that instruct the platform to record CPU, memory, battery, and network metrics for the enclosed flow. ' +
+          'Results appear in the reporter Transactions tab and are queryable via list_transactions / get_transaction. ' +
+          'The nvProfile parameter defaults to "3G-average" — change it to control network conditions during measurement. ' +
+          'Maximum transaction duration: 5 minutes. Supported on Android 5.0+ and all iOS versions.'
+        ),
+      includeAxeScan: z
+        .boolean()
+        .optional()
+        .describe(
+          'Add a Deque Axe DevTools accessibility scan to the generated test. ' +
+          'When enabled: (1) sets appium:automationName to AxeUiAutomator2 (Android) or AxeXCUITest (iOS) ' +
+          'and appiumVersion to "2.16.2" in setUp — required for the Axe integration to function; ' +
+          '(2) injects driver.executeScript("mobile: axeScan", settings) into the test body after the test steps. ' +
+          'The Axe API key is read from AXE_DEVTOOLS_API_KEY in the MCP environment; if not set, a placeholder is used. ' +
+          'Scan results appear in the Axe DevTools Mobile dashboard. ' +
+          'Can be combined with includePerformanceTransactions — the scan runs inside the performance transaction boundary.'
+        ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, outputFormat }) => {
       const accessKey = process.env.DIGITAL_AI_ACCESS_KEY ?? '';
       const rawBaseUrl = (process.env.DIGITAL_AI_BASE_URL ?? '').replace(/\/$/, '');
 
@@ -483,6 +657,10 @@ export function registerBoilerplateTools(server: McpServer): void {
         bundleIdentifier: platform === 'ios' ? resolvedBundleIdentifier : undefined,
         clearTestBody,
         region,
+        performanceTransactions: includePerformanceTransactions,
+        axeScan: includeAxeScan,
+        axeApiKey: process.env.AXE_DEVTOOLS_API_KEY,
+        isAppiumOss,
       };
 
       const files = getFilesForVariant(platform, language, isAppiumOss, projectType);
@@ -499,8 +677,15 @@ export function registerBoilerplateTools(server: McpServer): void {
           language,
           serverMode: isAppiumOss ? 'oss' : 'grid',
           serverModeNote: isAppiumOss
-            ? 'Appium Server (OSS) — standard W3C WebDriver protocol'
-            : 'Appium Grid (legacy) — proprietary Experitest JWP-era protocol, NOT standard Appium Server. All workarounds in this boilerplate exist because of this protocol difference.',
+            ? 'Appium Server (OSS) — standard W3C WebDriver protocol. ' +
+              'Java: java-client 8.x, Java 11+, UiAutomator2Options/XCUITestOptions (no DesiredCapabilities). ' +
+              'Python: appium-python-client 4.x+, AppiumOptions. ' +
+              'If you need Grid mode, switch to a Grid-enabled profile and regenerate — the APIs are incompatible.'
+            : 'Appium Grid (legacy) — Digital.ai JWP-era protocol, NOT standard Appium Server. ' +
+              'Java: java-client 7.6.0, Java 8+, DesiredCapabilities + AndroidElement. ' +
+              'Python: appium-python-client 2.2.0 + selenium 4.9.0 pinned, desired_capabilities= dict. ' +
+              'All workarounds in this boilerplate exist because of this protocol difference. ' +
+              'Switching to an OSS profile requires regenerating the boilerplate — the client versions and capability classes differ.',
           deviceCategory,
           region: region ?? null,
           deviceQueryNote: region

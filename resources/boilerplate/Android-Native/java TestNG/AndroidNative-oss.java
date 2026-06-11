@@ -19,6 +19,11 @@ public class LocalAndroidTest {
         options.setApp("cloud:com.experitest.ExperiBank/.LoginActivity");
         options.setAppPackage("com.experitest.ExperiBank");
         options.setAppActivity(".LoginActivity");
+        options.setCapability("autoDismissAlerts", true);
+        options.setCapability("autoGrantPermissions", true);
+        // System-level overlays (charging dialog, USB prompt) are NOT caught by autoDismissAlerts.
+        // If they block tests, call after driver init:
+        //   driver.executeScript("mobile: shell", Map.of("command","am","args",List.of("broadcast","-a","android.intent.action.CLOSE_SYSTEM_DIALOGS")));
         driver = new AndroidDriver(new URL("[Enter Instance here]/wd/hub"), options);
     }
 

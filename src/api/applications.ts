@@ -136,6 +136,7 @@ export async function installApplication(
   try {
     const res = await apiPost<ApiResponse<Record<string, string>>>(
       `/api/v1/applications/${applicationId}/install`,
+      undefined,
       options
     );
     return res.data;

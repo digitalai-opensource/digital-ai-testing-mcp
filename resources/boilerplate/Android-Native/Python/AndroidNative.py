@@ -24,9 +24,13 @@ class LocalAndroidTest(unittest.TestCase):
             'appPackage': 'com.experitest.ExperiBank',
             'appActivity': '.LoginActivity',
             'digitalai:deviceQuery': "@os='android' and @category='[Enter PHONE/TABLET here]'",
+            'autoDismissAlerts': True,
+            'autoGrantPermissions': True,
         }
         self.driver = webdriver.Remote("[Enter Instance here]/wd/hub", desired_capabilities=desired_caps)
         self.driver.implicitly_wait(10)
+        # System-level overlays (charging dialog, USB prompt) are NOT caught by autoDismissAlerts.
+        # If they block tests: self.driver.execute_script("mobile: shell", {"command": "am", "args": ["broadcast", "-a", "android.intent.action.CLOSE_SYSTEM_DIALOGS"]})
 
     def _elem(self, raw):
         # JWP sessions return element dicts rather than WebElement objects.

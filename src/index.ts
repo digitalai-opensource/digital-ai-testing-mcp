@@ -24,6 +24,7 @@ import { registerRegionTools } from './tools/region-tools.js';
 import { registerNvServerTools } from './tools/nv-server-tools.js';
 import { registerTransactionTools } from './tools/transaction-tools.js';
 import { registerCoverageTools } from './tools/coverage-tools.js';
+import { registerDebugTools } from './tools/debug-tools.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 
@@ -71,6 +72,7 @@ registerRegionTools(server);
 registerNvServerTools(server);
 registerTransactionTools(server);
 registerCoverageTools(server);
+registerDebugTools(server);
 registerMetaTools(server);
 
 console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 4 prompts).`);

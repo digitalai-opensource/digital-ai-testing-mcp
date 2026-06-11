@@ -24,6 +24,14 @@ public class LocalAndroidTest {
         dc.setCapability(MobileCapabilityType.APP, "cloud:com.experitest.ExperiBank/.LoginActivity");
         dc.setCapability(AndroidMobileCapabilityType.APP_PACKAGE, "com.experitest.ExperiBank");
         dc.setCapability(AndroidMobileCapabilityType.APP_ACTIVITY, ".LoginActivity");
+        dc.setCapability("autoDismissAlerts", true);
+        dc.setCapability("autoGrantPermissions", true);
+        // System-level overlays (charging dialog, USB prompt) are outside the app hierarchy and are
+        // NOT caught by autoDismissAlerts. If they block tests, call after driver init:
+        //   java.util.Map<String,Object> _args = new java.util.HashMap<>();
+        //   _args.put("command", "am");
+        //   _args.put("args", java.util.Arrays.asList("broadcast","-a","android.intent.action.CLOSE_SYSTEM_DIALOGS"));
+        //   driver.executeScript("mobile: shell", _args);
         // "Detected dialect: OSS" at startup is expected — the platform uses the legacy JSON Wire Protocol.
         driver = new AndroidDriver<>(new URL("[Enter Instance here]/wd/hub"), dc);
     }

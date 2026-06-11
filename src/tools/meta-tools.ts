@@ -91,6 +91,8 @@ const REGISTERED_TOOLS = [
   'get_device_coverage_summary', 'get_regional_test_coverage',
   // Infrastructure
   'get_license_utilization',
+  // Remote debug
+  'get_remote_debug_command',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
