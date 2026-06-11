@@ -4,6 +4,7 @@ import { join } from 'path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { getApplicationInfo } from '../api/applications.js';
+import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
 type Platform = 'android' | 'ios';
@@ -595,8 +596,11 @@ export function registerBoilerplateTools(server: McpServer): void {
       outputFormat: outputFormatParam,
     },
     async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, outputFormat }) => {
-      const accessKey = process.env.DIGITAL_AI_ACCESS_KEY ?? '';
-      const rawBaseUrl = (process.env.DIGITAL_AI_BASE_URL ?? '').replace(/\/$/, '');
+      // Active-profile accessors (not process.env) — generated boilerplate must
+      // embed the active profile's credential, not the default profile's. With
+      // env vars, switching to a project profile still embedded the admin JWT.
+      const accessKey = getActiveAccessKey();
+      const rawBaseUrl = getActiveUrl();
 
       let instanceHost = rawBaseUrl;
       try {

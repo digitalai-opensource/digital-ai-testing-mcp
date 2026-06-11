@@ -428,6 +428,7 @@ export interface TestGroupRequest {
   returnTotalCount?: boolean;
   pivotBy?: Array<'success' | 'status'>;
   groupBy?: string[];   // API field name — NOT "keys" (keys is silently ignored by the server)
+  filter?: TestFilterField[];
 }
 
 export interface TestListResponse {
@@ -703,4 +704,23 @@ export interface Transaction {
   networkDownloadSamples?: TransactionSample[];
   networkUploadSamples?: TransactionSample[];
   attachments?: unknown[];
+}
+
+// ─── Inspection Sessions (WebDriver-based native inspection) ─────────────────
+
+export interface InspectionSession {
+  handle: string;           // Short user-facing identifier
+  gridSessionId: string;    // Full CLOUD-SID:... Grid session ID
+  reportTestId: number;     // Reporter test_id — 0 if not captured
+  reportUrl: string;        // HTML report link (from caps)
+  cloudViewLink: string | null; // Mobile Studio URL (from caps)
+  deviceUDID: string;       // Device serial number
+  deviceName: string;       // e.g. "Google Pixel 7 sgdemo-0157"
+  deviceModel: string;      // e.g. "Pixel 7"
+  deviceOs: string;         // "Android"
+  deviceVersion: string;    // e.g. "16.0"
+  appPackage: string;       // Active app package
+  startedAt: number;        // Unix ms timestamp
+  // true when session was started with Cloud Admin JWT — enables automatic report cleanup
+  canDeleteReport: boolean;
 }

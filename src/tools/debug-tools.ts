@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getDevicesByQuery, getDevice } from '../api/devices.js';
+import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import type { Device } from '../types/digital-ai.js';
 
@@ -89,8 +90,10 @@ export function registerDebugTools(server: McpServer): void {
     },
     async ({ serialNumber, localPlatform, devicePlatform, osVersion, rdbPath, outputFormat }) => {
       try {
-        const accessKey = process.env.DIGITAL_AI_ACCESS_KEY ?? '';
-        const baseUrl = (process.env.DIGITAL_AI_BASE_URL ?? '').replace(/\/$/, '');
+        // Active-profile accessors (not process.env) — the generated rdb script
+        // must embed the credential for whatever profile is currently active.
+        const accessKey = getActiveAccessKey();
+        const baseUrl = getActiveUrl();
 
         // ── Resolve device ──────────────────────────────────────────────────
         let serial: string;

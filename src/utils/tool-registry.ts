@@ -63,6 +63,7 @@ export const WORKFLOW_DEPS: Record<string, { read: string[]; write: string[] }> 
     ],
     write: [
       'create_device_group',
+      'assign_group_to_project',
       'add_devices_to_group',
       'add_device_tag',
       'remove_devices_from_group',

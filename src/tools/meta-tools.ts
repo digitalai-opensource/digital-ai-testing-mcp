@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { resetClient, getActiveProfileName, getActiveUrl, getActiveKeyType } from '../api/client.js';
+import { getServerVersion } from '../utils/version.js';
 import { listProfiles, getProfileCredentials, profileCount } from '../utils/profile-loader.js';
 import { computeWorkflowReadiness, WORKFLOW_DEPS } from '../utils/tool-registry.js';
 
@@ -58,7 +59,7 @@ const REGISTERED_TOOLS = [
   'find_latest_test_for_name', 'get_grouped_test_reports',
   'get_project_test_summary', 'get_failure_rate_by_app_version',
   'get_distinct_test_key_values', 'delete_test_reports',
-  'delete_test_reports_before_date', 'download_test_attachments',
+  'delete_test_reports_before_date', 'delete_test_reports_by_name', 'download_test_attachments',
   'list_test_attachments', 'list_active_test_executions',
   // Test Views
   'list_test_views', 'search_test_views', 'get_test_view', 'get_test_view_summary',
@@ -93,6 +94,11 @@ const REGISTERED_TOOLS = [
   'get_license_utilization',
   // Remote debug
   'get_remote_debug_command',
+  // Inspection sessions (WebDriver-based native inspection)
+  'start_inspection_session', 'stop_inspection_session',
+  'take_inspection_screenshot', 'get_element_tree', 'find_elements',
+  'tap_element', 'type_into_element', 'clear_element',
+  'list_inspection_sessions', 'cleanup_inspection_sessions',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
@@ -106,7 +112,7 @@ export function registerMetaTools(server: McpServer): void {
     {},
     async () => {
       const name = process.env['MCP_SERVER_NAME'] ?? 'digital-ai-testing-mcp';
-      const version = process.env['MCP_SERVER_VERSION'] ?? '1.0.0';
+      const version = getServerVersion();
       const activeProfile = getActiveProfileName();
       const activeUrl = getActiveUrl();
       const requestTimeout = process.env['REQUEST_TIMEOUT_MS'] ?? '30000';

@@ -23,7 +23,8 @@ export function registerDeviceGroupTools(server: McpServer): void {
     'Lists all device groups in the system. ' +
     'Use this to find a group\'s numeric ID — required by get_devices_in_group, add_devices_to_group, remove_devices_from_group, assign_group_to_project, and the create_poc / close_poc / delete_poc workflows. ' +
     'Returns the Default device group ID (the source pool for POC device selection) and any named groups (e.g. "Acme Corp POC"). ' +
-    'Device groups organize devices and control which projects can access which devices. Cloud Admin only.',
+    'Device groups organize devices and control which projects can access which devices. ' +
+    'Cloud Admin JWT returns full group data (numberOfDevices, type, acceptNewDevices). Project API keys receive a simplified response via the v1 fallback (id and name only).',
     {
       maxResults: z
         .number()

@@ -40,6 +40,25 @@ apiDownload(path)                // returns Buffer for binary responses
 
 Axios client is lazy-initialised on first call. Auth is `X-API-KEY: ${DIGITAL_AI_ACCESS_KEY}`.
 
+**Retry:** `apiGet`/`apiDownload` and the read-only reporter POSTs (`/tests/list`, `/tests/grouped`, `/tests/distinct`, `/transactions/list`, `/testView/list`) retry up to 2× with backoff on transient failures (429/5xx/network). Mutating calls are never retried. Multi-page scans survive one transient error mid-scan.
+
+## Credentials — single source of truth
+
+**Never read `process.env.DIGITAL_AI_ACCESS_KEY` / `DIGITAL_AI_BASE_URL` outside `client.ts` and `profile-loader.ts`.** Env vars reflect the DEFAULT profile only and ignore `switch_environment` — reading them leaked the admin JWT into generated boilerplate/rdb scripts and pointed inspection sessions at the wrong cloud when a non-default profile was active.
+
+Use the accessors from `src/api/client.ts`, which fall back to env before the lazy client initialises:
+
+```ts
+getActiveUrl()        // base URL of the active profile
+getActiveAccessKey()  // credential of the active profile
+getActiveKeyType()    // 'jwt' | 'api-key'
+```
+
+## Local path validation (`src/utils/path-guard.ts`)
+
+- `validateOutputPath` — every tool that WRITES a local file (downloads) must call it
+- `validateInputPath` — every tool that READS a local file (uploads) must call it; additionally refuses credential-file names (`.env*`, SSH private keys) so a steered request cannot exfiltrate secrets to the cloud repository
+
 ## Response Envelope Inconsistency
 
 Most `/api/v1/*` endpoints wrap in `{ status, data, code }` — unwrap with `.data`:
@@ -170,9 +189,26 @@ Confirmed live-tested on both Cloud Admin JWT and Project API key. Blocked field
 
 **CSRF-BLOCKED** operators: `!=`, `like`, `startsWith`, `in`
 
-**Sort** by any field works, including `start_time` — the block is filter-only.
+**Sort** — ALL sort fields are CSRF-blocked for project API keys (non-JWT). Cloud Admin JWT only. `listTests` silently strips `sort` for project keys; callers must not rely on sorted order.
 
-For date-range filtering, use `startDate`/`endDate` parameters on `list_test_reports` — these fetch pages sorted descending and apply the date comparison client-side.
+**Any caller that needs "latest"/"most recent" semantics must use `listTestsSortedDesc`** (in `reporting.ts`), never `listTests` with a sort param. JWT: single server-sorted call. Project keys: scans all pages (up to 5 000 records, returns `scanCapped: true` when truncated), sorts client-side, trims to the requested limit. Used by `find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`, and the `recent-test-failures` resource.
+
+The blocked-filter-property check and the `success` string→boolean coercion are shared by `listTests` and `getGroupedTests` via `sanitizeReporterFilter` — both endpoints accept the same filter syntax, so new reporter functions that accept a `filter` must apply it too.
+
+For date-range filtering, use `startDate`/`endDate` parameters on `list_test_reports` — these fetch pages sorted descending (JWT) or unsorted with full-scan (project key) and apply the date comparison client-side.
+
+## Reporter API: Project Scoping
+
+Reporter endpoints (`/reporter/api/*`) have a split CSRF behavior on project-scoping query params:
+
+| Param | CSRF status | Notes |
+|---|---|---|
+| `projectName` | ✅ NOT blocked | Use this to scope reporter calls to a specific project |
+| `projectId` | ❌ CSRF-blocked (401) | Numeric ID triggers CSRF middleware — **never send to reporter endpoints** |
+
+`reporting.ts` functions (`listTests`, `deleteTests`, `getGroupedTests`, `getDistinctKeyValues`) accept `projectId` in their TypeScript signature for forward-compatibility but **silently ignore it** when building query params — only `projectName` is sent.
+
+Without `projectName`, Cloud Admin JWT searches its own scoped reporter context (which may not include projects with separate reporter instances). If tests from a specific project aren't appearing, pass `projectName` matching the exact project name from `list_projects`.
 
 ## Project settings — v2 vs v1
 
@@ -268,9 +304,9 @@ Parse with the dedicated `parseProvisioningDate`/`parseReservationDate` helpers 
 
 ## Sortable/Filterable Report Fields
 
-Sort properties (all work, including date fields):
+Sort properties work for **Cloud Admin JWT only**. All sort fields are CSRF-blocked for project API keys — `listTests` silently strips them.
 
-- `start_time` — ascending or descending
+- `start_time` — ascending or descending (JWT only)
 
 ## Slow Endpoints
 
@@ -284,6 +320,7 @@ These make multiple or expensive API calls — avoid calling in tight loops:
 - `get_performance_trend` — fetches ALL transactions then buckets client-side
 - `get_cross_platform_divergence` — calls `getGroupedTests` which can return large multi-field result sets
 - `get_daily_execution_trend` — paginates up to `maxRecords` (default 5 000) test records serially
+- `find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions` — fast for JWT, but under a **project API key** each does a full-scan via `listTestsSortedDesc` (up to 5 000 records) because server-side sort is CSRF-blocked
 
 ## Destructive Operations
 
@@ -455,6 +492,70 @@ Without `region`, the deviceQuery is evaluated against all devices in all region
 
 **To upgrade vitest:** run `npm install vitest@^4 --save-dev`. No Node version constraint — Node 22 supports vitest 4.x fully.
 
+## Inspection Sessions (WebDriver-based Native Inspection)
+
+`src/api/webdriver.ts` implements a **separate Axios instance** that connects to the Grid at
+`{DIGITAL_AI_BASE_URL}/wd/hub` using JWP (`desiredCapabilities`) format. It does **not** reuse
+the main `client.ts` instance (which sends `X-API-KEY` headers — the Grid uses `digitalai:accessKey`
+inside the session capability instead).
+
+### In-process session registry
+
+```ts
+const sessionRegistry = new Map<string, InspectionSession>(); // keyed by handle (8-char UUID slice)
+const allReportIds = new Set<number>();                        // all reportTestIds created this process
+```
+
+Both are cleared on MCP server restart. Orphaned Grid sessions timeout on their own (default 4 min).
+
+### Session response format — JWP vs W3C (regional)
+
+Different agent regions run different Appium versions and return different response formats:
+
+| Format | Region example | Response shape |
+|---|---|---|
+| **JWP** | SG region (Appium 1.8.0) | `{ sessionId: "CLOUD-SID:...", value: { caps... }, status: 0 }` |
+| **W3C** | US2 region (Appium 3.1.2) | `{ value: { sessionId: "uuid...", capabilities: { caps... } } }` |
+
+`createInspectionSession` handles both. The format is NOT determined by key type — it depends on which region allocates the device.
+
+### Capability field names — JWP vs W3C
+
+| Cap field | JWP (Appium 1.x) | W3C (Appium 2.x/3.x) |
+|---|---|---|
+| Report ID | `digitalai:reportTestId` | `digitalai:reportTestId` |
+| Report URL | `digitalai:reportUrl` | `digitalai:reportUrl` |
+| Mobile Studio link | `digitalai:cloudViewLink` | `digitalai:cloudViewLink` |
+| Serial number | `deviceUDID` / `device.serialNumber` | `deviceUDID` / `udid` |
+| Device display name | `device.name` | `digitalai:cloudDeviceName` |
+| Model | `device.model` | `digitalai:publicModel` |
+| OS | `device.os` | `platformName` |
+| OS version | `device.version` | `platformVersion` |
+| Screenshot format | PNG (`iVBORw0K`) | JPEG (`/9j/`) |
+| Element ID format | short numeric `"11"` | UUID `"00000000-0000-..."` |
+
+### WebDriver attribute names (Appium 1.x and 2.x)
+
+Use XML-matching hyphenated names — **not** camelCase:
+- `resource-id` (not `resourceId`)
+- `content-desc` (not `contentDescription`)
+- `class`, `text`, `bounds`, `clickable`, `enabled` — all work as-is
+
+### Cleanup mechanism
+
+`stop_inspection_session` → `quitInspectionSession(handle)` → calls
+`deleteTests([reportTestId])` (POST `/reporter/api/tests/delete`) immediately after the Grid session
+is deleted. The HTTP DELETE method on `/reporter/api/tests/{id}` is CSRF-blocked (confirmed); the
+POST bulk-delete endpoint is the only working path.
+
+`cleanup_inspection_sessions` iterates `allReportIds` for orphaned reports from sessions that
+were abandoned without calling `stop_inspection_session`.
+
+### Limitation: Android only / JWP only
+
+The current implementation hardcodes `platformName: "Android"` and JWP session format.
+iOS and W3C/OSS sessions are not yet supported.
+
 ## Adding a New Tool
 
 1. Add the API function to `src/api/<domain>.ts`
@@ -463,5 +564,6 @@ Without `region`, the deviceQuery is evaluated against all devices in all region
 4. Register the tool in `src/tools/<domain>-tools.ts`
 5. Run `npm run build` — fix all TypeScript errors before committing
 6. Add an integration test in `tests/<domain>.test.ts`
-7. Add the new script to `package.json` if it's a new test file
-8. Add the tool to the README.md tool reference table
+7. If the tool has a destructive guard, JWT gate, or path validation, add a handler-level case to `tests/tools.test.ts` — it exercises registered tools through an in-memory MCP transport against an unreachable host, so guards/gates are asserted without touching the live API
+8. Add the new script to `package.json` if it's a new test file
+9. Add the tool to the README.md tool reference table

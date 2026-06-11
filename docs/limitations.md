@@ -14,9 +14,11 @@ Devices designated as "shared" in Digital.ai may not be fully managed through th
 
 ## 4. Reporter API: Date Filter CSRF Restriction
 
-The Digital.ai reporter API routes certain filter properties through CSRF-protected middleware. The following are blocked for all callers (both JWT and API key): `start_time`, `create_time`, `uuid`. For date-range filtering, use the `startDate`/`endDate` parameters on `list_test_reports` — these fetch records sorted by `start_time` descending and apply the date comparison client-side.
+The Digital.ai reporter API routes certain filter properties through CSRF-protected middleware. The following are blocked for all callers (both JWT and API key): `start_time`, `create_time`, `uuid`. For date-range filtering, use the `startDate`/`endDate` parameters on `list_test_reports` — these fetch records server-sorted (Cloud Admin JWT) or via full scan (project API key) and apply the date comparison client-side.
 
-Confirmed working filter properties: `status`, `name` (with `contains`), `has_attachment`, `success` (boolean), `test_id`, `project_id`, `device.os` (case-sensitive), `duration`, `attachment_count`, `attachments_size`, `status_code`. Sort by any field (including `start_time`) works fine — the block is filter-only.
+Confirmed working filter properties: `status`, `name` (with `contains`), `has_attachment`, `success` (boolean), `test_id`, `project_id`, `device.os` (case-sensitive), `duration`, `attachment_count`, `attachments_size`, `status_code`.
+
+**Sort** works for Cloud Admin JWT only — ALL sort fields are CSRF-blocked for project API keys. Tools that need newest-first results (`find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`) compensate automatically under a project key by scanning all records and sorting client-side — correct results, but slower on large report sets.
 
 ## 5. Region Management
 
@@ -49,3 +51,21 @@ Endpoints under `/api/v1/devices/` use a custom timestamp format: `YYYY-MM-DD-hh
 Endpoints under `/api/v1/device-reservations` use standard ISO 8601 format (e.g. `"2024-01-15T13:30:00Z"`).
 
 Both formats are handled automatically by this MCP server — you always provide ISO 8601 in tool inputs, and the server converts as needed.
+
+## 12. No Session-Free Screenshot REST API
+
+The Digital.ai Continuous Testing platform does not expose a REST endpoint for capturing a device screenshot outside of a live WebDriver session. All device screenshot paths (`/api/v1/devices/{id}/screenshot`, `/api/v2/devices/{id}/screenshot`, and variants) return HTTP 404. This has been confirmed by live probe against the production API.
+
+To observe a device screen, the AI agent must hold a live WebDriver session: `start_inspection_session` + `take_inspection_screenshot` provide exactly this (Android only — see the [Inspection Sessions](tools.md#inspection-sessions) reference). Without a session, screen observation requires the Mobile Studio browser UI (developer-facing only) or Android Studio Layout Inspector via an rdb connection. Test attachments (screenshots captured during a test run) are available after the session ends via `download_test_attachments`.
+
+## 13. `get_remote_debug_command` Requires Cloud Admin JWT for Reliable Serial Resolution
+
+When the active `DIGITAL_AI_ACCESS_KEY` is a **Project API Key**, the device serial lookup API may return an internal numeric ID rather than the actual device UDID. The generated `adb connect` command in the output script will use that internal ID, which the ADB server cannot resolve — the connection will fail silently or immediately disconnect.
+
+Use a **Cloud Admin JWT** when running `get_remote_debug_command` to ensure the device serial is resolved to the real UDID. The tool includes an `authWarning` field in its structured response when a project API key is detected, flagging this condition before the script is written to disk.
+
+## 14. Android 15+ Samsung Devices: UIAutomator Dump Silently Fails
+
+On Android 15 (and some Android 13 Samsung devices, e.g. Galaxy S20 Ultra), `adb shell uiautomator dump` exits without output and produces no XML file. This is an OS-level restriction on UiAutomation introduced in later Android versions and is not specific to the Digital.ai platform.
+
+On affected devices, use `open_mobile_studio` instead of the uiautomator dump path to inspect UI elements. The Mobile Studio browser session viewer is not subject to this restriction. Android Studio Layout Inspector (via Tools → Layout Inspector) is also unaffected. If neither option is available, APK inspection via `aapt dump xmltree` and `aapt dump resources` can extract static resource IDs from the installed APK.

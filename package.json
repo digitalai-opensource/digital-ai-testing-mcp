@@ -1,6 +1,6 @@
 {
   "name": "digital-ai-testing-mcp",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "MCP server for Digital.ai Continuous Testing — device farm management, app lifecycle, and test automation",
   "type": "module",
   "main": "dist/index.js",
@@ -26,7 +26,8 @@
     "test:test-views": "vitest run tests/test-views.test.ts",
     "test:transactions": "vitest run tests/transactions.test.ts",
     "test:analytics": "vitest run tests/analytics.test.ts",
-    "test:infrastructure": "vitest run tests/infrastructure.test.ts"
+    "test:infrastructure": "vitest run tests/infrastructure.test.ts",
+    "test:tools": "vitest run tests/tools.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

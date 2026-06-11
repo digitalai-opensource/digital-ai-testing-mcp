@@ -205,12 +205,18 @@ export function registerDeviceTools(server: McpServer): void {
 
   server.tool(
     'release_device',
-    'Releases a device from its current user, making it available to others. Useful when a device is stuck in a reserved state. Available to all users for their own sessions. Accepts numeric device ID, serial number, UDID, or device name.',
+    'Releases a device from its current user, making it available to others. Useful when a device is stuck in a reserved state. Available to all users for their own sessions. Releasing a device someone else is using ends their session. Requires confirmDeletion: true. Accepts numeric device ID, serial number, UDID, or device name.',
     {
       deviceId: z.string().describe('Numeric device ID, serial number, UDID, or device name.'),
+      confirmDeletion: z
+        .boolean()
+        .optional()
+        .describe('Must be true to confirm. Releasing a device in use ends the current user\'s session. No changes are made without this.'),
     },
-    async ({ deviceId }) => {
+    async ({ deviceId, confirmDeletion }) => {
       try {
+        const guard = checkDestructiveGuard(confirmDeletion, `Release device "${deviceId}" from its current user`);
+        if (guard) return { content: [{ type: 'text', text: guard }] };
         const resolved = await resolveDevice(deviceId);
         await releaseDevice(resolved.id);
         return {
@@ -467,12 +473,9 @@ export function registerDeviceTools(server: McpServer): void {
     },
     async ({ deviceId, tag, confirmDeletion }) => {
       try {
-        const resolved = await resolveDevice(deviceId);
-        const guard = checkDestructiveGuard(
-          confirmDeletion,
-          `Remove tag "${tag}" from ${formatResolvedDevice(resolved, deviceId)}`
-        );
+        const guard = checkDestructiveGuard(confirmDeletion, `Remove tag "${tag}" from device "${deviceId}"`);
         if (guard) return { content: [{ type: 'text', text: guard }] };
+        const resolved = await resolveDevice(deviceId);
         await removeDeviceTag(resolved.id, tag);
         return {
           content: [{ type: 'text', text: `✅ Tag "${tag}" removed from ${formatResolvedDevice(resolved, deviceId)}.` }],
@@ -494,12 +497,9 @@ export function registerDeviceTools(server: McpServer): void {
     },
     async ({ deviceId, confirmDeletion }) => {
       try {
-        const resolved = await resolveDevice(deviceId);
-        const guard = checkDestructiveGuard(
-          confirmDeletion,
-          `Remove all tags from ${formatResolvedDevice(resolved, deviceId)}`
-        );
+        const guard = checkDestructiveGuard(confirmDeletion, `Remove all tags from device "${deviceId}"`);
         if (guard) return { content: [{ type: 'text', text: guard }] };
+        const resolved = await resolveDevice(deviceId);
         await removeAllDeviceTags(resolved.id);
         return {
           content: [{ type: 'text', text: `✅ All tags removed from ${formatResolvedDevice(resolved, deviceId)}.` }],

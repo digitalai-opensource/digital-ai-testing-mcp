@@ -38,6 +38,8 @@ This server reads a `DIGITAL_AI_ACCESS_KEY` from environment variables or a `.en
 - Cloud Admin JWTs grant full administrative access to the platform — user management, project deletion, device control. Treat them with the same care as a root credential.
 - Project-scoped API keys (`aut_1_...`) are narrower in scope but still grant installation, test execution, and reporting access for the assigned project.
 - The `get_remote_debug_command` tool embeds the active access key in the generated script file. The generated script is intended for local use only — delete it after your session. The tool includes a warning to this effect.
+- Tools that read local files for upload (`upload_application_file`, `upload_repository_file`, `update_repository_file`, `upload_provisioning_profile`) validate the path first and refuse credential-file names (`.env*`, SSH private keys) — a steered or mistaken request cannot publish secrets to the cloud repository.
+- Credentials are resolved through the active connection profile (`switch_environment`), never raw environment variables — generated artifacts (boilerplate, rdb scripts) always carry the currently active profile's key, so a project-scoped key can be used for customer-facing output.
 
 ### What This Server Can Do
 

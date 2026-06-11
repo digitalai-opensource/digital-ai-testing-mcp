@@ -5,11 +5,13 @@ import {
   getTestById,
   getTestByReportApiId,
   listTests,
+  listTestsSortedDesc,
   getGroupedTests,
   getDistinctKeyValues,
   deleteTests,
   downloadTestAttachments,
 } from '../api/reporting.js';
+import { getActiveKeyType } from '../api/client.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import {
@@ -217,8 +219,10 @@ export function registerReportingTools(server: McpServer): void {
         const targetLimit = limit ?? 50;
 
         if (startDate || endDate) {
-          // Client-side date filtering. Server-side start_time filter is blocked for API key auth.
-          // Fetch pages sorted descending so we can stop as soon as we pass the startDate cutoff.
+          // Client-side date filtering — server-side start_time filter is CSRF-blocked for all key types.
+          // JWT keys: fetch sorted descending so we can stop as soon as we pass the startDate cutoff.
+          // Project keys: sort is CSRF-blocked, so fetch unsorted and scan all pages (slower).
+          const isSortedFetch = getActiveKeyType() === 'jwt';
           const startTs = startDate ? new Date(startDate).getTime() : 0;
           const endTs = endDate ? new Date(endDate).getTime() : Date.now();
           const matched: TestReport[] = [];
@@ -231,7 +235,7 @@ export function registerReportingTools(server: McpServer): void {
                 limit: 500,
                 page: fetchPage,
                 returnTotalCount: false,
-                sort: [{ property: 'start_time', descending: true }],
+                ...(isSortedFetch && { sort: [{ property: 'start_time', descending: true }] }),
                 ...(searchValue && { searchValue }),
                 ...(filter && { filter }),
                 ...(keys && { keys }),
@@ -244,8 +248,9 @@ export function registerReportingTools(server: McpServer): void {
 
             for (const r of records) {
               const t = new Date(r.start_time).getTime();
-              if (t < startTs) { done = true; break; }
-              if (t <= endTs) {
+              // Early-exit is only valid when results are sorted descending by start_time.
+              if (isSortedFetch && t < startTs) { done = true; break; }
+              if (t >= startTs && t <= endTs) {
                 matched.push(r);
                 if (matched.length >= targetLimit) { done = true; break; }
               }
@@ -418,7 +423,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports',
-    'Permanently delete one or more test execution records by their numeric IDs. This cannot be undone. Requires confirmDeletion: true.',
+    'Permanently delete one or more test execution records by their numeric IDs. This cannot be undone. Requires confirmDeletion: true. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint.',
     {
       ids: z
         .array(z.number().int())
@@ -428,16 +433,96 @@ export function registerReportingTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Must be true to confirm the permanent deletion.'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
-      projectName: z.string().optional().describe('Scope to this project name.'),
+      projectId: z.number().int().optional().describe('Ignored — reporter API CSRF-blocks numeric projectId. Use projectName instead.'),
+      projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the delete to a specific reporter instance.'),
     },
     async ({ ids, confirmDeletion, projectId, projectName }) => {
+      if (getActiveKeyType() !== 'jwt') {
+        return { content: [{ type: 'text', text: 'Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. Use switch_environment() to switch to a Cloud Admin JWT profile.' }], isError: true };
+      }
       const guard = checkDestructiveGuard(confirmDeletion, `Delete ${ids.length} test report(s): [${ids.join(', ')}]`);
       if (guard) return { content: [{ type: 'text', text: guard }] };
       try {
         await deleteTests(ids, projectId, projectName);
         return {
           content: [{ type: 'text', text: `✅ Successfully deleted ${ids.length} test report(s).` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ─── delete_test_reports_by_name ──────────────────────────────────────────
+
+  server.tool(
+    'delete_test_reports_by_name',
+    'Find and permanently delete test execution records matching a name. Accepts exact match (name) or substring match (nameContains). Searches across all pages. Show a preview first via confirmDeletion: false, then re-call with confirmDeletion: true to execute. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint. IMPORTANT: always pass projectName (exact project name from list_projects) when using Cloud Admin JWT — without it the search spans the default reporter scope and tests from separate project reporter instances will not appear. The numeric projectId param is CSRF-blocked on reporter endpoints and is silently ignored.',
+    {
+      name: z
+        .string()
+        .optional()
+        .describe('Exact test name to match. Use this or nameContains, not both.'),
+      nameContains: z
+        .string()
+        .optional()
+        .describe('Case-insensitive substring to match against test names. Use this or name, not both.'),
+      confirmDeletion: z
+        .boolean()
+        .optional()
+        .describe('Set true to execute the deletion. Omit or false to preview matching records without deleting.'),
+      projectId: z.number().int().optional().describe('Ignored — the reporter API CSRF-blocks numeric projectId. Use projectName instead.'),
+      projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the search. Required when the target project has its own reporter instance separate from the default scope.'),
+    },
+    async ({ name, nameContains, confirmDeletion, projectId, projectName }) => {
+      if (getActiveKeyType() !== 'jwt') {
+        return { content: [{ type: 'text', text: 'Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. Use switch_environment() to switch to a Cloud Admin JWT profile.' }], isError: true };
+      }
+      try {
+        if (!name && !nameContains) {
+          return { content: [{ type: 'text', text: 'Error: provide either name (exact) or nameContains (substring).' }], isError: true };
+        }
+        if (name && nameContains) {
+          return { content: [{ type: 'text', text: 'Error: provide either name or nameContains, not both.' }], isError: true };
+        }
+
+        const filter = name
+          ? [{ property: 'name', operator: '=' as const, value: name }]
+          : [{ property: 'name', operator: 'contains' as const, value: nameContains! }];
+
+        // Paginate to collect all matching IDs
+        const allIds: number[] = [];
+        const previewNames: string[] = [];
+        let page = 1;
+        while (true) {
+          const batch = await listTests({ limit: 500, page, returnTotalCount: false, filter }, projectId, projectName);
+          const records = batch.data ?? [];
+          for (const r of records) {
+            allIds.push(r.test_id);
+            previewNames.push(`  ${r.test_id}: ${r.name} (${r.start_time?.slice(0, 10) ?? '?'})`);
+          }
+          if (records.length < 500) break;
+          page++;
+        }
+
+        if (allIds.length === 0) {
+          const criterion = name ? `name = "${name}"` : `name contains "${nameContains}"`;
+          return { content: [{ type: 'text', text: `No test reports found matching ${criterion}.` }] };
+        }
+
+        const guard = checkDestructiveGuard(confirmDeletion, `Delete ${allIds.length} test report(s) matching "${name ?? nameContains}"`);
+        if (guard) {
+          return {
+            content: [{
+              type: 'text',
+              text: `${guard}\n\nMatching records (${allIds.length}):\n${previewNames.join('\n')}`,
+            }],
+          };
+        }
+
+        await deleteTests(allIds, projectId, projectName);
+        return {
+          content: [{ type: 'text', text: `✅ Deleted ${allIds.length} test report(s) matching "${name ?? nameContains}".` }],
         };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
@@ -510,8 +595,11 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ name, projectId, projectName, outputFormat }) => {
       try {
-        const result = await listTests(
-          { limit: 1, page: 1, searchValue: name, sort: [{ property: 'start_time', descending: true }] },
+        // listTestsSortedDesc guarantees newest-first for both key types — project
+        // keys CSRF-block sort, so a plain sorted listTests call would silently
+        // return an arbitrary record instead of the latest.
+        const result = await listTestsSortedDesc(
+          { limit: 1, page: 1, searchValue: name },
           projectId,
           projectName
         );
@@ -556,8 +644,8 @@ export function registerReportingTools(server: McpServer): void {
             { limit: 1, page: 1, returnTotalCount: true, filter: [{ property: 'status', operator: '=', value: 'Passed' }] },
             projectId, projectName
           ),
-          listTests(
-            { limit: 200, page: 1, returnTotalCount: true, filter: [{ property: 'status', operator: '=', value: 'Failed' }], sort: [{ property: 'start_time', descending: true }] },
+          listTestsSortedDesc(
+            { limit: 200, page: 1, returnTotalCount: true, filter: [{ property: 'status', operator: '=', value: 'Failed' }] },
             projectId, projectName
           ),
           listTests(
@@ -618,7 +706,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports_before_date',
-    'Permanently delete all test execution records started before a given date. Fetches matching IDs automatically then deletes them. Requires confirmDeletion: true. This cannot be undone.',
+    'Permanently delete all test execution records started before a given date. Fetches matching IDs automatically then deletes them. Requires confirmDeletion: true. This cannot be undone. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint.',
     {
       beforeDate: z
         .string()
@@ -631,6 +719,9 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Scope to this project name.'),
     },
     async ({ beforeDate, confirmDeletion, projectId, projectName }) => {
+      if (getActiveKeyType() !== 'jwt') {
+        return { content: [{ type: 'text', text: 'Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. Use switch_environment() to switch to a Cloud Admin JWT profile.' }], isError: true };
+      }
       try {
         // The reporter API does not support start_time filter via API key (CSRF restriction).
         // Fetch all records page by page and apply the date filter client-side.
@@ -696,13 +787,12 @@ export function registerReportingTools(server: McpServer): void {
       try {
         // Active executions are Incomplete records with null duration.
         // We fetch more than needed since not all Incomplete records are still running.
-        const result = await listTests(
+        const result = await listTestsSortedDesc(
           {
             limit: Math.min((limit ?? 50) * 4, 500),
             page: 1,
             returnTotalCount: false,
             filter: [{ property: 'status', operator: '=', value: 'Incomplete' }],
-            sort: [{ property: 'start_time', descending: true }],
           },
           projectId,
           projectName
@@ -792,12 +882,11 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ testName, maxRuns, projectId, projectName, outputFormat }) => {
       try {
-        const result = await listTests(
+        const result = await listTestsSortedDesc(
           {
             limit: maxRuns,
             page: 1,
             filter: [{ property: 'name', operator: 'contains', value: testName }],
-            sort: [{ property: 'start_time', descending: true }],
             returnTotalCount: false,
           },
           projectId,

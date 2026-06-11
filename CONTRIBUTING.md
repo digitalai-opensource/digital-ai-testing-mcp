@@ -37,6 +37,7 @@ npm run build      # compile TypeScript
 npm run lint       # ESLint
 npm run typecheck  # TypeScript check only
 npm run test       # all tests (requires live .env credentials)
+npm run test:tools # tool-layer guard/gate tests — runs offline, no credentials needed
 ```
 
 See `.env.example` for required environment variables.

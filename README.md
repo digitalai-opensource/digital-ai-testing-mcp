@@ -6,12 +6,42 @@
 
 # Digital.ai Continuous Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **141 tools**, **2 resources**, and **4 prompts** covering 22 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, and more.
+An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **152 tools**, **2 resources**, and **4 prompts** covering 23 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive inspection, and more.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Pull the image (see Installation for GHCR authentication)
+docker pull ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+
+# 2. Create your .env
+curl -O https://raw.githubusercontent.com/dai-continuous-testing/digital-ai-testing-mcp/main/.env.example
+cp .env.example .env   # set DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY
+```
+
+Add to your AI client (Claude Desktop shown — see [Connecting AI Clients](#connecting-ai-clients) for VS Code, JetBrains, Copilot, and Cursor):
+
+```json
+{
+  "mcpServers": {
+    "digital-ai-testing": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "--env-file", "/ABSOLUTE/PATH/TO/.env",
+               "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"]
+    }
+  }
+}
+```
+
+Then ask: *"Show me the overall health of the device farm."*
 
 ---
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Prerequisites](#prerequisites)
 - [Access Keys](#access-keys)
 - [Installation](#installation)
@@ -22,39 +52,17 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
   - [Claude Code (JetBrains / Android Studio)](#claude-code-jetbrains--android-studio)
   - [GitHub Copilot (VS Code)](#github-copilot-vs-code)
   - [Cursor](#cursor)
-- [Tool Reference](#tool-reference)
-  - [Users](#users)
-  - [Devices](#devices)
-  - [Device Groups](#device-groups)
-  - [Reservations](#reservations)
-  - [Applications](#applications)
-  - [Repository](#repository)
-  - [Browsers](#browsers)
-  - [Projects](#projects)
-  - [Provisioning Profiles](#provisioning-profiles)
-  - [Backup](#backup)
-  - [Health & Diagnostics](#health--diagnostics)
-  - [Coverage Analytics](#coverage-analytics)
-  - [Reporting](#reporting)
-  - [Test Views](#test-views)
-  - [Transactions & Performance](#transactions--performance)
-  - [Agents](#agents)
-  - [Regions](#regions)
-  - [NV Servers](#nv-servers)
-  - [Environment Management](#environment-management)
-  - [Workflows](#workflows)
-  - [Boilerplate Generation](#boilerplate-generation)
-  - [Remote Debug](#remote-debug)
-  - [Resources & Prompts](#resources--prompts)
+- [Example Prompts](#example-prompts)
+- [Capabilities](#capabilities) — full per-tool reference in [docs/tools.md](docs/tools.md)
 - [Workflow Reference](#workflow-reference)
   - [POC Lifecycle](#poc-lifecycle)
   - [Project Lifecycle](#project-lifecycle)
+- [Boilerplate Generation](#boilerplate-generation)
 - [Reference](#reference)
   - [Response Format](#response-format)
   - [Understanding maxResults](#understanding-maxresults)
   - [List Filters & Sorting](#list-filters--sorting)
   - [Test Reporting Schema](#test-reporting-schema)
-- [Diagnostics](#diagnostics)
 - [Safety Guards](#safety-guards)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -77,7 +85,7 @@ Your Digital.ai access key determines what the MCP server can do on your behalf.
 
 | Key type | Format | Access |
 |---|---|---|
-| **Cloud Admin JWT** | `eyJ…` (long base-64 string) | All 140 tools: device management, user provisioning, project administration, infrastructure, performance data |
+| **Cloud Admin JWT** | `eyJ…` (long base-64 string) | All 152 tools: device management, user provisioning, project administration, infrastructure, performance data |
 | **Project API key** | `aut_1_…` | Scoped to the devices, apps, and reports within one specific project. v2 API tools (agents, regions, license data) return 403. |
 
 When a Cloud Admin tool is called with a project key, the MCP returns a plain-language error explaining what happened — and, if a Cloud Admin profile is configured, a ready-to-use `switch_environment(...)` command.
@@ -179,7 +187,7 @@ Use `digital-ai-testing-mcp:latest` as the image name in your AI client configur
 | `DIGITAL_AI_BASE_URL` | ✅ | — | Your Digital.ai tenant URL |
 | `DIGITAL_AI_ACCESS_KEY` | ✅ | — | Access key (JWT or project API key — see [Access Keys](#access-keys)) |
 | `MCP_SERVER_NAME` | Optional | `digital-ai-testing-mcp` | Server identity shown in the AI client |
-| `MCP_SERVER_VERSION` | Optional | `1.0.0` | Server version |
+| `MCP_SERVER_VERSION` | Optional | version from `package.json` | Override the reported server version (rarely needed) |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
 
@@ -315,343 +323,53 @@ Alternatively, create a `.cursor/mcp.json` file in your project root with the sa
 
 ---
 
-## Tool Reference
+## Example Prompts
 
-### Users
+Once connected, talk to the server in plain language — no tool names needed:
 
-| Tool | What it does | Filters / Sort | Admin Required? |
-|---|---|---|---|
-| `list_users` | List all user accounts | firstName, lastName, email, authenticationType, isCloudAdmin, tag; sortBy/sortOrder | Cloud Admin |
-| `create_user` | Create a new user account | — | Cloud Admin |
-| `delete_user` | Permanently delete a user account | — | Cloud Admin |
-| `get_my_account_info` | Show the account tied to the active API key | — | Any |
-| `assign_user_to_projects` | Grant user access to one or more projects | — | Cloud Admin |
-| `unassign_user_from_projects` | Remove user from one or more projects | — | Cloud Admin |
-| `get_user_tags` | List tags on a user | — | Cloud Admin |
-| `set_user_tags` | Replace all tags on a user (max 10) | — | Cloud Admin |
+- *"Show me the overall health of the device farm — how many devices are available, reserved, and offline?"*
+- *"Find an available Android phone running at least version 13 in the US2 region"*
+- *"Did all tests in the QA project pass today? I need a go/no-go for the release."*
+- *"Install the latest build of com.mycompany.app on all available Android devices"*
+- *"Find an available Android phone, then generate a Java JUnit5 test boilerplate"*
+- *"Show the pass/fail breakdown by OS — are Android and iOS failing at different rates?"*
+- *"Did the latest release introduce a CPU regression? Compare version 10553 vs 10554 on Android."*
+- *"Set up a new POC for Acme Corp — 6 devices in US2, 3 iOS and 3 Android, through August 31st"*
 
-### Devices
+**[→ docs/examples.md](docs/examples.md)** has 200+ prompts organized by scenario: farm health, device groups, regression sign-off, test analytics, performance, interactive inspection, POC lifecycle, and more.
 
-Device tools accept a **flexible device identifier**: numeric device ID, serial number, UDID, or device name — the server resolves it to the backend ID automatically.
+---
 
-| Tool | What it does | Filters / Sort | Admin Required? |
-|---|---|---|---|
-| `list_devices` | List devices with status, OS, model, and agent | `query` (@-syntax), `region`, `model`; sortBy/sortOrder | Any |
-| `get_device_detail` | Full device profile including groups and status history | — | Cloud Admin |
-| `edit_device` | Update device name, notes, or category | — | Cloud Admin |
-| `find_available_device` | Find the first available device matching OS, tags, or version | — | Any |
-| `release_device` | Release a reserved or stuck device | — | Any |
-| `release_orphaned_sessions` | Find and release devices stuck in "In Use" beyond a configurable time threshold | — | Any |
-| `reboot_device` | Remote reboot | — | Cloud Admin |
-| `reset_device_usb` | Reset USB connection | — | Cloud Admin |
-| `start_device_web_control` | Open a browser-based control session | — | Cloud Admin |
-| `open_mobile_studio` | Open the platform's browser-based UI Inspector for a device — shows live element tree with resource IDs, XPaths, and accessibility IDs. **Primary tool for element locator discovery before writing test code.** | — | Any |
-| `create_mobile_manual_test` | Create a structured manual test session | — | Any |
-| `download_ios_app_container` | Download an iOS app data container | — | Cloud Admin |
-| `get_device_health_summary` | Device farm health overview | — | Any |
-| `get_device_tags` | List all tags on a device | — | Any |
-| `add_device_tag` | Add a tag to a device | — | Cloud/Project Admin |
-| `remove_device_tag` | Remove a specific tag | — | Cloud/Project Admin |
-| `remove_all_device_tags` | Remove all tags | — | Cloud/Project Admin |
-| `get_device_ca_certificates` | List CA certificates on an Android device | — | Cloud Admin |
+## Capabilities
 
-**Device query syntax** (`list_devices` `query` parameter — server-side filtering):
+152 tools across 24 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
 
-```
-@os='android'            @os='iOS'          (case-insensitive)
-@version='14.0'          @version>'13.0'    (decimal required; supports =, >, <, !=)
-@category='PHONE'        @category='TABLET' (uppercase required)
-@region='US2'            @region='SG1'
-@name='My Device'                           (exact display name)
-@model='iPhone 12'       @modelName='Xiaomi Redmi Note 9 5G'
-@serialNumber='4hlfov...'
-@emulator='false'
-```
-
-Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and @region='US2'`
-
-> **Fields that silently return empty results — do not use in queries:** `@manufacturer`, `@tag`, `@deviceName`, `@id`, `@udid`, `@status`, `@agentName`, `@location`, `@project`, `@group`. The API accepts these without error but returns nothing. Use the `manufacturer`, `tags`, `model`, and `region` parameters on `list_devices` and `find_available_device` instead — those filter client-side and reliably work.
-
-### Device Groups
-
-| Tool | What it does | Admin Required? |
+| Domain | Tools | Highlights |
 |---|---|---|
-| `list_device_groups` | List all device groups | Cloud Admin |
-| `get_devices_in_group` | List devices in a group | Cloud Admin |
-| `get_projects_in_group` | List projects with access to a group | Cloud Admin |
-| `create_device_group` | Create a new device group | Cloud Admin |
-| `edit_device_group` | Rename or toggle auto-accept | Cloud Admin |
-| `delete_device_group` | Delete a group (devices are not deleted) | Cloud Admin |
-| `add_devices_to_group` | Add devices to a group | Cloud Admin |
-| `remove_devices_from_group` | Remove devices from a group | Cloud Admin |
-| `assign_group_to_project` | Grant a project access to a group | Cloud Admin |
-
-### Reservations
-
-| Tool | What it does | Filters / Sort | Admin Required? |
-|---|---|---|---|
-| `list_reservations` | List current and upcoming reservations | username, project, deviceUid; sortBy/sortOrder | Any |
-| `create_reservation` | Reserve one or more devices | — | Cloud/Project Admin |
-| `reserve_device_for_duration` | Reserve a device for N hours starting now (e.g. `0.5` = 30 min, `1.0` = 1 hour) | — | Cloud/Project Admin |
-| `delete_reservation` | Cancel a reservation | — | Cloud/Project/User |
-| `check_device_availability_window` | Check a device's reservation schedule over a time window | — | Cloud Admin |
-
-### Applications
-
-| Tool | What it does | Filters / Sort | Admin Required? |
-|---|---|---|---|
-| `list_applications` | List all apps in the repository | nameContains, osType, packageName, bundleIdentifier, fileType, isForSimulator; sortBy/sortOrder | Any |
-| `get_application_info` | Full app detail | — | Any |
-| `find_latest_application` | Find the newest uploaded version by name, bundle ID, or package name. Returns `appCapabilityString` (e.g. `cloud:MyApp`) ready for the Appium `app` capability. | — | Any |
-| `upload_application_file` | Upload APK/IPA/AAB from a local file path | — | Cloud Admin |
-| `upload_application_from_url` | Upload from a direct-download URL | — | Cloud Admin |
-| `delete_application` | Delete an app from the repository | — | Cloud Admin |
-| `update_application_plugins` | Update iOS plugin signing profiles | — | Cloud Admin |
-| `install_application` | Install an app on one or more devices. The app must be assigned to a project containing the target device — call `assign_app_to_project` first if you get a 400 error. | — | Any |
-| `uninstall_application` | Uninstall from one or more devices | — | Any |
-| `uninstall_application_by_package` | Uninstall by package name on a single device | — | Any |
-| `uninstall_application_by_package_from_devices` | Uninstall by package name across multiple devices | — | Any |
-| `extract_app_language_files` | Download localization files from an app | — | Any |
-| `bulk_install_to_group` | Install on every device in a device group | — | Any |
-
-> **Upload from URL:** Must be a direct-download link accessible from the Digital.ai server's network. Redirect URLs, auth-gated URLs, and unsupported file types return a 400 with a diagnostic message.
-
-> **File uploads from Docker:** The MCP server runs inside a container. Mount the directory containing your build artifacts as a volume (e.g. `-v /host/apps:/apps`) and reference the container path (e.g. `/apps/myapp.apk`). Alternatively, use `upload_application_from_url` for artifacts already on a network-accessible URL.
-
-### Repository
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `list_repository_files` | List files in the repository | Any |
-| `get_repository_file_info` | Get file details by ID | Any |
-| `upload_repository_file` | Upload a file | Any |
-| `download_repository_file` | Download a file by ID | Any |
-| `update_repository_file` | Replace file content in-place | Any |
-| `delete_repository_file` | Delete a file | Any |
-
-### Browsers
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `list_available_browsers` | List available browser/OS combinations | Any |
-| `start_selenium_session` | Open a Selenium browser session | Any |
-| `start_manual_test_session` | Create a structured browser test | Any |
-
-### Projects
-
-| Tool | What it does | Filters / Sort | Admin Required? |
-|---|---|---|---|
-| `list_projects` | List all projects | name filter; sortBy/sortOrder | Any |
-| `create_project` | Create a project | — | Cloud Admin |
-| `delete_project` | Delete a project | — | Cloud Admin |
-| `list_project_users` | List users in a project | username, role; sortBy/sortOrder | Cloud/Project Admin |
-| `assign_user_to_project` | Add a user to a project with a role | — | Cloud Admin |
-| `remove_user_from_project` | Remove a user from a project | — | Cloud Admin |
-| `get_project_tokens` | Get token configuration | — | Cloud/Project Admin |
-| `set_project_tokens` | Update token mode | — | Cloud Admin |
-| `get_project_settings` | Basic project settings | — | Cloud/Project Admin |
-| `get_project_admin_settings` | Full project configuration via v2 API — 35+ fields in one call: per-type license limits, cleanup flags, reservation policies, feature flags, user/app counts | — | Cloud Admin (JWT) |
-| `update_project_settings` | Update cleanup, concurrency, and limit settings | — | Cloud Admin |
-| `set_telephony_status` | Enable/disable calls and SMS | — | Cloud Admin |
-| `get_project_notes` | Get project notes | — | Any |
-| `set_project_notes` | Set project notes | — | Cloud/Project Admin |
-| `get_project_devices` | List devices accessible to a project | — | Cloud/Project Admin |
-| `get_automation_properties` | Get Appium/automation properties | — | Any |
-| `assign_app_to_project` | Make an app available to a project | — | Cloud Admin |
-
-### Provisioning Profiles
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `list_provisioning_profiles` | List iOS signing profiles with expiry dates | Cloud Admin |
-| `get_provisioning_profile` | Get profile details | Cloud Admin |
-| `upload_provisioning_profile` | Upload P12 + mobileprovision | Cloud Admin |
-| `download_provisioning_profile` | Download a profile | Cloud Admin |
-| `delete_provisioning_profile` | Delete a profile | Cloud Admin |
-
-### Backup
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `create_backup` | Trigger a live system backup | Cloud Admin |
-
-### Health & Diagnostics
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `get_environment_summary` | Full environment snapshot: devices, agents, groups | Any |
-| `check_ios_readiness` | iOS device and provisioning profile readiness | Any |
-| `check_android_readiness` | Android device readiness. If `available: 0`, counts may be project-scoped — `find_available_device` searches a broader pool. | Any |
-| `get_agent_status` | Agent connectivity overview | Any |
-| `get_server_info` | Server version, active profile, URL, tool count, and capability domains | Any |
-| `check_connectivity` | Verify the MCP server can reach the Digital.ai API | Any |
-| `check_workflow_readiness` | Readiness report for all workflow tools — which dependency tools are present or missing. Call this first when diagnosing workflow failures. | Any |
-| `list_active_sessions` | Currently active browser/Selenium sessions | Cloud Admin |
-| `get_reporter_project_storage` | Per-project disk usage: current MB, quota, usage %, artifact counts. Sorted by usage descending. | Cloud Admin |
-| `get_license_info` | Platform license limits for devices and browser sessions | Cloud Admin |
-| `get_license_utilization` | In-use counts vs. purchased limits | Cloud Admin |
-
-### Coverage Analytics
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `get_device_coverage_summary` | Compares farm inventory against test execution history — which OS versions, models, and manufacturers have been tested vs. available. Identifies gaps. | Any |
-| `get_regional_test_coverage` | Infrastructure coverage by region: device counts, OS split, and availability rate per region | Any |
-
-### Reporting
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `list_test_reports` | Search, filter, sort, and paginate test reports. See [Test Reporting Schema](#test-reporting-schema) for supported filters. | Any |
-| `get_test_report` | Full test execution report by numeric test ID or reporter URL | Any |
-| `get_test_by_report_id` | Report by `report_api_id` (returned when starting a session) | Any |
-| `find_latest_test_for_name` | Most recent run record for a test by name | Any |
-| `get_grouped_test_reports` | Pass/fail counts grouped by field (use `groupBy`, e.g. `["device.os"]`). Supports `pivotBy` for per-status columns. | Any |
-| `get_test_stability_report` | Last N runs of a named test: pass rate, sparkline trend, and consecutive streak count | Any |
-| `get_cross_platform_divergence` | Tests passing on one OS but failing on the other, with configurable minimum run count and divergence threshold | Any |
-| `get_daily_execution_trend` | Execution counts and pass rates bucketed by day or week. Stops at `lookbackDays` or `maxRecords` (default 5,000; max 25,000), whichever comes first. | Any |
-| `get_project_test_summary` | All-time pass/fail totals and top failing tests in a time window | Any |
-| `get_failure_rate_by_app_version` | Pass/fail breakdown grouped by app version | Any |
-| `get_distinct_test_key_values` | Discover all distinct values recorded for a report metadata key | Any |
-| `list_active_test_executions` | Currently-running test executions (Incomplete status with null duration) | Any |
-| `list_test_attachments` | Attachment metadata for a test by numeric ID | Any |
-| `download_test_attachments` | Download test attachments as a ZIP file | Any |
-| `delete_test_reports` | Permanently delete test records by ID list | Cloud Admin |
-| `delete_test_reports_before_date` | Delete all test records started before a given date | Cloud Admin |
-
-### Test Views
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `list_test_views` | List all test view groups | Any |
-| `search_test_views` | Search and paginate test view groups | Any |
-| `get_test_view` | Get test view configuration detail | Any |
-| `get_test_view_summary` | Pass/fail/skip counts for a view | Any |
-| `create_test_view` | Create a test view group | Cloud Admin |
-| `update_test_view` | Rename or toggle dashboard visibility | Cloud Admin |
-| `delete_test_view` | Delete a test view group | Cloud Admin |
-
-### Transactions & Performance
-
-Transactions are performance-instrumented segments of a test session. Developers mark start and end points in their app or test script; the platform records CPU, memory, battery, and network metrics for each interval. These tools support performance regression testing — compare metrics across app versions or identify slow operations.
-
-> Requires a Cloud Admin JWT. Server-side filtering is not supported on the transaction API; all filters are applied client-side after fetching.
-
-| Tool | What it does |
-|---|---|
-| `list_transactions` | List transactions filtered by app, version, transaction name, device OS, date range, duration threshold, or network profile. Sorted newest first. |
-| `get_transaction` | Full detail for one transaction, including time-series CPU, memory, battery, and network samples |
-| `get_transaction_performance_summary` | Aggregate avg/max/min CPU, memory, battery, duration, and Speed Index grouped by app version, transaction name, device model, device type, or network profile. Sorted worst-first. |
-| `get_performance_trend` | Metrics (Speed Index, CPU, memory, duration) bucketed by day/week/month over a configurable lookback window |
-
-### Agents
-
-> Requires a Cloud Admin JWT.
-
-| Tool | What it does |
-|---|---|
-| `list_agents` | List all host machines / test agents with OS, region, device count, and health status. Filterable by region and OS type. |
-| `get_agent_devices` | List devices connected to a specific agent |
-
-### Regions
-
-> Requires a Cloud Admin JWT.
-
-| Tool | What it does |
-|---|---|
-| `list_regions` | List all geographic regions (US1, UK1, SG1, DE1, AU1, CA1, US2, CH1) with status |
-| `get_region_topology` | Full infrastructure map of a region: NV servers, Selenium agents, signers, storages, reporters |
-
-### NV Servers
-
-> Requires a Cloud Admin JWT.
-
-| Tool | What it does |
-|---|---|
-| `list_nv_servers` | List all Network Virtualization servers with status and tunneling connectivity. Filterable by region. |
-| `get_nv_server` | Details for a specific NV server |
-
-### Environment Management
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `list_environments` | List all named connection profiles — name, URL, auth type. Marks the active profile. Credentials are never exposed. | Any |
-| `switch_environment` | Switch to a named profile instantly. Verifies the new connection and reports the connected user. All subsequent tool calls use the new credentials. | Any |
-
-> **403 guidance:** When a tool returns 403, the error message includes the current auth type and — if a Cloud Admin profile is configured — a ready-to-use `switch_environment(...)` call.
-
-### Workflows
-
-Six tools cover POC and general project lifecycle management. See [Workflow Reference](#workflow-reference) for full documentation.
-
-| Tool | Purpose | Admin Required? |
-|---|---|---|
-| `create_poc` | 10-step POC setup: device selection, project creation, user provisioning, app assignment | Cloud Admin |
-| `close_poc` | Wind down a POC — removes devices and users; preserves the project and group | Cloud Admin |
-| `delete_poc` | Full POC teardown including group and project deletion. Requires `confirmDeletion: true`. | Cloud Admin |
-| `setup_project` | Guided project provisioning with optional device allocation, users, and app assignment | Cloud Admin |
-| `close_project_resources` | Release project resources (devices, sessions, users) without deleting the project | Cloud Admin |
-| `teardown_project` | Full project teardown. Requires `confirmDeletion: true`. | Cloud Admin |
-
-### Boilerplate Generation
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `get_test_boilerplate` | Generate a complete, pre-configured Appium test script. See [Boilerplate Generation](#boilerplate-generation-1) below for full documentation. | Any |
-
-### Remote Debug
-
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `get_remote_debug_command` | Generate a ready-to-run `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) script that connects a cloud device as a locally attached ADB/USB device. Install the app first — `install_application` fails while a device is reserved via rdb. Also useful for device diagnostics (ping, nslookup, dumpsys) before NV-dependent tests. **Requires Cloud Admin credentials for reliable serial resolution** — a project API key may produce an internal device ID that rdb rejects. | Any¹ |
-
-> ¹ Callable with any API key, but **Cloud Admin JWT recommended** for reliable device serial resolution. If called with a project API key and rdb fails with `"validation error / Failed to reserve device"`, switch to your Cloud Admin profile first: `switch_environment("default")` → `get_remote_debug_command` → switch back.
-
-**rdb connects the cloud device as a locally attached ADB/USB device.** Once the tunnel is running, the device is visible to Android Studio, Xcode, Appium MCP, and command-line ADB — without any reconfiguration. This makes rdb useful for two distinct workflows:
-
-**1. Test script development** — discover element selectors before writing code:
-
-```
-install_application(appId, deviceId)          # install while device is Available
-get_remote_debug_command(serialNumber, ...)   # device is now reserved
-adb shell am start -n <package>/<activity>    # launch the app
-open_mobile_studio(...)                       # OR: use UI Inspector in the browser
-adb shell uiautomator dump ...                # OR: dump element hierarchy via ADB
-get_test_boilerplate(appId, region, ...)      # generate reusable script with discovered IDs
-```
-
-> `install_application` fails while a device is reserved via rdb — install first, then connect.
-
-**2. Device health diagnostics** — verify device state before committing to a test run:
-
-```bash
-adb shell ping -c 3 8.8.8.8                  # internet connectivity
-adb shell nslookup google.com                # DNS resolution
-adb shell dumpsys activity activities | grep topResumedActivity   # foreground activity
-adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS  # dismiss overlays
-```
-
-Network checks are especially important before NV-dependent tests (`startPerformanceTransaction`): a device with broken DNS will crash the app immediately when network throttling activates, producing a misleading `NoSuchElementException`.
-
-> **Android 15 note:** `adb shell uiautomator dump` exits silently on Android 15+ Samsung devices. Use `open_mobile_studio` (the platform's UI Inspector) instead — it requires no local tooling and is unaffected by this OS restriction.
-
-### Resources & Prompts
-
-**Resources** — ambient context the AI can pull on demand:
-
-| Resource URI | What it provides |
-|---|---|
-| `digital-ai://farm/status` | Live device farm status: counts by availability, OS, and agent health |
-| `digital-ai://reporting/recent-failures` | The 20 most recent failed test executions across all projects |
-
-**Prompts** — invoked by name in prompt-aware clients (Claude Desktop). Tool-first clients like Claude Code use the equivalent tool directly.
-
-| Prompt | Equivalent Tool | What it does |
-|---|---|---|
-| `create_poc` | `create_poc` | Guided POC setup — collects parameters upfront, confirms, then executes |
-| `investigate_test_failures` | — | Step-by-step failure triage: summary → recent failures → OS/device breakdown |
-| `device_farm_health_check` | — | Full farm health: device statuses → agent health → orphaned sessions |
-| `prepare_test_run` | — | Pre-run readiness check: devices → app version → provisioning profile validity |
+| [Devices](docs/tools.md#devices) | 18 | List/query devices, find available, release, reboot, tags, Mobile Studio |
+| [Device Groups](docs/tools.md#device-groups) | 9 | Create groups, move devices, control project access |
+| [Reservations](docs/tools.md#reservations) | 5 | Reserve devices, check availability windows |
+| [Applications](docs/tools.md#applications) | 13 | Upload, install/uninstall, find the latest build |
+| [Repository](docs/tools.md#repository) | 6 | Test-data file storage |
+| [Browsers](docs/tools.md#browsers) | 3 | Selenium browser sessions |
+| [Users](docs/tools.md#users) | 8 | Account provisioning, project assignment, tags |
+| [Projects](docs/tools.md#projects) | 17 | Create/configure projects, settings, app assignment |
+| [Provisioning Profiles](docs/tools.md#provisioning-profiles) | 5 | iOS signing profile lifecycle |
+| [Backup](docs/tools.md#backup) | 1 | Trigger a system backup |
+| [Health & Diagnostics](docs/tools.md#health--diagnostics) | 11 | Farm health, readiness checks, license utilization |
+| [Coverage Analytics](docs/tools.md#coverage-analytics) | 2 | Tested-vs-available device gap analysis |
+| [Reporting](docs/tools.md#reporting) | 17 | Search/filter test reports, stability, trends, cleanup |
+| [Test Views](docs/tools.md#test-views) | 7 | Dashboard view groups |
+| [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics *(JWT)* |
+| [Agents](docs/tools.md#agents) | 2 | Host machine status *(JWT)* |
+| [Regions](docs/tools.md#regions) | 2 | Region status and infrastructure topology *(JWT)* |
+| [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(JWT)* |
+| [Environment Management](docs/tools.md#environment-management) | 2 | Named connection profiles, runtime switching |
+| [Workflows](docs/tools.md#workflows) | 6 | POC and project lifecycle orchestration |
+| [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 1 | Ready-to-run Appium test scripts in 4 languages |
+| [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud device as a local ADB device |
+| [Inspection Sessions](docs/tools.md#inspection-sessions) | 10 | AI-driven live device interaction |
+| [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 4 guided prompts |
 
 ---
 
@@ -670,11 +388,13 @@ Collects all parameters upfront, presents a confirmation summary to the operator
 3. Select available phones from the Default group — region-matched, conflict-tag-free, phones only (tablets excluded). Presents the selection to the operator for confirmation before proceeding.
 4. Add selected devices to the POC group
 5. Tag each device with the derived POC tag (e.g. `acmecorppoc`)
-6. Remove devices from the Default group
-7. Create (or reuse) a project; record the Salesforce URL and end date in project notes
+6. Create (or reuse) a project; record the Salesforce URL and end date in project notes
+7. Remove devices from the Default group — done only after the project exists, so a project-creation failure never strands devices
 8. Locate the Default project
 9. Create users, assign to the POC project, remove from Default, and tag each account with the POC tag. Cloud Admin access is never granted through this workflow.
 10. Assign ExperiBank (or a specified app) to the POC project — falls back to the latest available version if the exact version is not found
+
+If any step fails, the workflow stops, reports which steps completed with all created resource IDs, and offers resume (re-invoke — existing resources are detected and reused) or unwind (`delete_poc`) paths.
 
 **Required parameters:**
 
@@ -697,7 +417,7 @@ Collects all parameters upfront, presents a confirmation summary to the operator
 | `appName` | `"ExperiBank"` |
 | `appVersion` | `"1.0"` |
 
-Steps 1 and 7 check for an existing group/project by name before creating — safe to re-run after a partial failure.
+Steps 1 and 6 check for an existing group/project by name before creating — safe to re-run after a partial failure.
 
 ---
 
@@ -719,11 +439,11 @@ Only `customerName` is required.
 
 #### `delete_poc` — Full teardown
 
-Performs all `close_poc` steps, then permanently deletes the device group and the project. Requires `confirmDeletion: true`.
+Performs the same wind-down as `close_poc`, then permanently deletes the device group and the project. Requires `confirmDeletion: true`.
 
-Before any destructive action, the workflow gathers a full inventory (project ID, group ID, device list, user breakdown) and presents it for explicit confirmation.
+Before any destructive action, the workflow gathers a full inventory (project ID, group ID, device list, user breakdown) and presents it for explicit confirmation. Unlike `close_poc`, user processing is batch-confirmed via this upfront inventory rather than per-user prompts.
 
-**Best practice:** Run `close_poc` first — it safely winds down the POC and is reversible. Use `delete_poc` only once the project data is confirmed no longer needed. Calling `delete_poc` without `confirmDeletion: true` returns a safe explanation and suggests `close_poc` as the alternative.
+**Best practice:** Run `close_poc` first — it winds down the POC while preserving the project and device group. Note that `close_poc` is not fully reversible: device moves and tag removal can be undone, but it permanently deletes POC-only user accounts (each deletion requires per-user operator confirmation). Use `delete_poc` only once the project data is confirmed no longer needed. Calling `delete_poc` without `confirmDeletion: true` returns a safe explanation and suggests `close_poc` as the alternative.
 
 ---
 
@@ -737,14 +457,15 @@ At the start, the workflow asks whether to create a **simple** project record on
 
 Full setup steps:
 
-1. Create the project with the specified name and automation type
-2. Create (or reuse) a device group for the project
-3. Select available devices matching the target OS and region. By default, devices are added to the project while keeping all existing group links intact. Set `isolateDevices: true` to remove devices from all other groups before reassigning.
-4. Tag each device with a project-derived tag
-5. Assign the device group to the project
-6. Create users and assign them to the project with the specified roles
-7. Assign the specified application to the project
-8. Record notes (owner, timeline, or any memo text) in the project record
+1. Create (or reuse) the project with the specified name and automation type; record the memo in project notes
+2. Create (or reuse) a device group and link it to the project
+3. Pre-flight check that the target app exists in the repository
+4. Select available devices matching the target OS and region — presented to the operator for confirmation
+5. Add the selected devices to the project group
+6. Tag each device with a project-derived tag
+7. Remove devices from other groups — only when `isolateDevices: true`; by default existing group links (including Default) are kept intact
+8. Create users, assign them to the project with the specified roles, remove them from Default, and tag each account
+9. Assign the specified application to the project
 
 **Required parameters:**
 
@@ -773,13 +494,12 @@ Full setup steps:
 Wind down the project environment while leaving the project record intact:
 
 1. Locate the project and its associated device group
-2. Release any active or orphaned sessions on project devices
+2. List the devices in the project group
 3. Remove the project-derived tag from each device
 4. Return devices to the Default group
-5. Process users: **delete accounts with no other project memberships; revoke project access only for multi-project users**
-6. Uninstall the project application from assigned devices
+5. Process users: **delete accounts with no other project memberships; revoke project access only for multi-project users** (each action individually confirmed by the operator)
 
-Only `projectName` is required.
+Only `projectName` is required. Active sessions and installed apps on the devices are not touched — release sessions with `release_orphaned_sessions` and remove apps with `uninstall_application` separately if needed.
 
 ---
 
@@ -797,7 +517,7 @@ The workflow presents a full inventory summary before any irreversible action. T
 
 ### `get_test_boilerplate`
 
-Generates a complete, pre-configured Appium test script. The Digital.ai server URL and access key are pre-filled from the MCP server's environment.
+Generates a complete, pre-configured Appium test script. The Digital.ai server URL and access key are pre-filled from the active connection profile — switch profiles with `switch_environment` first to generate scripts carrying a project-scoped key instead of your admin key.
 
 | Parameter | Values | Default |
 |---|---|---|
@@ -953,49 +673,6 @@ get_project_test_summary
 
 ---
 
-## Diagnostics
-
-If a workflow tool fails or a step returns an unexpected error, run this sequence:
-
-```
-1. get_server_info           — confirm tool count (expect 140) and active profile
-2. check_workflow_readiness  — which dependency tools are present or missing
-3. check_connectivity        — confirm the backend API is reachable
-```
-
-`check_workflow_readiness` returns a structured report:
-
-```json
-{
-  "allWorkflowsReady": true,
-  "registeredToolCount": 140,
-  "workflows": {
-    "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
-    "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
-  }
-}
-```
-
-If `ready` is `false`, `missingRead` and `missingWrite` list exactly which tools are absent. The most common cause is a stale Docker image — rebuild:
-
-```bash
-docker build -t digital-ai-testing-mcp:latest .
-```
-
-The server also logs a readiness check at startup (visible in Docker logs):
-
-```
-[digital-ai-testing-mcp] Workflow readiness: all workflows ready ✓
-```
-
-or, if degraded:
-
-```
-[digital-ai-testing-mcp] ⚠️  DEGRADED: create_poc — missing: create_device_group, add_devices_to_group
-```
-
----
-
 ## Safety Guards
 
 All destructive operations require `confirmDeletion: true`. Without it:
@@ -1003,6 +680,11 @@ All destructive operations require `confirmDeletion: true`. Without it:
 > ⚠️ Safety guard triggered. "Delete user 42" is a destructive operation that cannot be undone. Include `confirmDeletion: true` to proceed. No changes were made.
 
 The first call describes exactly what will be deleted. The second call — with `confirmDeletion: true` — executes. This prevents accidental data loss when an AI assistant misinterprets intent.
+
+Two further guards run before any request leaves the server:
+
+- **Auth pre-flight:** report-deletion tools (`delete_test_reports*`, `cleanup_inspection_sessions`) check the active key type first and return a clear "switch to a Cloud Admin JWT profile" message instead of an opaque CSRF 401 when called with a project key.
+- **Upload path validation:** tools that read local files for upload refuse relative paths, path traversal, and credential-file names (`.env*`, SSH private keys) — a misdirected request cannot publish secrets to the cloud repository.
 
 ---
 
@@ -1014,10 +696,11 @@ npm run build    # compile TypeScript to dist/
 npm run dev      # nodemon + ts-node for live reload
 ```
 
-**Running tests** — require a live `.env` with valid credentials; tests call the real Digital.ai API:
+**Running tests** — most suites require a live `.env` with valid credentials and call the real Digital.ai API. The exception is `test:tools`, which exercises registered tool handlers (guards, auth gates, path validation) through an in-memory MCP transport with no live API access:
 
 ```bash
 npm run test                  # all tests
+npm run test:tools            # tool-layer guard/gate regression tests (offline)
 npm run test:devices          # device management
 npm run test:users            # user management
 npm run test:applications     # app lifecycle
@@ -1042,10 +725,63 @@ Tests can also be run from VS Code: `Ctrl+Shift+P` → "Tasks: Run Task".
 
 ## Troubleshooting
 
+### Common symptoms
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `403 Forbidden` on admin tools (agents, regions, license, transactions) | Active profile is a project API key — v2 endpoints require Cloud Admin JWT | The error names the active profile and suggests the command: `switch_environment("<jwt-profile>")` |
+| Report delete tools return "Cloud Admin JWT required" | Reporter mutation endpoints are CSRF-blocked for project API keys | Switch to a Cloud Admin JWT profile, re-run, switch back |
+| `install_application` returns 400 on a device you can see | Device is reserved via an rdb (remote debug) session | Install **first**, then run `get_remote_debug_command` — not the other way around |
+| `install_application` returns 400 (no rdb involved) | App not assigned to a project containing the target device | Call `assign_app_to_project` first |
+| Repeatable `NoSuchElementException` while sibling tests pass | Device health, not test code — device stuck in a wrong state or offline-but-pooled | Run `get_device_health_summary`; scope the deviceQuery with `@region='<healthy-region>'` |
+| Tests missing from `list_test_reports` results | Project has its own reporter instance — unscoped queries search the default scope | Pass `projectName` (exact name from `list_projects`) |
+| rdb fails: `validation error / Failed to reserve device` | Project API key resolved an internal device ID instead of the real serial | `switch_environment("default")` → regenerate the rdb script → switch back |
+| Device query returns nothing for `@manufacturer` / `@tag` | These fields are silently ignored server-side | Use the `manufacturer`/`tags` parameters on `find_available_device` — they filter client-side |
+
 ### `Failed to reconnect to digital-ai-testing: -32000`
 
 On Windows this usually means the `--env-file` path was stored with backslashes stripped. Open `~/.claude.json`, find the `mcpServers` entry for this project, and check that the env file path looks correct (e.g. `C:/projects/digital-ai-testing-mcp/.env`). If it shows something like `C:projectsdigital-ai-testing-mcp.env`, the backslashes were eaten. Fix the path in the file directly (use forward slashes), then run `/mcp` in Claude Code to reconnect.
 
+### Workflow tools failing?
+
+Run this sequence:
+
+```
+1. get_server_info           — confirm tool count (expect 152) and active profile
+2. check_workflow_readiness  — which dependency tools are present or missing
+3. check_connectivity        — confirm the backend API is reachable
+```
+
+`check_workflow_readiness` returns a structured report:
+
+```json
+{
+  "allWorkflowsReady": true,
+  "registeredToolCount": 152,
+  "workflows": {
+    "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
+    "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
+  }
+}
+```
+
+If `ready` is `false`, `missingRead` and `missingWrite` list exactly which tools are absent. The most common cause is a stale Docker image — rebuild:
+
+```bash
+docker build -t digital-ai-testing-mcp:latest .
+```
+
+The server also logs a readiness check at startup (visible in Docker logs): `Workflow readiness: all workflows ready ✓`, or `⚠️ DEGRADED: create_poc — missing: ...` when tools are absent.
+
+---
+
 ## Known Limitations
 
-See [docs/limitations.md](docs/limitations.md) for the full list.
+The four most commonly encountered:
+
+1. **No API to trigger Appium test execution.** Tests launch from Appium clients (IDE, CI scripts). The server manages devices, apps, reservations, and results — it cannot start an Appium session itself. (Interactive [inspection sessions](docs/tools.md#inspection-sessions) are the exception: live WebDriver sessions for element discovery, Android only.)
+2. **Inspection sessions are Android-only** — iOS and W3C/OSS Appium Server sessions are not yet supported.
+3. **No user disable/lock endpoint.** Removing access for a user provisioned solely for a POC means deleting the account — which is why `close_poc` requires per-user confirmation.
+4. **Reporter API restrictions for project API keys** — server-side sort and report deletion require a Cloud Admin JWT. Tools compensate automatically (client-side sorting, clear pre-flight errors), at the cost of slower full-scan queries under project keys.
+
+See [docs/limitations.md](docs/limitations.md) for the full list of 14.

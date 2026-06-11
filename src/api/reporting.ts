@@ -1,10 +1,11 @@
 import { writeFile } from 'fs/promises';
-import { apiGet, apiPost, apiDownload } from './client.js';
+import { apiGet, apiPost, apiDownload, getActiveKeyType } from './client.js';
 import type {
   TestReport,
   TestListRequest,
   TestListResponse,
   TestGroupRequest,
+  TestFilterField,
 } from '../types/digital-ai.js';
 
 // The reporter API does not use the standard ApiResponse {status,data,code} envelope.
@@ -13,9 +14,12 @@ import type {
 
 // Properties that route through CSRF-protected middleware and fail regardless of auth type.
 // Confirmed blocked on both JWT (Cloud Admin) and X-API-KEY (project user) tokens.
-// Sort by these fields works fine; only filter is blocked.
 // Note: test_id was previously listed here but live testing confirmed it works fine.
 const CSRF_BLOCKED_FILTER_PROPS = new Set(['start_time', 'create_time', 'uuid']);
+
+// ALL sort fields are CSRF-blocked for project API keys (non-JWT).
+// Cloud Admin JWT bypasses CSRF via Bearer mechanism; project keys do not.
+// sort is silently stripped for project keys — callers must not rely on sorted order.
 
 // Shape returned by GET /reporter/api/tests/{id} — camelCase, different from list shape
 interface RawSingleTest {
@@ -105,6 +109,31 @@ export async function getTestByReportApiId(
   }
 }
 
+// Reject CSRF-blocked filter properties before hitting the API and coerce the
+// 'success' value from string to boolean (the string form routes through
+// CSRF-checked middleware; the boolean form bypasses it). Shared by listTests
+// and getGroupedTests — both endpoints accept the same filter syntax.
+function sanitizeReporterFilter(filter: TestFilterField[]): TestFilterField[] {
+  const blocked = [...new Set(
+    filter
+      .filter((f) => CSRF_BLOCKED_FILTER_PROPS.has(f.property))
+      .map((f) => f.property)
+  )];
+  if (blocked.length > 0) {
+    throw new Error(
+      `Filter properties [${blocked.join(', ')}] are not supported via API key authentication — ` +
+      `the Digital.ai reporter API routes these through CSRF-protected middleware. ` +
+      `Supported filter properties: status, name, has_attachment, success. ` +
+      `For date filtering, retrieve results without a date filter and filter by start_time in the returned data.`
+    );
+  }
+  return filter.map((f) =>
+    f.property === 'success' && typeof f.value === 'string'
+      ? { ...f, value: f.value === 'true' }
+      : f
+  );
+}
+
 export async function listTests(
   request: TestListRequest,
   projectId?: number,
@@ -114,40 +143,64 @@ export async function listTests(
     let finalRequest = request;
 
     if (request.filter && request.filter.length > 0) {
-      // Check for CSRF-blocked filter properties before hitting the API.
-      // These properties route through session-authenticated middleware and
-      // return 401 CSRF errors for API-key callers regardless of headers sent.
-      const blocked = [...new Set(
-        request.filter
-          .filter((f) => CSRF_BLOCKED_FILTER_PROPS.has(f.property))
-          .map((f) => f.property)
-      )];
-      if (blocked.length > 0) {
-        throw new Error(
-          `Filter properties [${blocked.join(', ')}] are not supported via API key authentication — ` +
-          `the Digital.ai reporter API routes these through CSRF-protected middleware. ` +
-          `Supported filter properties: status, name, has_attachment, success. ` +
-          `For date filtering, retrieve results without a date filter and filter by start_time in the returned data.`
-        );
-      }
-
-      // Coerce 'success' filter value from string to boolean. The string form ("true")
-      // routes through CSRF-checked middleware; the boolean form (true) bypasses it.
-      const coercedFilter = request.filter.map((f) =>
-        f.property === 'success' && typeof f.value === 'string'
-          ? { ...f, value: f.value === 'true' }
-          : f
-      );
-      finalRequest = { ...request, filter: coercedFilter };
+      finalRequest = { ...request, filter: sanitizeReporterFilter(request.filter) };
     }
 
+    // Sort params are CSRF-blocked for project API keys — silently strip so callers don't fail.
+    // Date-range pagination in reporting-tools.ts must not rely on sorted order for project keys.
+    if (getActiveKeyType() !== 'jwt' && finalRequest.sort && finalRequest.sort.length > 0) {
+      finalRequest = { ...finalRequest, sort: undefined };
+    }
+
+    // projectId (numeric) is CSRF-blocked on all reporter endpoints — only projectName works.
     const params: Record<string, unknown> = {};
-    if (projectId !== undefined) params['projectId'] = projectId;
     if (projectName) params['projectName'] = projectName;
     return await apiPost<TestListResponse>('/reporter/api/tests/list', finalRequest, params);
   } catch (e) {
     throw new Error(`listTests failed: ${(e as Error).message}`);
   }
+}
+
+// Fetch tests reliably sorted by start_time descending regardless of key type.
+// JWT: single sorted call (fast path). Project keys: sort is CSRF-blocked and
+// silently stripped by listTests, so an unsorted first page is NOT the most
+// recent — scan all pages (up to maxScan records), sort client-side, and trim
+// to the requested limit. Callers that need "latest"/"most recent" semantics
+// must use this instead of passing sort to listTests directly.
+export async function listTestsSortedDesc(
+  request: TestListRequest,
+  projectId?: number,
+  projectName?: string,
+  maxScan = 5000
+): Promise<TestListResponse & { scanCapped?: boolean }> {
+  if (getActiveKeyType() === 'jwt') {
+    return listTests(
+      { ...request, sort: [{ property: 'start_time', descending: true }] },
+      projectId,
+      projectName
+    );
+  }
+  const limit = request.limit ?? 50;
+  const all: TestReport[] = [];
+  let page = 1;
+  let scanCapped = false;
+  while (true) {
+    const batch = await listTests(
+      { ...request, limit: 500, page, sort: undefined, returnTotalCount: false },
+      projectId,
+      projectName
+    );
+    const records = batch.data ?? [];
+    all.push(...records);
+    if (records.length < 500) break;
+    if (all.length >= maxScan) {
+      scanCapped = true;
+      break;
+    }
+    page++;
+  }
+  all.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  return { count: all.length, data: all.slice(0, limit), scanCapped };
 }
 
 export async function getGroupedTests(
@@ -156,10 +209,14 @@ export async function getGroupedTests(
   projectName?: string
 ): Promise<unknown> {
   try {
+    let finalRequest = request;
+    if (request.filter && request.filter.length > 0) {
+      finalRequest = { ...request, filter: sanitizeReporterFilter(request.filter) };
+    }
+    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only.
     const params: Record<string, unknown> = {};
-    if (projectId !== undefined) params['projectId'] = projectId;
     if (projectName) params['projectName'] = projectName;
-    return await apiPost<unknown>('/reporter/api/tests/grouped', request, params);
+    return await apiPost<unknown>('/reporter/api/tests/grouped', finalRequest, params);
   } catch (e) {
     throw new Error(`getGroupedTests failed: ${(e as Error).message}`);
   }
@@ -174,8 +231,8 @@ export async function getDistinctKeyValues(
   projectName?: string
 ): Promise<Record<string, string[]>> {
   try {
+    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only.
     const params: Record<string, unknown> = {};
-    if (projectId !== undefined) params['projectId'] = projectId;
     if (projectName) params['projectName'] = projectName;
     const raw = await apiPost<{ count: number | null; data: Record<string, unknown>[] }>(
       '/reporter/api/tests/distinct',
@@ -212,8 +269,8 @@ export async function deleteTests(
   projectName?: string
 ): Promise<void> {
   try {
+    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only.
     const params: Record<string, unknown> = {};
-    if (projectId !== undefined) params['projectId'] = projectId;
     if (projectName) params['projectName'] = projectName;
     await apiPost('/reporter/api/tests/delete', ids, params);
   } catch (e) {

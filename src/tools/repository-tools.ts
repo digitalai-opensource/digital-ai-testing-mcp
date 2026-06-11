@@ -9,7 +9,7 @@ import {
   deleteFile,
 } from '../api/repository.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { validateOutputPath } from '../utils/path-guard.js';
+import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatRepositoryFileList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
@@ -100,6 +100,8 @@ export function registerRepositoryTools(server: McpServer): void {
       projectName: z.string().optional().describe('Project name to associate with.'),
     },
     async ({ localFilePath, uniqueName, description, projectId, projectName }) => {
+      const inputErr = validateInputPath(localFilePath);
+      if (inputErr) return { content: [{ type: 'text', text: `Error: ${inputErr}` }], isError: true };
       try {
         const fileId = await uploadFile(localFilePath, {
           uniqueName,
@@ -159,6 +161,10 @@ export function registerRepositoryTools(server: McpServer): void {
       description: z.string().optional().describe('New description.'),
     },
     async ({ fileId, localFilePath, uniqueName, description }) => {
+      if (localFilePath) {
+        const inputErr = validateInputPath(localFilePath);
+        if (inputErr) return { content: [{ type: 'text', text: `Error: ${inputErr}` }], isError: true };
+      }
       try {
         await updateFile(fileId, { localPath: localFilePath, uniqueName, description });
         return {

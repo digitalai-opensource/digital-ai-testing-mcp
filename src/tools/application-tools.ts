@@ -15,7 +15,7 @@ import {
 } from '../api/applications.js';
 import { getDevicesInDeviceGroup } from '../api/device-groups.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { validateOutputPath } from '../utils/path-guard.js';
+import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatApplicationList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
@@ -192,6 +192,9 @@ export function registerApplicationTools(server: McpServer): void {
           isError: true,
         };
       }
+
+      const inputErr = validateInputPath(filePath);
+      if (inputErr) return { content: [{ type: 'text', text: `Error: ${inputErr}` }], isError: true };
 
       try {
         const uploadParams = {
@@ -394,14 +397,18 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'uninstall_application',
-    'Uninstalls an app from one or more devices.',
+    'Uninstalls an app from one or more devices. App data on the device is lost. Requires confirmDeletion: true.',
     {
       applicationId: z.number().describe('The numeric application ID.'),
       deviceId: z.string().optional().describe('Single device ID.'),
       devicesList: z.string().optional().describe('Comma-separated device IDs.'),
       allDevices: z.boolean().optional().describe('Uninstall from all devices.'),
+      confirmDeletion: z
+        .boolean()
+        .optional()
+        .describe('Must be true to confirm this destructive operation. No changes are made without this.'),
     },
-    async ({ applicationId, deviceId, devicesList, allDevices }) => {
+    async ({ applicationId, deviceId, devicesList, allDevices, confirmDeletion }) => {
       try {
         if (!deviceId && !devicesList && !allDevices) {
           return {
@@ -414,6 +421,9 @@ export function registerApplicationTools(server: McpServer): void {
             isError: true,
           };
         }
+        const target = allDevices ? 'ALL devices' : devicesList ? `devices ${devicesList}` : `device ${deviceId}`;
+        const guard = checkDestructiveGuard(confirmDeletion, `Uninstall application ${applicationId} from ${target}`);
+        if (guard) return { content: [{ type: 'text', text: guard }] };
         const result = await uninstallApplication(applicationId, {
           deviceId,
           devicesList,
@@ -436,15 +446,21 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'uninstall_application_by_package',
-    'Uninstalls an app from a single device using the package name (Android) or bundle ID (iOS), without needing the app\'s numeric ID.',
+    'Uninstalls an app from a single device using the package name (Android) or bundle ID (iOS), without needing the app\'s numeric ID. App data on the device is lost. Requires confirmDeletion: true.',
     {
       deviceId: z.string().describe('The numeric device ID.'),
       packageName: z
         .string()
         .describe('Android package name (e.g. com.mycompany.app) or iOS bundle identifier.'),
+      confirmDeletion: z
+        .boolean()
+        .optional()
+        .describe('Must be true to confirm this destructive operation. No changes are made without this.'),
     },
-    async ({ deviceId, packageName }) => {
+    async ({ deviceId, packageName, confirmDeletion }) => {
       try {
+        const guard = checkDestructiveGuard(confirmDeletion, `Uninstall "${packageName}" from device ${deviceId}`);
+        if (guard) return { content: [{ type: 'text', text: guard }] };
         await uninstallApplicationByPackage(deviceId, packageName);
         return {
           content: [
@@ -462,7 +478,7 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'uninstall_application_by_package_from_devices',
-    'Uninstalls an app from multiple devices at once using the package name or bundle ID.',
+    'Uninstalls an app from multiple devices at once using the package name or bundle ID. App data on the devices is lost. Requires confirmDeletion: true.',
     {
       devicesList: z
         .string()
@@ -470,9 +486,15 @@ export function registerApplicationTools(server: McpServer): void {
       packageName: z
         .string()
         .describe('Android package name or iOS bundle identifier.'),
+      confirmDeletion: z
+        .boolean()
+        .optional()
+        .describe('Must be true to confirm this destructive operation. No changes are made without this.'),
     },
-    async ({ devicesList, packageName }) => {
+    async ({ devicesList, packageName, confirmDeletion }) => {
       try {
+        const guard = checkDestructiveGuard(confirmDeletion, `Uninstall "${packageName}" from devices ${devicesList}`);
+        if (guard) return { content: [{ type: 'text', text: guard }] };
         await uninstallApplicationByPackageFromDevices(devicesList, packageName);
         return {
           content: [
