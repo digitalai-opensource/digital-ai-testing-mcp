@@ -207,7 +207,7 @@ export function registerReservationTools(server: McpServer): void {
 
   server.tool(
     'check_device_availability_window',
-    'Shows the reservation schedule for a specific device over a time window, so you can find an available slot. Cloud Admin only. Accepts numeric device ID, serial number, UDID, or device name.',
+    'Shows the reservation schedule for a specific device over a time window, so you can find an available slot. Works with any auth type — uses v1 reservation endpoints. Accepts numeric device ID, serial number, UDID, or device name.',
     {
       deviceId: z.string().describe('Numeric device ID, serial number, UDID, or device name.'),
       startDate: z

@@ -32,9 +32,10 @@ coverage/
 # Claude Code local state
 .claude/
 
-# Docs — only examples.md and limitations.md ship with the product;
-# everything else (gap analyses, UAT suite, API mapping, publishing guide)
-# is internal tooling kept locally.
+# Docs — only tools.md, examples.md, and limitations.md ship with the product
+# (the README links into all three); everything else (gap analyses, UAT suite,
+# API mapping, publishing guide) is internal tooling kept locally.
 docs/*.md
+!docs/tools.md
 !docs/examples.md
 !docs/limitations.md

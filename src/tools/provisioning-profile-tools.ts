@@ -8,7 +8,7 @@ import {
   deleteProvisioningProfile,
 } from '../api/provisioning-profiles.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { validateOutputPath } from '../utils/path-guard.js';
+import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatProvisioningProfileList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
@@ -99,6 +99,10 @@ export function registerProvisioningProfileTools(server: McpServer): void {
         .describe('Optional notes about this profile (max 255 chars).'),
     },
     async ({ p12FilePath, password, mobileprovisionFilePath, notes }) => {
+      for (const p of [p12FilePath, mobileprovisionFilePath]) {
+        const inputErr = validateInputPath(p);
+        if (inputErr) return { content: [{ type: 'text', text: `Error: ${inputErr}` }], isError: true };
+      }
       try {
         await uploadProvisioningProfile(p12FilePath, password, mobileprovisionFilePath, notes);
         return {

@@ -25,8 +25,10 @@ import { registerNvServerTools } from './tools/nv-server-tools.js';
 import { registerTransactionTools } from './tools/transaction-tools.js';
 import { registerCoverageTools } from './tools/coverage-tools.js';
 import { registerDebugTools } from './tools/debug-tools.js';
+import { registerInspectionTools } from './tools/inspection-tools.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
+import { getServerVersion } from './utils/version.js';
 
 dotenv.config({ quiet: true });
 
@@ -43,7 +45,7 @@ if (missing.length > 0) {
 }
 
 const name = process.env.MCP_SERVER_NAME ?? 'digital-ai-testing-mcp';
-const version = process.env.MCP_SERVER_VERSION ?? '1.0.0';
+const version = getServerVersion();
 
 console.error(`[${name}] v${version} starting...`);
 console.error(`[${name}] Target: ${process.env.DIGITAL_AI_BASE_URL}`);
@@ -73,6 +75,7 @@ registerNvServerTools(server);
 registerTransactionTools(server);
 registerCoverageTools(server);
 registerDebugTools(server);
+registerInspectionTools(server);
 registerMetaTools(server);
 
 console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 4 prompts).`);

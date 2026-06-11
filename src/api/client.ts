@@ -10,6 +10,7 @@ function buildClient(baseURL: string, accessKey: string): AxiosInstance {
   // reporter mutation endpoints, and Bearer for standard endpoints.
   const isJwt = accessKey.startsWith('eyJ');
   _activeKeyType = isJwt ? 'jwt' : 'api-key';
+  _activeKey = accessKey;
 
   const authHeaders = isJwt
     ? { Authorization: `Bearer ${accessKey}` }
@@ -58,6 +59,7 @@ function buildClient(baseURL: string, accessKey: string): AxiosInstance {
 let _client: AxiosInstance | undefined;
 let _activeProfileName = 'default';
 let _activeUrl = '';
+let _activeKey = '';
 let _activeKeyType: 'jwt' | 'api-key' = 'api-key';
 
 /** Build a human-readable auth guidance message for 403 responses. */
@@ -120,6 +122,13 @@ export function getActiveProfileName(): string {
 
 /** Returns the auth type of the currently active connection. */
 export function getActiveKeyType(): 'jwt' | 'api-key' {
+  // The Axios client is lazy-initialised — before the first API call,
+  // _activeKeyType still holds its default. Derive from env in that window so
+  // pre-flight auth gates (delete tools, canDeleteReport) don't misclassify
+  // a JWT profile as a project key on the first tool call of a session.
+  if (!_client) {
+    return (process.env.DIGITAL_AI_ACCESS_KEY ?? '').startsWith('eyJ') ? 'jwt' : 'api-key';
+  }
   return _activeKeyType;
 }
 
@@ -129,15 +138,58 @@ export function getActiveUrl(): string {
   return _activeUrl || (process.env.DIGITAL_AI_BASE_URL ?? '').replace(/\/$/, '');
 }
 
+/**
+ * Returns the access key of the currently active connection.
+ *
+ * This is the ONLY sanctioned way for other modules to obtain the credential.
+ * Never read process.env.DIGITAL_AI_ACCESS_KEY outside this file and
+ * profile-loader.ts — env vars reflect the DEFAULT profile and ignore
+ * switch_environment, which leaks the wrong credential into generated
+ * artifacts (boilerplate, rdb scripts) and WebDriver sessions.
+ */
+export function getActiveAccessKey(): string {
+  return _activeKey || (process.env.DIGITAL_AI_ACCESS_KEY ?? '');
+}
+
+// ─── Retry for read operations ────────────────────────────────────────────────
+// Multi-page scans (listTestsSortedDesc, delete_test_reports_before_date) make
+// many serial calls; one transient failure should not discard the whole scan.
+// Only reads are retried — GETs are idempotent, and the reporter's POST-based
+// list/aggregate endpoints below are reads despite the verb. Mutating POSTs
+// (delete, create, install) are never retried.
+
+const RETRYABLE_POST_PATHS = new Set([
+  '/reporter/api/tests/list',
+  '/reporter/api/tests/grouped',
+  '/reporter/api/tests/distinct',
+  '/reporter/api/transactions/list',
+  '/reporter/api/testView/list',
+]);
+
+const TRANSIENT_STATUS_RE = /\[(429|500|502|503|504|unknown)\]/;
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= retries || !TRANSIENT_STATUS_RE.test((e as Error).message)) throw e;
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+}
+
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
 export async function apiGet<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-  const res = await getClient().get<T>(path, { params });
+  const res = await withRetry(() => getClient().get<T>(path, { params }));
   return res.data;
 }
 
 export async function apiPost<T>(path: string, data?: unknown, params?: Record<string, unknown>): Promise<T> {
-  const res = await getClient().post<T>(path, data, { params });
+  const res = RETRYABLE_POST_PATHS.has(path)
+    ? await withRetry(() => getClient().post<T>(path, data, { params }))
+    : await getClient().post<T>(path, data, { params });
   return res.data;
 }
 
@@ -177,6 +229,6 @@ export async function apiPutForm<T>(path: string, form: FormData): Promise<T> {
 }
 
 export async function apiDownload(path: string): Promise<Buffer> {
-  const res = await getClient().get<Buffer>(path, { responseType: 'arraybuffer' });
+  const res = await withRetry(() => getClient().get<Buffer>(path, { responseType: 'arraybuffer' }));
   return Buffer.from(res.data);
 }

@@ -55,6 +55,19 @@ Natural language prompts you can use with Claude when this MCP server is connect
 
 ---
 
+## Device Groups
+
+- "List all device groups and their device counts"
+- "What devices are in the 'QA Pool' group?"
+- "Which projects have access to the 'Acme Corp POC' device group?"
+- "Create a device group called 'Nightly Regression' that doesn't auto-accept new devices"
+- "Add devices 12, 34, and 56 to group 7"
+- "Move device 12 from the Default group to the 'QA Pool' group"
+- "Give the iOS Regression project access to the 'QA Pool' device group"
+- "Delete the 'Old POC' device group — the devices should stay in the farm"
+
+---
+
 ## Reservations
 
 - "Show me all current device reservations"
@@ -181,6 +194,7 @@ Natural language prompts you can use with Claude when this MCP server is connect
 ## Pre-Test Environment Setup
 
 - "Check that the MCP server can reach the Digital.ai API"
+- "Run a workflow readiness check — are all the tools the POC workflows depend on registered?"
 - "Am I connected to an Appium Grid or an OSS Appium server?"
 - "Get the appCapabilityString for our latest Android build — I need to paste it into a CI pipeline"
 - "Check iOS provisioning profiles before running the test suite — are any expired or expiring this month?"
@@ -203,6 +217,36 @@ Before generating boilerplate, always find an available device first so the corr
 - "Generate a TestNG test for the Android app with package com.mycompany.android and main activity .MainActivity"
 - "Generate test scripts for our app in all 4 supported languages — JUnit5, TestNG, NodeJS, and Python — so the team can use whichever framework they prefer"
 - "Generate both an Android and an iOS test script for app IDs 456 (Android) and 789 (iOS) using Java JUnit5"
+- "Generate a Python test for app 456 with performance transactions enabled so CPU and memory get recorded" *(starts NV throttling — the generated code brackets the test body, not app launch)*
+- "Generate a JUnit5 test with an Axe accessibility scan included" *(requires `AXE_DEVTOOLS_API_KEY` in the MCP environment)*
+- "Switch to the QA project profile, then generate the boilerplate — I want the script to carry the project-scoped key, not the admin key"
+
+---
+
+## Interactive Inspection (AI-Driven Test Building)
+
+*The agent drives a real Android device over a live WebDriver session — sees screenshots, discovers element IDs, taps and types — then turns what it learned into a test script. No local Appium needed.*
+
+- "Start an inspection session on an available Android phone in US2 and show me what's on screen"
+- "Connect to a device with ExperiBank installed, launch it, and walk through the login flow with username 'company' and password 'company'"
+- "Take a screenshot and tell me what screen the app is on"
+- "Get the element tree for this screen — what are the resource IDs for the username and password fields?"
+- "Find the login button, tap it, and verify the next screen shows the balance"
+- "Type 'company' into the username field and take a screenshot to confirm"
+- "Explore the app's payment flow, note every element ID you used, then generate a Python test that replays it"
+- "What inspection sessions are still open? Stop them all."
+- "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin JWT)*
+
+---
+
+## Remote Debug (Cloud Device as Local ADB)
+
+*rdb connects a cloud device to your machine as if plugged in via USB — visible to `adb`, Android Studio, and Xcode.*
+
+- "Generate the remote debug script for device R5CR111SB4X — I want to inspect it with Android Studio's Layout Inspector"
+- "I need ADB access to a Samsung Galaxy in US2: install app 456 on it first, then give me the rdb connection script" *(install must come first — it fails while the device is rdb-reserved)*
+- "Give me the rdb script for a device so I can check its network health before tonight's NV performance run"
+- "rdb says 'Failed to reserve device' — switch to the admin profile, regenerate the script, then switch back"
 
 ---
 
@@ -234,6 +278,8 @@ Before generating boilerplate, always find an available device first so the corr
 
 ## Functional Test Analytics
 
+> **Cross-project scoping:** When using Cloud Admin JWT, reporter tools accept a `projectName` parameter to scope results to a specific project. Use the exact name from `list_projects`. The numeric `projectId` parameter is not supported on reporter endpoints (CSRF-blocked) — always use `projectName` instead.
+
 - "Show me the last 20 failed tests sorted by most recent"
 - "Did the last run of 'Login Flow' pass or fail?"
 - "Get the full report for test ID 377918, including step detail"
@@ -248,6 +294,9 @@ Before generating boilerplate, always find an available device first so the corr
 - "Does test ID 377918 have any attachments?"
 - "Download the attachments for test UUID abc-456 and save them to /tmp/test-artifacts.zip"
 - "Delete all test reports older than 90 days"
+- "Delete all test reports whose name contains '[Smoke Test]' — show me what would be deleted before confirming"
+- "Find and delete all test reports named '[MCP Probe] smoke-test' from the 'DAIMCP POC' project"
+- "Clean up all probe/debug test reports from last week — names contain '[MCP'"
 - "Get a test summary for the QA project — what are the most commonly failing tests?"
 - "What tests are running right now?"
 
