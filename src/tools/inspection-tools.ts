@@ -265,7 +265,9 @@ export function registerInspectionTools(server: McpServer): void {
     'hand-written @name/@model deviceQuery strings are less reliable and can hang the allocation.\n\n' +
     'IMPORTANT: Always call stop_inspection_session when done. Sessions left open consume ' +
     'a reserved device and create a test report in the reporter. ' +
-    'Use cleanup_inspection_sessions to delete reports from sessions that were abandoned.',
+    'Use cleanup_inspection_sessions to delete reports from sessions that were abandoned. ' +
+    'When using the session to build a test interactively, keep it alive until the user confirms ' +
+    'ALL steps are captured — see the STEP CONFIRMATION GATE in stop_inspection_session.',
     {
       platform: z
         .enum(['android', 'ios'])
@@ -433,7 +435,16 @@ export function registerInspectionTools(server: McpServer): void {
     'By default deletes the test report created by this session from the Digital.ai reporter. ' +
     'Pass keepReport: true to preserve it — the platform records video of every session, and the kept ' +
     "report's video is retrievable via download_test_attachments (useful for documenting a verified flow). " +
-    'Always call this when done inspecting — open sessions hold a reserved device.',
+    'Always call this when done inspecting — open sessions hold a reserved device.\n\n' +
+    'STEP CONFIRMATION GATE — when building a test interactively, NEVER call this tool (and NEVER call ' +
+    'get_test_boilerplate) until the user explicitly confirms all test steps are captured. A single completed ' +
+    'scenario does NOT mean the test is done. After each scenario, surface what was captured and ask: ' +
+    '"I\'ve captured [description of step]. Want to add another step — for example a success path, a failure ' +
+    'path, navigation to another screen, or a different scenario — or are you ready to generate the script?" ' +
+    'WAIT for the answer before proceeding. Language like "let\'s start with...", "first...", or "begin by..." ' +
+    'is an explicit signal that more steps are planned — NEVER finalize after only the first step when these ' +
+    'phrases were used. Keep the session alive between steps: call take_inspection_screenshot periodically ' +
+    'if the user is thinking (resets the idle clock without moving to the next phase).',
     {
       handle: z
         .string()
