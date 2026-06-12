@@ -14,6 +14,7 @@ import {
   extractLanguageFiles,
 } from '../api/applications.js';
 import { getDevicesInDeviceGroup } from '../api/device-groups.js';
+import { getMyAccountInfo } from '../api/users.js';
 import { resolveDevice } from '../utils/device-resolver.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
@@ -26,6 +27,11 @@ export function registerApplicationTools(server: McpServer): void {
     'list_applications',
     'Lists and searches the app repository. Use nameContains to find apps by name (e.g. "ExperiBank", "demo") without needing a bundle ID or package name. ' +
     'Returns app IDs needed by install_application, assign_app_to_project, and get_application_info. ' +
+    'TEST-CREATION NOTE: if this lookup is the first step of creating a test, decide the MODE before going further — ' +
+    'autonomous (get_test_boilerplate: specific intent + selectors from source or a session) vs interactive ' +
+    '(start_inspection_session: vague intent, "let\'s decide as we go", no source access). If unsure, ask the user which they want. ' +
+    'Each result lists its project assignments — when several uploads share a name, PREFER the one assigned to your active project ' +
+    '(install and inspection sessions run in the active project context and fail for apps assigned only elsewhere). ' +
     'Also filterable by platform (ios/android), package name, bundle identifier, file type (apk/ipa/aab), and simulator flag. ' +
     'Covers the full app catalog — browse uploaded applications, find a specific version, or search for a demo app.',
     {
@@ -98,6 +104,9 @@ export function registerApplicationTools(server: McpServer): void {
             osType: a.osType,
             version: a.releaseVersion,
             uploadedAt: a.createdAtFormatted || new Date(a.createdAt).toISOString().slice(0, 10),
+            // Install/inspection run in the ACTIVE project context — pick a copy
+            // assigned to it when several uploads share a name (v36).
+            projects: (a.projectsInfo ?? []).map(p => p.name),
           })),
         };
         const humanText = appendTruncationNotice(
@@ -530,6 +539,9 @@ export function registerApplicationTools(server: McpServer): void {
     'Search by appName (partial, case-insensitive — e.g. "ExperiBank") without needing the bundle ID or package name. ' +
     'Or search by bundleIdentifier (iOS) or packageName (Android) for exact matching. ' +
     'osType is optional when searching by appName; omit it to search across all platforms. ' +
+    'PROJECT-AWARE: when several uploads match, the newest one assigned to your ACTIVE project is preferred ' +
+    '(install/session run in the active project context — an app assigned only to another project will fail there). ' +
+    'The response lists each app\'s project assignments; heed the projectWarning if present. ' +
     'Returns the app ID needed by assign_app_to_project. ' +
     'Used in create_poc Step 10 to locate a demo app before assigning it to the POC project.',
     {
@@ -553,6 +565,19 @@ export function registerApplicationTools(server: McpServer): void {
     },
     async ({ appName, osType, packageName, bundleIdentifier, outputFormat }) => {
       try {
+        // Guard against mis-named parameters (e.g. name= / os=): with no criteria
+        // this tool would otherwise "find" the newest app in the entire catalog.
+        if (!appName && !packageName && !bundleIdentifier) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Error: provide at least one search criterion — appName (partial match), packageName (Android), or bundleIdentifier (iOS). ' +
+                'Parameter names matter: use appName (not "name") and osType (not "os").',
+            }],
+            isError: true,
+          };
+        }
+
         let apps = await getApplications({ osType, packageName, bundleIdentifier });
         if (appName) {
           const q = appName.toLowerCase();
@@ -562,7 +587,27 @@ export function registerApplicationTools(server: McpServer): void {
           return respond(outputFormat, { found: false }, 'No applications found matching your criteria.');
         }
         const sorted = apps.sort((a, b) => b.createdAt - a.createdAt);
-        const latest = sorted[0];
+
+        // Prefer the newest upload assigned to the ACTIVE project — install and
+        // inspection sessions run in the active project context, so a copy that
+        // only lives in another project will fail there (v36).
+        let activeProject: { id: number; name: string } | undefined;
+        try {
+          const me = await getMyAccountInfo();
+          activeProject = { id: me.project.id, name: me.project.name };
+        } catch {
+          // Non-fatal — fall back to global newest
+        }
+        const inActiveProject = activeProject
+          ? sorted.filter(a => (a.projectsInfo ?? []).some(p => p.id === activeProject!.id))
+          : [];
+        const latest = inActiveProject[0] ?? sorted[0];
+        const preferredOverNewer = inActiveProject[0] != null && inActiveProject[0].id !== sorted[0].id;
+        const projectWarning =
+          activeProject && !(latest.projectsInfo ?? []).some(p => p.id === activeProject!.id)
+            ? `App ${latest.id} is NOT assigned to your active project "${activeProject.name}" — install and inspection sessions will fail there. ` +
+              `Assign it first (assign_app_to_project) or switch to a project that has it: ${(latest.projectsInfo ?? []).map(p => p.name).join(', ') || '(none)'}.`
+            : undefined;
 
         // Build the ready-to-use `app` capability string for Appium
         let appCapabilityString: string | undefined;
@@ -574,7 +619,12 @@ export function registerApplicationTools(server: McpServer): void {
           appCapabilityString = `cloud:${latest.bundleIdentifier}`;
         }
 
-        const structured = { ...latest, appCapabilityString };
+        const structured = {
+          ...latest,
+          appCapabilityString,
+          activeProject,
+          ...(projectWarning && { projectWarning }),
+        };
 
         const humanText = [
           `📦 Latest: ${latest.applicationName}`,
@@ -584,9 +634,14 @@ export function registerApplicationTools(server: McpServer): void {
           `Package: ${latest.packageName ?? latest.bundleIdentifier ?? 'N/A'}`,
           `Uploaded: ${latest.createdAtFormatted}`,
           `Unique Name: ${latest.uniqueName ?? 'none'}`,
+          `Projects: ${(latest.projectsInfo ?? []).map(p => p.name).join(', ') || '(none)'}`,
           appCapabilityString ? `App Capability: ${appCapabilityString}` : '',
+          preferredOverNewer
+            ? `\nNote: a newer upload exists (ID ${sorted[0].id}, ${sorted[0].createdAtFormatted}) but is not assigned to your active project "${activeProject?.name}" — returned the newest copy that is.`
+            : '',
+          projectWarning ? `\n⚠️  ${projectWarning}` : '',
           apps.length > 1
-            ? `\nNote: ${apps.length - 1} older version(s) also found in the repository.`
+            ? `\nNote: ${apps.length - 1} other matching upload(s) in the repository.`
             : '',
         ]
           .filter(Boolean)

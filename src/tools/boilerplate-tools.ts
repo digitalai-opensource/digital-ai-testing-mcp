@@ -166,72 +166,95 @@ function appendAxeScan(language: Language, indent: string, apiKey: string): stri
   ].join('\n');
 }
 
-function buildPlaceholder(language: Language, platform: Platform, indent: string, appIdentifier?: string): string {
-  const c = language === 'python' ? '#' : '//';
-  const pkg = appIdentifier ?? 'com.yourpackage';
+// The cleared-body placeholder is a deliberate ANTI-fabrication guard (v38).
+// Three properties matter: (1) a loud banner so the scaffold is never mistaken
+// for a finished test; (2) an EXECUTABLE fail/raise as the first statement so a
+// scaffold delivered unmodified fails immediately with an explanatory message
+// instead of silently running fabricated selectors; (3) example selectors use
+// <…> tokens — NOT the real package name — so they cannot be copy-pasted and
+// passed off as verified locators (the prior version interpolated the real
+// package into fake IDs, which is exactly how fabricated selectors looked real).
+function failGuard(language: Language, indent: string): string {
+  const msg = 'Replace this placeholder body with real element selectors captured from a live inspection (start_inspection_session -> get_element_tree, or open_mobile_studio) before running. Do not run the scaffold as-is.';
+  switch (language) {
+    case 'java-junit5':
+      return `${indent}org.junit.jupiter.api.Assertions.fail("${msg}");`;
+    case 'java-testng':
+      return `${indent}org.testng.Assert.fail("${msg}");`;
+    case 'python':
+      return `${indent}raise NotImplementedError("${msg}")`;
+    case 'nodejs':
+      return `${indent}throw new Error('${msg}');`;
+  }
+}
 
+function buildPlaceholder(language: Language, platform: Platform, indent: string): string {
+  const c = language === 'python' ? '#' : '//';
+  const idTerm = platform === 'android' ? 'resource-id' : 'accessibility id';
+  const banner = [
+    `${indent}${c} ============================================================================`,
+    `${indent}${c} ⛔ PLACEHOLDER TEST BODY — NOT A RUNNABLE TEST. This is scaffolding only.`,
+    `${indent}${c} The example locators below are NOT real. Do NOT deliver this file as a finished test.`,
+    `${indent}${c} Replace this entire block with steps built from selectors discovered LIVE:`,
+    `${indent}${c}   start_inspection_session -> get_element_tree / find_elements, or open_mobile_studio.`,
+    `${indent}${c} NEVER guess a ${idTerm} from the package name or naming conventions.`,
+    `${indent}${c} NEVER invent credentials — ask the user for login details.`,
+    `${indent}${c} The fail()/raise below is intentional: it stops this scaffold from being mistaken`,
+    `${indent}${c} for a passing test until you replace it with verified steps.`,
+    `${indent}${c} ============================================================================`,
+  ];
+
+  // Example shapes use <…> tokens so they read as obviously-unfilled, never as real selectors.
+  let examples: string[];
   if (platform === 'android') {
     if (language === 'java-junit5' || language === 'java-testng') {
-      return [
-        `${indent}${c} TODO: Add your test steps here. Element IDs are app-specific — cannot be pre-filled.`,
-        `${indent}${c} Find them via the Digital.ai Session Viewer (UI inspector) or your app's source code.`,
-        `${indent}${c} Example patterns (replace IDs with your app's actual resource IDs):`,
-        `${indent}${c}   driver.findElement(By.id("${pkg}:id/loginButton")).click();`,
-        `${indent}${c}   driver.findElement(By.id("${pkg}:id/usernameField")).sendKeys("myuser");`,
-        `${indent}${c}   driver.findElement(By.xpath("//*[@text='Welcome']")); // assert element visible`,
-      ].join('\n');
+      examples = [
+        `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
+        `${indent}${c}   driver.findElement(By.id("<resource-id from get_element_tree>")).click();`,
+        `${indent}${c}   driver.findElement(By.id("<resource-id>")).sendKeys("<value the user gave you>");`,
+        `${indent}${c}   driver.findElement(By.xpath("//*[@text='<visible text>']")); // assert visible`,
+      ];
+    } else if (language === 'nodejs') {
+      examples = [
+        `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
+        `${indent}${c}   const btn = await $('id=<resource-id from get_element_tree>'); await btn.click();`,
+        `${indent}${c}   const field = await $('//*[@resource-id="<resource-id>"]'); await field.setValue('<value>');`,
+        `${indent}${c}   await expect($('//*[@text="<visible text>"]')).toBeExisting();`,
+      ];
+    } else {
+      examples = [
+        `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
+        `${indent}${c}   self.driver.find_element(By.ID, "<resource-id from get_element_tree>").click()`,
+        `${indent}${c}   self.driver.find_element(By.ID, "<resource-id>").send_keys('<value>')`,
+        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@text='<visible text>']")  # assert visible`,
+      ];
     }
-    if (language === 'nodejs') {
-      return [
-        `${indent}${c} TODO: Add your test steps here. Element IDs are app-specific — cannot be pre-filled.`,
-        `${indent}${c} Find them via the Digital.ai Session Viewer (UI inspector) or your app's source code.`,
-        `${indent}${c} Example patterns (replace IDs with your app's actual resource IDs):`,
-        `${indent}${c}   const btn = await $('id=${pkg}:id/loginButton'); await btn.click();`,
-        `${indent}${c}   const field = await $('//*[@resource-id="${pkg}:id/usernameField"]'); await field.setValue('myuser');`,
-        `${indent}${c}   await expect($('//*[@text="Welcome"]')).toBeExisting();`,
-      ].join('\n');
+  } else {
+    if (language === 'java-junit5' || language === 'java-testng') {
+      examples = [
+        `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
+        `${indent}${c}   driver.findElement(By.xpath("//*[@name='<accessibility id from get_element_tree>']")).click();`,
+        `${indent}${c}   driver.findElement(By.xpath("//*[@name='<accessibility id>']")).sendKeys("<value the user gave you>");`,
+        `${indent}${c}   driver.findElement(By.xpath("//*[@label='<visible label>']")); // assert visible`,
+      ];
+    } else if (language === 'nodejs') {
+      examples = [
+        `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
+        `${indent}${c}   const btn = await $('//*[@name="<accessibility id from get_element_tree>"]'); await btn.click();`,
+        `${indent}${c}   const field = await $('//*[@name="<accessibility id>"]'); await field.setValue('<value>');`,
+        `${indent}${c}   await expect($('//*[@label="<visible label>"]')).toBeExisting();`,
+      ];
+    } else {
+      examples = [
+        `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
+        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@name='<accessibility id from get_element_tree>']").click()`,
+        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@name='<accessibility id>']").send_keys('<value>')`,
+        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@label='<visible label>']")  # assert visible`,
+      ];
     }
-    // python android
-    return [
-      `${indent}${c} TODO: Add your test steps here. Element IDs are app-specific — cannot be pre-filled.`,
-      `${indent}${c} Find them via the Digital.ai Session Viewer (UI inspector) or your app's source code.`,
-      `${indent}${c} Example patterns (replace IDs with your app's actual resource IDs):`,
-      `${indent}${c}   self.driver.find_element(By.ID, "${pkg}:id/loginButton").click()`,
-      `${indent}${c}   self.driver.find_element(By.ID, "${pkg}:id/usernameField").send_keys('myuser')`,
-      `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@text='Welcome']")  # assert visible`,
-    ].join('\n');
   }
 
-  // iOS
-  if (language === 'java-junit5' || language === 'java-testng') {
-    return [
-      `${indent}${c} TODO: Add your test steps here. Accessibility names are app-specific — cannot be pre-filled.`,
-      `${indent}${c} Find them via the Digital.ai Session Viewer or Xcode Accessibility Inspector.`,
-      `${indent}${c} Example patterns (replace names with your app's actual accessibility identifiers):`,
-      `${indent}${c}   driver.findElement(By.xpath("//*[@name='loginButton']")).click();`,
-      `${indent}${c}   driver.findElement(By.xpath("//*[@name='usernameField']")).sendKeys("myuser");`,
-      `${indent}${c}   driver.findElement(By.xpath("//*[@label='Welcome']")); // assert element visible`,
-    ].join('\n');
-  }
-  if (language === 'nodejs') {
-    return [
-      `${indent}${c} TODO: Add your test steps here. Accessibility names are app-specific — cannot be pre-filled.`,
-      `${indent}${c} Find them via the Digital.ai Session Viewer or Xcode Accessibility Inspector.`,
-      `${indent}${c} Example patterns (replace names with your app's actual accessibility identifiers):`,
-      `${indent}${c}   const btn = await $('//*[@name="loginButton"]'); await btn.click();`,
-      `${indent}${c}   const field = await $('//*[@name="usernameField"]'); await field.setValue('myuser');`,
-      `${indent}${c}   await expect($('//*[@label="Welcome"]')).toBeExisting();`,
-    ].join('\n');
-  }
-  // python ios
-  return [
-    `${indent}${c} TODO: Add your test steps here. Accessibility names are app-specific — cannot be pre-filled.`,
-    `${indent}${c} Find them via the Digital.ai Session Viewer or Xcode Accessibility Inspector.`,
-    `${indent}${c} Example patterns (replace names with your app's actual accessibility identifiers):`,
-    `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@name='loginButton']").click()`,
-    `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@name='usernameField']").send_keys('myuser')`,
-    `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@label='Welcome']")  # assert visible`,
-  ].join('\n');
+  return [...banner, failGuard(language, indent), ...examples].join('\n');
 }
 
 function readBoilerplateFile(platform: Platform, language: Language, diskName: string): string {
@@ -268,7 +291,7 @@ function substitute(
     const indentMatch = result.match(/([^\S\n]*)(?:\/\/|#) \[BEGIN_DEMO_STEPS\]/);
     const indent = indentMatch?.[1] ?? '        ';
     if (vars.clearTestBody) {
-      let placeholder = buildPlaceholder(language, platform, indent, vars.packageName ?? vars.bundleIdentifier);
+      let placeholder = buildPlaceholder(language, platform, indent);
       if (vars.axeScan) {
         placeholder += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
       }
@@ -453,17 +476,19 @@ function appNote(
   resolvedFromAppId?: boolean
 ): string {
   const source = resolvedFromAppId ? ' (resolved from app record)' : '';
+  // NOTE: with a custom app the test body is the v38 placeholder (fails by design until
+  // replaced) — phrase these to reinforce that, never as a casual "TODO".
   if (platform === 'android') {
     if (packageName && mainActivity) {
-      return `App capabilities pre-filled${source}: package=${packageName}, activity=${mainActivity}. Replace the TODO test steps with interactions specific to your app.`;
+      return `App capabilities pre-filled${source}: package=${packageName}, activity=${mainActivity}. The test body is a PLACEHOLDER that fails by design — replace it with verified selectors from a live inspection before running.`;
     }
     if (packageName) {
-      return `App package pre-filled${source}: ${packageName}. Replace .LoginActivity with your main activity and update the TODO test steps for your app.`;
+      return `App package pre-filled${source}: ${packageName}. Replace .LoginActivity with your main activity. The test body is a PLACEHOLDER that fails by design — replace it with verified selectors from a live inspection.`;
     }
     return 'Replace com.experitest.ExperiBank with your app\'s package name and .LoginActivity with your main activity. Replace the test steps with interactions specific to your app.';
   }
   if (bundleIdentifier) {
-    return `Bundle ID pre-filled${source}: ${bundleIdentifier}. Replace the TODO test steps with interactions specific to your app.`;
+    return `Bundle ID pre-filled${source}: ${bundleIdentifier}. The test body is a PLACEHOLDER that fails by design — replace it with verified selectors from a live inspection before running.`;
   }
   return 'Replace com.experitest.ExperiBank with your app\'s bundle ID. Replace the test steps with interactions specific to your app.';
 }
@@ -471,6 +496,33 @@ function appNote(
 export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'get_test_boilerplate',
+    'AUTONOMOUS TEST CREATION — this tool is the scaffold for writing a complete automated test yourself, ' +
+    'without user collaboration. Use it when BOTH hold: ' +
+    '(a) the intent is SPECIFIC — a standardized flow ("create a login test") or step-level detail ' +
+    '("login, tap Transfer, select account 43x, set $50.00, tap Transfer Now"); ' +
+    '(b) you have a SELECTOR SOURCE — the app source code in the workspace, or element IDs captured from an inspection session. ' +
+    'If the intent is vague ("I want a test for app X") or there is no selector source, prefer the interactive path: ' +
+    'start_inspection_session (or the collaborative_test_creation prompt). ' +
+    'VAGUE-INTENT SIGNALS — treat answers like "let\'s decide as we go", "let\'s see what\'s there", or "not sure yet" ' +
+    '(at ANY point, including replies to your scoping questions) as a redirect to interactive mode: do NOT generate a script from them. ' +
+    'A test-TYPE label alone — "end-to-end", "smoke test", "regression", "login test" picked from a menu — is a CATEGORY, ' +
+    'NOT a specification: it does not name screens, actions, or expected results, so it does NOT meet the specific-intent bar. ' +
+    'Never treat a menu selection as a flow definition. ' +
+    'IF UNSURE WHICH MODE THE USER WANTS, ASK: "Want me to create this test for you based on best practices, ' +
+    'or start an interactive session where we build it together?"\n\n' +
+    'NEVER call this tool as a discovery/inspection step, and NEVER deliver its output as a finished test when the body is a ' +
+    'placeholder — the cleared body ships with a deliberate fail-guard and non-real <…> selectors precisely so a scaffold ' +
+    'cannot masquerade as a runnable test. Replace it with verified selectors first.\n\n' +
+    'SELECTOR POLICY — NEVER fabricate element selectors OR credentials. Ask the user for login details; do not invent ' +
+    'values like "company"/"company" or any default. Source code is authoritative only for classic static IDs ' +
+    '(Android View XML android:id; iOS explicit accessibilityIdentifier). Jetpack Compose, SwiftUI, Flutter, and ' +
+    'React Native apps often expose NO source-derivable IDs — and the build on the farm may be older than the workspace ' +
+    'source (version skew). When source yields clear static IDs, a short inspection-session spot-check of the critical ' +
+    'selectors is recommended; when it does not, a no-user-interaction inspection session IS the selector source — ' +
+    'capture real IDs there, never guess from naming conventions.\n\n' +
+    'OUTPUT LOCATION — in an IDE/workspace context, write the result as a local test automation project ' +
+    '(this tool returns all project files). In a chat-only context (no file tools), present the files inline ' +
+    'so the user can port them to an IDE or CI system.\n\n' +
     'Use this when you already have the app identifiers (packageName/bundleIdentifier, mainActivity) and want a ' +
     'complete, non-interactive test script ready to trigger against the cloud farm via RemoteWebDriver — ' +
     'no local debug session required. Typical entry points: "generate a test script I can run later", ' +
@@ -669,11 +721,35 @@ export function registerBoilerplateTools(server: McpServer): void {
 
       const files = getFilesForVariant(platform, language, isAppiumOss, projectType);
 
+      // Grid scripts carry non-obvious workarounds (pinned clients, JWP capability
+      // format, element wrappers). Once the file leaves this response, the
+      // serverModeNote leaves with it — so the explanation must live IN the source.
+      const gridHeader = (filename: string): string => {
+        const isSource =
+          filename.endsWith('.java') ||
+          filename.endsWith('.py') ||
+          (filename.endsWith('.js') && !filename.includes('wdio.conf'));
+        if (isAppiumOss || !isSource) return '';
+        const text =
+          'WHY THIS LOOKS DIFFERENT FROM STANDARD APPIUM DOCS:\n' +
+          'This script targets the Digital.ai Appium Grid — a proprietary JWP-era protocol that\n' +
+          'predates the W3C WebDriver spec. The pinned client versions, desired-capabilities\n' +
+          'session format, and element handling below are REQUIRED by that protocol.\n' +
+          'Do not "upgrade" them to match current Appium documentation — the Grid will reject\n' +
+          'the session (the error "Cant run Appium Grid with Appium client 8+" means the W3C\n' +
+          'request format was rejected, not that your client is too new).\n' +
+          'Projects configured for Appium Server (OSS) get standard W3C boilerplate instead.';
+        if (filename.endsWith('.py')) {
+          return text.split('\n').map(l => `# ${l}`).join('\n') + '\n\n';
+        }
+        return '/*\n' + text.split('\n').map(l => ` * ${l}`).join('\n') + '\n */\n\n';
+      };
+
       try {
         const resolved = files.map(f => {
           const raw = readBoilerplateFile(platform, language, f.diskName);
           const content = substitute(raw, language, platform, vars);
-          return { ...f, content };
+          return { ...f, content: gridHeader(f.filename) + content };
         });
 
         const structured = {
@@ -703,6 +779,16 @@ export function registerBoilerplateTools(server: McpServer): void {
           parallelNote: language === 'python'
             ? 'Device farms support parallel test execution. Each test method already has its own setUp/tearDown session — no code changes needed. Install pytest-xdist (pip install pytest-xdist) and run: pytest -n auto -v. Check maxDevelopmentLicense via get_project_admin_settings to confirm your concurrency limit before scaling workers.'
             : null,
+          // v38: when a custom app is targeted the test body is a placeholder, NOT a finished test.
+          requiresVerifiedSelectors: clearTestBody,
+          ...(clearTestBody && {
+            placeholderWarning:
+              'THIS IS NOT A RUNNABLE TEST. The test body is a placeholder with a deliberate fail()/raise guard and ' +
+              'non-real <…> example selectors. Before this is usable you MUST replace the placeholder block with steps ' +
+              'using element IDs captured from a live inspection (start_inspection_session -> get_element_tree, or ' +
+              'open_mobile_studio), and obtain any credentials from the user. NEVER guess selectors from the package ' +
+              'name and NEVER invent credentials. Do NOT present this scaffold to the user as a completed test.',
+          }),
         };
 
         const platformLabel = platform === 'android' ? 'Android' : 'iOS';
@@ -723,6 +809,15 @@ export function registerBoilerplateTools(server: McpServer): void {
           `> **Device query:** ${regionLabel}${region ? '' : ' — re-call with region=<value> from find_available_device to scope to healthy devices only.'}`,
           '',
         ];
+        if (clearTestBody) {
+          lines.push(
+            '> ⛔ **NOT A FINISHED TEST.** The test body is a placeholder with a deliberate fail-guard and ' +
+            'non-real `<…>` example selectors. Replace it with steps using element IDs from a live inspection ' +
+            '(`start_inspection_session` → `get_element_tree`, or `open_mobile_studio`) and get credentials from ' +
+            'the user. Never guess selectors from the package name; never invent credentials; never deliver this scaffold as-is.',
+            '',
+          );
+        }
 
         for (const f of resolved) {
           if (f.isInstructions) {

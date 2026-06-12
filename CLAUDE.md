@@ -134,6 +134,10 @@ Common values seen in production:
 
 The `statusAgeInMinutes` field (string, parse with `parseFloat`) tells how long the device has been in its current status. Used by `release_orphaned_sessions`.
 
+**Always read `displayStatus`, never `currentStatus`** — `currentStatus` only ever holds
+`online`/`offline`/`error` (confirmed live, v36). Filtering it for `'available'`/`'reserved'`
+matches nothing; this bug made `check_ios_readiness` report `ready: false` permanently.
+
 ## Reporter API Field Names
 
 The reporter API uses **snake_case** in list results (unlike the rest of the API which uses camelCase).

@@ -251,6 +251,9 @@ Before generating boilerplate, always find an available device first so the corr
 - "Start an iOS inspection session on an iPhone, launch our app by bundle ID, and map the login screen's elements"
 - "On the iPhone session, navigate into Settings → General and come back using the nav-bar back button"
 - "I want to create a test together — walk me through it step by step and share the device view link" *(the `collaborative_test_creation` prompt packages this flow)*
+- "Create a login test for our app" *(specific intent + source in the workspace → the agent builds it autonomously, verifying selectors with a silent inspection session)*
+- "Login, tap Transfer, pick account 43x, set $50.00, tap Transfer Now — make that a test" *(step-level detail → autonomous, no collaboration needed)*
+- "I want a test for app X" *(vague → the agent starts the interactive experience, or asks which mode you want)*
 - "What inspection sessions are still open? Stop them all."
 - "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin JWT)*
 

@@ -515,6 +515,18 @@ The workflow presents a full inventory summary before any irreversible action. T
 
 ## Boilerplate Generation
 
+### Two ways to create a test
+
+The server supports two test-creation modes, and the agent is instructed to route between them based on context:
+
+| | **Autonomous** (`get_test_boilerplate`) | **Interactive** (`start_inspection_session` / `collaborative_test_creation` prompt) |
+|---|---|---|
+| **When** | Intent is specific — a standardized flow ("create a login test") or step-level detail — AND selectors are derivable (app source in the workspace, or a prior inspection session) | Request is vague ("I want a test for app X"), no source access (chat-only, or IDE without this app's code), or the user wants to watch/drive on a live device |
+| **User involvement** | None required — the agent writes the test from boilerplate + source knowledge + best practices | Collaborative — the agent shares a live device view URL and builds the test step by step with the user |
+| **Output** | In an IDE: a local test automation project. Chat-only: portable project files presented inline | Same, plus selectors verified against the real app along the way |
+
+**Hybrid is often best:** even in autonomous mode, the agent can open a short inspection session — no user involvement — to capture or verify element IDs against the real build. This matters because source code is only authoritative for classic static IDs (Android View XML, explicit iOS `accessibilityIdentifier`); Jetpack Compose, SwiftUI, Flutter, and React Native apps often expose no source-derivable IDs, and the build on the farm can lag the workspace source. The agent is explicitly instructed to **never fabricate selectors** — when in doubt it verifies live, and when the mode itself is ambiguous it asks: *"Want me to create this test for you based on best practices, or start an interactive session where we build it together?"*
+
 ### `get_test_boilerplate`
 
 Generates a complete, pre-configured Appium test script. The Digital.ai server URL and access key are pre-filled from the active connection profile — switch profiles with `switch_environment` first to generate scripts carrying a project-scoped key instead of your admin key.

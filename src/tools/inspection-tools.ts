@@ -32,6 +32,7 @@ import {
   pushFileToDevice,
   pullFileFromDevice,
   requireSession,
+  findFirstElementId,
   listActiveSessions,
   getPendingReportIds,
   deleteAllTrackedReports,
@@ -40,6 +41,7 @@ import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { getActiveKeyType, getActiveUrl } from '../api/client.js';
 import { resolveDevice } from '../utils/device-resolver.js';
+import { getAllDevices } from '../api/devices.js';
 import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
 import { readFileSync, writeFileSync } from 'fs';
 
@@ -47,11 +49,13 @@ import { readFileSync, writeFileSync } from 'fs';
 
 function sessionSummary(s: InspectionSession): string {
   const age = Math.round((Date.now() - s.startedAt) / 1000);
+  const idle = Math.round((Date.now() - s.lastUsedAt) / 1000);
+  const idleWarning = idle > 180 ? ' ⚠️ likely expired (Grid idle timeout ~4 min)' : '';
   return (
     `Handle:   ${s.handle}\n` +
     `Device:   ${s.deviceName} (${s.deviceOs} ${s.deviceVersion})\n` +
     `App:      ${s.appPackage || '(none)'}\n` +
-    `Age:      ${age}s\n` +
+    `Age:      ${age}s | Idle: ${idle}s${idleWarning}\n` +
     (s.cloudViewLink ? `Studio:   ${s.cloudViewLink}\n` : '')
   );
 }
@@ -234,10 +238,21 @@ export function registerInspectionTools(server: McpServer): void {
     'SHARE BOTH URLS WITH THE USER IMMEDIATELY so they can watch (viewUrl) or interact (debugUrl) in real time. ' +
     'The session reserves a device and gives you screenshot + element + gesture access. ' +
     'Session creation takes 20-90 s while a device is allocated.\n\n' +
+    'TEST-CREATION MODE ROUTER — choose INTERACTIVE (this tool, narrated step by step with the user watching via viewUrl, ' +
+    'or the collaborative_test_creation prompt) when: the request is vague ("I want a test for app X"); the user answers ' +
+    'scoping questions with "let\'s decide as we go" / "let\'s see what\'s there" / "not sure yet" (exploration signals — ' +
+    'an unambiguous redirect to interactive, at any point in the conversation); the user has no app ' +
+    'source code in reach (chat-only context, or an IDE without this app\'s code); or the user asks to watch/drive. ' +
+    'Choose AUTONOMOUS (get_test_boilerplate + your own knowledge, no user collaboration) when the intent is specific ' +
+    '(standardized flow or step-level detail) AND selectors are derivable from source or a prior inspection session. ' +
+    'HYBRID is often best: use this tool silently (no narration needed) to capture or verify real element IDs, then write the test autonomously. ' +
+    'NEVER fabricate selectors — if they aren\'t in source explicitly, get them from a live session. ' +
+    'IF UNSURE WHICH MODE THE USER WANTS, ASK: "Want me to create this test for you based on best practices, ' +
+    'or start an interactive session where we build it together?"\n\n' +
     'Typical workflow:\n' +
     '  1. find_available_device — find a healthy device (region preference is automatic)\n' +
     '  2. install_application — BEFORE starting the session; install fails while the device is reserved\n' +
-    '  3. start_inspection_session — connect with region param for reliable routing; share viewUrl/debugUrl\n' +
+    '  3. start_inspection_session(device: <id from step 1>) — PIN the session to the device you just installed on; share viewUrl/debugUrl\n' +
     '  4. launch_app — foreground the app (Android: packageName + mainActivity from get_application_info; iOS: bundleIdentifier)\n' +
     '  5. take_inspection_screenshot / get_element_tree — see the screen, discover locators\n' +
     '  6. find_elements / tap_element / type_into_element / swipe_screen / press_back — interact and verify\n' +
@@ -246,9 +261,8 @@ export function registerInspectionTools(server: McpServer): void {
     'press_back performs the left-edge back swipe; clipboard and clear_data are unavailable on iOS Grid sessions.\n\n' +
     'KNOWN LIMITATIONS: (a) the app/appPackage/appActivity params return HTTP 500 on some deployments — ' +
     'if that happens, start a generic session (no app params) and use launch_app instead; ' +
-    '(b) targeting a specific device via @serialNumber or @model in deviceQuery can time out — ' +
-    'prefer generic queries (@os + @category) scoped with the region param; ' +
-    'the deviceQuery field support here is narrower than list_devices.\n\n' +
+    '(b) to target a specific device use the device param (resolves to @serialNumber with a fail-fast availability check) — ' +
+    'hand-written @name/@model deviceQuery strings are less reliable and can hang the allocation.\n\n' +
     'IMPORTANT: Always call stop_inspection_session when done. Sessions left open consume ' +
     'a reserved device and create a test report in the reporter. ' +
     'Use cleanup_inspection_sessions to delete reports from sessions that were abandoned.',
@@ -258,12 +272,22 @@ export function registerInspectionTools(server: McpServer): void {
         .optional()
         .default('android')
         .describe("Target platform. Default 'android'. Sets platformName and the default deviceQuery @os."),
+      device: z
+        .string()
+        .optional()
+        .describe(
+          'PIN the session to a specific device — numeric platform ID, serial/UDID, or unambiguous device name. ' +
+          'Use this to get the SAME device you selected with find_available_device and installed the app on ' +
+          '(without it, the Grid picks any matching device and your install may land elsewhere). ' +
+          'Confirmed working — resolves to an @serialNumber query. Overrides deviceQuery and region.'
+        ),
       deviceQuery: z
         .string()
         .optional()
         .describe(
           "Server-side device query. Default: \"@os='android' and @category='PHONE'\" (or @os='iOS' when platform is ios). " +
-          "Add @region, @model, @version as needed. Example: \"@os='android' and @category='PHONE' and @model='Pixel 7'\""
+          "Add @region, @model, @version as needed. Example: \"@os='android' and @category='PHONE' and @model='Pixel 7'\". " +
+          'Ignored when device is provided.'
         ),
       region: z
         .string()
@@ -299,10 +323,39 @@ export function registerInspectionTools(server: McpServer): void {
     },
     async (args) => {
       try {
+        // Device pinning: resolve to the serial and use an exact @serialNumber query
+        // (confirmed live — routes to the requested device). Fail fast when the
+        // device is not Available instead of burning a 120 s allocation timeout.
+        let pinnedQuery: string | undefined;
+        if (args.device) {
+          let resolved = await resolveDevice(args.device);
+          if (!resolved.udid) {
+            // Numeric-ID passthrough skips the lookup — fetch the record for serial + status.
+            const match = (await getAllDevices()).find((d) => d.id === resolved.id);
+            if (!match) {
+              return {
+                content: [{ type: 'text' as const, text: `Error: no device found with ID ${resolved.id}. Use list_devices to browse.` }],
+                isError: true,
+              };
+            }
+            resolved = { ...resolved, udid: match.udid, deviceName: match.deviceName, displayStatus: match.displayStatus };
+          }
+          if (resolved.displayStatus.toLowerCase() !== 'available' && resolved.displayStatus !== 'unknown') {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Error: device ${resolved.deviceName} is "${resolved.displayStatus}", not Available — the session would time out waiting for it. Pick another device with find_available_device, or wait for it to free up.`,
+              }],
+              isError: true,
+            };
+          }
+          pinnedQuery = `@serialNumber='${resolved.udid}'`;
+        }
+
         const session = await createInspectionSession({
           platform: args.platform ?? 'android',
-          deviceQuery: args.deviceQuery,
-          region: args.region,
+          deviceQuery: pinnedQuery ?? args.deviceQuery,
+          region: pinnedQuery ? undefined : args.region,
           app: args.app,
           appPackage: args.appPackage,
           appActivity: args.appActivity,
@@ -343,6 +396,11 @@ export function registerInspectionTools(server: McpServer): void {
           debugUrl,
           cloudViewLink: session.cloudViewLink,
           reportUrl: session.reportUrl,
+          idleTimeoutNote:
+            'Grid sessions expire after ~4 minutes without a command. Before pausing to ask the user something, ' +
+            'call take_inspection_screenshot — it resets the idle clock AND captures the state you are asking about. ' +
+            'If the user takes longer than ~4 minutes, expect a 404 on your next call: stop_inspection_session to clean up, ' +
+            'start a fresh session, and re-find elements (your noted selectors stay valid; raw elementIds do not survive sessions).',
           shareWithUser: viewUrl
             ? `Emit these URLs to the user immediately so they can follow along: watch live at ${viewUrl} or interact in debug mode at ${debugUrl}`
             : null,
@@ -566,28 +624,61 @@ export function registerInspectionTools(server: McpServer): void {
     }
   );
 
+  // ── Resolve elementId-or-selector args shared by tap/type/clear ──────────
+  const resolveTargetElement = async (args: {
+    handle: string;
+    elementId?: string;
+    strategy?: 'xpath' | 'id' | 'accessibility id' | 'class name';
+    selector?: string;
+  }): Promise<{ elementId: string } | { error: string }> => {
+    if (args.elementId) return { elementId: args.elementId };
+    if (args.strategy && args.selector) {
+      const found = await findFirstElementId(args.handle, args.strategy, args.selector);
+      if (!found) {
+        return { error: `No element found matching ${args.strategy}: "${args.selector}". Check the locator with get_element_tree.` };
+      }
+      return { elementId: found };
+    }
+    return { error: 'Provide either elementId (from find_elements) or strategy + selector to locate the element directly.' };
+  };
+
+  const targetParams = {
+    handle: z.string().describe('Session handle from start_inspection_session.'),
+    elementId: z
+      .string()
+      .optional()
+      .describe('Element ID from a previous find_elements call. Provide this OR strategy+selector.'),
+    strategy: z
+      .enum(['xpath', 'id', 'accessibility id', 'class name'])
+      .optional()
+      .describe('Locator strategy for direct one-call targeting (the find happens internally — no separate find_elements round trip needed).'),
+    selector: z
+      .string()
+      .optional()
+      .describe("Locator value for direct targeting, e.g. 'com.example:id/login' or '//XCUIElementTypeButton[@label=\"Sign In\"]'. First match is used."),
+  };
+
   // ── tap_element ───────────────────────────────────────────────────────────
   server.tool(
     'tap_element',
     'Tap (click) an element on the device screen. ' +
-    'Use find_elements first to get the elementId, then call this to interact. ' +
+    'Target it directly with strategy + selector (one call — the find happens internally), ' +
+    'or pass an elementId from a previous find_elements call. ' +
     'After tapping, call take_inspection_screenshot to verify the result.',
-    {
-      handle: z
-        .string()
-        .describe("Session handle from start_inspection_session."),
-      elementId: z
-        .string()
-        .describe("Element ID returned by find_elements."),
-    },
+    { ...targetParams },
     async (args) => {
       try {
-        await tapElement(args.handle, args.elementId);
+        const target = await resolveTargetElement(args);
+        if ('error' in target) {
+          return { content: [{ type: 'text' as const, text: `Error: ${target.error}` }], isError: true };
+        }
+        await tapElement(args.handle, target.elementId);
+        const via = args.elementId ? `element ${args.elementId}` : `${args.strategy}: "${args.selector}"`;
         return {
           content: [
             {
               type: 'text' as const,
-              text: `✅ Tapped element ${args.elementId}.\n\nCall take_inspection_screenshot to verify the result.`,
+              text: `✅ Tapped ${via}.\n\nCall take_inspection_screenshot to verify the result.`,
             },
           ],
         };
@@ -604,27 +695,28 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'type_into_element',
     'Type text into an input field on the device screen. ' +
-    'Use find_elements to locate an EditText element, then call this. ' +
+    'Target the field directly with strategy + selector (one call — the find happens internally), ' +
+    'or pass an elementId from a previous find_elements call. ' +
     'For fields that need clearing first, call clear_element before typing.',
     {
-      handle: z
-        .string()
-        .describe("Session handle from start_inspection_session."),
-      elementId: z
-        .string()
-        .describe("Element ID of an EditText field, returned by find_elements."),
+      ...targetParams,
       text: z
         .string()
         .describe("Text to type into the field."),
     },
     async (args) => {
       try {
-        await typeIntoElement(args.handle, args.elementId, args.text);
+        const target = await resolveTargetElement(args);
+        if ('error' in target) {
+          return { content: [{ type: 'text' as const, text: `Error: ${target.error}` }], isError: true };
+        }
+        await typeIntoElement(args.handle, target.elementId, args.text);
+        const via = args.elementId ? `element ${args.elementId}` : `${args.strategy}: "${args.selector}"`;
         return {
           content: [
             {
               type: 'text' as const,
-              text: `✅ Typed "${args.text}" into element ${args.elementId}.`,
+              text: `✅ Typed "${args.text}" into ${via}.`,
             },
           ],
         };
@@ -640,20 +732,19 @@ export function registerInspectionTools(server: McpServer): void {
   // ── clear_element ─────────────────────────────────────────────────────────
   server.tool(
     'clear_element',
-    'Clear the text content of an input field. Use before type_into_element when the field already has content.',
-    {
-      handle: z
-        .string()
-        .describe("Session handle from start_inspection_session."),
-      elementId: z
-        .string()
-        .describe("Element ID of the field to clear, returned by find_elements."),
-    },
+    'Clear the text content of an input field. Use before type_into_element when the field already has content. ' +
+    'Target it directly with strategy + selector, or pass an elementId from find_elements.',
+    { ...targetParams },
     async (args) => {
       try {
-        await clearElement(args.handle, args.elementId);
+        const target = await resolveTargetElement(args);
+        if ('error' in target) {
+          return { content: [{ type: 'text' as const, text: `Error: ${target.error}` }], isError: true };
+        }
+        await clearElement(args.handle, target.elementId);
+        const via = args.elementId ? `element ${args.elementId}` : `${args.strategy}: "${args.selector}"`;
         return {
-          content: [{ type: 'text' as const, text: `✅ Cleared element ${args.elementId}.` }],
+          content: [{ type: 'text' as const, text: `✅ Cleared ${via}.` }],
         };
       } catch (e) {
         return {

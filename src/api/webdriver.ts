@@ -92,10 +92,23 @@ export async function createInspectionSession(
   }
 
   const client = makeClient();
-  const res = await client.post('/session', {
-    desiredCapabilities,
-    capabilities: { alwaysMatch, firstMatch: [{}] },
-  });
+  let res;
+  try {
+    res = await client.post('/session', {
+      desiredCapabilities,
+      capabilities: { alwaysMatch, firstMatch: [{}] },
+    });
+  } catch (e) {
+    // The Grid often returns a bare 500 with no body when the device agent pool
+    // is saturated (v36) — give the caller a diagnosis path instead of a status code.
+    throw new Error(
+      `Session creation failed: ${describeWdError(e)}. Diagnostics: ` +
+      `(1) run check_${platform === 'ios' ? 'ios' : 'android'}_readiness — if available is 0, the device pool or platform agents are busy; ` +
+      `(2) if launching an app, verify it is assigned to your ACTIVE project (get_application_info → projectsInfo) — a successful install does NOT imply the session can use the app; ` +
+      `(3) specific-device queries (@name/@serialNumber) can time out — prefer a generic @os/@category query with the region param. ` +
+      `A bare 500 usually means platform load — retry shortly.`
+    );
+  }
 
   // JWP response:  { sessionId: "CLOUD-SID:...", value: { caps... }, status: 0 }
   // W3C response:  { value: { sessionId: "uuid...", capabilities: { caps... } } }
@@ -141,6 +154,7 @@ export async function createInspectionSession(
     deviceVersion: String(caps['device.version'] ?? caps['platformVersion'] ?? ''),
     appPackage: String(caps['appPackage'] ?? opts.appPackage ?? ''),
     startedAt: Date.now(),
+    lastUsedAt: Date.now(),
     canDeleteReport,
     sessionFormat: isW3c ? 'w3c' : 'jwp',
     platform,
@@ -227,8 +241,13 @@ function sessionAwareError(e: unknown, handle: string): string {
   const detail = describeWdError(e);
   const err = e as { response?: { status?: number } };
   if (err.response?.status === 404) {
+    const s = sessionRegistry.get(handle);
+    const idleNote =
+      s?.lastIdleMs != null && s.lastIdleMs > 60_000
+        ? ` The session was idle for ${Math.round(s.lastIdleMs / 60_000)} minute(s) before this command — Grid sessions expire after ~4 minutes of inactivity.`
+        : '';
     return (
-      `${detail} — the Grid session has likely been terminated (idle timeout or agent crash). ` +
+      `${detail} — the Grid session has likely been terminated (idle timeout or agent crash).${idleNote} ` +
       `The handle "${handle}" is no longer usable: call stop_inspection_session to clean up, ` +
       `then start_inspection_session for a fresh session.`
     );
@@ -1438,6 +1457,11 @@ export function requireSession(handle: string): InspectionSession {
     throw new Error(
       `No active inspection session "${handle}". Use list_inspection_sessions to see active sessions.`
     );
+  // Track idle gaps — Grid sessions expire after ~4 minutes without a command,
+  // so the gap preceding a failure is the key diagnostic (v36).
+  const now = Date.now();
+  s.lastIdleMs = now - s.lastUsedAt;
+  s.lastUsedAt = now;
   return s;
 }
 

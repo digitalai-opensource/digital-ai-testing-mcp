@@ -380,6 +380,12 @@ export function registerPrompts(server: McpServer): void {
           text: [
             'I want to create a mobile test script collaboratively. Follow this procedure exactly:',
             '',
+            'MODE CHECK — this prompt drives the INTERACTIVE experience (live device, shared view URL, step-by-step ' +
+            'collaboration). If my answers below reveal that my intent is actually fully specified (a standardized flow ' +
+            'or complete step-level detail) AND you can derive verified selectors (app source code or a quick silent ' +
+            'inspection session), offer the faster autonomous path: "I have everything I need — want me to just build ' +
+            'this test for you, or continue interactively?"',
+            '',
             'FIRST — before any tool calls — explain the plan to me:',
             '  "Here\'s how we\'ll build this together:',
             '   1. Find the app and an available device near the cloud server',

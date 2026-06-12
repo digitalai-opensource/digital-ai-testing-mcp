@@ -721,6 +721,8 @@ export interface InspectionSession {
   deviceVersion: string;    // e.g. "16.0"
   appPackage: string;       // Active app package
   startedAt: number;        // Unix ms timestamp
+  lastUsedAt: number;       // Unix ms of the most recent command — idle-timeout awareness
+  lastIdleMs?: number;      // Idle gap measured at the start of the current command
   // true when session was started with Cloud Admin JWT — enables automatic report cleanup
   canDeleteReport: boolean;
   // Protocol of the allocating agent: JWP (Appium 1.x) uses touch/perform and

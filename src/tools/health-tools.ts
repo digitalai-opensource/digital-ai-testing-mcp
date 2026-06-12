@@ -32,14 +32,16 @@ export function registerHealthTools(server: McpServer): void {
 
         const pagedDevices = applyMaxResults(devices, maxResults);
 
+        // displayStatus carries the usable state (Available/In Use/Reserved/Offline);
+        // currentStatus only ever holds online/offline/error — confirmed live (v36).
         const available = pagedDevices.items.filter(
-          (d) => d.currentStatus.toLowerCase() === 'available'
+          (d) => d.displayStatus.toLowerCase() === 'available'
         ).length;
         const reserved = pagedDevices.items.filter(
-          (d) => d.currentStatus.toLowerCase() === 'reserved'
+          (d) => d.displayStatus.toLowerCase() === 'reserved'
         ).length;
         const offline = pagedDevices.items.filter(
-          (d) => d.currentStatus.toLowerCase() === 'offline'
+          (d) => d.displayStatus.toLowerCase() === 'offline'
         ).length;
         const ios = pagedDevices.items.filter((d) => d.deviceOs === 'iOS').length;
         const android = pagedDevices.items.filter((d) => d.deviceOs === 'Android').length;
@@ -93,10 +95,12 @@ export function registerHealthTools(server: McpServer): void {
         ]);
 
         const iosDevices = devices.filter((d) => d.deviceOs === 'iOS');
+        // displayStatus, NOT currentStatus — the latter only holds online/offline/error,
+        // which made this tool report available: 0 / ready: false permanently (v36 bug).
         const available = iosDevices.filter(
-          (d) => d.currentStatus.toLowerCase() === 'available'
+          (d) => d.displayStatus.toLowerCase() === 'available'
         );
-        const offline = iosDevices.filter((d) => d.currentStatus.toLowerCase() === 'offline');
+        const offline = iosDevices.filter((d) => d.displayStatus.toLowerCase() === 'offline');
 
         const now = Date.now();
         const expiringProfiles = profiles.filter((p) => {
@@ -257,7 +261,7 @@ export function registerHealthTools(server: McpServer): void {
             };
           }
           agentMap[d.agentName].total++;
-          const status = d.currentStatus.toLowerCase();
+          const status = d.displayStatus.toLowerCase();
           if (status === 'available') agentMap[d.agentName].available++;
           else if (status === 'reserved') agentMap[d.agentName].reserved++;
           else if (status === 'offline') agentMap[d.agentName].offline++;
