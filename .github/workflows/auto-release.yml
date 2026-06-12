@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      created: ${{ steps.check.outputs.exists == 'false' }}
 
     steps:
       - name: Checkout code
@@ -39,3 +42,17 @@ jobs:
             --title "v${{ steps.version.outputs.version }}" \
             --generate-notes \
             --latest
+
+  # Releases created above use GITHUB_TOKEN, which suppresses the
+  # `release: published` event (GitHub recursion prevention) — so the Docker
+  # build in release.yml would never fire. Call it directly instead.
+  docker:
+    name: Publish Docker image
+    needs: auto-release
+    if: needs.auto-release.outputs.created == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.auto-release.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
