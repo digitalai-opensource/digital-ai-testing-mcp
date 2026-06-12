@@ -373,6 +373,15 @@ export function registerHealthTools(server: McpServer): void {
           return (b[sortBy as keyof typeof b] as number) - (a[sortBy as keyof typeof a] as number);
         });
         const paged = applyMaxResults(sorted, maxResults);
+        const overQuota = paged.items.filter(p => p.usagePct > 100);
+        const cleanupSuggestions = overQuota.map(p => ({
+          project: p.name,
+          usagePct: parseFloat(p.usagePct.toFixed(1)),
+          suggestedActions: [
+            `delete_test_reports_before_date(projectName: "${p.name}", beforeDate: "<30-days-ago>", confirmDeletion: false)  // preview oldest records`,
+            `delete_test_reports_by_name(projectName: "${p.name}", nameContains: "<pattern>", confirmDeletion: false)  // preview by name`,
+          ],
+        }));
         const structured = {
           total: paged.total,
           projects: paged.items.map(p => ({
@@ -383,12 +392,21 @@ export function registerHealthTools(server: McpServer): void {
             usagePct: parseFloat(p.usagePct.toFixed(1)),
             dataItemsCount: p.dataItemsCount,
           })),
+          ...(cleanupSuggestions.length > 0 && { cleanupSuggestions }),
         };
         const lines = [`📦 Reporter Project Storage (${paged.total} projects):\n`];
         for (const p of paged.items) {
           const bar = '█'.repeat(Math.min(20, Math.floor(p.usagePct / 5))) + '░'.repeat(Math.max(0, 20 - Math.floor(p.usagePct / 5)));
-          lines.push(`  ${p.name}`);
+          const overQuotaFlag = p.usagePct > 100 ? ' ⚠️ OVER QUOTA' : '';
+          lines.push(`  ${p.name}${overQuotaFlag}`);
           lines.push(`    ${bar} ${p.usagePct.toFixed(1)}% — ${p.currentDiskStorageInMB}MB / ${p.diskStorageThresholdInMB}MB (${p.dataItemsCount} items)`);
+        }
+        if (cleanupSuggestions.length > 0) {
+          lines.push(`\n⚠️ ${cleanupSuggestions.length} project(s) over quota — suggested cleanup actions:`);
+          for (const s of cleanupSuggestions) {
+            lines.push(`\n  ${s.project} (${s.usagePct}%):`);
+            for (const a of s.suggestedActions) lines.push(`    • ${a}`);
+          }
         }
         return respond(outputFormat, structured, lines.join('\n'));
       } catch (e) {

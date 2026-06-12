@@ -723,4 +723,10 @@ export interface InspectionSession {
   startedAt: number;        // Unix ms timestamp
   // true when session was started with Cloud Admin JWT — enables automatic report cleanup
   canDeleteReport: boolean;
+  // Protocol of the allocating agent: JWP (Appium 1.x) uses touch/perform and
+  // /appium/device/* routes; W3C (Appium 2/3) uses /actions and mobile: execute commands.
+  sessionFormat: 'jwp' | 'w3c';
+  // Project the session was created under — report deletes must scope to this
+  // project's reporter instance (test_ids are only unique per instance).
+  projectName?: string;
 }

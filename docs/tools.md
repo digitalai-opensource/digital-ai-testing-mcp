@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Continuous Testing MCP Server — all 152 tools, 2 resources, and 4 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Continuous Testing MCP Server — all 164 tools, 2 resources, and 5 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin JWT key; *Any* works with both JWT and project API keys. See [Access Keys](../README.md#access-keys).
@@ -328,41 +328,59 @@ Network checks are especially important before NV-dependent tests (`startPerform
 
 ### Inspection Sessions
 
-10 tools for AI-driven interactive test building. An inspection session opens a live WebDriver connection to a real Android device, giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
+22 tools for AI-driven interactive test building. An inspection session opens a live WebDriver connection to a real Android device, giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `start_inspection_session` | Reserve a device and open a live WebDriver session. Allocates a real Android device, installs/launches the target app, and returns a session handle. Device allocation takes 20–90 s. | No |
-| `stop_inspection_session` | Release the device and delete the probe report from the reporter. Always call this when done. | No |
+| `start_inspection_session` | Reserve a device and open a live WebDriver session. Allocates a real Android device and returns a session handle plus `viewUrl`/`debugUrl` so the operator can watch or interact in a browser. Device allocation takes 20–90 s. | No |
+| `stop_inspection_session` | Release the device and delete the probe report from the reporter. `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | No |
 | `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Claude. Use after each interaction to verify UI state. | No |
 | `get_element_tree` | Get the full UI hierarchy as a formatted element table. Shows resource-id, content-desc, text, and clickability for all elements on screen. | No |
 | `find_elements` | Find elements by strategy (xpath, id, accessibility id, class name) and return their element IDs and attributes for use with tap/type. | No |
 | `tap_element` | Tap a UI element by its element ID. | No |
 | `type_into_element` | Type text into an input field. | No |
 | `clear_element` | Clear an input field before typing new content. | No |
+| `swipe_screen` | Swipe/scroll by direction (`up`/`down`/`left`/`right`) or explicit coordinates. Scroll lists, open the app drawer, dismiss overlays. Auto-selects W3C actions or JWP touch per agent. | No |
+| `scroll_to_element` | Scroll until an element becomes visible — swipes repeatedly, stops when found or when the screen stops changing (end of content). Returns the element ID ready for tap/type. | No |
+| `long_press` | Press-and-hold an element or coordinate — context menus, hold-to-record buttons. | No |
+| `double_tap` | Double-tap an element or coordinate — image/map zoom, double-tap actions. | No |
+| `drag_and_drop` | Hold at a start point, drag to an end point, release — reorder lists, move sliders. | No |
+| `pinch_zoom` | Two-finger zoom in/out on maps and images. **Appium Server sessions only** — the Grid rejects multi-touch. | No |
+| `press_key` | Press an Android key: ENTER (submit forms/search), HOME, APP_SWITCH, volume, or any raw keycode. | No |
+| `hide_keyboard` | Hide the on-screen keyboard if open — safer than press_back when the keyboard covers an element. | No |
+| `launch_app` | Launch an installed app by package + activity — the equivalent of tapping its icon. Get `mainActivity` from `get_application_info` first. | No |
+| `press_back` | Press the Android Back button — close dialogs, navigate back. | No |
+| `app_control` | App lifecycle: `terminate`, `clear_data` (reset to first launch), `query_state`, `deep_link` (jump straight to a screen). Grid limits: query_state is foreground-only, deep_link best-effort. | No |
+| `device_control` | Device-level actions: orientation get/set, clipboard get/set, geolocation set/reset, alert accept/dismiss, file push/pull. Grid limits: alerts and reset_geolocation are Appium Server only. | No |
 | `list_inspection_sessions` | List all active inspection sessions in the current server process. | No |
-| `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions. Requires `confirmDeletion: true`. | Cloud Admin JWT (reporter delete is CSRF-blocked for project keys) |
+| `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions (scoped to the project each session was created under). Requires `confirmDeletion: true`. | Cloud Admin JWT (reporter delete is CSRF-blocked for project keys) |
 
 **Typical workflow:**
 
 ```
-find_available_device(os="android", region="US2")  → pick a healthy device + region
-start_inspection_session(app="cloud:com.example.app/.MainActivity", region="US2")
+list_applications(nameContains="MyApp")             → appId
+get_application_info(appId)                         → packageName + mainActivity
+find_available_device(os="Android")                 → healthy device (region preference automatic)
+install_application(appId, deviceId)                → BEFORE the session; install fails on reserved devices
+start_inspection_session(region="US2")              → handle + viewUrl/debugUrl (share with the operator!)
+launch_app(handle, packageName, mainActivity)       → foreground the app
 take_inspection_screenshot(handle="A1B2C3D4")       → AI sees the current screen
 get_element_tree(handle="A1B2C3D4")                 → discover element resource-ids
 find_elements(handle="A1B2C3D4", strategy="id", selector="com.example:id/login")
-tap_element(handle="A1B2C3D4", elementId="11")
-type_into_element(handle="A1B2C3D4", elementId="12", text="mypassword")
+scroll_to_element(...)                              → find content below the fold
+tap_element / type_into_element / press_key(ENTER) / long_press / swipe_screen / press_back
 take_inspection_screenshot(handle="A1B2C3D4")       → verify result
 stop_inspection_session(handle="A1B2C3D4")          → release device + delete probe report
 get_test_boilerplate(...)                           → generate the test script
 ```
 
 **Notes:**
-- Android only. iOS and W3C/OSS Appium Server sessions are not yet supported.
+- Android only. iOS sessions are not yet supported.
+- Works against both the legacy Appium Grid (JWP, e.g. the Default project) and Appium Server (W3C/OSS) projects — the session request carries both capability formats and each gesture/launch command auto-detects the protocol per session.
 - Session reports are created in the Digital.ai reporter automatically. `stop_inspection_session` deletes them. If the MCP server restarts before you call stop, run `cleanup_inspection_sessions` to delete orphaned reports.
-- The session connects via JWP format to the Digital.ai Appium Grid (`{BASE_URL}/wd/hub`). This is the same Grid used by all Appium tests.
-- `cloudViewLink` in the start response is a Mobile Studio URL — useful for watching the device in a browser while the agent inspects it.
+- The session connects to `{BASE_URL}/wd/hub` — the same Grid endpoint used by all Appium tests.
+- `viewUrl` (watch) and `debugUrl` (interact) in the start response are operator-facing browser URLs — share them with the user immediately. `cloudViewLink` is the equivalent Mobile Studio link.
+- The `collaborative_test_creation` prompt packages this entire flow as a guided, narrated workflow.
 
 ### Resources & Prompts
 
@@ -381,4 +399,5 @@ get_test_boilerplate(...)                           → generate the test script
 | `investigate_test_failures` | — | Step-by-step failure triage: summary → recent failures → OS/device breakdown |
 | `device_farm_health_check` | — | Full farm health: device statuses → agent health → orphaned sessions |
 | `prepare_test_run` | — | Pre-run readiness check: devices → app version → provisioning profile validity |
+| `collaborative_test_creation` | — | Build a test script together with the operator: live inspection session with shared view URLs, element discovery, interactive verification, final script generation |
 

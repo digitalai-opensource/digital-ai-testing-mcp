@@ -78,7 +78,7 @@ registerDebugTools(server);
 registerInspectionTools(server);
 registerMetaTools(server);
 
-console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 4 prompts).`);
+console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 5 prompts).`);
 
 // Startup parity check: verify all workflow dependency tools are actually registered.
 // A missing tool here means a module failed to load — the image needs to be rebuilt.

@@ -361,4 +361,56 @@ export function registerPrompts(server: McpServer): void {
       };
     }
   );
+
+  // ─── Collaborative Test Creation ───────────────────────────────────────────
+
+  server.prompt(
+    'collaborative_test_creation',
+    'Build a mobile test script together with the user: live inspection session with a shareable device view, ' +
+    'element discovery, interactive verification of each step, and final script generation with verified selectors.',
+    {
+      appName: z.string().optional().describe('App name to search for (e.g. "Sample App"). Used with list_applications.'),
+      language: z.string().optional().describe('Target script language: "java", "python", or "nodejs". Default python.'),
+    },
+    ({ appName, language }) => ({
+      messages: [{
+        role: 'user',
+        content: {
+          type: 'text',
+          text: [
+            'I want to create a mobile test script collaboratively. Follow this procedure exactly:',
+            '',
+            'FIRST — before any tool calls — explain the plan to me:',
+            '  "Here\'s how we\'ll build this together:',
+            '   1. Find the app and an available device near the cloud server',
+            '   2. Install the app, then start a live inspection session — I\'ll share a live view URL so you can follow along',
+            '   3. Launch the app and capture element selectors from the real UI',
+            '   4. Interact with the UI to observe real behavior (success and failure states)',
+            '   5. Generate the test script with verified selectors and assertions"',
+            '',
+            'Then execute:',
+            '',
+            `1. list_applications${appName ? ` with nameContains="${appName}"` : ''} — note the appId.`,
+            '2. get_application_info(appId) — note packageName AND mainActivity (needed to launch the app).',
+            '3. find_available_device(os="Android") — region preference is automatic; note the device id and region.',
+            '4. install_application(applicationId, deviceId) — install BEFORE starting the session; ' +
+            'installation fails while the device is reserved by a session.',
+            '5. start_inspection_session(region from step 3) — the response includes viewUrl and debugUrl. ' +
+            'IMMEDIATELY share both URLs with me before doing anything else so I can watch.',
+            '6. launch_app(handle, packageName, mainActivity from step 2) — bring the app to the foreground.',
+            '7. take_inspection_screenshot — confirm the expected screen is visible.',
+            '8. get_element_tree — capture locators for the screen under test.',
+            '9. Walk through the test flow with me step by step: type_into_element / tap_element / swipe_screen, ' +
+            'screenshotting after each action and narrating what you observe. Verify both the success path ' +
+            'and at least one failure path (e.g. wrong credentials) so the script has real assertions.',
+            `10. get_test_boilerplate(appId, platform="android", language="${language ?? 'python'}", region from step 3) — use as the scaffold.`,
+            '11. stop_inspection_session — always, even on error.',
+            '12. Present the final test file using the locators and behaviors verified in steps 8-9.',
+            '',
+            'Throughout: narrate each step before you take it, and pause to ask me before changing direction.',
+          ].join('\n'),
+        },
+      }],
+    })
+  );
 }

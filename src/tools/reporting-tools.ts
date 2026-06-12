@@ -471,10 +471,15 @@ export function registerReportingTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Set true to execute the deletion. Omit or false to preview matching records without deleting.'),
+      maxPreviewResults: z
+        .number()
+        .int()
+        .optional()
+        .describe('Maximum records to show in preview (confirmDeletion: false). Defaults to 50. The deletion itself (confirmDeletion: true) always processes all matching records regardless of this limit.'),
       projectId: z.number().int().optional().describe('Ignored — the reporter API CSRF-blocks numeric projectId. Use projectName instead.'),
       projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the search. Required when the target project has its own reporter instance separate from the default scope.'),
     },
-    async ({ name, nameContains, confirmDeletion, projectId, projectName }) => {
+    async ({ name, nameContains, confirmDeletion, maxPreviewResults, projectId, projectName }) => {
       if (getActiveKeyType() !== 'jwt') {
         return { content: [{ type: 'text', text: 'Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. Use switch_environment() to switch to a Cloud Admin JWT profile.' }], isError: true };
       }
@@ -490,16 +495,24 @@ export function registerReportingTools(server: McpServer): void {
           ? [{ property: 'name', operator: '=' as const, value: name }]
           : [{ property: 'name', operator: 'contains' as const, value: nameContains! }];
 
-        // Paginate to collect all matching IDs
+        // In preview mode cap scanning to avoid timeout on high-cardinality matches
+        const isPreview = !confirmDeletion;
+        const previewCap = maxPreviewResults ?? 50;
         const allIds: number[] = [];
         const previewNames: string[] = [];
+        let truncated = false;
         let page = 1;
-        while (true) {
+
+        outer: while (true) {
           const batch = await listTests({ limit: 500, page, returnTotalCount: false, filter }, projectId, projectName);
           const records = batch.data ?? [];
           for (const r of records) {
             allIds.push(r.test_id);
             previewNames.push(`  ${r.test_id}: ${r.name} (${r.start_time?.slice(0, 10) ?? '?'})`);
+            if (isPreview && allIds.length >= previewCap) {
+              truncated = true;
+              break outer;
+            }
           }
           if (records.length < 500) break;
           page++;
@@ -510,12 +523,16 @@ export function registerReportingTools(server: McpServer): void {
           return { content: [{ type: 'text', text: `No test reports found matching ${criterion}.` }] };
         }
 
-        const guard = checkDestructiveGuard(confirmDeletion, `Delete ${allIds.length} test report(s) matching "${name ?? nameContains}"`);
+        const countDesc = truncated ? `${previewCap}+ (preview capped at ${previewCap})` : `${allIds.length}`;
+        const guard = checkDestructiveGuard(confirmDeletion, `Delete ${countDesc} test report(s) matching "${name ?? nameContains}"`);
         if (guard) {
+          const truncationNote = truncated
+            ? `\n\n⚠️ Showing first ${previewCap} of ${previewCap}+ matches. Re-run with confirmDeletion: true to delete all matches, or use a more specific nameContains value to narrow the search.`
+            : '';
           return {
             content: [{
               type: 'text',
-              text: `${guard}\n\nMatching records (${allIds.length}):\n${previewNames.join('\n')}`,
+              text: `${guard}\n\nMatching records (${truncated ? `first ${previewCap} shown` : allIds.length}):\n${previewNames.join('\n')}${truncationNote}`,
             }],
           };
         }

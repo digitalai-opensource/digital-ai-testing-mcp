@@ -234,6 +234,21 @@ Before generating boilerplate, always find an available device first so the corr
 - "Find the login button, tap it, and verify the next screen shows the balance"
 - "Type 'company' into the username field and take a screenshot to confirm"
 - "Explore the app's payment flow, note every element ID you used, then generate a Python test that replays it"
+- "Launch the sample app on the session device — get the right activity from the app info first"
+- "Scroll down in this list until you find the 'Settings' row, then tap it"
+- "Scroll until the 'About phone' entry is visible and give me its element ID" *(scroll_to_element does the swipe-find loop in one call)*
+- "Swipe left on the first item to reveal the delete button and screenshot the result"
+- "Long-press the first message to open its context menu"
+- "Type the search term and press ENTER to submit"
+- "Dismiss the keyboard and go back one screen"
+- "Rotate the device to landscape and screenshot the layout"
+- "Set the clipboard to a test string, long-press the input field, and paste it"
+- "Set the device location to Mountain View and verify the store finder shows the right results"
+- "Clear the app's data so we can test the first-launch onboarding flow from scratch"
+- "Open the deep link myapp://orders/42 and verify it lands on the order detail screen"
+- "Stop the session but keep the report — I want the session video for the bug ticket" *(keepReport: true, then download_test_attachments)*
+- "Start an inspection session and give me the live view URL so I can watch while you work"
+- "I want to create a test together — walk me through it step by step and share the device view link" *(the `collaborative_test_creation` prompt packages this flow)*
 - "What inspection sessions are still open? Stop them all."
 - "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin JWT)*
 

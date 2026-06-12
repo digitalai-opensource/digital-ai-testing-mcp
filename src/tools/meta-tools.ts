@@ -98,6 +98,9 @@ const REGISTERED_TOOLS = [
   'start_inspection_session', 'stop_inspection_session',
   'take_inspection_screenshot', 'get_element_tree', 'find_elements',
   'tap_element', 'type_into_element', 'clear_element',
+  'swipe_screen', 'launch_app', 'press_back',
+  'long_press', 'double_tap', 'drag_and_drop', 'pinch_zoom', 'scroll_to_element',
+  'press_key', 'hide_keyboard', 'app_control', 'device_control',
   'list_inspection_sessions', 'cleanup_inspection_sessions',
 ] as const;
 
@@ -142,7 +145,7 @@ export function registerMetaTools(server: McpServer): void {
         `Request timeout:  ${requestTimeout}ms`,
         `Upload timeout:   ${uploadTimeout}ms`,
         '',
-        `Registered tools: ${TOOL_COUNT} tools + 2 resources + 4 prompts`,
+        `Registered tools: ${TOOL_COUNT} tools + 2 resources + 5 prompts`,
         '',
         'Capability domains:',
         '  Users              — list, create, delete, assign, tag, get-tags (8 tools)',
@@ -171,6 +174,8 @@ export function registerMetaTools(server: McpServer): void {
         '  Analytics          — get_test_stability_report, get_cross_platform_divergence, get_daily_execution_trend (3 tools)',
         '  Coverage           — get_device_coverage_summary, get_regional_test_coverage (2 tools)',
         '  Utilization        — get_license_utilization (1 tool, Cloud Admin only)',
+        '  Remote Debug       — get_remote_debug_command (1 tool)',
+        '  Inspection         — start/stop session, screenshot, element tree, find, tap, type, clear, gestures (swipe/long-press/double-tap/drag/pinch/scroll-to), keys, keyboard, app/device control, launch-app, list, cleanup (22 tools)',
         '',
         '── High-value analytics (35 of 50 industry-standard queries fully supported) ──',
         '  Functional quality:',

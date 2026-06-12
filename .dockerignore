@@ -33,3 +33,6 @@ coverage/
 docs/
 API-Docs/
 docker-compose.yml
+
+# MCP Config local state
+.mcp.json

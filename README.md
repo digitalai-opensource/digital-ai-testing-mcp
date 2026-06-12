@@ -6,7 +6,7 @@
 
 # Digital.ai Continuous Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **152 tools**, **2 resources**, and **4 prompts** covering 23 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **164 tools**, **2 resources**, and **5 prompts** covering 23 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive inspection, and more.
 
 ---
 
@@ -85,7 +85,7 @@ Your Digital.ai access key determines what the MCP server can do on your behalf.
 
 | Key type | Format | Access |
 |---|---|---|
-| **Cloud Admin JWT** | `eyJ…` (long base-64 string) | All 152 tools: device management, user provisioning, project administration, infrastructure, performance data |
+| **Cloud Admin JWT** | `eyJ…` (long base-64 string) | All 164 tools: device management, user provisioning, project administration, infrastructure, performance data |
 | **Project API key** | `aut_1_…` | Scoped to the devices, apps, and reports within one specific project. v2 API tools (agents, regions, license data) return 403. |
 
 When a Cloud Admin tool is called with a project key, the MCP returns a plain-language error explaining what happened — and, if a Cloud Admin profile is configured, a ready-to-use `switch_environment(...)` command.
@@ -342,7 +342,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 
 ## Capabilities
 
-152 tools across 24 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
+164 tools across 24 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
 
 | Domain | Tools | Highlights |
 |---|---|---|
@@ -368,7 +368,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 | [Workflows](docs/tools.md#workflows) | 6 | POC and project lifecycle orchestration |
 | [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 1 | Ready-to-run Appium test scripts in 4 languages |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud device as a local ADB device |
-| [Inspection Sessions](docs/tools.md#inspection-sessions) | 10 | AI-driven live device interaction |
+| [Inspection Sessions](docs/tools.md#inspection-sessions) | 22 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control |
 | [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 4 guided prompts |
 
 ---
@@ -747,7 +747,7 @@ On Windows this usually means the `--env-file` path was stored with backslashes 
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 152) and active profile
+1. get_server_info           — confirm tool count (expect 164) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -757,7 +757,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 152,
+  "registeredToolCount": 164,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
@@ -780,7 +780,7 @@ The server also logs a readiness check at startup (visible in Docker logs): `Wor
 The four most commonly encountered:
 
 1. **No API to trigger Appium test execution.** Tests launch from Appium clients (IDE, CI scripts). The server manages devices, apps, reservations, and results — it cannot start an Appium session itself. (Interactive [inspection sessions](docs/tools.md#inspection-sessions) are the exception: live WebDriver sessions for element discovery, Android only.)
-2. **Inspection sessions are Android-only** — iOS and W3C/OSS Appium Server sessions are not yet supported.
+2. **Inspection sessions are Android-only** — iOS is not yet supported. Both the legacy Appium Grid (JWP) and Appium Server (W3C/OSS) projects work.
 3. **No user disable/lock endpoint.** Removing access for a user provisioned solely for a POC means deleting the account — which is why `close_poc` requires per-user confirmation.
 4. **Reporter API restrictions for project API keys** — server-side sort and report deletion require a Cloud Admin JWT. Tools compensate automatically (client-side sorting, clear pre-flight errors), at the cost of slower full-scan queries under project keys.
 

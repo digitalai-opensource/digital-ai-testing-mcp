@@ -9,13 +9,39 @@ import {
   tapElement,
   typeIntoElement,
   clearElement,
+  swipeScreen,
+  getWindowSize,
+  launchApp,
+  pressBack,
+  longPress,
+  doubleTap,
+  dragAndDrop,
+  pinchZoom,
+  scrollToElement,
+  pressKey,
+  ANDROID_KEYCODES,
+  isKeyboardShown,
+  hideKeyboard,
+  appControl,
+  getOrientation,
+  setOrientation,
+  getClipboard,
+  setClipboard,
+  setGeolocation,
+  resetGeolocation,
+  handleAlert,
+  pushFileToDevice,
+  pullFileFromDevice,
   listActiveSessions,
   getPendingReportIds,
   deleteAllTrackedReports,
 } from '../api/webdriver.js';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { getActiveKeyType } from '../api/client.js';
+import { getActiveKeyType, getActiveUrl } from '../api/client.js';
+import { resolveDevice } from '../utils/device-resolver.js';
+import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
+import { readFileSync, writeFileSync } from 'fs';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -135,16 +161,23 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'start_inspection_session',
     'Start a live WebDriver session on a real Android device for interactive test building. ' +
-    'Returns a session handle used by all other inspection tools. ' +
-    'The session reserves a device, launches the app, and gives you screenshot + element access. ' +
+    'Returns a session handle used by all other inspection tools, plus viewUrl/debugUrl — ' +
+    'SHARE BOTH URLS WITH THE USER IMMEDIATELY so they can watch (viewUrl) or interact (debugUrl) in real time. ' +
+    'The session reserves a device and gives you screenshot + element + gesture access. ' +
     'Session creation takes 20-90 s while a device is allocated.\n\n' +
     'Typical workflow:\n' +
-    '  1. find_available_device — find a healthy device in the right region\n' +
-    '  2. start_inspection_session — connect with region param for reliable routing\n' +
-    '  3. take_inspection_screenshot — see current screen\n' +
-    '  4. get_element_tree — discover element IDs and locators\n' +
-    '  5. find_elements / tap_element / type_into_element — interact and verify\n' +
-    '  6. stop_inspection_session — always call this when done; auto-deletes the test report\n\n' +
+    '  1. find_available_device — find a healthy device (region preference is automatic)\n' +
+    '  2. install_application — BEFORE starting the session; install fails while the device is reserved\n' +
+    '  3. start_inspection_session — connect with region param for reliable routing; share viewUrl/debugUrl\n' +
+    '  4. launch_app — foreground the app (use mainActivity from get_application_info)\n' +
+    '  5. take_inspection_screenshot / get_element_tree — see the screen, discover locators\n' +
+    '  6. find_elements / tap_element / type_into_element / swipe_screen / press_back — interact and verify\n' +
+    '  7. stop_inspection_session — always call this when done; auto-deletes the test report\n\n' +
+    'KNOWN LIMITATIONS: (a) the app/appPackage/appActivity params return HTTP 500 on some deployments — ' +
+    'if that happens, start a generic session (no app params) and use launch_app instead; ' +
+    '(b) targeting a specific device via @serialNumber or @model in deviceQuery can time out — ' +
+    'prefer generic queries (@os + @category) scoped with the region param; ' +
+    'the deviceQuery field support here is narrower than list_devices.\n\n' +
     'IMPORTANT: Always call stop_inspection_session when done. Sessions left open consume ' +
     'a reserved device and create a test report in the reporter. ' +
     'Use cleanup_inspection_sessions to delete reports from sessions that were abandoned.',
@@ -200,9 +233,27 @@ export function registerInspectionTools(server: McpServer): void {
           testName: args.testName,
         });
 
+        // Resolve the numeric platform device ID from the UDID so the user-facing
+        // view/debug URLs can be emitted without a follow-up list_devices call.
+        let deviceId: string | null = null;
+        let viewUrl: string | null = null;
+        let debugUrl: string | null = null;
+        if (session.deviceUDID) {
+          try {
+            const resolved = await resolveDevice(session.deviceUDID);
+            deviceId = resolved.id;
+            const base = getActiveUrl().replace(/\/+$/, '');
+            viewUrl = `${base}/#/open/device/${deviceId}/1`;
+            debugUrl = `${base}/#/open/device/${deviceId}/3`;
+          } catch {
+            // Non-fatal — session is usable without the URLs
+          }
+        }
+
         const structured: Record<string, unknown> = {
           handle: session.handle,
           device: {
+            id: deviceId,
             name: session.deviceName,
             model: session.deviceModel,
             os: session.deviceOs,
@@ -210,8 +261,13 @@ export function registerInspectionTools(server: McpServer): void {
             udid: session.deviceUDID,
           },
           appPackage: session.appPackage,
+          viewUrl,
+          debugUrl,
           cloudViewLink: session.cloudViewLink,
           reportUrl: session.reportUrl,
+          shareWithUser: viewUrl
+            ? `Emit these URLs to the user immediately so they can follow along: watch live at ${viewUrl} or interact in debug mode at ${debugUrl}`
+            : null,
         };
 
         if (!session.canDeleteReport) {
@@ -238,19 +294,33 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'stop_inspection_session',
     'Stop a live inspection session and release the device. ' +
-    'Automatically deletes the test report created by this session from the Digital.ai reporter. ' +
+    'By default deletes the test report created by this session from the Digital.ai reporter. ' +
+    'Pass keepReport: true to preserve it — the platform records video of every session, and the kept ' +
+    "report's video is retrievable via download_test_attachments (useful for documenting a verified flow). " +
     'Always call this when done inspecting — open sessions hold a reserved device.',
     {
       handle: z
         .string()
         .describe("Session handle returned by start_inspection_session, e.g. 'A1B2C3D4'."),
+      keepReport: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Preserve the session report (and its platform-recorded video) instead of deleting it. Default false.'),
     },
     async (args) => {
       try {
-        const { reportDeleted, canDeleteReport, reportTestId } = await quitInspectionSession(args.handle);
+        const { reportDeleted, reportKept, canDeleteReport, reportTestId, reportUrl } =
+          await quitInspectionSession(args.handle, args.keepReport ?? false);
 
         let text: string;
-        if (reportDeleted) {
+        if (reportKept) {
+          text =
+            `✅ Session ${args.handle} stopped. Device released. Report KEPT (test_id=${reportTestId}).\n` +
+            `Report: ${reportUrl}\n` +
+            `The platform-recorded session video is attached to this report — retrieve it with ` +
+            `download_test_attachments once processing completes (usually within a minute).`;
+        } else if (reportDeleted) {
           text = `✅ Session ${args.handle} stopped. Device released. Probe report deleted.`;
         } else if (!canDeleteReport && reportTestId > 0) {
           text =
@@ -508,6 +578,466 @@ export function registerInspectionTools(server: McpServer): void {
           content: [{ type: 'text' as const, text: `Error clearing element: ${(e as Error).message}` }],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ── swipe_screen ──────────────────────────────────────────────────────────
+  server.tool(
+    'swipe_screen',
+    'Swipe/scroll on the device screen. Use a named direction for common gestures ' +
+    '(scrolling lists, opening the app drawer, dismissing overlays), or explicit coordinates for precision. ' +
+    'Direction is the FINGER movement: "up" moves the finger up, which scrolls content DOWN/forward ' +
+    '(and opens the app drawer from the home screen). ' +
+    'Works on both Appium 1.x (JWP touch actions) and Appium 2/3 (W3C actions) agents automatically.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      direction: z
+        .enum(['up', 'down', 'left', 'right'])
+        .optional()
+        .describe('Finger movement direction. Swipes from 80% to 20% of the screen along the axis, centered on the other axis. Provide this OR explicit coordinates.'),
+      startX: z.number().int().optional().describe('Explicit start X (pixels). All four coordinates required together.'),
+      startY: z.number().int().optional().describe('Explicit start Y (pixels).'),
+      endX: z.number().int().optional().describe('Explicit end X (pixels).'),
+      endY: z.number().int().optional().describe('Explicit end Y (pixels).'),
+      durationMs: z
+        .number()
+        .int()
+        .optional()
+        .default(300)
+        .describe('Gesture duration in ms. 300 = normal swipe, 100 = fast fling, 600+ = slow drag. Default 300.'),
+    },
+    async (args) => {
+      try {
+        let { startX, startY, endX, endY } = args;
+        const hasCoords = [startX, startY, endX, endY].every((v) => v != null);
+
+        if (!args.direction && !hasCoords) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: provide either direction or all four of startX/startY/endX/endY.' }],
+            isError: true,
+          };
+        }
+
+        if (args.direction && !hasCoords) {
+          const { width, height } = await getWindowSize(args.handle);
+          const midX = Math.round(width / 2);
+          const midY = Math.round(height / 2);
+          switch (args.direction) {
+            case 'up':
+              startX = midX; endX = midX;
+              startY = Math.round(height * 0.8); endY = Math.round(height * 0.2);
+              break;
+            case 'down':
+              startX = midX; endX = midX;
+              startY = Math.round(height * 0.2); endY = Math.round(height * 0.8);
+              break;
+            case 'left':
+              startY = midY; endY = midY;
+              startX = Math.round(width * 0.8); endX = Math.round(width * 0.2);
+              break;
+            case 'right':
+              startY = midY; endY = midY;
+              startX = Math.round(width * 0.2); endX = Math.round(width * 0.8);
+              break;
+          }
+        }
+
+        const mechanism = await swipeScreen(
+          args.handle,
+          startX!,
+          startY!,
+          endX!,
+          endY!,
+          args.durationMs ?? 300
+        );
+        return {
+          content: [{
+            type: 'text' as const,
+            text:
+              `✅ Swiped ${args.direction ?? ''} (${startX},${startY}) → (${endX},${endY}) over ${args.durationMs ?? 300}ms [${mechanism}].\n\n` +
+              `Call take_inspection_screenshot to verify the result.`,
+          }],
+        };
+      } catch (e) {
+        return {
+          content: [{ type: 'text' as const, text: `Error swiping: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ── launch_app ────────────────────────────────────────────────────────────
+  server.tool(
+    'launch_app',
+    'Launch an installed app on the device in an inspection session — the equivalent of tapping its icon. ' +
+    'ALWAYS pass the activity: get the correct mainActivity from get_application_info(appId) first; ' +
+    'guessing ".MainActivity" often fails, and Digital.ai Grid sessions cannot launch by package name alone ' +
+    '(activity-less activation only works on standalone Appium agents). ' +
+    'Use this instead of navigating to the app via home screen / app drawer / search.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      packageName: z.string().describe("Android package name, e.g. 'com.digitalai.sampleapp'."),
+      activity: z
+        .string()
+        .optional()
+        .describe("Launch activity, e.g. '.LoginActivity'. From get_application_info mainActivity. Effectively required on Digital.ai Grid sessions; omit only on standalone Appium agents to just foreground the app."),
+    },
+    async (args) => {
+      try {
+        const result = await launchApp(args.handle, args.packageName, args.activity);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `✅ ${result}.\n\nCall take_inspection_screenshot to verify the app is in the foreground.`,
+          }],
+        };
+      } catch (e) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text:
+              `Error launching app: ${(e as Error).message}\n\n` +
+              `If the app is not installed, install it first (install_application requires the device to be ` +
+              `unreserved — stop this session, install, then start a new session). ` +
+              `If the activity is wrong, get the correct one from get_application_info(appId).`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ── press_back ────────────────────────────────────────────────────────────
+  server.tool(
+    'press_back',
+    'Press the Android Back button in an inspection session. ' +
+    'Use to dismiss keyboards, close dialogs, or navigate back one screen.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+    },
+    async (args) => {
+      try {
+        await pressBack(args.handle);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: '✅ Back pressed.\n\nCall take_inspection_screenshot to verify the result.',
+          }],
+        };
+      } catch (e) {
+        return {
+          content: [{ type: 'text' as const, text: `Error pressing back: ${(e as Error).message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ── long_press ────────────────────────────────────────────────────────────
+  server.tool(
+    'long_press',
+    'Long-press an element or screen coordinate — opens context menus, triggers press-and-hold actions. ' +
+    'Provide elementId (from find_elements) or explicit x/y coordinates.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      elementId: z.string().optional().describe('Element ID from find_elements. Provide this OR x/y.'),
+      x: z.number().int().optional().describe('X coordinate (pixels).'),
+      y: z.number().int().optional().describe('Y coordinate (pixels).'),
+      durationMs: z.number().int().optional().default(1500).describe('Hold duration in ms. Default 1500.'),
+    },
+    async (args) => {
+      try {
+        await longPress(args.handle, { elementId: args.elementId, x: args.x, y: args.y }, args.durationMs ?? 1500);
+        return {
+          content: [{ type: 'text' as const, text: `✅ Long-pressed for ${args.durationMs ?? 1500}ms.\n\nCall take_inspection_screenshot to verify the result.` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error long-pressing: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── double_tap ────────────────────────────────────────────────────────────
+  server.tool(
+    'double_tap',
+    'Double-tap an element or screen coordinate — zoom into images/maps, trigger double-tap actions. ' +
+    'Provide elementId (from find_elements) or explicit x/y coordinates.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      elementId: z.string().optional().describe('Element ID from find_elements. Provide this OR x/y.'),
+      x: z.number().int().optional().describe('X coordinate (pixels).'),
+      y: z.number().int().optional().describe('Y coordinate (pixels).'),
+    },
+    async (args) => {
+      try {
+        await doubleTap(args.handle, { elementId: args.elementId, x: args.x, y: args.y });
+        return {
+          content: [{ type: 'text' as const, text: `✅ Double-tapped.\n\nCall take_inspection_screenshot to verify the result.` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error double-tapping: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── drag_and_drop ─────────────────────────────────────────────────────────
+  server.tool(
+    'drag_and_drop',
+    'Press and hold at a start point, drag to an end point, and release — reorder lists, move sliders, drag items between containers. ' +
+    'Use find_elements bounds to compute coordinates.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      startX: z.number().int().describe('Drag start X (pixels).'),
+      startY: z.number().int().describe('Drag start Y (pixels).'),
+      endX: z.number().int().describe('Drop X (pixels).'),
+      endY: z.number().int().describe('Drop Y (pixels).'),
+      holdMs: z.number().int().optional().default(600).describe('Initial hold before moving (ms). Default 600.'),
+      moveMs: z.number().int().optional().default(1200).describe('Movement duration (ms). Default 1200.'),
+    },
+    async (args) => {
+      try {
+        await dragAndDrop(args.handle, args.startX, args.startY, args.endX, args.endY, args.holdMs ?? 600, args.moveMs ?? 1200);
+        return {
+          content: [{ type: 'text' as const, text: `✅ Dragged (${args.startX},${args.startY}) → (${args.endX},${args.endY}).\n\nCall take_inspection_screenshot to verify the result.` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error dragging: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── pinch_zoom ────────────────────────────────────────────────────────────
+  server.tool(
+    'pinch_zoom',
+    'Two-finger pinch gesture — zoom in (fingers diverge) or out (fingers converge) on maps and images. ' +
+    'Defaults to the screen center. NOTE: Appium Server (OSS) project sessions only — the Appium Grid rejects multi-touch.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      direction: z.enum(['in', 'out']).describe("'in' = zoom in (fingers spread apart), 'out' = zoom out (fingers converge)."),
+      centerX: z.number().int().optional().describe('Gesture center X. Default: screen center.'),
+      centerY: z.number().int().optional().describe('Gesture center Y. Default: screen center.'),
+      distance: z.number().int().optional().default(300).describe('Distance each finger travels (pixels). Default 300.'),
+    },
+    async (args) => {
+      try {
+        await pinchZoom(args.handle, args.direction, args.centerX, args.centerY, args.distance ?? 300);
+        return {
+          content: [{ type: 'text' as const, text: `✅ Pinch-zoomed ${args.direction}.\n\nCall take_inspection_screenshot to verify the result.` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error pinch-zooming: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── scroll_to_element ─────────────────────────────────────────────────────
+  server.tool(
+    'scroll_to_element',
+    'Scroll until an element becomes visible, swiping repeatedly and stopping when found or when the end of the ' +
+    'scrollable content is reached (screen stops changing). Returns the element ID ready for tap/type. ' +
+    'Much faster than manual swipe + screenshot loops for finding content below the fold.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      strategy: z
+        .enum(['xpath', 'id', 'accessibility id', 'class name'])
+        .describe('Locator strategy (same as find_elements).'),
+      selector: z.string().describe('The locator value to search for while scrolling.'),
+      direction: z
+        .enum(['up', 'down'])
+        .optional()
+        .default('up')
+        .describe("Finger movement per swipe. 'up' (default) scrolls content forward/down; 'down' scrolls back toward the top."),
+      maxSwipes: z.number().int().optional().default(8).describe('Maximum swipes before giving up. Default 8.'),
+    },
+    async (args) => {
+      try {
+        const result = await scrollToElement(args.handle, args.strategy, args.selector, args.direction ?? 'up', args.maxSwipes ?? 8);
+        if (result.found && result.element) {
+          const e = result.element;
+          const lines = [
+            `✅ Found after ${result.swipesUsed} swipe${result.swipesUsed !== 1 ? 's' : ''}:`,
+            `  elementId:    ${e.elementId}`,
+            e.resourceId ? `  resource-id:  ${e.resourceId}` : '',
+            e.text ? `  text:         ${e.text}` : '',
+            e.bounds ? `  bounds:       ${e.bounds}` : '',
+            '',
+            `To interact: tap_element(handle="${args.handle}", elementId="${e.elementId}")`,
+          ].filter(Boolean);
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        const reason = result.reachedEnd
+          ? `reached the end of the scrollable content after ${result.swipesUsed} swipes`
+          : `gave up after ${result.swipesUsed} swipes (maxSwipes)`;
+        return {
+          content: [{ type: 'text' as const, text: `Element not found — ${reason}.\n\nVerify the selector with get_element_tree, or try direction="${(args.direction ?? 'up') === 'up' ? 'down' : 'up'}".` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error scrolling to element: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── press_key ─────────────────────────────────────────────────────────────
+  server.tool(
+    'press_key',
+    'Press an Android key: ENTER to submit forms/search, HOME, APP_SWITCH, volume, or any raw keycode. ' +
+    'Complements press_back (which has its own tool).',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      key: z
+        .enum(['HOME', 'BACK', 'ENTER', 'TAB', 'DELETE', 'APP_SWITCH', 'SEARCH', 'MENU', 'VOLUME_UP', 'VOLUME_DOWN', 'POWER'])
+        .optional()
+        .describe('Named key. Provide this OR keycode.'),
+      keycode: z.number().int().optional().describe('Raw Android keycode (e.g. 66 = ENTER). Provide this OR key.'),
+    },
+    async (args) => {
+      try {
+        const code = args.keycode ?? (args.key ? ANDROID_KEYCODES[args.key] : undefined);
+        if (code == null) {
+          return { content: [{ type: 'text' as const, text: 'Error: provide either key (named) or keycode (number).' }], isError: true };
+        }
+        await pressKey(args.handle, code);
+        return {
+          content: [{ type: 'text' as const, text: `✅ Pressed ${args.key ?? `keycode ${code}`}.\n\nCall take_inspection_screenshot to verify the result.` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error pressing key: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── hide_keyboard ─────────────────────────────────────────────────────────
+  server.tool(
+    'hide_keyboard',
+    'Hide the on-screen keyboard if it is open. Safer than press_back (which navigates when no keyboard is shown). ' +
+    'Use when the keyboard covers an element you need to tap.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+    },
+    async (args) => {
+      try {
+        const shown = await isKeyboardShown(args.handle);
+        if (!shown) {
+          return { content: [{ type: 'text' as const, text: 'Keyboard is not shown — nothing to hide.' }] };
+        }
+        await hideKeyboard(args.handle);
+        return { content: [{ type: 'text' as const, text: '✅ Keyboard hidden.' }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error hiding keyboard: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── app_control ───────────────────────────────────────────────────────────
+  server.tool(
+    'app_control',
+    'Control app lifecycle in an inspection session: terminate (force-stop), clear_data (reset to first-launch state), ' +
+    'query_state (installed/background/foreground), deep_link (open a URL/URI directly — skip navigation to the screen under test). ' +
+    'NOTE on Grid sessions: query_state only reports the foreground activity; deep_link is best-effort. ' +
+    'To relaunch after terminate/clear_data, use launch_app.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      action: z
+        .enum(['terminate', 'clear_data', 'query_state', 'deep_link'])
+        .describe('Lifecycle action to perform.'),
+      packageName: z
+        .string()
+        .optional()
+        .describe('Android package name. Required for terminate, clear_data, query_state; optional handler hint for deep_link.'),
+      url: z.string().optional().describe('URL or URI scheme for deep_link, e.g. "myapp://orders/42" or "https://...".'),
+    },
+    async (args) => {
+      try {
+        const result = await appControl(args.handle, args.action, args.packageName, args.url);
+        return { content: [{ type: 'text' as const, text: `✅ ${result}` }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error (${args.action}): ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── device_control ────────────────────────────────────────────────────────
+  server.tool(
+    'device_control',
+    'Device-level controls for an inspection session: orientation (get/set — rotation testing), clipboard (get/set — paste flows), ' +
+    'geolocation (set/reset — location-based features), alerts (accept/dismiss — system dialogs, Appium Server only), ' +
+    'and file transfer (push_file/pull_file — test fixtures like images for upload flows). ' +
+    'Grid session limits: alerts and reset_geolocation are not supported (clear errors explain alternatives).',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      action: z
+        .enum(['get_orientation', 'set_orientation', 'get_clipboard', 'set_clipboard', 'set_geolocation', 'reset_geolocation', 'accept_alert', 'dismiss_alert', 'push_file', 'pull_file'])
+        .describe('Device action to perform.'),
+      orientation: z.enum(['PORTRAIT', 'LANDSCAPE']).optional().describe('For set_orientation.'),
+      text: z.string().optional().describe('For set_clipboard: the text to place on the clipboard.'),
+      latitude: z.number().optional().describe('For set_geolocation.'),
+      longitude: z.number().optional().describe('For set_geolocation.'),
+      remotePath: z.string().optional().describe('For push_file/pull_file: absolute device path, e.g. "/sdcard/Download/fixture.png".'),
+      localPath: z.string().optional().describe('For push_file (source) / pull_file (destination): local file path visible to the MCP server process (volume-mount when running in Docker).'),
+    },
+    async (args) => {
+      try {
+        switch (args.action) {
+          case 'get_orientation': {
+            const o = await getOrientation(args.handle);
+            return { content: [{ type: 'text' as const, text: `Orientation: ${o}` }] };
+          }
+          case 'set_orientation': {
+            if (!args.orientation) return { content: [{ type: 'text' as const, text: 'Error: set_orientation requires orientation.' }], isError: true };
+            await setOrientation(args.handle, args.orientation);
+            return { content: [{ type: 'text' as const, text: `✅ Orientation set to ${args.orientation}.\n\nCall take_inspection_screenshot to verify the layout.` }] };
+          }
+          case 'get_clipboard': {
+            const text = await getClipboard(args.handle);
+            return { content: [{ type: 'text' as const, text: text ? `Clipboard: "${text}"` : 'Clipboard is empty.' }] };
+          }
+          case 'set_clipboard': {
+            if (args.text == null) return { content: [{ type: 'text' as const, text: 'Error: set_clipboard requires text.' }], isError: true };
+            await setClipboard(args.handle, args.text);
+            return { content: [{ type: 'text' as const, text: `✅ Clipboard set (${args.text.length} chars). Long-press an input field to paste.` }] };
+          }
+          case 'set_geolocation': {
+            if (args.latitude == null || args.longitude == null) {
+              return { content: [{ type: 'text' as const, text: 'Error: set_geolocation requires latitude and longitude.' }], isError: true };
+            }
+            await setGeolocation(args.handle, args.latitude, args.longitude);
+            return { content: [{ type: 'text' as const, text: `✅ Location set to ${args.latitude}, ${args.longitude}.` }] };
+          }
+          case 'reset_geolocation': {
+            await resetGeolocation(args.handle);
+            return { content: [{ type: 'text' as const, text: '✅ Simulated location cleared — device uses its real location again.' }] };
+          }
+          case 'accept_alert':
+          case 'dismiss_alert': {
+            await handleAlert(args.handle, args.action === 'accept_alert' ? 'accept' : 'dismiss');
+            return { content: [{ type: 'text' as const, text: `✅ Alert ${args.action === 'accept_alert' ? 'accepted' : 'dismissed'}.` }] };
+          }
+          case 'push_file': {
+            if (!args.remotePath || !args.localPath) {
+              return { content: [{ type: 'text' as const, text: 'Error: push_file requires remotePath and localPath.' }], isError: true };
+            }
+            const inputError = validateInputPath(args.localPath);
+            if (inputError) return { content: [{ type: 'text' as const, text: inputError }], isError: true };
+            const data = readFileSync(args.localPath).toString('base64');
+            await pushFileToDevice(args.handle, args.remotePath, data);
+            return { content: [{ type: 'text' as const, text: `✅ Pushed ${args.localPath} → ${args.remotePath} (${Math.round(data.length * 0.75)} bytes).` }] };
+          }
+          case 'pull_file': {
+            if (!args.remotePath || !args.localPath) {
+              return { content: [{ type: 'text' as const, text: 'Error: pull_file requires remotePath and localPath.' }], isError: true };
+            }
+            const outputError = validateOutputPath(args.localPath);
+            if (outputError) return { content: [{ type: 'text' as const, text: outputError }], isError: true };
+            const b64 = await pullFileFromDevice(args.handle, args.remotePath);
+            const buf = Buffer.from(b64, 'base64');
+            writeFileSync(args.localPath, buf);
+            return { content: [{ type: 'text' as const, text: `✅ Pulled ${args.remotePath} → ${args.localPath} (${buf.length} bytes).` }] };
+          }
+        }
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error (${args.action}): ${(e as Error).message}` }], isError: true };
       }
     }
   );

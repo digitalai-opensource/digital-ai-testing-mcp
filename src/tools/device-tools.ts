@@ -24,6 +24,24 @@ import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js'
 import { formatDeviceList, formatDeviceHealthSummary } from '../utils/response-formatter.js';
 import { resolveDevice, formatResolvedDevice } from '../utils/device-resolver.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { getActiveUrl } from '../api/client.js';
+
+// Region affinity by cloud hostname — used as the preferRegions default so callers
+// get server-proximate devices without passing the param explicitly.
+const CLOUD_REGION_AFFINITY: Array<{ hostMatch: string; regions: string[] }> = [
+  { hostMatch: 'uscloud', regions: ['US1', 'US2'] },
+  { hostMatch: 'eucloud', regions: ['DE1', 'UK1'] },
+  { hostMatch: 'apcloud', regions: ['SG1', 'AU1'] },
+];
+
+function defaultPreferRegions(): string[] | undefined {
+  try {
+    const host = new URL(getActiveUrl()).hostname.toLowerCase();
+    return CLOUD_REGION_AFFINITY.find((a) => host.includes(a.hostMatch))?.regions;
+  } catch {
+    return undefined;
+  }
+}
 
 const MODE_MAP: Record<string, 0 | 1 | 2 | 3> = {
   manual: 0,
@@ -600,8 +618,9 @@ export function registerDeviceTools(server: McpServer): void {
     'IMPORTANT: Call this tool before generating any digitalai:deviceQuery capability strings — use the osVersion AND region values ' +
     'from the RESPONSE (not the parameters you passed) when calling get_test_boilerplate. ' +
     'The osVersion parameter is a minimum filter (≥), so the returned device may be running a higher version than requested. ' +
-    'Use preferRegions to bias selection toward regions geographically close to your Digital.ai server ' +
-    '(e.g. ["US1","US2"] for uscloud.experitest.com, ["SG1","AU1"] for apcloud, ["DE1","UK1"] for eucloud).',
+    'Region preference defaults automatically from the active cloud URL (uscloud → US1/US2, eucloud → DE1/UK1, ' +
+    'apcloud → SG1/AU1) to avoid cross-region session latency; pass preferRegions explicitly to override, ' +
+    'or preferRegions: [] to disable the default and search all regions equally.',
     {
       os: z
         .enum(['iOS', 'Android'])
@@ -636,16 +655,20 @@ export function registerDeviceTools(server: McpServer): void {
         .array(z.string())
         .optional()
         .describe(
-          'Region codes in preference order (e.g. ["US1","US2"]). When provided, the tool returns the first ' +
-          'available device in the highest-priority region that has one. Falls back to any available device if ' +
-          'none of the preferred regions have a healthy device. Use this to avoid cross-region session latency: ' +
-          'uscloud.experitest.com → ["US1","US2"]; apcloud.experitest.com → ["SG1","AU1"]; ' +
-          'eucloud.experitest.com → ["DE1","UK1"]. The response includes regionPreferenceApplied to confirm which case applied.'
+          'Region codes in preference order (e.g. ["US1","US2"]). The tool returns the first ' +
+          'available device in the highest-priority region that has one, falling back to any available device if ' +
+          'none of the preferred regions have a healthy device. DEFAULT: derived from the active cloud URL ' +
+          '(uscloud → ["US1","US2"]; eucloud → ["DE1","UK1"]; apcloud → ["SG1","AU1"]). ' +
+          'Pass [] to disable the default and treat all regions equally. ' +
+          'The response includes regionPreferenceApplied to confirm which case applied.'
         ),
       outputFormat: outputFormatParam,
     },
     async ({ os, osVersion, manufacturer, model, tags, category, preferRegions, outputFormat }) => {
       try {
+        // No explicit preference → derive from the active cloud URL. An explicit [] opts out.
+        const effectiveRegions = preferRegions ?? defaultPreferRegions();
+        const regionsDefaulted = !preferRegions && !!effectiveRegions;
         // Only @os, @category, and @emulator are confirmed to work server-side.
         // @manufacturer and @tag look valid but silently return 0 results from the API
         // (even combined with working fields). Filter these client-side instead.
@@ -680,8 +703,8 @@ export function registerDeviceTools(server: McpServer): void {
           let d = available[0];
           let regionPreferenceApplied = false;
           let preferredRegionUsed: string | null = null;
-          if (preferRegions && preferRegions.length > 0) {
-            for (const preferredRegion of preferRegions) {
+          if (effectiveRegions && effectiveRegions.length > 0) {
+            for (const preferredRegion of effectiveRegions) {
               const inRegion = available.filter(dev => dev.region === preferredRegion);
               if (inRegion.length > 0) {
                 d = inRegion[0];
@@ -708,9 +731,10 @@ export function registerDeviceTools(server: McpServer): void {
             alternativesAvailable: available.length - 1,
             regionPreferenceApplied,
             preferredRegionUsed,
+            preferRegionsDefaulted: regionsDefaulted,
           };
-          const regionNote = preferRegions && preferRegions.length > 0 && !regionPreferenceApplied
-            ? `\n⚠️  None of the preferred regions (${preferRegions.join(', ')}) had available devices — returned device is from region: ${d.region}`
+          const regionNote = effectiveRegions && effectiveRegions.length > 0 && !regionPreferenceApplied
+            ? `\n⚠️  None of the preferred regions (${effectiveRegions.join(', ')}${regionsDefaulted ? ', cloud default' : ''}) had available devices — returned device is from region: ${d.region}`
             : '';
           const humanText = [
             `✅ Available device found:`,

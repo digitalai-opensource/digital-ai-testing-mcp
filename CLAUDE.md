@@ -495,18 +495,30 @@ Without `region`, the deviceQuery is evaluated against all devices in all region
 ## Inspection Sessions (WebDriver-based Native Inspection)
 
 `src/api/webdriver.ts` implements a **separate Axios instance** that connects to the Grid at
-`{DIGITAL_AI_BASE_URL}/wd/hub` using JWP (`desiredCapabilities`) format. It does **not** reuse
-the main `client.ts` instance (which sends `X-API-KEY` headers — the Grid uses `digitalai:accessKey`
-inside the session capability instead).
+`{DIGITAL_AI_BASE_URL}/wd/hub`. It does **not** reuse the main `client.ts` instance (which sends
+`X-API-KEY` headers — the Grid uses `digitalai:accessKey` inside the session capability instead).
+
+The session create request is **dual-protocol**: it sends both `desiredCapabilities` (JWP, read by
+the proprietary Appium Grid) and `capabilities.alwaysMatch` (W3C, read by standard Appium Server —
+non-standard caps get the `appium:` prefix there). Works for both `isAppiumOss` project modes.
+The detected response format is stored as `session.sessionFormat: 'jwp' | 'w3c'` and drives which
+gesture/launch mechanism each command tries first.
 
 ### In-process session registry
 
 ```ts
 const sessionRegistry = new Map<string, InspectionSession>(); // keyed by handle (8-char UUID slice)
-const allReportIds = new Set<number>();                        // all reportTestIds created this process
+const allReports = new Map<number, string | undefined>();      // reportTestId → projectName it was created under
 ```
 
 Both are cleared on MCP server restart. Orphaned Grid sessions timeout on their own (default 4 min).
+
+**Report IDs must be project-scoped.** Reporter `test_id`s are only unique per reporter instance —
+a session created under a non-default profile (e.g. a project key) gets a `test_id` from that
+project's instance. Deleting it later without `projectName` resolves the same numeric ID in the
+default scope and deletes the WRONG report. `createInspectionSession` captures the active project
+via `getMyAccountInfo()` and every delete (`quitInspectionSession`, `deleteAllTrackedReports`)
+passes it to `deleteTests(ids, undefined, projectName)`.
 
 ### Session response format — JWP vs W3C (regional)
 
@@ -548,13 +560,58 @@ Use XML-matching hyphenated names — **not** camelCase:
 is deleted. The HTTP DELETE method on `/reporter/api/tests/{id}` is CSRF-blocked (confirmed); the
 POST bulk-delete endpoint is the only working path.
 
-`cleanup_inspection_sessions` iterates `allReportIds` for orphaned reports from sessions that
-were abandoned without calling `stop_inspection_session`.
+`cleanup_inspection_sessions` iterates `allReports` for orphaned reports from sessions that
+were abandoned without calling `stop_inspection_session`, deleting them grouped by the project
+they were created under.
 
-### Limitation: Android only / JWP only
+### Gestures & app/device control — protocol matrix (confirmed live, v34/v35)
 
-The current implementation hardcodes `platformName: "Android"` and JWP session format.
-iOS and W3C/OSS sessions are not yet supported.
+The Digital.ai Grid (proprietary JWP proxy) and standard Appium Server support **disjoint**
+command sets. Every gesture/launch/control helper in `webdriver.ts` tries the session's native
+mechanism first and falls back through the others, reporting all failures together:
+
+| Operation | Appium Grid (JWP, `isAppiumOss=false`) | Appium Server (W3C/OSS) |
+|---|---|---|
+| Swipe / drag | `POST /touch/perform` (press/wait/moveTo/release; moveTo is ABSOLUTE; `longPress` action works) | `POST /actions` (W3C pointer actions) |
+| Double-tap | `touch/perform` `tap` action with `count: 2` | `/actions` two down/up pairs, 100 ms pause |
+| Pinch/zoom | ❌ `touch/multi/perform` → **501** ("multiTouchActions not supported") | `/actions` two-finger, or `mobile: pinchOpen/CloseGesture` |
+| App launch | `seetest:client.launch` via `POST /execute` — args `[activityUrl, instrument, stopIfRunning]`, **exactly 3 args** | `mobile: startActivity` via `POST /execute/sync` — args `[{intent, wait}]` |
+| App terminate / clear data | `seetest:client.applicationClose` / `applicationClearData` — 1 arg (package) | `mobile: terminateApp` / `mobile: clearApp` — `[{appId}]` |
+| App state | foreground only via `GET /appium/device/current_activity` | `mobile: queryAppState` → 0–4 |
+| Deep link | best-effort: `seetest:client.launch(url, false, true)` — depends on device's URL handler state | `mobile: deepLink` — `[{url, package?}]` |
+| Key press | `POST /appium/device/press_keycode` — `{keycode}` (also `seetest:client.deviceAction("Home")` / `sendText("{HOME}")`) | `mobile: pressKey` — `[{keycode}]` |
+| Keyboard | `POST /appium/device/hide_keyboard`, `GET .../is_keyboard_shown` | `mobile: hideKeyboard` / `mobile: isKeyboardShown` |
+| Orientation | `GET`/`POST /orientation` (both) | same |
+| Clipboard | `POST /appium/device/get_clipboard` / `set_clipboard` (base64; also `seetest:client.setClipboardText`) | `mobile: getClipboard` / `setClipboard` |
+| Geolocation set | `seetest:client.setLocation(lat, lng)` — **string args**; legacy `POST /location` also works | `mobile: setGeolocation` (legacy `POST /location` **500s** on OSS) |
+| Geolocation reset | ❌ `clearLocation` is 0-arg and the Grid execute parser can't express 0-arg commands | `mobile: resetGeolocation` |
+| Alerts | ❌ all alert routes → **501** (dialogs are normal UI elements — tap them) | `POST /alert/accept` / `/alert/dismiss` (404 "no such alert" when none open) |
+| Files | `POST /appium/device/push_file` / `pull_file` — `{path, data}` | `mobile: pushFile` / `pullFile` — `[{remotePath, payload}]` |
+| Back | `POST /back` (works on both) | `POST /back` |
+| Window size | `GET /window/current/size` | `GET /window/rect` |
+
+**Grid execute layer accepts ONLY `seetest:client.*` commands.** `mobile:` anything fails with
+"missing 'client.' prefix"; the legacy `/appium/device/start_activity` route NPEs (500) and
+`/appium/device/activate_app` 404s — yet other legacy `/appium/device/*` routes (press_keycode,
+hide_keyboard, clipboard, files) DO work on the Grid. The Grid returns a mix of **500 and 501**
+(not just 404) for unsupported things, so fallbacks cannot rely on status codes alone; error
+messages from the body matter (`describeWdError` extracts them). The Grid execute parser cannot
+express 0-arg seetest commands ("invalid parameters delimiter") — `clearLocation` is unreachable.
+There is no activate-by-package command on the Grid — `launch_app` effectively requires the
+activity there (from `get_application_info.mainActivity`).
+
+`mobile:` gesture commands (`swipeGesture` etc.) arrived in the Appium 1.22 era — not available on
+Appium 1.8 agents, which is why swipe uses raw W3C actions / JWP touch instead.
+
+`stop_inspection_session` accepts `keepReport: true` — preserves the session's reporter record so
+the platform-recorded video stays retrievable via `download_test_attachments` (kept reports are
+removed from the orphan registry so `cleanup_inspection_sessions` won't delete them).
+
+### Limitation: Android only
+
+`platformName: "Android"` is hardcoded. iOS inspection sessions are not yet supported.
+Both Appium Grid and Appium Server (OSS) projects work — verified live on the Default (Grid)
+and DAIMCP POC (Appium Server) projects.
 
 ## Adding a New Tool
 

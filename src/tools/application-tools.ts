@@ -14,6 +14,7 @@ import {
   extractLanguageFiles,
 } from '../api/applications.js';
 import { getDevicesInDeviceGroup } from '../api/device-groups.js';
+import { resolveDevice } from '../utils/device-resolver.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
@@ -112,7 +113,8 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'get_application_info',
-    'Gets full details for a specific app by its numeric ID, including signing configuration, plugins, and project assignments.',
+    'Gets full details for a specific app by its numeric ID, including signing configuration, plugins, project assignments, ' +
+    'and the launch activity (mainActivity, Android) needed for start_inspection_session and launch_app.',
     {
       applicationId: z.number().describe('The numeric application ID. Use list_applications to find it.'),
       outputFormat: outputFormatParam,
@@ -126,6 +128,7 @@ export function registerApplicationTools(server: McpServer): void {
           `Version: ${app.releaseVersion} (build ${app.buildVersion})`,
           `File Type: ${app.fileType.toUpperCase()}`,
           `Package: ${app.packageName ?? app.bundleIdentifier ?? 'N/A'}`,
+          app.mainActivity ? `Main Activity: ${app.mainActivity}` : '',
           `Unique Name: ${app.uniqueName ?? 'none'}`,
           `Camera Support: ${app.cameraSupport}`,
           `Network Capture: ${app.networkCaptureSupport}`,
@@ -339,11 +342,11 @@ export function registerApplicationTools(server: McpServer): void {
     'For Android, use keepData: true to upgrade the app without losing existing app data.',
     {
       applicationId: z.number().describe('The numeric application ID.'),
-      deviceId: z.string().optional().describe('Single device ID to install on.'),
+      deviceId: z.string().optional().describe('Single device to install on — numeric platform ID, serial number/UDID, or unambiguous device name. Serials are resolved to the numeric ID automatically.'),
       devicesList: z
         .string()
         .optional()
-        .describe('Comma-separated list of device IDs (e.g. "8,235,54").'),
+        .describe('Comma-separated list of numeric device IDs (e.g. "8,235,54").'),
       allDevices: z
         .boolean()
         .optional()
@@ -368,8 +371,14 @@ export function registerApplicationTools(server: McpServer): void {
             isError: true,
           };
         }
+        // The install endpoint requires the numeric platform ID — resolve serials/UDIDs/names.
+        let resolvedDeviceId = deviceId;
+        if (deviceId && !/^\d+$/.test(deviceId.trim())) {
+          const resolved = await resolveDevice(deviceId);
+          resolvedDeviceId = resolved.id;
+        }
         const result = await installApplication(applicationId, {
-          deviceId,
+          deviceId: resolvedDeviceId,
           devicesList,
           allDevices,
           instrument,
@@ -386,10 +395,15 @@ export function registerApplicationTools(server: McpServer): void {
         };
       } catch (e) {
         const msg = (e as Error).message ?? String(e);
-        const hint = msg.includes('400')
-          ? ' — 400 errors on install usually mean the app is not assigned to the target device\'s project. ' +
-            'Call assign_app_to_project(projectId, applicationId) and retry.'
-          : '';
+        let hint = '';
+        if (msg.includes("long parameter 'deviceId' is invalid")) {
+          hint = ' — deviceId must be the numeric platform ID (e.g. 16751287), not the device serial number. ' +
+            'Pass the serial as deviceId and this tool will resolve it, or use list_devices(@serialNumber=\'...\') to look up the ID.';
+        } else if (msg.includes('400')) {
+          hint = ' — 400 errors on install usually mean the app is not assigned to the target device\'s project ' +
+            '(call assign_app_to_project(projectId, applicationId) and retry), or the device is currently reserved ' +
+            '(e.g. by an rdb tunnel or an inspection session — release it first).';
+        }
         return { content: [{ type: 'text', text: `Error: ${msg}${hint}` }], isError: true };
       }
     }
