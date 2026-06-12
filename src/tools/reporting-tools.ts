@@ -131,6 +131,8 @@ export function registerReportingTools(server: McpServer): void {
     'list_test_reports',
     'Search and list test execution reports. Supports filtering, sorting, and pagination. ' +
     'For date-range filtering use startDate/endDate — server-side start_time filtering is CSRF-blocked. ' +
+    'When the user asks for "my reports" / "reports linked to my account", filter by user immediately: ' +
+    '[{"property":"user","operator":"=","value":"<email from get_my_account_info>"}] — do not return a global count first. ' +
     'Scoped to a project if projectId or projectName is provided.',
     {
       limit: z
@@ -157,6 +159,7 @@ export function registerReportingTools(server: McpServer): void {
               'Field to filter on. Confirmed working: ' +
               '"status" (Passed/Failed/Incomplete/Skipped/Error/Healed), ' +
               '"name", ' +
+              '"user" (email, exact match — for "my reports" use the email from get_my_account_info), ' +
               '"has_attachment" ("Y"/"N"), ' +
               '"success" (boolean true/false), ' +
               '"test_id" (number), ' +
@@ -201,7 +204,7 @@ export function registerReportingTools(server: McpServer): void {
       returnTotalCount: z
         .boolean()
         .optional()
-        .describe('If true, the response includes the total matching count. Ignored when startDate/endDate are provided.'),
+        .describe('If true, the response includes the total matching count. Works with startDate/endDate too: the scan continues past limit to count all in-range records (up to 5000 scanned; totalCapped: true indicates the count was truncated). For a count-only query, combine with limit: 1.'),
       startDate: z
         .string()
         .optional()
@@ -225,11 +228,18 @@ export function registerReportingTools(server: McpServer): void {
           const isSortedFetch = getActiveKeyType() === 'jwt';
           const startTs = startDate ? new Date(startDate).getTime() : 0;
           const endTs = endDate ? new Date(endDate).getTime() : Date.now();
+          // When a total is requested, keep scanning past targetLimit to count
+          // all in-range records (up to maxScan) instead of stopping at the limit.
+          const wantTotal = returnTotalCount ?? false;
+          const maxScan = 5000;
           const matched: TestReport[] = [];
+          let matchedCount = 0;
+          let scanned = 0;
+          let countCapped = false;
           let fetchPage = 1;
           let done = false;
 
-          while (!done && matched.length < targetLimit) {
+          while (!done && (wantTotal || matched.length < targetLimit)) {
             const batch = await listTests(
               {
                 limit: 500,
@@ -245,27 +255,36 @@ export function registerReportingTools(server: McpServer): void {
             );
             const records = batch.data ?? [];
             if (records.length === 0) break;
+            scanned += records.length;
 
             for (const r of records) {
               const t = new Date(r.start_time).getTime();
               // Early-exit is only valid when results are sorted descending by start_time.
               if (isSortedFetch && t < startTs) { done = true; break; }
               if (t >= startTs && t <= endTs) {
-                matched.push(r);
-                if (matched.length >= targetLimit) { done = true; break; }
+                matchedCount++;
+                if (matched.length < targetLimit) matched.push(r);
+                if (!wantTotal && matched.length >= targetLimit) { done = true; break; }
               }
             }
             if (records.length < 500) done = true;
+            if (!done && scanned >= maxScan) { countCapped = true; done = true; }
             fetchPage++;
           }
 
           const rangeLabel = `${startDate ?? 'beginning'} → ${endDate ?? 'now'}`;
+          const totalLine = wantTotal
+            ? `Total matching: ${matchedCount}${countCapped ? `+ (count capped after scanning ${maxScan} records — narrow the range for an exact total)` : ''}\n`
+            : '';
           const header = matched.length === 0
-            ? `No tests found in range ${rangeLabel} (date filter applied client-side).`
-            : `${matched.length} test(s) in range ${rangeLabel} (date filter applied client-side):\n`;
+            ? `${totalLine}No tests found in range ${rangeLabel} (date filter applied client-side).`
+            : `${totalLine}${matched.length} test(s) shown for range ${rangeLabel} (date filter applied client-side):\n`;
           return respond(
             outputFormat,
-            { reports: matched },
+            {
+              reports: matched,
+              ...(wantTotal && { total: matchedCount, totalCapped: countCapped }),
+            },
             header + (matched.length > 0 ? '\n' + formatTestReportList(matched) : '')
           );
         }
@@ -423,7 +442,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports',
-    'Permanently delete one or more test execution records by their numeric IDs. This cannot be undone. Requires confirmDeletion: true. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint.',
+    'Permanently delete one or more test execution records by their numeric IDs. This cannot be undone. Requires confirmDeletion: true. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint. PREFERRED cleanup method whenever the IDs are already known (e.g. from a filtered list_test_reports call) — more precise than name or date matching.',
     {
       ids: z
         .array(z.number().int())
@@ -457,7 +476,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports_by_name',
-    'Find and permanently delete test execution records matching a name. Accepts exact match (name) or substring match (nameContains). Searches across all pages. Show a preview first via confirmDeletion: false, then re-call with confirmDeletion: true to execute. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint. IMPORTANT: always pass projectName (exact project name from list_projects) when using Cloud Admin JWT — without it the search spans the default reporter scope and tests from separate project reporter instances will not appear. The numeric projectId param is CSRF-blocked on reporter endpoints and is silently ignored.',
+    'Find and permanently delete test execution records matching a name. Accepts exact match (name) or substring match (nameContains). Searches across all pages. Show a preview first via confirmDeletion: false, then re-call with confirmDeletion: true to execute. If you already have the numeric IDs (e.g. from a filtered list_test_reports call), use delete_test_reports instead — no name-matching ambiguity. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint. IMPORTANT: always pass projectName (exact project name from list_projects) when using Cloud Admin JWT — without it the search spans the default reporter scope and tests from separate project reporter instances will not appear. The numeric projectId param is CSRF-blocked on reporter endpoints and is silently ignored.',
     {
       name: z
         .string()

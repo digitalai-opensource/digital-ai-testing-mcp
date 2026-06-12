@@ -123,8 +123,8 @@ function sanitizeReporterFilter(filter: TestFilterField[]): TestFilterField[] {
     throw new Error(
       `Filter properties [${blocked.join(', ')}] are not supported via API key authentication — ` +
       `the Digital.ai reporter API routes these through CSRF-protected middleware. ` +
-      `Supported filter properties: status, name, has_attachment, success. ` +
-      `For date filtering, retrieve results without a date filter and filter by start_time in the returned data.`
+      `Supported filter properties: status, name, user, has_attachment, success, test_id, project_id, device.os, duration, attachment_count, attachments_size, status_code. ` +
+      `For date filtering, use the startDate/endDate parameters instead.`
     );
   }
   return filter.map((f) =>

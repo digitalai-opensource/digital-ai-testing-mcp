@@ -328,7 +328,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 
 ### Inspection Sessions
 
-22 tools for AI-driven interactive test building. An inspection session opens a live WebDriver connection to a real Android device, giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
+22 tools for AI-driven interactive test building. An inspection session opens a live WebDriver connection to a real Android or iOS device (`platform: "ios"`), giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
@@ -375,8 +375,8 @@ get_test_boilerplate(...)                           → generate the test script
 ```
 
 **Notes:**
-- Android only. iOS sessions are not yet supported.
-- Works against both the legacy Appium Grid (JWP, e.g. the Default project) and Appium Server (W3C/OSS) projects — the session request carries both capability formats and each gesture/launch command auto-detects the protocol per session.
+- Android and iOS (`platform: "ios"`), on both the legacy Appium Grid (JWP) and Appium Server (W3C/OSS) projects — the session request carries both capability formats and each gesture/launch command auto-detects protocol and platform per session.
+- iOS specifics: locate elements by `name`/`label`/`value` (`accessibility id`, `name`, or xpath like `//*[@label='...']`); launch apps by bundle ID (no activity); `press_back` taps the nav-bar back button; clear-app-data and Grid-device clipboard are unavailable.
 - Session reports are created in the Digital.ai reporter automatically. `stop_inspection_session` deletes them. If the MCP server restarts before you call stop, run `cleanup_inspection_sessions` to delete orphaned reports.
 - The session connects to `{BASE_URL}/wd/hub` — the same Grid endpoint used by all Appium tests.
 - `viewUrl` (watch) and `debugUrl` (interact) in the start response are operator-facing browser URLs — share them with the user immediately. `cloudViewLink` is the equivalent Mobile Studio link.

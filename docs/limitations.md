@@ -56,7 +56,7 @@ Both formats are handled automatically by this MCP server — you always provide
 
 The Digital.ai Continuous Testing platform does not expose a REST endpoint for capturing a device screenshot outside of a live WebDriver session. All device screenshot paths (`/api/v1/devices/{id}/screenshot`, `/api/v2/devices/{id}/screenshot`, and variants) return HTTP 404. This has been confirmed by live probe against the production API.
 
-To observe a device screen, the AI agent must hold a live WebDriver session: `start_inspection_session` + `take_inspection_screenshot` provide exactly this (Android only — see the [Inspection Sessions](tools.md#inspection-sessions) reference). Without a session, screen observation requires the Mobile Studio browser UI (developer-facing only) or Android Studio Layout Inspector via an rdb connection. Test attachments (screenshots captured during a test run) are available after the session ends via `download_test_attachments`.
+To observe a device screen, the AI agent must hold a live WebDriver session: `start_inspection_session` + `take_inspection_screenshot` provide exactly this (Android and iOS — see the [Inspection Sessions](tools.md#inspection-sessions) reference). Without a session, screen observation requires the Mobile Studio browser UI (developer-facing only) or Android Studio Layout Inspector via an rdb connection. Test attachments (screenshots captured during a test run) are available after the session ends via `download_test_attachments`.
 
 ## 13. `get_remote_debug_command` Requires Cloud Admin JWT for Reliable Serial Resolution
 

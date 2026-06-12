@@ -175,6 +175,7 @@ Confirmed live-tested on both Cloud Admin JWT and Project API key. Blocked field
 |---|---|---|
 | `status` | `=` | `"Passed"`, `"Failed"`, `"Incomplete"`, `"Skipped"`, `"Error"`, `"Healed"` |
 | `name` | `=`, `contains` | `contains` is case-insensitive substring |
+| `user` | `=` | Email, exact match — for "my reports" use the email from `get_my_account_info` (confirmed live, v34a) |
 | `success` | `=` | Boolean `true`/`false` — string `"true"` is CSRF-blocked |
 | `has_attachment` | `=` | `"Y"` or `"N"` |
 | `test_id` | `=` | Returns 1 record |
@@ -607,11 +608,32 @@ Appium 1.8 agents, which is why swipe uses raw W3C actions / JWP touch instead.
 the platform-recorded video stays retrievable via `download_test_attachments` (kept reports are
 removed from the orphan registry so `cleanup_inspection_sessions` won't delete them).
 
-### Limitation: Android only
+### iOS sessions (confirmed live on iPhone 13 Pro Max, Grid AND Appium Server)
 
-`platformName: "Android"` is hardcoded. iOS inspection sessions are not yet supported.
-Both Appium Grid and Appium Server (OSS) projects work — verified live on the Default (Grid)
-and DAIMCP POC (Appium Server) projects.
+`start_inspection_session(platform: "ios")`. The `InspectionSession.platform` field drives every
+platform branch. Key differences from Android:
+
+| Concern | iOS behavior |
+|---|---|
+| Element attributes | `name` / `label` / `value` / `type` — XCUITest **rejects** Android names (`class`, `text`, `bounds` → 500); the Grid exposes `class` instead of `type` (fetch both, take non-null) |
+| Element geometry | `bounds` attr is EMPTY on Grid iOS — use `GET /element/{id}/rect` (W3C) or `/location` + `/size` (JWP); `elementRect()` handles both |
+| Coordinate space | Grid = physical pixels (1284×2778); XCUITest = logical points (428×926). Always compute gestures from the session's own window size |
+| App launch | bundle ID only, no activity: `seetest:client.launch(bundleId, false, true)` (Grid) / `mobile: launchApp {bundleId}` (OSS) |
+| Back navigation | No Back button. `press_back` taps `//XCUIElementTypeNavigationBar/XCUIElementTypeButton[1]` (via the cheap single-element route), falling back to a left-edge swipe — synthetic edge swipes do NOT trigger the system back gesture on the Grid (confirmed live) |
+| Keys | `mobile: pressButton {home/volumeup/volumedown}` (OSS) / `seetest:client.deviceAction("Home")` (Grid). No keycodes; ENTER = type `"\n"` |
+| Clipboard | works on OSS; Grid iOS devices reject it ("not supported on this device") |
+| clear_data | impossible on iOS (XCUITest limitation) — uninstall/reinstall instead |
+| Geolocation | `mobile: setSimulatedLocation` / `resetSimulatedLocation` on OSS (NOT setGeolocation — that's UiAutomator2); `seetest:client.setLocation` on Grid |
+| Alerts | proper support on OSS (`/alert/accept`); 501 on Grid (same as Android) |
+| app_control query_state | works on OSS (`mobile: queryAppState {bundleId}`); unavailable on Grid iOS (no current_activity equivalent) |
+
+**Dead-session detection:** a 404 on an established session means the Grid/agent terminated it
+(idle timeout or WDA crash — observed live when WDA was hammered during a navigation transition).
+`sessionAwareError` appends recovery guidance; `findFirstElementId` exists so internal helpers
+don't pay findElements' ~9-requests-per-element enrichment cost.
+
+Both Appium Grid and Appium Server (OSS) projects work for BOTH platforms — verified live on the
+Default (Grid) and DAIMCP POC (Appium Server) projects with Android and iPhone devices.
 
 ## Adding a New Tool
 

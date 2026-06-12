@@ -248,6 +248,8 @@ Before generating boilerplate, always find an available device first so the corr
 - "Open the deep link myapp://orders/42 and verify it lands on the order detail screen"
 - "Stop the session but keep the report — I want the session video for the bug ticket" *(keepReport: true, then download_test_attachments)*
 - "Start an inspection session and give me the live view URL so I can watch while you work"
+- "Start an iOS inspection session on an iPhone, launch our app by bundle ID, and map the login screen's elements"
+- "On the iPhone session, navigate into Settings → General and come back using the nav-bar back button"
 - "I want to create a test together — walk me through it step by step and share the device view link" *(the `collaborative_test_creation` prompt packages this flow)*
 - "What inspection sessions are still open? Stop them all."
 - "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin JWT)*

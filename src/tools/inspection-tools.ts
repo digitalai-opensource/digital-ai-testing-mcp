@@ -32,6 +32,7 @@ import {
   handleAlert,
   pushFileToDevice,
   pullFileFromDevice,
+  requireSession,
   listActiveSessions,
   getPendingReportIds,
   deleteAllTrackedReports,
@@ -84,9 +85,16 @@ interface ParsedElement {
   clickable: boolean;
   enabled: boolean;
   fullResourceId: string | null;
+  // iOS attributes
+  name: string | null;
+  label: string | null;
+  value: string | null;
 }
 
-function parseElementTree(xml: string): {
+function parseElementTree(
+  xml: string,
+  platform: 'android' | 'ios'
+): {
   elements: ParsedElement[];
   totalNodes: number;
 } {
@@ -99,9 +107,41 @@ function parseElementTree(xml: string): {
 
   while ((m = tagRe.exec(xml)) !== null) {
     const cls = m[1];
-    if (cls === 'hierarchy') continue;
+    if (cls === 'hierarchy' || cls === 'AppiumAUT' || cls === 'node') continue;
     const attrs = m[2] ?? '';
     totalNodes++;
+
+    if (platform === 'ios') {
+      // XCUI XML: locators live in name/label/value; geometry in x/y/width/height.
+      const name = extractAttr(attrs, 'name');
+      const label = extractAttr(attrs, 'label');
+      const value = extractAttr(attrs, 'value');
+      const visible = extractAttr(attrs, 'visible') !== 'false';
+      const enabled = extractAttr(attrs, 'enabled') !== 'false';
+      const x = extractAttr(attrs, 'x');
+      const y = extractAttr(attrs, 'y');
+      const w = extractAttr(attrs, 'width');
+      const h = extractAttr(attrs, 'height');
+      const bounds =
+        x != null && y != null && w != null && h != null
+          ? `[${x},${y}][${Number(x) + Number(w)},${Number(y) + Number(h)}]`
+          : null;
+
+      elements.push({
+        className: cls,
+        resourceId: null,
+        contentDesc: null,
+        text: null,
+        bounds,
+        clickable: visible,
+        enabled,
+        fullResourceId: null,
+        name: name || null,
+        label: label || null,
+        value: value || null,
+      });
+      continue;
+    }
 
     const resourceId = extractAttr(attrs, 'resource-id');
     const contentDesc = extractAttr(attrs, 'content-desc');
@@ -119,13 +159,43 @@ function parseElementTree(xml: string): {
       clickable,
       enabled,
       fullResourceId: resourceId,
+      name: null,
+      label: null,
+      value: null,
     });
   }
 
   return { elements, totalNodes };
 }
 
-function formatElementTable(elements: ParsedElement[], totalNodes: number): string {
+function formatElementTable(
+  elements: ParsedElement[],
+  totalNodes: number,
+  platform: 'android' | 'ios'
+): string {
+  if (platform === 'ios') {
+    const interesting = elements.filter((e) => e.name || e.label || e.value);
+    const lines: string[] = [
+      `Screen hierarchy: ${totalNodes} nodes total, ${interesting.length} with locators`,
+      '',
+      `${'Type'.padEnd(22)} ${'name'.padEnd(26)} ${'label'.padEnd(26)} ${'value'.padEnd(18)} Vis`,
+      '─'.repeat(98),
+    ];
+    for (const e of interesting) {
+      const t = shortClass(e.className).replace(/^XCUIElementType/, '').padEnd(22);
+      const n = (e.name ?? '-').slice(0, 24).padEnd(26);
+      const l = (e.label ?? '-').slice(0, 24).padEnd(26);
+      const v = (e.value ?? '-').slice(0, 16).padEnd(18);
+      const vis = e.clickable ? '✓' : ' ';
+      lines.push(`${t} ${n} ${l} ${v} ${vis}`);
+    }
+    if (interesting.length === 0) {
+      lines.push('  (no elements with name, label, or value found on this screen)');
+    }
+    lines.push('', "Locate iOS elements with: strategy 'accessibility id' or 'name' (matches name), or xpath like //*[@label='...'] or //XCUIElementTypeButton.");
+    return lines.join('\n');
+  }
+
   // Only show elements with at least one useful locator attribute
   const interesting = elements.filter(
     (e) => e.resourceId || e.contentDesc || e.text
@@ -160,7 +230,7 @@ export function registerInspectionTools(server: McpServer): void {
   // ── start_inspection_session ──────────────────────────────────────────────
   server.tool(
     'start_inspection_session',
-    'Start a live WebDriver session on a real Android device for interactive test building. ' +
+    'Start a live WebDriver session on a real Android or iOS device for interactive test building. ' +
     'Returns a session handle used by all other inspection tools, plus viewUrl/debugUrl — ' +
     'SHARE BOTH URLS WITH THE USER IMMEDIATELY so they can watch (viewUrl) or interact (debugUrl) in real time. ' +
     'The session reserves a device and gives you screenshot + element + gesture access. ' +
@@ -169,10 +239,12 @@ export function registerInspectionTools(server: McpServer): void {
     '  1. find_available_device — find a healthy device (region preference is automatic)\n' +
     '  2. install_application — BEFORE starting the session; install fails while the device is reserved\n' +
     '  3. start_inspection_session — connect with region param for reliable routing; share viewUrl/debugUrl\n' +
-    '  4. launch_app — foreground the app (use mainActivity from get_application_info)\n' +
+    '  4. launch_app — foreground the app (Android: packageName + mainActivity from get_application_info; iOS: bundleIdentifier)\n' +
     '  5. take_inspection_screenshot / get_element_tree — see the screen, discover locators\n' +
     '  6. find_elements / tap_element / type_into_element / swipe_screen / press_back — interact and verify\n' +
     '  7. stop_inspection_session — always call this when done; auto-deletes the test report\n\n' +
+    'iOS NOTES: elements are located by name/label/value (not resource-id); ' +
+    'press_back performs the left-edge back swipe; clipboard and clear_data are unavailable on iOS Grid sessions.\n\n' +
     'KNOWN LIMITATIONS: (a) the app/appPackage/appActivity params return HTTP 500 on some deployments — ' +
     'if that happens, start a generic session (no app params) and use launch_app instead; ' +
     '(b) targeting a specific device via @serialNumber or @model in deviceQuery can time out — ' +
@@ -182,11 +254,16 @@ export function registerInspectionTools(server: McpServer): void {
     'a reserved device and create a test report in the reporter. ' +
     'Use cleanup_inspection_sessions to delete reports from sessions that were abandoned.',
     {
+      platform: z
+        .enum(['android', 'ios'])
+        .optional()
+        .default('android')
+        .describe("Target platform. Default 'android'. Sets platformName and the default deviceQuery @os."),
       deviceQuery: z
         .string()
         .optional()
         .describe(
-          "Server-side device query. Default: \"@os='android' and @category='PHONE'\". " +
+          "Server-side device query. Default: \"@os='android' and @category='PHONE'\" (or @os='iOS' when platform is ios). " +
           "Add @region, @model, @version as needed. Example: \"@os='android' and @category='PHONE' and @model='Pixel 7'\""
         ),
       region: z
@@ -224,6 +301,7 @@ export function registerInspectionTools(server: McpServer): void {
     async (args) => {
       try {
         const session = await createInspectionSession({
+          platform: args.platform ?? 'android',
           deviceQuery: args.deviceQuery,
           region: args.region,
           app: args.app,
@@ -252,6 +330,7 @@ export function registerInspectionTools(server: McpServer): void {
 
         const structured: Record<string, unknown> = {
           handle: session.handle,
+          platform: session.platform,
           device: {
             id: deviceId,
             name: session.deviceName,
@@ -390,9 +469,10 @@ export function registerInspectionTools(server: McpServer): void {
     },
     async (args) => {
       try {
+        const platform = requireSession(args.handle).platform;
         const xml = await getPageSource(args.handle);
-        const { elements, totalNodes } = parseElementTree(xml);
-        const table = formatElementTable(elements, totalNodes);
+        const { elements, totalNodes } = parseElementTree(xml, platform);
+        const table = formatElementTable(elements, totalNodes, platform);
 
         let text = table;
         if (args.includeRawXml) {
@@ -458,7 +538,10 @@ export function registerInspectionTools(server: McpServer): void {
           if (e.className) lines.push(`  type:         ${shortClass(e.className)}`);
           if (e.resourceId) lines.push(`  resource-id:  ${e.resourceId}`);
           if (e.contentDesc) lines.push(`  content-desc: ${e.contentDesc}`);
-          lines.push(`  text:         ${e.text ?? '(empty)'}`);
+          if (e.name) lines.push(`  name:         ${e.name}`);
+          if (e.label) lines.push(`  label:        ${e.label}`);
+          if (e.value) lines.push(`  value:        ${e.value}`);
+          if (e.text != null || (!e.name && !e.label)) lines.push(`  text:         ${e.text ?? '(empty)'}`);
           if (e.bounds) lines.push(`  bounds:       ${e.bounds}`);
           lines.push(`  clickable:    ${e.clickable ?? 'unknown'}`);
           lines.push(`  enabled:      ${e.enabled ?? 'unknown'}`);
@@ -672,17 +755,17 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'launch_app',
     'Launch an installed app on the device in an inspection session — the equivalent of tapping its icon. ' +
-    'ALWAYS pass the activity: get the correct mainActivity from get_application_info(appId) first; ' +
-    'guessing ".MainActivity" often fails, and Digital.ai Grid sessions cannot launch by package name alone ' +
-    '(activity-less activation only works on standalone Appium agents). ' +
+    'Android: ALWAYS pass the activity (get mainActivity from get_application_info(appId); guessing ".MainActivity" often fails, ' +
+    'and Grid sessions cannot launch by package name alone). ' +
+    'iOS: pass the bundleIdentifier as packageName — no activity exists or is needed. ' +
     'Use this instead of navigating to the app via home screen / app drawer / search.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
-      packageName: z.string().describe("Android package name, e.g. 'com.digitalai.sampleapp'."),
+      packageName: z.string().describe("Android package name (e.g. 'com.digitalai.sampleapp') or iOS bundle identifier (e.g. 'com.digitalai.sample')."),
       activity: z
         .string()
         .optional()
-        .describe("Launch activity, e.g. '.LoginActivity'. From get_application_info mainActivity. Effectively required on Digital.ai Grid sessions; omit only on standalone Appium agents to just foreground the app."),
+        .describe("Android launch activity, e.g. '.LoginActivity' — from get_application_info mainActivity; effectively required on Android Grid sessions. Ignored on iOS."),
     },
     async (args) => {
       try {
@@ -712,18 +795,18 @@ export function registerInspectionTools(server: McpServer): void {
   // ── press_back ────────────────────────────────────────────────────────────
   server.tool(
     'press_back',
-    'Press the Android Back button in an inspection session. ' +
-    'Use to dismiss keyboards, close dialogs, or navigate back one screen.',
+    'Navigate back one screen. Android: presses the Back button (also dismisses keyboards and dialogs). ' +
+    'iOS: performs the left-edge back swipe (the platform convention — iOS has no Back button).',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
     },
     async (args) => {
       try {
-        await pressBack(args.handle);
+        const result = await pressBack(args.handle);
         return {
           content: [{
             type: 'text' as const,
-            text: '✅ Back pressed.\n\nCall take_inspection_screenshot to verify the result.',
+            text: `✅ ${result}.\n\nCall take_inspection_screenshot to verify the result.`,
           }],
         };
       } catch (e) {
@@ -882,25 +965,25 @@ export function registerInspectionTools(server: McpServer): void {
   // ── press_key ─────────────────────────────────────────────────────────────
   server.tool(
     'press_key',
-    'Press an Android key: ENTER to submit forms/search, HOME, APP_SWITCH, volume, or any raw keycode. ' +
+    'Press a device key. Android: ENTER to submit forms/search, HOME, APP_SWITCH, volume, or any raw keycode. ' +
+    'iOS: HOME, VOLUME_UP, VOLUME_DOWN, POWER (physical buttons only — for ENTER type "\\n" via type_into_element). ' +
     'Complements press_back (which has its own tool).',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       key: z
         .enum(['HOME', 'BACK', 'ENTER', 'TAB', 'DELETE', 'APP_SWITCH', 'SEARCH', 'MENU', 'VOLUME_UP', 'VOLUME_DOWN', 'POWER'])
         .optional()
-        .describe('Named key. Provide this OR keycode.'),
-      keycode: z.number().int().optional().describe('Raw Android keycode (e.g. 66 = ENTER). Provide this OR key.'),
+        .describe('Named key. Provide this OR keycode. iOS supports HOME, VOLUME_UP, VOLUME_DOWN, POWER.'),
+      keycode: z.number().int().optional().describe('Raw Android keycode (e.g. 66 = ENTER). Android only. Provide this OR key.'),
     },
     async (args) => {
       try {
-        const code = args.keycode ?? (args.key ? ANDROID_KEYCODES[args.key] : undefined);
-        if (code == null) {
+        if (!args.key && args.keycode == null) {
           return { content: [{ type: 'text' as const, text: 'Error: provide either key (named) or keycode (number).' }], isError: true };
         }
-        await pressKey(args.handle, code);
+        const pressed = await pressKey(args.handle, args.key, args.keycode);
         return {
-          content: [{ type: 'text' as const, text: `✅ Pressed ${args.key ?? `keycode ${code}`}.\n\nCall take_inspection_screenshot to verify the result.` }],
+          content: [{ type: 'text' as const, text: `✅ Pressed ${pressed}.\n\nCall take_inspection_screenshot to verify the result.` }],
         };
       } catch (e) {
         return { content: [{ type: 'text' as const, text: `Error pressing key: ${(e as Error).message}` }], isError: true };
@@ -933,10 +1016,11 @@ export function registerInspectionTools(server: McpServer): void {
   // ── app_control ───────────────────────────────────────────────────────────
   server.tool(
     'app_control',
-    'Control app lifecycle in an inspection session: terminate (force-stop), clear_data (reset to first-launch state), ' +
-    'query_state (installed/background/foreground), deep_link (open a URL/URI directly — skip navigation to the screen under test). ' +
-    'NOTE on Grid sessions: query_state only reports the foreground activity; deep_link is best-effort. ' +
-    'To relaunch after terminate/clear_data, use launch_app.',
+    'Control app lifecycle in an inspection session: terminate (force-stop), clear_data (reset to first-launch state — Android only; ' +
+    'iOS requires uninstall/reinstall), query_state (installed/background/foreground), ' +
+    'deep_link (open a URL/URI directly — skip navigation to the screen under test). ' +
+    'NOTE on Grid sessions: query_state reports only the foreground activity (Android) or is unavailable (iOS); deep_link is best-effort. ' +
+    'To relaunch after terminate, use launch_app.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z
@@ -945,7 +1029,7 @@ export function registerInspectionTools(server: McpServer): void {
       packageName: z
         .string()
         .optional()
-        .describe('Android package name. Required for terminate, clear_data, query_state; optional handler hint for deep_link.'),
+        .describe('Android package name or iOS bundle identifier. Required for terminate, clear_data, query_state; optional Android handler hint for deep_link.'),
       url: z.string().optional().describe('URL or URI scheme for deep_link, e.g. "myapp://orders/42" or "https://...".'),
     },
     async (args) => {
@@ -964,7 +1048,8 @@ export function registerInspectionTools(server: McpServer): void {
     'Device-level controls for an inspection session: orientation (get/set — rotation testing), clipboard (get/set — paste flows), ' +
     'geolocation (set/reset — location-based features), alerts (accept/dismiss — system dialogs, Appium Server only), ' +
     'and file transfer (push_file/pull_file — test fixtures like images for upload flows). ' +
-    'Grid session limits: alerts and reset_geolocation are not supported (clear errors explain alternatives).',
+    'Grid session limits: alerts and reset_geolocation are not supported, and iOS Grid devices reject clipboard ops ' +
+    '(clear errors explain alternatives). iOS file paths may require the @bundleId:container syntax.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z

@@ -29,6 +29,7 @@ function makeClient(): AxiosInstance {
 }
 
 export interface InspectionSessionOptions {
+  platform?: 'android' | 'ios';
   deviceQuery?: string;
   region?: string;
   app?: string;
@@ -55,14 +56,17 @@ export async function createInspectionSession(
     // Non-fatal — deletes fall back to the default reporter scope
   }
 
-  let query = opts.deviceQuery ?? "@os='android' and @category='PHONE'";
+  const platform = opts.platform ?? 'android';
+  let query =
+    opts.deviceQuery ??
+    (platform === 'ios' ? "@os='iOS' and @category='PHONE'" : "@os='android' and @category='PHONE'");
   if (opts.region) query = `${query} and @region='${opts.region}'`;
 
   const desiredCapabilities: Record<string, unknown> = {
     'digitalai:accessKey': accessKey,
     'digitalai:deviceQuery': query,
     'digitalai:testName': opts.testName ?? '[MCP Inspection]',
-    'platformName': 'Android',
+    'platformName': platform === 'ios' ? 'iOS' : 'Android',
     'noReset': opts.noReset ?? true,
   };
   if (opts.app) {
@@ -139,6 +143,7 @@ export async function createInspectionSession(
     startedAt: Date.now(),
     canDeleteReport,
     sessionFormat: isW3c ? 'w3c' : 'jwp',
+    platform,
     projectName,
   };
 
@@ -201,14 +206,34 @@ export async function captureScreenshot(
 ): Promise<{ data: string; mimeType: string }> {
   const session = requireSession(handle);
   const client = makeClient();
-  const res = await client.get(`/session/${session.gridSessionId}/screenshot`, {
-    timeout: 30_000,
-  });
+  let res;
+  try {
+    res = await client.get(`/session/${session.gridSessionId}/screenshot`, {
+      timeout: 30_000,
+    });
+  } catch (e) {
+    throw new Error(sessionAwareError(e, handle));
+  }
   if (!res.data.value) throw new Error('Screenshot returned empty response');
   const data = res.data.value as string;
   // Detect image format from base64 prefix — Grid returns PNG, OSS Appium may return JPEG
   const mimeType = data.startsWith('/9j/') ? 'image/jpeg' : 'image/png';
   return { data, mimeType };
+}
+
+// Augment a WebDriver error with a dead-session hint — a 404 on an established
+// session almost always means the Grid/agent terminated it (timeout, WDA crash).
+function sessionAwareError(e: unknown, handle: string): string {
+  const detail = describeWdError(e);
+  const err = e as { response?: { status?: number } };
+  if (err.response?.status === 404) {
+    return (
+      `${detail} — the Grid session has likely been terminated (idle timeout or agent crash). ` +
+      `The handle "${handle}" is no longer usable: call stop_inspection_session to clean up, ` +
+      `then start_inspection_session for a fresh session.`
+    );
+  }
+  return detail;
 }
 
 export async function getPageSource(handle: string): Promise<string> {
@@ -229,6 +254,10 @@ export interface WdElement {
   bounds: string | null;
   clickable: boolean | null;
   enabled: boolean | null;
+  // iOS locator attributes (null on Android)
+  name: string | null;
+  label: string | null;
+  value: string | null;
 }
 
 export async function findElements(
@@ -238,12 +267,18 @@ export async function findElements(
 ): Promise<WdElement[]> {
   const session = requireSession(handle);
   const client = makeClient();
+  const sid = session.gridSessionId;
 
-  const res = await client.post(
-    `/session/${session.gridSessionId}/elements`,
-    { using, value },
-    { timeout: 20_000 }
-  );
+  let res;
+  try {
+    res = await client.post(
+      `/session/${sid}/elements`,
+      { using, value },
+      { timeout: 20_000 }
+    );
+  } catch (e) {
+    throw new Error(sessionAwareError(e, handle));
+  }
 
   const rawList: Record<string, string>[] = res.data.value ?? [];
   const elements: WdElement[] = [];
@@ -253,16 +288,55 @@ export async function findElements(
       raw['ELEMENT'] ?? raw['element-6066-11e4-a52e-4f735466cecf'];
     if (!elementId) continue;
 
-    // Appium 1.x JWP uses XML-matching hyphenated attribute names (resource-id, content-desc)
+    if (session.platform === 'ios') {
+      // iOS attribute model: name/label/value/type. XCUITest rejects Android
+      // names (class, text, bounds) outright; the Grid exposes `class` instead
+      // of `type` — fetch both and take whichever resolves.
+      const [name, label, val, type, cls, enabled, visible] =
+        await Promise.allSettled([
+          getAttr(client, sid, elementId, 'name'),
+          getAttr(client, sid, elementId, 'label'),
+          getAttr(client, sid, elementId, 'value'),
+          getAttr(client, sid, elementId, 'type'),
+          getAttr(client, sid, elementId, 'class'),
+          getAttr(client, sid, elementId, 'enabled'),
+          getAttr(client, sid, elementId, 'visible'),
+        ]).then((rs) => rs.map((r) => (r.status === 'fulfilled' ? r.value : null)));
+
+      let bounds: string | null = null;
+      try {
+        const { x, y, width, height } = await elementRect(client, session, elementId);
+        bounds = `[${x},${y}][${x + width},${y + height}]`;
+      } catch {
+        // Non-fatal — element is still usable without geometry
+      }
+
+      elements.push({
+        elementId,
+        className: type ?? cls,
+        resourceId: null,
+        contentDesc: null,
+        text: null,
+        bounds,
+        clickable: visible === 'true' ? true : visible === 'false' ? false : null,
+        enabled: enabled === 'true' ? true : enabled === 'false' ? false : null,
+        name,
+        label,
+        value: val,
+      });
+      continue;
+    }
+
+    // Android: Appium 1.x JWP uses XML-matching hyphenated attribute names
     const [className, resourceId, contentDesc, text, bounds, clickable, enabled] =
       await Promise.allSettled([
-        getAttr(client, session.gridSessionId, elementId, 'class'),
-        getAttr(client, session.gridSessionId, elementId, 'resource-id'),
-        getAttr(client, session.gridSessionId, elementId, 'content-desc'),
-        getAttr(client, session.gridSessionId, elementId, 'text'),
-        getAttr(client, session.gridSessionId, elementId, 'bounds'),
-        getAttr(client, session.gridSessionId, elementId, 'clickable'),
-        getAttr(client, session.gridSessionId, elementId, 'enabled'),
+        getAttr(client, sid, elementId, 'class'),
+        getAttr(client, sid, elementId, 'resource-id'),
+        getAttr(client, sid, elementId, 'content-desc'),
+        getAttr(client, sid, elementId, 'text'),
+        getAttr(client, sid, elementId, 'bounds'),
+        getAttr(client, sid, elementId, 'clickable'),
+        getAttr(client, sid, elementId, 'enabled'),
       ]).then((rs) => rs.map((r) => (r.status === 'fulfilled' ? r.value : null)));
 
     elements.push({
@@ -274,10 +348,75 @@ export async function findElements(
       bounds,
       clickable: clickable === 'true' ? true : clickable === 'false' ? false : null,
       enabled: enabled === 'true' ? true : enabled === 'false' ? false : null,
+      name: null,
+      label: null,
+      value: null,
     });
   }
 
   return elements;
+}
+
+// Lightweight single-element lookup: one round trip via the singular /element
+// route, no attribute enrichment. Returns null when nothing matches ("no such
+// element" 404). Used by internal helpers (e.g. press_back's nav-bar lookup)
+// where the full findElements enrichment (~9 requests/element) is wasteful.
+export async function findFirstElementId(
+  handle: string,
+  using: string,
+  value: string
+): Promise<string | null> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  try {
+    const res = await client.post(
+      `/session/${session.gridSessionId}/element`,
+      { using, value },
+      { timeout: 20_000 }
+    );
+    const raw: Record<string, string> = res.data.value ?? {};
+    return raw['ELEMENT'] ?? raw['element-6066-11e4-a52e-4f735466cecf'] ?? null;
+  } catch (e) {
+    const detail = describeWdError(e).toLowerCase();
+    if (detail.includes('no such element') || detail.includes('an element could not be located')) {
+      return null;
+    }
+    throw new Error(describeWdError(e));
+  }
+}
+
+// Element geometry that works on every agent: W3C agents route GET /element/{id}/rect;
+// JWP agents (incl. the Grid, both platforms — confirmed live) route /location + /size.
+async function elementRect(
+  client: AxiosInstance,
+  session: InspectionSession,
+  elementId: string
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  const sid = session.gridSessionId;
+  const rect = async () => {
+    const r = await client.get(`/session/${sid}/element/${elementId}/rect`, { timeout: 10_000 });
+    const v = r.data.value;
+    if (v?.width == null) throw new Error('rect route returned no geometry');
+    return { x: Number(v.x), y: Number(v.y), width: Number(v.width), height: Number(v.height) };
+  };
+  const locSize = async () => {
+    const [loc, size] = await Promise.all([
+      client.get(`/session/${sid}/element/${elementId}/location`, { timeout: 10_000 }),
+      client.get(`/session/${sid}/element/${elementId}/size`, { timeout: 10_000 }),
+    ]);
+    return {
+      x: Number(loc.data.value?.x),
+      y: Number(loc.data.value?.y),
+      width: Number(size.data.value?.width),
+      height: Number(size.data.value?.height),
+    };
+  };
+  const [primary, fallback] = session.sessionFormat === 'w3c' ? [rect, locSize] : [locSize, rect];
+  try {
+    return await primary();
+  } catch {
+    return await fallback();
+  }
 }
 
 async function getAttr(
@@ -495,6 +634,34 @@ export async function launchApp(
     throw new Error(`All launch mechanisms failed:\n  ${errors.join('\n  ')}`);
   };
 
+  if (session.platform === 'ios') {
+    // iOS launches by bundle ID — there is no activity concept.
+    const seetest: Mechanism = ['seetest:client.launch', () =>
+      client.post(
+        `/session/${sid}/execute`,
+        { script: 'seetest:client.launch', args: [packageName, false, true] },
+        { timeout: 30_000 }
+      )];
+    const w3cLaunch: Mechanism = ['mobile: launchApp', () =>
+      client.post(
+        `/session/${sid}/execute/sync`,
+        { script: 'mobile: launchApp', args: [{ bundleId: packageName }] },
+        { timeout: 30_000 }
+      )];
+    const w3cActivate: Mechanism = ['mobile: activateApp', () =>
+      client.post(
+        `/session/${sid}/execute/sync`,
+        { script: 'mobile: activateApp', args: [{ bundleId: packageName }] },
+        { timeout: 30_000 }
+      )];
+
+    const order = session.sessionFormat === 'w3c'
+      ? [w3cLaunch, w3cActivate, seetest]
+      : [seetest, w3cLaunch, w3cActivate];
+    const used = await tryAll(order);
+    return `Launched ${packageName} via ${used}`;
+  }
+
   if (activity) {
     // Normalise: ".LoginActivity" and "com.full.path.LoginActivity" both valid.
     const fullActivity = activity.startsWith('.') || activity.includes('.')
@@ -548,11 +715,36 @@ export async function launchApp(
   return `Activated ${packageName} via ${used} (foregrounded)`;
 }
 
-export async function pressBack(handle: string): Promise<void> {
+export async function pressBack(handle: string): Promise<string> {
   const session = requireSession(handle);
+  if (session.platform === 'ios') {
+    // iOS has no Back button. Primary: tap the navigation bar's back button —
+    // present on every pushed screen (single cheap lookup, no enrichment).
+    // Fallback: the left-edge swipe, which only helps in gesture-driven apps
+    // (synthetic touches often don't trigger the system edge recognizer —
+    // confirmed live on the Grid).
+    try {
+      const backButton = await findFirstElementId(
+        handle,
+        'xpath',
+        '//XCUIElementTypeNavigationBar/XCUIElementTypeButton[1]'
+      );
+      if (backButton) {
+        await tapElement(handle, backButton);
+        return 'Tapped the navigation bar back button';
+      }
+    } catch {
+      // Fall through to the edge swipe
+    }
+    const { width, height } = await getWindowSize(handle);
+    const midY = Math.round(height / 2);
+    await swipeScreen(handle, 2, midY, Math.round(width * 0.6), midY, 300);
+    return 'No navigation bar back button found — attempted the left-edge back swipe (may not navigate in all apps; if the screen is unchanged, look for an on-screen close/back element)';
+  }
   const client = makeClient();
   // POST /back is a standard WebDriver route — works on JWP and W3C alike.
   await client.post(`/session/${session.gridSessionId}/back`, {}, { timeout: 15_000 });
+  return 'Back pressed';
 }
 
 // Execute a script via the protocol-appropriate endpoint.
@@ -571,31 +763,15 @@ function execScript(
   );
 }
 
-// Resolve an element's center point from its bounds attribute ("[x1,y1][x2,y2]").
-// Works identically on JWP and W3C agents.
-async function elementCenter(
-  client: AxiosInstance,
-  sessionId: string,
-  elementId: string
-): Promise<{ x: number; y: number }> {
-  const res = await client.get(
-    `/session/${sessionId}/element/${elementId}/attribute/bounds`,
-    { timeout: 10_000 }
-  );
-  const m = /\[(\d+),(\d+)\]\[(\d+),(\d+)\]/.exec(String(res.data.value ?? ''));
-  if (!m) throw new Error(`Could not read bounds for element ${elementId}`);
-  return {
-    x: Math.round((Number(m[1]) + Number(m[3])) / 2),
-    y: Math.round((Number(m[2]) + Number(m[4])) / 2),
-  };
-}
-
 async function resolvePoint(
   client: AxiosInstance,
   session: InspectionSession,
   opts: { elementId?: string; x?: number; y?: number }
 ): Promise<{ x: number; y: number }> {
-  if (opts.elementId) return elementCenter(client, session.gridSessionId, opts.elementId);
+  if (opts.elementId) {
+    const { x, y, width, height } = await elementRect(client, session, opts.elementId);
+    return { x: Math.round(x + width / 2), y: Math.round(y + height / 2) };
+  }
   if (opts.x != null && opts.y != null) return { x: opts.x, y: opts.y };
   throw new Error('Provide either elementId or both x and y.');
 }
@@ -874,15 +1050,58 @@ export const ANDROID_KEYCODES: Record<string, number> = {
   APP_SWITCH: 187,
 };
 
-export async function pressKey(handle: string, keycode: number): Promise<void> {
+// iOS physical buttons: XCUITest `mobile: pressButton` name → SeeTest deviceAction label.
+const IOS_BUTTONS: Record<string, { w3c: string; grid: string }> = {
+  HOME: { w3c: 'home', grid: 'Home' },
+  VOLUME_UP: { w3c: 'volumeup', grid: 'Volume Up' },
+  VOLUME_DOWN: { w3c: 'volumedown', grid: 'Volume Down' },
+  POWER: { w3c: 'power', grid: 'Lock' },
+};
+
+export async function pressKey(
+  handle: string,
+  key?: string,
+  keycode?: number
+): Promise<string> {
   const session = requireSession(handle);
   const client = makeClient();
   const sid = session.gridSessionId;
 
+  if (session.platform === 'ios') {
+    const button = key ? IOS_BUTTONS[key] : undefined;
+    if (!button) {
+      throw new Error(
+        `${key ?? `keycode ${keycode}`} is not available on iOS. Supported: HOME, VOLUME_UP, VOLUME_DOWN, POWER. ` +
+        `For ENTER, type "\\n" with type_into_element; iOS has no BACK button — press_back performs the edge-swipe instead.`
+      );
+    }
+    const w3c = () => execScript(client, session, 'mobile: pressButton', [{ name: button.w3c }]);
+    const grid = () =>
+      client.post(
+        `/session/${sid}/execute`,
+        { script: 'seetest:client.deviceAction', args: [button.grid] },
+        { timeout: 15_000 }
+      );
+    const [primary, fallback] = session.sessionFormat === 'w3c' ? [w3c, grid] : [grid, w3c];
+    try {
+      await primary();
+    } catch (e) {
+      try {
+        await fallback();
+      } catch (e2) {
+        throw new Error(`pressKey failed: ${describeWdError(e)}; fallback: ${describeWdError(e2)}`);
+      }
+    }
+    return key!;
+  }
+
+  const code = keycode ?? (key ? ANDROID_KEYCODES[key] : undefined);
+  if (code == null) throw new Error('Provide a named key or an Android keycode.');
+
   // Confirmed live: the Grid routes the legacy press_keycode endpoint.
   const jwp = () =>
-    client.post(`/session/${sid}/appium/device/press_keycode`, { keycode }, { timeout: 15_000 });
-  const w3c = () => execScript(client, session, 'mobile: pressKey', [{ keycode }]);
+    client.post(`/session/${sid}/appium/device/press_keycode`, { keycode: code }, { timeout: 15_000 });
+  const w3c = () => execScript(client, session, 'mobile: pressKey', [{ keycode: code }]);
 
   const [primary, fallback] = session.sessionFormat === 'w3c' ? [w3c, jwp] : [jwp, w3c];
   try {
@@ -891,6 +1110,7 @@ export async function pressKey(handle: string, keycode: number): Promise<void> {
     if (!isUnknownCommand(e)) throw e;
     await fallback();
   }
+  return key ?? `keycode ${code}`;
 }
 
 export async function isKeyboardShown(handle: string): Promise<boolean> {
@@ -965,11 +1185,14 @@ export async function appControl(
   const sid = session.gridSessionId;
   const isW3c = session.sessionFormat === 'w3c';
 
+  const isIos = session.platform === 'ios';
+
   switch (action) {
     case 'terminate': {
-      if (!packageName) throw new Error('terminate requires packageName.');
+      if (!packageName) throw new Error('terminate requires packageName (Android) or bundleIdentifier (iOS).');
       if (isW3c) {
-        const res = await execScript(client, session, 'mobile: terminateApp', [{ appId: packageName }]);
+        const args = isIos ? { bundleId: packageName } : { appId: packageName };
+        const res = await execScript(client, session, 'mobile: terminateApp', [args]);
         return res.data.value
           ? `Terminated ${packageName}.`
           : `${packageName} was not running.`;
@@ -979,6 +1202,12 @@ export async function appControl(
     }
     case 'clear_data': {
       if (!packageName) throw new Error('clear_data requires packageName.');
+      if (isIos) {
+        throw new Error(
+          'iOS cannot clear app data (XCUITest has no equivalent of Android clearApp). ' +
+          'Uninstall and reinstall the app instead: uninstall_application_by_package, then install_application.'
+        );
+      }
       if (isW3c) {
         await execScript(client, session, 'mobile: clearApp', [{ appId: packageName }]);
       } else {
@@ -987,13 +1216,20 @@ export async function appControl(
       return `Cleared app data for ${packageName}. The app is back to first-launch state.`;
     }
     case 'query_state': {
-      if (!packageName) throw new Error('query_state requires packageName.');
+      if (!packageName) throw new Error('query_state requires packageName (Android) or bundleIdentifier (iOS).');
       if (isW3c) {
-        const res = await execScript(client, session, 'mobile: queryAppState', [{ appId: packageName }]);
+        const args = isIos ? { bundleId: packageName } : { appId: packageName };
+        const res = await execScript(client, session, 'mobile: queryAppState', [args]);
         const code = Number(res.data.value);
         return `${packageName}: ${APP_STATE_LABELS[code] ?? `state ${code}`} (code ${code}).`;
       }
-      // The Grid has no queryAppState — report the foreground check instead.
+      if (isIos) {
+        throw new Error(
+          'query_state is not supported on Grid iOS sessions (no current-activity equivalent). ' +
+          'Use take_inspection_screenshot to check what is in the foreground.'
+        );
+      }
+      // The Android Grid has no queryAppState — report the foreground check instead.
       const res = await client.get(`/session/${sid}/appium/device/current_activity`, {
         timeout: 15_000,
       });
@@ -1007,7 +1243,8 @@ export async function appControl(
       if (!url) throw new Error('deep_link requires url.');
       if (isW3c) {
         const args: Record<string, unknown> = { url };
-        if (packageName) args['package'] = packageName;
+        // Android needs the handler package; iOS routes through the system.
+        if (packageName && !isIos) args['package'] = packageName;
         await execScript(client, session, 'mobile: deepLink', [args]);
         return `Opened deep link ${url}.`;
       }
@@ -1047,18 +1284,23 @@ export async function getClipboard(handle: string): Promise<string> {
   const session = requireSession(handle);
   const client = makeClient();
   let b64: string;
-  if (session.sessionFormat === 'w3c') {
-    const res = await execScript(client, session, 'mobile: getClipboard', [
-      { contentType: 'plaintext' },
-    ]);
-    b64 = String(res.data.value ?? '');
-  } else {
-    const res = await client.post(
-      `/session/${session.gridSessionId}/appium/device/get_clipboard`,
-      { contentType: 'plaintext' },
-      { timeout: 15_000 }
-    );
-    b64 = String(res.data.value ?? '');
+  try {
+    if (session.sessionFormat === 'w3c') {
+      const res = await execScript(client, session, 'mobile: getClipboard', [
+        { contentType: 'plaintext' },
+      ]);
+      b64 = String(res.data.value ?? '');
+    } else {
+      const res = await client.post(
+        `/session/${session.gridSessionId}/appium/device/get_clipboard`,
+        { contentType: 'plaintext' },
+        { timeout: 15_000 }
+      );
+      b64 = String(res.data.value ?? '');
+    }
+  } catch (e) {
+    // Grid iOS devices report "This option is not supported on this device".
+    throw new Error(describeWdError(e));
   }
   return b64 ? Buffer.from(b64, 'base64').toString('utf8') : '';
 }
@@ -1067,17 +1309,21 @@ export async function setClipboard(handle: string, text: string): Promise<void> 
   const session = requireSession(handle);
   const client = makeClient();
   const content = Buffer.from(text, 'utf8').toString('base64');
-  if (session.sessionFormat === 'w3c') {
-    await execScript(client, session, 'mobile: setClipboard', [
+  try {
+    if (session.sessionFormat === 'w3c') {
+      await execScript(client, session, 'mobile: setClipboard', [
+        { content, contentType: 'plaintext' },
+      ]);
+      return;
+    }
+    await client.post(
+      `/session/${session.gridSessionId}/appium/device/set_clipboard`,
       { content, contentType: 'plaintext' },
-    ]);
-    return;
+      { timeout: 15_000 }
+    );
+  } catch (e) {
+    throw new Error(describeWdError(e));
   }
-  await client.post(
-    `/session/${session.gridSessionId}/appium/device/set_clipboard`,
-    { content, contentType: 'plaintext' },
-    { timeout: 15_000 }
-  );
 }
 
 export async function setGeolocation(
@@ -1088,11 +1334,13 @@ export async function setGeolocation(
   const session = requireSession(handle);
   const client = makeClient();
   if (session.sessionFormat === 'w3c') {
-    // Legacy POST /location 500s on Appium Server — mobile: setGeolocation is the route.
-    await execScript(client, session, 'mobile: setGeolocation', [{ latitude, longitude }]);
+    // Legacy POST /location 500s on Appium Server. XCUITest uses
+    // setSimulatedLocation; UiAutomator2 uses setGeolocation — both confirmed live.
+    const script = session.platform === 'ios' ? 'mobile: setSimulatedLocation' : 'mobile: setGeolocation';
+    await execScript(client, session, script, [{ latitude, longitude }]);
     return;
   }
-  // Confirmed live on the Grid: seetest:client.setLocation takes string args.
+  // Confirmed live on the Grid (both platforms): seetest:client.setLocation, string args.
   await execScript(client, session, 'seetest:client.setLocation', [
     String(latitude),
     String(longitude),
@@ -1110,7 +1358,8 @@ export async function resetGeolocation(handle: string): Promise<void> {
     );
   }
   const client = makeClient();
-  await execScript(client, session, 'mobile: resetGeolocation', [{}]);
+  const script = session.platform === 'ios' ? 'mobile: resetSimulatedLocation' : 'mobile: resetGeolocation';
+  await execScript(client, session, script, [{}]);
 }
 
 export async function handleAlert(
@@ -1133,11 +1382,15 @@ export async function handleAlert(
       { timeout: 15_000 }
     );
   } catch (e) {
-    const detail = describeWdError(e);
-    if (detail.toLowerCase().includes('no alert') || detail.toLowerCase().includes('noalertopen')) {
+    const detail = describeWdError(e).toLowerCase();
+    if (
+      detail.includes('no alert') ||
+      detail.includes('noalertopen') ||
+      detail.includes('modal dialog when one was not open')
+    ) {
       throw new Error('No alert is present on the screen — nothing to accept/dismiss.');
     }
-    throw new Error(detail);
+    throw new Error(describeWdError(e));
   }
 }
 

@@ -780,7 +780,7 @@ The server also logs a readiness check at startup (visible in Docker logs): `Wor
 The four most commonly encountered:
 
 1. **No API to trigger Appium test execution.** Tests launch from Appium clients (IDE, CI scripts). The server manages devices, apps, reservations, and results — it cannot start an Appium session itself. (Interactive [inspection sessions](docs/tools.md#inspection-sessions) are the exception: live WebDriver sessions for element discovery, Android only.)
-2. **Inspection sessions are Android-only** — iOS is not yet supported. Both the legacy Appium Grid (JWP) and Appium Server (W3C/OSS) projects work.
+2. **Inspection sessions support Android and iOS** on both the legacy Appium Grid (JWP) and Appium Server (W3C/OSS) projects. iOS caveats: no clear-app-data, no clipboard on Grid devices, and back navigation uses the nav-bar button (iOS has no Back button).
 3. **No user disable/lock endpoint.** Removing access for a user provisioned solely for a POC means deleting the account — which is why `close_poc` requires per-user confirmation.
 4. **Reporter API restrictions for project API keys** — server-side sort and report deletion require a Cloud Admin JWT. Tools compensate automatically (client-side sorting, clear pre-flight errors), at the cost of slower full-scan queries under project keys.
 
