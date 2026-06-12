@@ -19,7 +19,6 @@ import {
   pinchZoom,
   scrollToElement,
   pressKey,
-  ANDROID_KEYCODES,
   isKeyboardShown,
   hideKeyboard,
   appControl,
