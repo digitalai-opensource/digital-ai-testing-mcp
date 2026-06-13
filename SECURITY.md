@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 1.0.x (latest) | ✅ |
-| < 1.0.0 | ❌ |
+| 1.3.x (latest) | ✅ |
+| < 1.3.0 | ❌ |
 
 Security fixes are applied to the latest release only. We do not backport to older minor versions.
 
@@ -63,13 +63,7 @@ When run via Docker (the recommended deployment), the container has no access to
 
 ### Dependency Audit
 
-Runtime dependencies are minimal (Axios, dotenv, Zod, the MCP SDK). Development dependencies include Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies.
-
-One known finding is currently tracked:
-
-| Advisory | Package | Severity | Notes |
-|---|---|---|---|
-| GHSA-5xrq-8626-4rwp | `vitest` | Moderate | Affects the Vitest UI server only. This project runs `vitest run` (headless) — the UI server is never started. No attack surface. |
+Runtime dependencies are minimal (Axios, dotenv, Zod, the MCP SDK). Development dependencies include Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies. No known findings are currently tracked.
 
 ---
 
