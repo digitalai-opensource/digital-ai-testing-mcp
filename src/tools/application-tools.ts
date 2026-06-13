@@ -15,12 +15,30 @@ import {
 } from '../api/applications.js';
 import { getDevicesInDeviceGroup } from '../api/device-groups.js';
 import { getMyAccountInfo } from '../api/users.js';
+import { listActiveSessions } from '../api/webdriver.js';
 import { resolveDevice } from '../utils/device-resolver.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatApplicationList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+
+// v43 Fix C — structured (not prose) test-creation guidance, attached to the entry-point
+// tools an agent calls first when building a test. The doc's argument: agents treat a
+// structured response field as fact to act on, but treat description prose as background
+// context. `liveInspectionSession` is the one selector source the MCP can actually verify.
+function testCreationGuidance() {
+  return {
+    decideModeFirst:
+      'If you are creating a test: INTERACTIVE (start_inspection_session) when intent is vague, you lack the app source, ' +
+      'or you have no captured element IDs; AUTONOMOUS (get_test_boilerplate) only with specific intent AND a real selector source.',
+    liveInspectionSession: listActiveSessions().length > 0,
+    prohibited:
+      'Authoring a test from guessed/placeholder element IDs or fabricated credentials and presenting it as finished — ' +
+      'including by writing the file yourself instead of using get_test_boilerplate.',
+    beforeDelivering: 'Run validate_test_script on any test you produce; do not present a script it flags.',
+  };
+}
 
 export function registerApplicationTools(server: McpServer): void {
   server.tool(
@@ -108,6 +126,7 @@ export function registerApplicationTools(server: McpServer): void {
             // assigned to it when several uploads share a name (v36).
             projects: (a.projectsInfo ?? []).map(p => p.name),
           })),
+          _testCreationGuidance: testCreationGuidance(),
         };
         const humanText = appendTruncationNotice(
           `Found ${paged.total} application(s):\n\n${formatApplicationList(paged.items)}`,
@@ -153,7 +172,7 @@ export function registerApplicationTools(server: McpServer): void {
         ]
           .filter(Boolean)
           .join('\n');
-        return respond(outputFormat, app, humanText);
+        return respond(outputFormat, { ...app, _testCreationGuidance: testCreationGuidance() }, humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

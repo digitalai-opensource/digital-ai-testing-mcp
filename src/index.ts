@@ -26,6 +26,7 @@ import { registerTransactionTools } from './tools/transaction-tools.js';
 import { registerCoverageTools } from './tools/coverage-tools.js';
 import { registerDebugTools } from './tools/debug-tools.js';
 import { registerInspectionTools } from './tools/inspection-tools.js';
+import { registerPerformanceTools } from './tools/performance-tools.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
@@ -50,7 +51,24 @@ const version = getServerVersion();
 console.error(`[${name}] v${version} starting...`);
 console.error(`[${name}] Target: ${process.env.DIGITAL_AI_BASE_URL}`);
 
-const server = new McpServer({ name, version });
+// Server instructions are delivered to the client at connect time — BEFORE the agent
+// forms a plan — so they carry more weight than tool descriptions (which are read at
+// call time, after a plan is already committed; the v43 root cause). This slot is the
+// MCP's only reach into the consuming agent ahead of its first action, so it leads with
+// the one policy that keeps being bypassed: never author test code from guessed selectors.
+const SERVER_INSTRUCTIONS = `Digital.ai Continuous Testing — device farm, app lifecycle, reporting, and test authoring.
+
+TEST-AUTHORING POLICY — read this BEFORE you plan or create any test for an app:
+1. Decide the mode FIRST, before calling any tool or writing any file:
+   • INTERACTIVE (the default whenever intent is vague, you lack the app's source code, or the user says anything like "let's decide as we go"): call start_inspection_session, capture REAL element IDs via get_element_tree / open_mobile_studio, and build steps from those.
+   • AUTONOMOUS (only when intent is step-specific AND you already have a real selector source — captured inspection IDs, or authoritative app source in the workspace): use get_test_boilerplate. It returns NO runnable code for a real app unless a live inspection session exists or you pass confirmSelectorsVerified:true.
+2. PROHIBITED, regardless of how the request is phrased: hand-writing or generating a test file with invented or placeholder element IDs (e.g. nav_catalog, home_container), guessed XPaths, or fabricated credentials, and presenting it as a finished test. A test built without real, inspection-sourced (or source-derived) selectors is non-functional — do not deliver it. Writing the file yourself instead of calling get_test_boilerplate does NOT exempt you from this.
+3. If you have no selector source, you are in INTERACTIVE mode by definition — start_inspection_session first. If you are unsure which mode the user wants, ASK before calling any tool. A test-type label picked from a menu ("login test", "smoke", "e2e") is a category, not a specification.
+4. Before you present or save ANY test — generated here OR written by hand — run validate_test_script on it. If it flags placeholder selectors, a scaffold fail-guard, or placeholder credentials, the test is not runnable; fix it before delivering.
+
+GENERAL: credentials and base URL come from the active profile (switch_environment changes it — never read them from env). Destructive tools require confirmDeletion:true. Reporter and transaction tools require a Cloud Admin JWT profile.`;
+
+const server = new McpServer({ name, version }, { instructions: SERVER_INSTRUCTIONS });
 
 registerUserTools(server);
 registerDeviceTools(server);
@@ -76,9 +94,10 @@ registerTransactionTools(server);
 registerCoverageTools(server);
 registerDebugTools(server);
 registerInspectionTools(server);
+registerPerformanceTools(server);
 registerMetaTools(server);
 
-console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 5 prompts).`);
+console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 6 prompts).`);
 
 // Startup parity check: verify all workflow dependency tools are actually registered.
 // A missing tool here means a module failed to load — the image needs to be rebuilt.

@@ -706,6 +706,75 @@ export interface Transaction {
   attachments?: unknown[];
 }
 
+// ─── Performance Comparison (built on Transaction data) ──────────────────────
+// Result shapes for compare_performance_transactions / assess_comparison_confounds
+// / detect_performance_outliers. The statistical primitives (MetricSummary,
+// OutlierResult) live in src/utils/performance-stats.ts; these are the
+// domain-level report objects assembled in src/utils/performance-comparison.ts.
+
+// Which dimensions are allowed as the declared "comparison axis" — the thing
+// that is SUPPOSED to differ between the two sides. Anything else that varies
+// is a confound.
+export type ComparisonDimension =
+  | 'appVersion'
+  | 'deviceModel'
+  | 'deviceOs'
+  | 'deviceVersion'
+  | 'networkProfile'
+  | 'deviceName'
+  | 'projectName'
+  | 'name'        // transaction name
+  | 'region'      // derived from deviceName suffix / device record; best-effort
+  | 'testId';     // two test scripts purporting to test the same thing
+
+// One metric ("speedIndex", "cpuAvg", …) summarised for both sides plus the delta.
+export interface MetricComparison {
+  metric: string;
+  unit: string;
+  sideA: import('../utils/performance-stats.js').MetricSummary;
+  sideB: import('../utils/performance-stats.js').MetricSummary;
+  // Delta is computed on the headline aggregate (trimmedMean, falling back to
+  // median then mean) of B minus A. Positive = B is higher than A.
+  deltaTrimmedMean: number | null;
+  deltaMedian: number | null;
+  deltaMean: number | null;
+  percentChangeTrimmedMean: number | null; // (B-A)/A * 100 on trimmed mean
+}
+
+export interface PerformanceSide {
+  label: string;
+  transactionIds: number[];
+  n: number;
+  excludedIds: number[];          // dropped as outliers / missing the metric
+}
+
+export interface PerformanceComparison {
+  sideA: PerformanceSide;
+  sideB: PerformanceSide;
+  metrics: MetricComparison[];
+  outlierExclusionApplied: boolean;
+  trimFraction: number;
+  notes: string[];
+}
+
+export type ConfoundSeverity = 'high' | 'medium' | 'low' | 'info';
+
+export interface ConfoundFlag {
+  dimension: ComparisonDimension | string;
+  severity: ConfoundSeverity;
+  kind: 'cross-side' | 'within-side' | 'telemetry' | 'imbalance';
+  message: string;
+  sideAValues?: string[];
+  sideBValues?: string[];
+}
+
+export interface ConfoundAssessment {
+  comparisonAxis: (ComparisonDimension | string)[];
+  validity: 'clean' | 'caveated' | 'confounded';
+  flags: ConfoundFlag[];
+  summary: string;
+}
+
 // ─── Inspection Sessions (WebDriver-based native inspection) ─────────────────
 
 export interface InspectionSession {

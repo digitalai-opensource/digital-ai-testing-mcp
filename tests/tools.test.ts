@@ -22,6 +22,8 @@ import { registerApplicationTools } from '../src/tools/application-tools.js';
 import { registerReportingTools } from '../src/tools/reporting-tools.js';
 import { registerRepositoryTools } from '../src/tools/repository-tools.js';
 import { registerProvisioningProfileTools } from '../src/tools/provisioning-profile-tools.js';
+import { registerPerformanceTools } from '../src/tools/performance-tools.js';
+import { registerBoilerplateTools } from '../src/tools/boilerplate-tools.js';
 import { resetClient, getActiveKeyType, getActiveAccessKey, getActiveUrl } from '../src/api/client.js';
 import { validateInputPath, validateOutputPath } from '../src/utils/path-guard.js';
 
@@ -54,6 +56,8 @@ beforeAll(async () => {
   registerReportingTools(server);
   registerRepositoryTools(server);
   registerProvisioningProfileTools(server);
+  registerPerformanceTools(server);
+  registerBoilerplateTools(server);
 
   client = new Client({ name: 'harness-client', version: '0.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -107,6 +111,99 @@ describe('Reporter delete tools gate on Cloud Admin JWT before guard or API', ()
       assert.equal(res.isError, true);
     });
   }
+});
+
+describe('Performance comparison tools gate on Cloud Admin JWT before any API call', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
+  });
+
+  const PERF_TOOLS: Array<{ tool: string; args: Record<string, unknown> }> = [
+    { tool: 'compare_performance_transactions', args: { sideALabel: 'A', sideBLabel: 'B', sideATransactionIds: [1], sideBTransactionIds: [2] } },
+    { tool: 'assess_comparison_confounds', args: { sideALabel: 'A', sideBLabel: 'B', sideATransactionIds: [1], sideBTransactionIds: [2], comparisonAxis: ['appVersion'] } },
+    { tool: 'detect_performance_outliers', args: { transactionIds: [1, 2, 3] } },
+  ];
+
+  for (const { tool, args } of PERF_TOOLS) {
+    it(`${tool} with a project API key returns the JWT-gate message`, async () => {
+      const res = await callTool(tool, args);
+      const text = textOf(res);
+      assert.match(text, /Cloud Admin JWT required/, `${tool}: got: ${text.slice(0, 200)}`);
+      assert.match(text, /switch_environment/);
+      assert.equal(res.isError, true);
+    });
+  }
+});
+
+describe('get_test_boilerplate inspection gate (v42) blocks before emitting any code', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+  });
+
+  // No inspection session exists in the harness, so a real-app target must block.
+  const REAL_APP_CASES: Array<{ name: string; args: Record<string, unknown> }> = [
+    { name: 'by packageName', args: { platform: 'android', language: 'python', packageName: 'com.example.app' } },
+    { name: 'by appId', args: { platform: 'android', language: 'java-junit5', appId: 42 } },
+    { name: 'by bundleIdentifier', args: { platform: 'ios', language: 'java-testng', bundleIdentifier: 'com.example.app' } },
+  ];
+
+  for (const { name, args } of REAL_APP_CASES) {
+    it(`blocks (${name}) with a structured no-code redirect and no file content`, async () => {
+      const res = await callTool('get_test_boilerplate', args);
+      const text = textOf(res);
+      assert.equal(res.isError, true, `expected blocked isError, got: ${text.slice(0, 200)}`);
+      assert.match(text, /"reason":"no_verified_selectors"|no_verified_selectors/);
+      assert.match(text, /start_inspection_session/);
+      // The block must precede any generated source — no boilerplate body leaks through.
+      assert.doesNotMatch(text, /import |public class |def setUp|RemoteWebDriver/);
+    });
+  }
+
+  it('confirmSelectorsVerified:true bypasses the gate (then proceeds to generation)', async () => {
+    const res = await callTool('get_test_boilerplate', {
+      platform: 'android', language: 'python', packageName: 'com.example.app', confirmSelectorsVerified: true,
+    });
+    // Past the gate it reads real boilerplate files from disk and generates — not the block.
+    assert.doesNotMatch(textOf(res), /no_verified_selectors/);
+  });
+});
+
+describe('validate_test_script (v43) flags fabricated/placeholder tests', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+  });
+
+  it('fails a scaffold with placeholder selectors and the fail-guard', async () => {
+    const scaffold = [
+      'def test_login(self):',
+      '    raise NotImplementedError("Replace this placeholder body")',
+      '    self.driver.find_element(By.ID, "<resource-id from get_element_tree>").click()',
+    ].join('\n');
+    const res = await callTool('validate_test_script', { scriptContent: scaffold });
+    const text = textOf(res);
+    assert.equal(res.isError, true, `expected fail, got: ${text.slice(0, 200)}`);
+    assert.match(text, /"verdict":"fail"|FAIL/);
+    assert.match(text, /placeholder selectors|scaffold guard/);
+  });
+
+  it('fails known fabricated resource IDs from the v43 incident', async () => {
+    const res = await callTool('validate_test_script', {
+      scriptContent: 'driver.findElement(By.id("nav_catalog")).click();',
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /nav_catalog|known fabricated/);
+  });
+
+  it('passes a script with no placeholder markers (no isError)', async () => {
+    const clean = [
+      'def test_login(self):',
+      '    self.driver.find_element(By.ID, "com.app:id/usernameField").send_keys("user")',
+      '    self.driver.find_element(By.ID, "com.app:id/loginButton").click()',
+    ].join('\n');
+    const res = await callTool('validate_test_script', { scriptContent: clean });
+    assert.notEqual(res.isError, true, `expected pass, got: ${textOf(res).slice(0, 200)}`);
+    assert.match(textOf(res), /"verdict":"pass"|PASS/);
+  });
 });
 
 describe('Upload tools reject unsafe input paths before reading any file', () => {

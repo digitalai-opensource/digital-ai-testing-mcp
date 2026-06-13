@@ -257,6 +257,32 @@ HAR/video download endpoints return Angular SPA HTML, not data.
 
 Auth: Cloud Admin JWT only. Project API keys return 401 on all transaction endpoints.
 
+## Performance Comparison Tools
+
+Built on transaction data. Layering follows the repo convention — pure math is isolated from the API and tool layers:
+
+- `src/utils/performance-stats.ts` — pure statistics (mean/median/`trimmedMean`/`stddev`/`mad`/`detectOutliersMAD`/`summarizeMetric`). No network, no domain types — unit-tested with plain number arrays.
+- `src/utils/performance-comparison.ts` — domain compute over a `Transaction[]` the caller already fetched: `resolveSide`, `buildComparison`, `buildConfoundAssessment`, `buildOutlierReport`. Pure in/out (fixture-tested).
+- `src/tools/performance-tools.ts` — `compare_performance_transactions`, `assess_comparison_confounds`, `detect_performance_outliers`, `performance_transaction_control`. The list endpoint already carries `speedIndex`/`cpuAvg`/`memAvg`, so filter-based selection fetches `listTransactions()` ONCE and filters in memory (no N+1 `getTransaction`).
+
+**`gatherPool()` — cross-scope ID resolution (confirmed live).** `listTransactions()` is PROJECT-SCOPED to the active JWT's reporter context: a transaction created under a different project's reporter instance is absent from the bulk list (live case — 1894 is in "DAIMCP POC", invisible to a Default-scoped JWT; 1895 is in "Default"). `getTransaction(id)` is a direct GET that works across scopes. So `gatherPool` resolves explicit `transactionIds` via `getTransaction` (cross-scope, and bounded by the IDs given — no full-list fetch when both sides are explicit) and only fetches the bulk list when a side uses a FILTER. Mixed selectors merge both, deduped by id.
+
+**JWT gate:** the three analytical tools call `requireJwt()` (checks `getActiveKeyType() !== 'jwt'`) and return the `Cloud Admin JWT required … switch_environment("default")` message with `isError: true` BEFORE any API call — asserted in `tests/tools.test.ts`. `performance_transaction_control` is NOT gated (it drives an inspection session, which works on project keys) but reading the resulting transactions back IS JWT-only.
+
+**Speed Index is composite, not duration (`SI`, not `ms`).** Speed Index is the area above the visual-progress curve (WebPageTest methodology: integral of `(1 − VisualCompletion(t))` over the render window) — a lower value means content was visible more completely earlier, NOT that the screen rendered N ms sooner. `METRIC_UNITS.speedIndex` is `'SI'` and every renderer (compare, summary, trend, `formatTransactionList`, `formatTransaction`) labels it `SI` with a composite-metric annotation. Misreading a `−160ms` delta as "renders 160ms faster" was the v42 failure. Reserve `ms`/wall-clock language for the `duration` metric. The compare tool emits `metricSemantics.speedIndex.{isCompositeMetric, unit, meaning}` in structured output.
+
+**Speed Index is forced first in `compare_performance_transactions`.** `normalizeMetrics` (in `performance-tools.ts`) ensures `speedIndex` is always present and at `metrics[0]` regardless of what the caller passes — so it always anchors outlier exclusion and delta ranking. If the caller omitted it or listed it later, a note is prepended to the result. This is the v42 fix for an agent passing `["duration", cpuAvg, memAvg]` and silently dropping the primary signal — chosen over a schema reject because it can't be gotten wrong.
+
+**Canonical workflow (the `performance_comparison_report` prompt is the authoritative sequence):** `find_available_device` → `get_test_boilerplate(includePerformanceTransactions, region)` → `list_nv_servers(region)` (confirm ONLINE+tunneled — Speed Index is invalid without it) → run tests → `list_transactions` → `detect_performance_outliers` → `assess_comparison_confounds` → `compare_performance_transactions(metrics=["speedIndex",…])`. `compare_performance_transactions`'s description encodes the NV/outlier/confound steps as prerequisites and points back to the prompt; no separate workflow resource — the prompt is it.
+
+**Headline metric is always three numbers** — trimmed mean, median, and raw mean (user requirement) — so small/noisy N can't hide behind one figure. Delta uses trimmedMean (→ median → mean fallback) of B − A.
+
+**Outlier model:** median/MAD modified z-score (`(x − median) / (1.4826·madRaw)`, default k=3.5, Iglewicz–Hoaglin). MAD over stddev because at N=5–10 one bad run inflates a stddev bound enough to mask itself. `degenerate: true` when madRaw=0 (>50% identical) — scoring is skipped, nothing flagged. `buildComparison` excludes outliers on the PRIMARY metric (`metrics[0]`) and drops those whole transactions from every metric summary, only when a side has ≥4 samples.
+
+**Confound model (`buildConfoundAssessment`):** caller declares the `comparisonAxis` (what SHOULD differ). Every other inspectable dimension (appVersion, deviceModel, deviceOs, deviceVersion, networkProfile, deviceName, projectName, name, testId) is checked for cross-side splits (→ confound, severity by perf-impact) and within-side heterogeneity (→ noise). Plus all-zero CPU+memory = "no telemetry" flag (the live 1894 case), and ≥2× sample imbalance. Verdict: `confounded` (any high), `caveated` (any med/low), else `clean`. `region` is NOT on the transaction record — it returns an `info` flag saying it can't be verified here.
+
+**Phase-2 generation (`performanceTransaction` in `webdriver.ts`):** `seetest:client.startPerformanceTransaction`/`endPerformanceTransaction` via the existing `execScript` (Grid `/execute`, OSS `/execute/sync`). These are cloud-proxy commands, not Appium, so they work on both modes. The Grid execute parser can't express a 0-arg seetest command, so `start` REQUIRES a `networkProfile`. `start` activates NV throttling immediately (ANR risk — keep the window tight); the record lands in the reporter ~1 min AFTER `end`, not instantly.
+
 ## Reporter grouped endpoint
 
 `POST /reporter/api/tests/grouped` requires the **`groupBy`** field (NOT `keys` — `keys` is silently ignored). Example:
@@ -440,32 +466,77 @@ Never use `%USERPROFILE%` in paths passed to `claude mcp add` or stored in `~/.c
 
 ## Performance Transactions — `executeScript` Syntax
 
-`seetest:client` commands use **dot-notation**: the method name is part of the script string, arguments are separate parameters.
+`seetest:client` commands use **dot-notation**: the method name is part of the script string, arguments are passed as **separate parameters** to `execute_script` — NOT embedded inside the script string.
+
+```python
+# Correct — arg is a separate parameter
+self.driver.execute_script("seetest:client.startPerformanceTransaction", "Monitor")
+
+# Wrong — inline in string; silently fails or produces no data
+self.driver.execute_script('seetest:client.startPerformanceTransaction("Monitor")')
+```
+
+### The only working API: `startPerformanceTransaction` / `endPerformanceTransaction`
 
 ```java
 // Java — correct
-driver.executeScript("seetest:client.startPerformanceTransaction", "3G-average");
-driver.executeScript("seetest:client.endPerformanceTransaction", "Login");
+driver.executeScript("seetest:client.startPerformanceTransaction", "Monitor");
+// ... steps to measure ...
+driver.executeScript("seetest:client.endPerformanceTransaction", "Login Performance");
 
 // Java — WRONG (rejected on both Grid and OSS)
-driver.executeScript("seetest:client", new Object[]{"startPerformanceTransaction", "3G-average"});
+driver.executeScript("seetest:client", new Object[]{"startPerformanceTransaction", "Monitor"});
 ```
 
 ```python
-# Python — correct
-self.driver.execute_script("seetest:client.startPerformanceTransaction", "3G-average")
+self.driver.execute_script("seetest:client.startPerformanceTransaction", "Monitor")
+# ... steps to measure ...
+self.driver.execute_script("seetest:client.endPerformanceTransaction", "Login Performance")
 ```
 
 ```js
-// Node.js — correct
-await browser.execute('seetest:client.startPerformanceTransaction', '3G-average');
+await browser.execute('seetest:client.startPerformanceTransaction', 'Monitor');
+// ... steps to measure ...
+await browser.execute('seetest:client.endPerformanceTransaction', 'Login Performance');
 ```
 
-**NV throttling warning:** `startPerformanceTransaction` activates network throttling immediately. If the app has background network calls during initialization (analytics, config fetches), start the transaction AFTER the UI is stable — or the app may ANR/crash. Use this to measure a specific action (e.g. button tap → next screen), not the full session.
+**Argument semantics are asymmetric:**
+- `startPerformanceTransaction` arg = **NV network profile name** (`"Monitor"` = observe without throttling; other profiles apply latency/bandwidth constraints)
+- `endPerformanceTransaction` arg = **transaction name** — this is the name that appears in the reporter and is queryable via `list_transactions`
 
-**NV profile names:** Must be configured on the NV server and obtained from your platform admin. `"wifi"` and `"3G-average"` are common but not guaranteed to exist on all deployments.
+**Methods that silently do nothing (`startTransaction` / `endTransaction`):** These method names are accepted without error, the test passes, but **zero transaction records appear in the reporter**. They are not the performance transaction API. Do not use them.
+
+**`stopTransaction` does not exist.** Fails with `Could not find a method 'stopTransaction' matching with N parameters` at every parameter count (0, 1, 2) — a Java reflection error. The correct stop method is `endPerformanceTransaction`.
+
+**NV throttling warning:** `startPerformanceTransaction` activates network throttling immediately. If the app has background network calls during initialization (analytics, config fetches), start the transaction AFTER the UI is stable — or the app may ANR/crash.
+
+**NV server pre-requisite:** An NV server must be ONLINE and tunnel-connected in the device's region for transactions to record. Verify with `list_nv_servers(region=<target region>)` before running instrumented tests.
+
+**Reporter delay:** Transaction data appears approximately 1 minute after `endPerformanceTransaction`. `list_transactions` returns 0 results if queried immediately after the test run.
+
+**NV profile names:** Must be configured on the NV server by your platform admin. `"Monitor"` (pass-through), `"wifi"`, and `"3G-average"` are common but not guaranteed to exist on all deployments.
 
 ## Boilerplate Generation — Device Routing
+
+### Inspection gate (v42 — structural, not advisory)
+
+When `get_test_boilerplate` targets a **real app** (`appId`, `packageName`, or `bundleIdentifier` set → `targetsCustomApp`), it returns **NO code** and a `{ status: 'blocked', reason: 'no_verified_selectors' }` response (`isError: true`) UNLESS one of:
+- a **live inspection session exists** in this MCP process (`listActiveSessions().length > 0`), or
+- the caller sets **`confirmSelectorsVerified: true`** (explicit escape hatch for selectors captured via rdb/UIAutomator, `open_mobile_studio`, `get_automation_properties`, or authoritative workspace source).
+
+The built-in ExperiBank demo (no app identifiers) is **never gated** — it ships real working steps.
+
+**Why structural, not another warning.** The v42 finding (written by the agent that committed the failure) is that advisory guards — warning text, the `requiresVerifiedSelectors` flag, the in-code `Assertions.fail()` guard — all lose to task-completion momentum: the agent stripped the `fail()` and shipped the placeholder as a finished test. Returning no code removes the object the agent dresses up. The gate runs at the TOP of the handler **before any network call** (`getMyAccountInfo`, the `appId` lookup), so it is asserted in `tests/tools.test.ts` against an unreachable host. The soft guards (`requiresVerifiedSelectors`, `placeholderWarning`, in-code fail-guard) are retained as defense-in-depth on the paths that DO pass the gate.
+
+### v43 — the bypass, and the limits of MCP enforcement
+
+The v42 gate controls only what `get_test_boilerplate` *emits*. v43 was a failure where the agent **never called the tool** — it called `list_applications`/`get_application_info`, then hand-wrote a `.java` file with fabricated resource IDs. **No MCP-server change can prevent freeform file authoring** — the server is not in the loop for the agent's Write tool. The reliable fix is harness-level (a skill / system prompt / CLAUDE.md in the *consuming* project). The MCP's levers, all advisory and layered as backstops:
+
+- **Server `instructions`** (`src/index.ts`, `SERVER_INSTRUCTIONS`) — delivered at connect time, before the agent forms a plan (higher weight than tool descriptions, which are read at call time *after* a plan is committed — v43 root-cause 2a). Leads with the mode-first / no-guessed-selectors policy. Verified emitted via the `initialize` handshake.
+- **`_testCreationGuidance`** (Fix C) — a structured field on `list_applications` and `get_application_info` responses (`testCreationGuidance()` in `application-tools.ts`). Structured data is treated as fact to act on; prose in a description is treated as context. Reports `liveInspectionSession` (the one selector source the MCP can verify).
+- **`validate_test_script`** (Fix D) — a delivery backstop. `detectFabricationIssues()` (pure, in `boilerplate-tools.ts`, unit-tested) scans for unreplaced `<…>` placeholders, the scaffold fail-guard, placeholder credentials, and known fabricated IDs; high-severity hits return `isError`. Catches a hand-written script IF the agent calls it — which the server `instructions` direct it to do before delivering any test.
+
+None of these is bulletproof against a bypassing agent; they raise compliance, and the harness-level governance is what actually binds.
 
 ### `region` parameter (v23+)
 
@@ -489,13 +560,13 @@ Without `region`, the deviceQuery is evaluated against all devices in all region
 **Do NOT:** increase `implicitly_wait`, add `noReset`, or re-run tests before checking device health.
 **Do:** run `get_device_health_summary` or `list_devices` filtered to the project. Look for devices with `statusAge > 1440 minutes` (24 h) and status `Offline` — these should not be in the pool. If found, update the `deviceQuery` to add `@region='<healthy-region>'` to exclude the problem device.
 
-## Node.js Version & Vitest Pin
+## Node.js Version & Vitest
 
 **Current local Node.js: 22 LTS** — all engine requirements satisfied.
 
-`vitest` is pinned to `^3.x` deliberately. The outstanding `npm audit` finding (`GHSA-5xrq-8626-4rwp`) is a Vitest UI server vulnerability. This project never runs the UI server (`vitest run` only), so there is no attack surface. `npm audit --omit=dev` reports zero vulnerabilities.
+`vitest` is on `^4.x` (4.1.8+). It was upgraded from 3.x to clear the dev-only `esbuild` advisories (`GHSA-gv7w-rqvm-qjhr` Deno-module RCE, `GHSA-g7r4-m6w7-qqqr` Windows dev-server file read) that the 3.x → vite → esbuild tree pulled in; neither code path (esbuild dev server, esbuild Deno module) is used by `vitest run`, but the upgrade removes the audit findings outright. `npm audit` reports **0 vulnerabilities** (both full and `--omit=dev`). Node 22 supports vitest 4.x fully; all 141 tests pass on it.
 
-**To upgrade vitest:** run `npm install vitest@^4 --save-dev`. No Node version constraint — Node 22 supports vitest 4.x fully.
+If a future `npm audit` flags the test toolchain again, prefer the in-range fix first: `npm audit fix` (no `--force`). The production runtime ships none of these (multi-stage Docker copies only `dist/` + prod deps), so `npm audit --omit=dev` is the number that matters for the shipped image.
 
 ## Inspection Sessions (WebDriver-based Native Inspection)
 

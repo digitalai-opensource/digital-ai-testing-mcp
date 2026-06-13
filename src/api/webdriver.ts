@@ -782,6 +782,61 @@ function execScript(
   );
 }
 
+// Start or end a Digital.ai performance transaction inside a live inspection
+// session. The platform records CPU/memory/battery/network + Speed Index for
+// the window between start and end; the agent runs the UI steps to measure in
+// between using the normal tap/type/launch tools.
+//
+// These are seetest:client.* commands — the Digital.ai cloud proxy interprets
+// them, not Appium, so they route through execScript on both Grid (/execute)
+// and Appium Server / OSS (/execute/sync). The Grid execute parser cannot
+// express a zero-argument seetest command, so start REQUIRES a network profile.
+export async function performanceTransaction(
+  handle: string,
+  action: 'start' | 'end',
+  opts: { networkProfile?: string; transactionName?: string }
+): Promise<string> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  try {
+    if (action === 'start') {
+      if (!opts.networkProfile) {
+        throw new Error(
+          'networkProfile is required to start a performance transaction. Use "Monitor" to observe WITHOUT ' +
+          'throttling (the usual choice when you just want to measure current performance). Throttling profiles ' +
+          '("3G-average", "wifi", etc.) apply network conditions and must exist on your NV server — obtain valid ' +
+          'names from your platform admin; only "Monitor" is broadly guaranteed. The NV server for the device\'s ' +
+          'region must be ONLINE and tunnel-connected (verify with list_nv_servers) or the transaction records nothing.'
+        );
+      }
+      await execScript(client, session, 'seetest:client.startPerformanceTransaction', [opts.networkProfile]);
+      const isMonitor = opts.networkProfile.toLowerCase() === 'monitor';
+      const throttleNote = isMonitor
+        ? `"Monitor" is pass-through — no throttling is applied, so there is no ANR risk from network shaping. `
+        : `⚠️ NV throttling is now ACTIVE — if the app makes background network calls during this window it may ANR/crash; keep the measured window tight. `;
+      return (
+        `Started performance transaction with NV profile "${opts.networkProfile}". ` +
+        throttleNote +
+        `Perform ONLY the UI steps you want measured, then call action:"end".`
+      );
+    }
+    if (!opts.transactionName) {
+      throw new Error('transactionName is required to end a performance transaction.');
+    }
+    const res = await execScript(client, session, 'seetest:client.endPerformanceTransaction', [opts.transactionName]);
+    const value = (res?.data as { value?: unknown })?.value;
+    const perfJson = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+    return (
+      `Ended performance transaction "${opts.transactionName}". The platform is writing the record — it appears in ` +
+      `the reporter within ~1 minute (not instantly). Retrieve it with list_transactions(transactionName:"${opts.transactionName}", ` +
+      `deviceName, startDate=today) then get_transaction(id) for the Speed Index and telemetry. ` +
+      `Raw perf payload (truncated): ${perfJson.slice(0, 400)}`
+    );
+  } catch (e) {
+    throw new Error(sessionAwareError(e, handle));
+  }
+}
+
 async function resolvePoint(
   client: AxiosInstance,
   session: InspectionSession,

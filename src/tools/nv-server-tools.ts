@@ -11,7 +11,8 @@ const regionName = (r: AgentRegion | string | undefined): string =>
 export function registerNvServerTools(server: McpServer): void {
   server.tool(
     'list_nv_servers',
-    'List all Network Virtualization (NV) servers. Shows status, region, host, and tunneling connectivity. NV servers enable network condition simulation (latency, packet loss, bandwidth throttling) during test sessions. Cloud Admin only.',
+    'List all Network Virtualization (NV) servers. Shows status, region, host, and tunneling connectivity. NV servers enable network condition simulation (latency, packet loss, bandwidth throttling) during test sessions. ' +
+    'CALL THIS BEFORE running any performance-instrumented test session: a performance transaction records nothing unless an NV server in the device\'s region is ONLINE and tunnel-connected. Speed Index and network metrics collected without a connected NV server are unreliable and will produce misleading compare_performance_transactions results. Filter with region=<device region> and connectedOnly=true to confirm one is available. Cloud Admin only.',
     {
       region: z.string().optional().describe('Filter by region name (client-side, partial match). E.g. "US1", "SG1".'),
       connectedOnly: z.boolean().optional().describe('If true, return only NV servers with active tunneling connections.'),

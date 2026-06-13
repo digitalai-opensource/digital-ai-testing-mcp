@@ -72,7 +72,7 @@ const REGISTERED_TOOLS = [
   // Workflows — General project lifecycle
   'setup_project', 'close_project_resources', 'teardown_project',
   // Boilerplate
-  'get_test_boilerplate',
+  'get_test_boilerplate', 'validate_test_script',
   // Agents (v2, Cloud Admin only)
   'list_agents', 'get_agent_devices',
   // Regions (v2, Cloud Admin only)
@@ -102,6 +102,9 @@ const REGISTERED_TOOLS = [
   'long_press', 'double_tap', 'drag_and_drop', 'pinch_zoom', 'scroll_to_element',
   'press_key', 'hide_keyboard', 'app_control', 'device_control',
   'list_inspection_sessions', 'cleanup_inspection_sessions',
+  // Performance comparison (Cloud Admin JWT only; transaction-control is session-based)
+  'compare_performance_transactions', 'assess_comparison_confounds',
+  'detect_performance_outliers', 'performance_transaction_control',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
@@ -145,7 +148,7 @@ export function registerMetaTools(server: McpServer): void {
         `Request timeout:  ${requestTimeout}ms`,
         `Upload timeout:   ${uploadTimeout}ms`,
         '',
-        `Registered tools: ${TOOL_COUNT} tools + 2 resources + 5 prompts`,
+        `Registered tools: ${TOOL_COUNT} tools + 2 resources + 6 prompts`,
         '',
         'Capability domains:',
         '  Users              — list, create, delete, assign, tag, get-tags (8 tools)',
@@ -164,7 +167,7 @@ export function registerMetaTools(server: McpServer): void {
         '  Meta               — get_server_info, check_connectivity, check_workflow_readiness, list_environments, switch_environment (5 tools)',
         '  Workflows — POC    — create_poc, close_poc, delete_poc (3 tools, Cloud Admin only)',
         '  Workflows — Project— setup_project, close_project_resources, teardown_project (3 tools, Cloud Admin only)',
-        '  Boilerplate        — get_test_boilerplate (1 tool)',
+        '  Boilerplate        — get_test_boilerplate, validate_test_script (2 tools)',
         '  Agents             — list_agents, get_agent_devices (2 tools, Cloud Admin only)',
         '  Regions            — list_regions, get_region_topology (2 tools, Cloud Admin only)',
         '  NV Servers         — list_nv_servers, get_nv_server (2 tools, Cloud Admin only)',

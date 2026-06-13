@@ -58,6 +58,7 @@ Then ask: *"Show me the overall health of the device farm."*
   - [POC Lifecycle](#poc-lifecycle)
   - [Project Lifecycle](#project-lifecycle)
 - [Boilerplate Generation](#boilerplate-generation)
+  - [Recommended agent guardrails](docs/recommended-agent-guardrails.md)
 - [Reference](#reference)
   - [Response Format](#response-format)
   - [Understanding maxResults](#understanding-maxresults)
@@ -369,7 +370,8 @@ Once connected, talk to the server in plain language — no tool names needed:
 | [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 1 | Ready-to-run Appium test scripts in 4 languages |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud device as a local ADB device |
 | [Inspection Sessions](docs/tools.md#inspection-sessions) | 22 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control |
-| [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 4 guided prompts |
+| [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation *(JWT)* |
+| [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 5 guided prompts |
 
 ---
 
@@ -527,6 +529,8 @@ The server supports two test-creation modes, and the agent is instructed to rout
 
 **Hybrid is often best:** even in autonomous mode, the agent can open a short inspection session — no user involvement — to capture or verify element IDs against the real build. This matters because source code is only authoritative for classic static IDs (Android View XML, explicit iOS `accessibilityIdentifier`); Jetpack Compose, SwiftUI, Flutter, and React Native apps often expose no source-derivable IDs, and the build on the farm can lag the workspace source. The agent is explicitly instructed to **never fabricate selectors** — when in doubt it verifies live, and when the mode itself is ambiguous it asks: *"Want me to create this test for you based on best practices, or start an interactive session where we build it together?"*
 
+> **Stronger guarantees:** the server ships this routing policy automatically in its MCP `instructions`, and `get_test_boilerplate` structurally refuses to emit code for a real app without verified selectors. Because not every client surfaces server `instructions` — and no MCP server can intercept a file an agent writes by hand — you can install a client-side reinforcement for a stronger, client-independent guarantee. See **[Recommended agent guardrails](docs/recommended-agent-guardrails.md)**.
+
 ### `get_test_boilerplate`
 
 Generates a complete, pre-configured Appium test script. The Digital.ai server URL and access key are pre-filled from the active connection profile — switch profiles with `switch_environment` first to generate scripts carrying a project-scoped key instead of your admin key.
@@ -545,7 +549,10 @@ Generates a complete, pre-configured Appium test script. The Digital.ai server U
 | `projectType` | `standalone-gradle` \| `standalone-maven` \| `android-gradle-submodule` | `standalone-gradle` |
 | `includePerformanceTransactions` | `true` \| `false` | `false` |
 | `includeAxeScan` | `true` \| `false` | `false` |
+| `confirmSelectorsVerified` | `true` \| `false` | _(optional)_ |
 | `outputFormat` | `json` \| `human` | `json` |
+
+> **Inspection gate (v42):** when you target a real app (`appId`/`packageName`/`bundleIdentifier`), this tool returns **no code** and a structured `{ status: "blocked", reason: "no_verified_selectors" }` error UNLESS a live inspection session exists in the MCP process, or you set `confirmSelectorsVerified: true` (escape hatch for selectors already captured via rdb/UIAutomator, `open_mobile_studio`, or authoritative source). The built-in ExperiBank demo (no app identifiers) is never gated. This makes it structurally impossible to receive a placeholder scaffold and pass it off as a finished test.
 
 **Recommended workflow** for building a new test:
 
@@ -557,7 +564,7 @@ Generates a complete, pre-configured Appium test script. The Digital.ai server U
 6. Write/run the test
 7. `release_device` — explicit cleanup
 
-**Performance transactions:** Pass `includePerformanceTransactions: true` to bracket the test body with `startPerformanceTransaction` / `endPerformanceTransaction` calls. The platform records CPU, memory, battery, and network metrics; results appear in the reporter Transactions tab and are queryable via `list_transactions`. NV profile defaults to `"3G-average"` — change it if needed. Note: NV throttling activates immediately when `startPerformanceTransaction` is called; start it only after the UI is stable to avoid ANR/crashes in apps with background network activity.
+**Performance transactions:** Pass `includePerformanceTransactions: true` to bracket the test body with `startPerformanceTransaction` / `endPerformanceTransaction` calls. The start arg is the NV network profile (defaults to `"Monitor"` — observe without throttling); the end arg is the transaction name. The platform records CPU, memory, battery, and Speed Index metrics; results appear in the reporter Transactions tab (~1 min after `endPerformanceTransaction`) and are queryable via `list_transactions`. Pre-requisite: an NV server must be ONLINE and tunnel-connected in the device region (`list_nv_servers`). Note: a throttling profile activates NV shaping immediately; `"Monitor"` is pass-through and carries no ANR risk.
 
 **Accessibility scanning:** Pass `includeAxeScan: true` to inject a Deque Axe DevTools Mobile accessibility scan (`mobile: axeScan` executeScript call). Sets the required `appium:automationName` capability automatically (`AxeUiAutomator2` for Android, `AxeXCUITest` for iOS). Requires `AXE_DEVTOOLS_API_KEY` in the MCP environment.
 
@@ -566,6 +573,16 @@ Both flags can be combined — the Axe scan runs inside the performance transact
 **Element locators:** Use `open_mobile_studio` first — it is the platform's native UI Inspector and requires no local tooling. For scenarios requiring direct ADB access (file push, shell commands), use `get_remote_debug_command` to connect the device locally.
 
 > ⚠️ The generated script is an **end-product artifact** — do not execute it as a discovery step. Running it without known element selectors creates Incomplete sessions visible to the whole team. Discover selectors with `open_mobile_studio` first.
+
+### `validate_test_script`
+
+Delivery backstop (v43) for the case the `get_test_boilerplate` gate cannot catch — a test written by hand with guessed selectors. Pass the full `scriptContent` before presenting or saving any test; it scans for unreplaced `<…>` placeholder selectors, the deliberate scaffold fail-guard, placeholder/fabricated credentials, and resource IDs from a known prior fabrication incident. Returns `isError` with a `fail` verdict when any high-severity pattern is found, so a non-functional test cannot be delivered as finished. A `pass` is necessary but not sufficient — it confirms obvious placeholders are gone, not that selectors are real; a live inspection remains the authoritative source.
+
+| Parameter | Values | Default |
+|---|---|---|
+| `scriptContent` | The full test script text | _(required)_ |
+| `fileName` | Label for the result | _(optional)_ |
+| `outputFormat` | `json` \| `human` | `json` |
 
 `projectType` controls the Java output layout only (ignored for Node.js and Python): `standalone-gradle` produces `src/test/java/` with both `build.gradle` and `pom.xml`; `standalone-maven` produces `pom.xml` only; `android-gradle-submodule` scopes files under `e2e-tests/` for embedding in an existing Android Studio project.
 
@@ -578,6 +595,25 @@ Both flags can be combined — the Axe scan runs inside the performance transact
 | `python` | Test file + `requirements.txt` |
 
 All boilerplate defaults to the ExperiBank demo app as the starting point. ExperiBank is available on most farm devices and can verify connectivity before switching to your own app.
+
+---
+
+## Performance Comparison Reports
+
+Compare performance (Speed Index, CPU, memory, battery, duration) between two sets of conditions — app v1 vs v2, device A vs device B, OS version X vs Y, region to region, two network profiles, or two automation scripts. **All four tools require a Cloud Admin JWT** (transaction data 401s on project API keys).
+
+The headline metric is reported three ways every time — **trimmed mean, median, and raw mean** — so a small or noisy sample can't hide behind a single number.
+
+| Tool | Purpose |
+|---|---|
+| `compare_performance_transactions` | Two-set comparison; trimmed-mean/median/mean per side + delta and % change. MAD outliers excluded by default (≥4 samples/side). Pass `comparisonAxis` to embed a confound check. |
+| `assess_comparison_confounds` | Verdict — **clean / caveated / confounded** — by flagging any dimension other than the declared axis (device model, OS, OS version, network profile, project, transaction name) that varies across or within the sides, plus missing telemetry and sample imbalance. |
+| `detect_performance_outliers` | Robust median/MAD outlier flagging on a single set; returns the kept set and recommended exclusions/re-runs. |
+| `performance_transaction_control` | Phase 2: generate fresh samples inside an inspection session — `start` (with an NV profile) → run the verified flow → `end` (names the record). Records appear in the reporter ~1 min later. |
+
+> **Why the confound check matters:** comparing transactions 1894 (Speed Index 1015) and 1895 (1000) looks like a 1.5% version delta — but they ran on *different device models, different OS versions, and different projects*, and 1894 has no CPU/memory telemetry. `assess_comparison_confounds` returns **confounded** and names all three, so the delta is never misread as a version regression.
+
+The **`performance_comparison_report` prompt** orchestrates the full workflow end to end: define the axis → scrub confounds → negotiate sample size → **require explicit plan confirmation with a time estimate** → run the series with outlier-driven re-runs → report the delta with root-cause reasoning. True host/background interference is not directly observable; the report approximates device quietness (idle, healthy status, no concurrent reservation) and states that limit explicitly.
 
 ---
 

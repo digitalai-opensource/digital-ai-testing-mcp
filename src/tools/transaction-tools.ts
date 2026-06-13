@@ -16,8 +16,13 @@ export function registerTransactionTools(server: McpServer): void {
   server.tool(
     'list_transactions',
     'List performance transaction records — instrumented segments of mobile test sessions ' +
-    'that capture CPU, memory, battery, and network metrics between developer-marked start/end points. ' +
+    'that capture CPU, memory, battery, network, and Speed Index metrics between developer-marked start/end points. ' +
     'Use this for performance regression analysis: compare metrics across app versions, devices, or network profiles. ' +
+    'SPEED INDEX is a composite visual-progress score (WebPageTest methodology — the integral of (1 − VisualCompletion(t)) ' +
+    'over the render window), NOT a duration: a lower value means content was visible more completely earlier in the ' +
+    'render window. Do not read a Speed Index delta as "rendered N ms sooner". ' +
+    'If these transactions were collected without a verified NV server connection (see list_nv_servers), Speed Index ' +
+    'values may be invalid. ' +
     'Server-side filtering is not available; all filters are applied client-side. ' +
     'Cloud Admin JWT required — project API keys are not accepted by this endpoint.',
     {
@@ -171,6 +176,8 @@ export function registerTransactionTools(server: McpServer): void {
     '  "deviceName" — compare by full device name\n' +
     '  "networkProfile" — compare performance under different network conditions\n' +
     'Results are sorted by avgSpeedIndex descending so the worst-performing group appears first. ' +
+    'avgSpeedIndex is a composite visual-progress score (area above the progressive-render curve), NOT elapsed time. ' +
+    'Compare it directionally (lower is better) but do not interpret a delta as a shift in render-completion time. ' +
     'Accepts the same filters as list_transactions to scope the analysis. ' +
     'Cloud Admin JWT required.',
     {
@@ -273,9 +280,9 @@ export function registerTransactionTools(server: McpServer): void {
           `   Sorted by avg Speed Index (highest = slowest rendering first)\n`,
         ];
         for (const g of aggregated) {
-          const si = g.avgSpeedIndex != null ? `${g.avgSpeedIndex.toFixed(0)}ms` : 'n/a';
+          const si = g.avgSpeedIndex != null ? `${g.avgSpeedIndex.toFixed(0)} SI` : 'n/a';
           const siRange = g.minSpeedIndex != null && g.maxSpeedIndex != null
-            ? ` [${g.minSpeedIndex}–${g.maxSpeedIndex}ms]` : '';
+            ? ` [${g.minSpeedIndex}–${g.maxSpeedIndex} SI]` : '';
           const dur = g.avgDurationMs != null ? `${(g.avgDurationMs / 1000).toFixed(2)}s` : 'n/a';
           const cpu = g.avgCpuPct != null ? `${g.avgCpuPct.toFixed(1)}%` : 'n/a';
           const mem = g.avgMemMB != null ? `${g.avgMemMB.toFixed(0)}MB` : 'n/a';
@@ -379,7 +386,7 @@ export function registerTransactionTools(server: McpServer): void {
           `  ${'Period'.padEnd(12)} ${'Runs'.padStart(5)} ${'SpeedIdx'.padStart(9)} ${'Duration'.padStart(9)} ${'CPU%'.padStart(6)} ${'Mem MB'.padStart(7)}`,
           `  ${'─'.repeat(52)}`,
           ...sorted.map(([period, b]) => {
-            const si  = fmt1(avgOf(b.speedIndex), 'ms');
+            const si  = fmt1(avgOf(b.speedIndex), ' SI');
             const dur = avgOf(b.duration) != null ? `${(avgOf(b.duration)! / 1000).toFixed(2)}s` : 'n/a';
             const cpu = fmt1(avgOf(b.cpu), '%');
             const mem = avgOf(b.mem) != null ? `${avgOf(b.mem)!.toFixed(0)}` : 'n/a';

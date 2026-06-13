@@ -5,6 +5,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { getApplicationInfo } from '../api/applications.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
+import { listActiveSessions } from '../api/webdriver.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
 type Platform = 'android' | 'ios';
@@ -99,6 +100,48 @@ function getFilesForVariant(
   }
 }
 
+// ── v43 Fix D — fabricated-test detector ──────────────────────────────────────
+// A backstop for the failure the boilerplate gate cannot catch: an agent that
+// hand-writes (or fills) a test with invented selectors and ships it. Pure string
+// scan, no network — unit-testable. High-severity hits mean the script is NOT
+// runnable as-is and must not be delivered as finished.
+export interface ScriptIssue {
+  severity: 'high' | 'info';
+  label: string;
+  detail: string;
+}
+
+export function detectFabricationIssues(content: string): ScriptIssue[] {
+  const issues: ScriptIssue[] = [];
+  const add = (severity: ScriptIssue['severity'], label: string, detail: string) =>
+    issues.push({ severity, label, detail });
+
+  // 1. Unfilled angle-bracket placeholders the scaffold emits, e.g. <resource-id from get_element_tree>, <value>, <visible text>.
+  const angle = content.match(/<[^>\n]*(resource-id|selector|element|value|visible text|udid|enter |your )[^>\n]*>/gi);
+  if (angle) add('high', 'placeholder selectors', `Unreplaced placeholder token(s): ${[...new Set(angle)].slice(0, 4).join(', ')}`);
+
+  // 2. The deliberate scaffold fail-guard / "not a real test" markers left in place.
+  if (/raise NotImplementedError|PLACEHOLDER TEST BODY|NOT A RUNNABLE TEST|NOT A FINISHED TEST|Replace this placeholder/i.test(content)) {
+    add('high', 'scaffold guard present', 'The deliberate placeholder fail-guard is still in the body — the test was never filled in with real steps.');
+  }
+
+  // 3. Credential placeholders / obvious fabricated logins.
+  const cred = content.match(/YOUR_ACCESS_KEY_HERE|YOUR_PASSWORD|<password>|\[Enter [^\]]*\]|changeme|password123/gi);
+  if (cred) add('high', 'placeholder credentials', `Credential placeholder(s): ${[...new Set(cred)].slice(0, 4).join(', ')}`);
+
+  // 4. Known fabricated example IDs from the v43 post-mortem — illustrative, not exhaustive.
+  const knownFab = content.match(/\b(nav_catalog|home_container)\b/g);
+  if (knownFab) add('high', 'known fabricated IDs', `Resource IDs from a prior fabrication incident: ${[...new Set(knownFab)].join(', ')}. Confirm these came from a live inspection, not a guess.`);
+
+  // 5. Soft signal: no inspection session ran in this process — can't be a hard fail
+  // (selectors may be source-derived or captured in a since-closed session), but worth surfacing.
+  if (listActiveSessions().length === 0) {
+    add('info', 'no live inspection session', 'No inspection session is active in this MCP process. If the selectors here were not captured from an inspection or taken from authoritative app source, they are guesses — re-verify before delivering.');
+  }
+
+  return issues;
+}
+
 // Pattern matches the [BEGIN_DEMO_STEPS] ... [END_DEMO_STEPS] block including its leading indent.
 const DEMO_STEP_PATTERN = /([^\S\n]*)(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n[\s\S]*?[^\S\n]*(?:\/\/|#) \[END_DEMO_STEPS\]/;
 
@@ -108,34 +151,35 @@ const DEMO_INNER_PATTERN = /(?<=(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n)([\s\S]*?)(?=\
 function wrapWithPerformanceTransaction(language: Language, indent: string, core: string): string {
   if (language === 'java-junit5' || language === 'java-testng') {
     return [
-      `${indent}// WARNING: startPerformanceTransaction activates NV throttling immediately.`,
-      `${indent}// If your app makes background network calls during screen init (analytics, config fetches, auth pre-checks),`,
-      `${indent}// wait for the UI to be stable first — or the app may ANR/crash. Measure only the specific action`,
-      `${indent}// you care about (e.g. fill credentials first with no NV active, then start around the button tap).`,
-      `${indent}driver.executeScript("seetest:client.startPerformanceTransaction", "3G-average");`,
+      `${indent}// startPerformanceTransaction arg = NV network profile ("Monitor" = observe without throttling)`,
+      `${indent}// endPerformanceTransaction arg   = transaction name (appears in reporter + list_transactions)`,
+      `${indent}// Data appears in the reporter ~1 min after endPerformanceTransaction. Pre-req: NV server must be`,
+      `${indent}// ONLINE and tunnel-connected in the device region — verify with list_nv_servers(region=<region>).`,
+      `${indent}driver.executeScript("seetest:client.startPerformanceTransaction", "Monitor");`,
       core,
-      `${indent}String perfData = (String) driver.executeScript("seetest:client.endPerformanceTransaction", "My Transaction");`,
-      `${indent}// perfData contains the JSON performance report — also visible in the reporter Transactions tab.`,
+      `${indent}driver.executeScript("seetest:client.endPerformanceTransaction", "My Transaction");`,
     ].join('\n');
   }
   if (language === 'python') {
     return [
-      `${indent}# WARNING: startPerformanceTransaction activates NV throttling immediately.`,
-      `${indent}# If your app makes background network calls during screen init, wait for the UI to be stable first.`,
-      `${indent}self.driver.execute_script("seetest:client.startPerformanceTransaction", "3G-average")`,
+      `${indent}# startPerformanceTransaction arg = NV network profile ("Monitor" = observe without throttling)`,
+      `${indent}# endPerformanceTransaction arg   = transaction name (appears in reporter + list_transactions)`,
+      `${indent}# Data appears in the reporter ~1 min after endPerformanceTransaction. Pre-req: NV server must be`,
+      `${indent}# ONLINE and tunnel-connected in the device region — verify with list_nv_servers(region=<region>).`,
+      `${indent}self.driver.execute_script("seetest:client.startPerformanceTransaction", "Monitor")`,
       core,
-      `${indent}perf_data = self.driver.execute_script("seetest:client.endPerformanceTransaction", "My Transaction")`,
-      `${indent}# perf_data contains the JSON performance report — also visible in the reporter Transactions tab.`,
+      `${indent}self.driver.execute_script("seetest:client.endPerformanceTransaction", "My Transaction")`,
     ].join('\n');
   }
   // nodejs
   return [
-    `${indent}// WARNING: startPerformanceTransaction activates NV throttling immediately.`,
-    `${indent}// If your app makes background network calls during screen init, wait for the UI to be stable first.`,
-    `${indent}await browser.execute('seetest:client.startPerformanceTransaction', '3G-average');`,
+    `${indent}// startPerformanceTransaction arg = NV network profile ("Monitor" = observe without throttling)`,
+    `${indent}// endPerformanceTransaction arg   = transaction name (appears in reporter + list_transactions)`,
+    `${indent}// Data appears in the reporter ~1 min after endPerformanceTransaction. Pre-req: NV server must be`,
+    `${indent}// ONLINE and tunnel-connected in the device region — verify with list_nv_servers(region=<region>).`,
+    `${indent}await browser.execute('seetest:client.startPerformanceTransaction', 'Monitor');`,
     core,
-    `${indent}const perfData = await browser.execute('seetest:client.endPerformanceTransaction', 'My Transaction');`,
-    `${indent}// perfData contains the JSON performance report — also visible in the reporter Transactions tab.`,
+    `${indent}await browser.execute('seetest:client.endPerformanceTransaction', 'My Transaction');`,
   ].join('\n');
 }
 
@@ -496,6 +540,10 @@ function appNote(
 export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'get_test_boilerplate',
+    'STOP — when you target a real app (appId, packageName, or bundleIdentifier) this tool returns NO code unless ' +
+    'a live inspection session exists OR you set confirmSelectorsVerified:true. Without a selector source it blocks ' +
+    'with a redirect to start_inspection_session — there is nothing to "fill in later". Do not attempt to work around ' +
+    'the block by writing the test from scratch; capture real selectors first.\n\n' +
     'AUTONOMOUS TEST CREATION — this tool is the scaffold for writing a complete automated test yourself, ' +
     'without user collaboration. Use it when BOTH hold: ' +
     '(a) the intent is SPECIFIC — a standardized flow ("create a login test") or step-level detail ' +
@@ -556,7 +604,7 @@ export function registerBoilerplateTools(server: McpServer): void {
     'Use projectType to control the output structure: standalone-gradle (default), standalone-maven, or android-gradle-submodule. ' +
     'Returns all files needed to run the test (source file + build/dependency file) with dependency management options where applicable. ' +
     'Pass includePerformanceTransactions: true to bracket the test body with startPerformanceTransaction / endPerformanceTransaction calls — ' +
-    'the platform records CPU, memory, battery, and network metrics for the enclosed flow; results appear in the reporter Transactions tab. ' +
+    'the platform records CPU, memory, battery, and Speed Index metrics for the enclosed flow; results appear in the reporter Transactions tab. ' +
     'Pass includeAxeScan: true to add a Deque Axe DevTools accessibility scan (sets the required automationName capability and injects the mobile: axeScan call). ' +
     'Both flags can be combined. ' +
     'JAVA PITFALL (Appium Client 7.x / Grid): In WebDriverWait lambdas, the parameter d is typed as WebDriver — ' +
@@ -627,11 +675,19 @@ export function registerBoilerplateTools(server: McpServer): void {
         .optional()
         .describe(
           'Wrap the generated test body with startPerformanceTransaction / endPerformanceTransaction calls. ' +
-          'When enabled, the test steps are bracketed by driver.executeScript("seetest:client", ...) calls ' +
-          'that instruct the platform to record CPU, memory, battery, and network metrics for the enclosed flow. ' +
-          'Results appear in the reporter Transactions tab and are queryable via list_transactions / get_transaction. ' +
-          'The nvProfile parameter defaults to "3G-average" — change it to control network conditions during measurement. ' +
-          'Maximum transaction duration: 5 minutes. Supported on Android 5.0+ and all iOS versions.'
+          'The start arg is the NV network profile name ("Monitor" = observe without throttling, no bandwidth changes). ' +
+          'The end arg is the transaction name that appears in the reporter and is queryable via list_transactions. ' +
+          'Results appear in the reporter Transactions tab approximately 1 minute after endPerformanceTransaction. ' +
+          'Pre-requisite: an NV server must be ONLINE and tunnel-connected in the device region — ' +
+          'call list_nv_servers(region=<target region>) and verify before running instrumented tests. ' +
+          'CONTROLLED COMPARISON REQUIREMENTS: (1) a comparison needs ≥4 samples per side or outlier detection is ' +
+          'skipped (detect_performance_outliers / compare_performance_transactions) — plan ≥10 samples for short ' +
+          'transactions, ≥5 for long ones. (2) A deviceQuery that matches multiple OS versions can also match multiple ' +
+          'HARDWARE models, which confounds the result; pin hardware by adding an exact @model constraint (e.g. ' +
+          'and @model=\'SM-G991U\'), or pin a single physical device with @serialNumber=\'<udid>\', so every sample ' +
+          'runs on the same hardware. ' +
+          'NOTE: startTransaction/endTransaction exist but silently produce no reporter data — they are not the performance transaction API. ' +
+          'stopTransaction does not exist and fails with a Java reflection error at every parameter count.'
         ),
       includeAxeScan: z
         .boolean()
@@ -645,9 +701,64 @@ export function registerBoilerplateTools(server: McpServer): void {
           'Scan results appear in the Axe DevTools Mobile dashboard. ' +
           'Can be combined with includePerformanceTransactions — the scan runs inside the performance transaction boundary.'
         ),
+      confirmSelectorsVerified: z
+        .boolean()
+        .optional()
+        .describe(
+          'Escape hatch for the inspection gate. When you target a real app, this tool refuses to emit code unless a ' +
+          'live inspection session exists — UNLESS you set this to true. Set it ONLY if you have ALREADY captured REAL ' +
+          'element IDs for this app from a source other than a still-open session: an rdb/UIAutomator dump, ' +
+          'open_mobile_studio, get_automation_properties, or authoritative app source in the workspace. ' +
+          'Setting this WITHOUT real captured selectors produces a placeholder scaffold with invalid <…> selectors that ' +
+          'fails at runtime, and violates the tool contract. When in doubt, do NOT set it — start_inspection_session instead.'
+        ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, confirmSelectorsVerified, outputFormat }) => {
+      // ── Inspection gate (v42) ────────────────────────────────────────────────
+      // Advisory guards (warning text, a requiresVerifiedSelectors flag, an in-code
+      // fail() guard) all lost to task-completion momentum: the agent stripped the
+      // fail() and shipped the placeholder as a finished test. The structural fix is
+      // to return NO code at all when a real app is targeted and there is no selector
+      // source — there is then no scaffold to dress up. A live inspection session in
+      // this process counts as a source; so does an explicit confirmSelectorsVerified
+      // (rdb/Mobile Studio/source). The built-in ExperiBank demo (no app identifiers)
+      // ships real working steps, so it is never gated.
+      const targetsCustomApp = appId !== undefined || Boolean(packageName) || Boolean(bundleIdentifier);
+      if (targetsCustomApp && confirmSelectorsVerified !== true && listActiveSessions().length === 0) {
+        const blocked = {
+          status: 'blocked',
+          reason: 'no_verified_selectors',
+          requiredAction: 'start_inspection_session',
+          message:
+            'Boilerplate generation is blocked: a real app is targeted but there is no selector source. ' +
+            'Element IDs are app-specific and cannot be pre-filled — a scaffold generated now would be a placeholder ' +
+            'with invalid selectors, which must NOT be presented as a finished test.',
+          howToProceed: [
+            'PREFERRED: call start_inspection_session, capture real element IDs (get_element_tree / open_mobile_studio), ' +
+              'then re-call this tool while that session is still open.',
+            'ALTERNATIVE: if you ALREADY captured real selectors elsewhere (rdb/UIAutomator dump, open_mobile_studio, ' +
+              'get_automation_properties, or authoritative workspace source), re-call with confirmSelectorsVerified:true.',
+          ],
+        };
+        const human = [
+          '⛔ BLOCKED — no verified selectors for the targeted app.',
+          '',
+          'A real app is targeted (appId/packageName/bundleIdentifier) but no live inspection session exists, so this',
+          'tool will NOT emit a placeholder scaffold — there would be nothing runnable to deliver, only invalid <…>',
+          'selectors to fill in later.',
+          '',
+          'To proceed:',
+          '  • PREFERRED — start_inspection_session, capture real element IDs (get_element_tree / open_mobile_studio),',
+          '    then re-call get_test_boilerplate while that session is still open.',
+          '  • ALTERNATIVE — if you already captured real selectors another way (rdb/UIAutomator dump, open_mobile_studio,',
+          '    get_automation_properties, or authoritative workspace source), re-call with confirmSelectorsVerified:true.',
+          '',
+          'Do NOT work around this by writing the test from scratch — the selectors still have to be real.',
+        ].join('\n');
+        return { ...respond(outputFormat, blocked, human), isError: true };
+      }
+
       // Active-profile accessors (not process.env) — generated boilerplate must
       // embed the active profile's credential, not the default profile's. With
       // env vars, switching to a project profile still embedded the admin JWT.
@@ -846,6 +957,56 @@ export function registerBoilerplateTools(server: McpServer): void {
           isError: true,
         };
       }
+    }
+  );
+
+  // ── validate_test_script (v43 Fix D — delivery backstop) ───────────────────
+  server.tool(
+    'validate_test_script',
+    'Backstop check for a generated or hand-written mobile test BEFORE you present or save it. ' +
+    'Pass the full script content; this scans for the markers of a non-functional test: unreplaced ' +
+    '<…> placeholder selectors, the deliberate scaffold fail-guard, placeholder/fabricated credentials, ' +
+    'and resource IDs from a known prior fabrication incident. Returns isError when any high-severity ' +
+    'pattern is found — a test that fails this is NOT runnable and must not be delivered as finished. ' +
+    'This catches the case the get_test_boilerplate gate cannot: a script you wrote yourself with guessed ' +
+    'selectors. A clean result is necessary but not sufficient — it cannot confirm selectors are REAL, only ' +
+    'that obvious placeholders are gone; the authoritative source for selectors is still a live inspection.',
+    {
+      scriptContent: z.string().describe('The full text of the test script to validate.'),
+      fileName: z.string().optional().describe('Optional file name, used only to label the result.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ scriptContent, fileName, outputFormat }) => {
+      const issues = detectFabricationIssues(scriptContent);
+      const high = issues.filter((i) => i.severity === 'high');
+      const label = fileName ? ` (${fileName})` : '';
+      const verdict = high.length > 0 ? 'fail' : 'pass';
+
+      const structured = {
+        verdict,
+        highSeverityCount: high.length,
+        issues,
+        guidance:
+          high.length > 0
+            ? 'Do NOT present this script as a finished test. Replace every flagged placeholder with element IDs ' +
+              'captured from a live inspection (start_inspection_session -> get_element_tree, or open_mobile_studio), ' +
+              'and obtain real credentials from the user.'
+            : 'No placeholder/fabrication markers found. This does NOT prove the selectors are real — only that obvious ' +
+              'placeholders are absent. If you did not capture these from an inspection or app source, verify before delivering.',
+      };
+
+      const lines = [
+        `${verdict === 'fail' ? '⛔ FAIL' : '✅ PASS'} — validate_test_script${label}`,
+        '',
+        ...(issues.length
+          ? issues.map((i) => `  ${i.severity === 'high' ? '⛔' : 'ℹ️'} [${i.label}] ${i.detail}`)
+          : ['  No issues detected.']),
+        '',
+        structured.guidance,
+      ];
+
+      const res = respond(outputFormat, structured, lines.join('\n'));
+      return high.length > 0 ? { ...res, isError: true } : res;
     }
   );
 }

@@ -362,6 +362,107 @@ export function registerPrompts(server: McpServer): void {
     }
   );
 
+  // ─── Performance Comparison Report ─────────────────────────────────────────
+
+  server.prompt(
+    'performance_comparison_report',
+    'Plan and run a rigorous performance comparison between two sets of conditions (app versions, device models, ' +
+    'OS versions, regions, network profiles, or two automation scripts), using Digital.ai performance transactions. ' +
+    'Scrubs confounds, negotiates sample size, REQUIRES explicit plan confirmation, runs the series with outlier-driven ' +
+    'reruns, then reports the Speed Index delta (trimmed mean + median + raw mean) with root-cause reasoning.',
+    {
+      comparisonGoal: z.string().describe('What to compare, in the user\'s words — e.g. "sampleapp v1.0 vs v2.0 on a Galaxy S21" or "Login speed US2 vs SG1".'),
+      appName: z.string().optional().describe('App name to scope the analysis (used with list_applications / list_transactions).'),
+      mode: z.string().optional().describe('"existing" to analyze transactions already in the reporter, "fresh" to generate a new sample series via inspection sessions, or blank to let the agent recommend.'),
+    },
+    ({ comparisonGoal, appName, mode }) => ({
+      messages: [{
+        role: 'user',
+        content: {
+          type: 'text',
+          text: [
+            `I want a performance comparison report. Goal: ${comparisonGoal}`,
+            appName ? `App: ${appName}` : '',
+            mode ? `Preferred data source: ${mode}` : '',
+            '',
+            'This is a CLOUD ADMIN JWT workflow — all transaction tools 401 on a project API key. If the active profile',
+            'is a project key, tell me and switch with switch_environment("default") before proceeding.',
+            '',
+            'Follow these phases IN ORDER. Do not skip the confirmation gate in Phase 3.',
+            '',
+            '═══ PHASE 0 — Define the comparison axis and the two sides ═══',
+            'State precisely what is SUPPOSED to differ (the comparison axis: appVersion / deviceModel / deviceOs /',
+            'deviceVersion / networkProfile / region / testId) and what should be held constant. Define side A and side B',
+            'in one sentence each. If my goal is ambiguous about the axis, ask me before continuing.',
+            '',
+            '═══ PHASE 1 — Source the data and scrub confounds ═══',
+            'Decide existing-data vs fresh-generation:',
+            '  • EXISTING (prefer when suitable transactions already exist): use list_transactions to gather candidate',
+            '    transactions for each side. Then call assess_comparison_confounds with the comparisonAxis from Phase 0.',
+            '    Present the validity verdict (clean / caveated / confounded) and every flag. If CONFOUNDED, work with me',
+            '    to re-select the sides to hold the confounding factor constant — do NOT proceed to a delta on confounded data.',
+            '  • FRESH (when no clean historical data exists): minimize extraneous noise before generating:',
+            '      - Device health: get_device_health_summary and list_devices for each candidate device; exclude any with',
+            '        Offline status or statusAge > 1440 min. If comparing something OTHER than device, ensure both sides use',
+            '        similar-capability devices (or the same device) and similar configuration (same networkProfile unless',
+            '        that IS the axis).',
+            '      - Pin the hardware: a deviceQuery matching multiple OS versions can also match multiple device MODELS,',
+            '        which confounds the comparison. Constrain each side to a single model (@model=\'<code>\') or one',
+            '        physical device (@serialNumber=\'<udid>\') so every sample of that side runs on identical hardware.',
+            '      - NV server: performance transactions record NOTHING unless an NV server in the device\'s region is ONLINE',
+            '        and tunnel-connected. Call list_nv_servers(region=<device region>) and confirm one is up BEFORE generating.',
+            '        If none is available, stop and tell me — fresh generation cannot proceed.',
+            '      - Network profile: default to "Monitor" (pass-through — measures real performance without throttling).',
+            '        Only use a throttling profile ("3G-average", "wifi", …) if constrained network IS the comparison axis.',
+            '      - Recent reliability: get_test_stability_report / recent results for the chosen devices to avoid a flaky one.',
+            '      - Verify the test flow is fully functional on each target platform FIRST (real selectors from a live',
+            '        inspection — never fabricated). A broken flow produces garbage samples.',
+            '      - Note honestly that true host/background interference is not directly observable — approximate via idle,',
+            '        healthy status, and no concurrent reservation; state this limitation in the final report.',
+            '',
+            '═══ PHASE 2 — Negotiate sample size and build the plan ═══',
+            'Recommend a per-side sample size based on transaction length: SHORT transactions (≲5 s) → at least 10 samples',
+            'per side; LONG transactions → as few as 5. HARD FLOOR: never fewer than 4 per side — below 4, outlier',
+            'detection is skipped entirely and a single bad run silently dominates the aggregate. Ask me to confirm or adjust.',
+            'Then assemble a PLAN NARRATIVE containing: the axis, both sides, the controlled factors, the device(s),',
+            'the networkProfile (state "Monitor" unless throttling is the axis), the per-side sample size, the TOTAL',
+            'number of discrete transactions to run, and an ESTIMATED wall-clock time (≈ transaction duration × total',
+            'runs + overhead + ~1 min reporter-write delay per transaction).',
+            '',
+            '═══ PHASE 3 — MANDATORY CONFIRMATION GATE ═══',
+            'Present the full plan narrative and scope. Then STOP and ask: "Run this plan? It will execute N discrete',
+            'transactions across both sides, taking roughly T minutes." DO NOT execute anything until I explicitly confirm.',
+            'If I want changes, revise and re-confirm. This gate is required — never run the series without my yes.',
+            '',
+            '═══ PHASE 4 — Execute the series (only after confirmation) ═══',
+            'For FRESH generation, per comparison point repeat N times: performance_transaction_control(action:"start",',
+            'networkProfile) → run the SAME verified flow with tap/type/launch → performance_transaction_control(action:"end",',
+            'transactionName). Wait ~1 minute, then read each record with list_transactions → get_transaction.',
+            'After collecting each side, run detect_performance_outliers on Speed Index. If a sample is flagged as a wild',
+            'outlier, treat it as a candidate failure: re-run that one sample (excluding the bad result). If the SAME sample',
+            'fails/outlies MORE THAN ONCE, STOP and ask me how to proceed (e.g. try a different device or host) — do not',
+            'silently keep a bad data point or loop forever.',
+            'For EXISTING data, run detect_performance_outliers and decide exclusions with me.',
+            '',
+            '═══ PHASE 5 — Compare and report ═══',
+            'Call compare_performance_transactions with both sides, metrics including speedIndex (add cpuAvg/memAvg if telemetry',
+            'is present), comparisonAxis from Phase 0, and excludeOutliers:true. Report, for Speed Index, the TRIMMED MEAN,',
+            'MEDIAN, and RAW MEAN per side, the delta and % change, and the per-side sample counts (with any exclusions).',
+            'Re-run assess_comparison_confounds on the final sets and include the validity verdict.',
+            'Speed Index is a COMPOSITE visual-progress score (area above the render curve), NOT elapsed time — report its',
+            'delta in "SI" units and describe it as "more/less complete rendering earlier in the window", NEVER as',
+            '"rendered N ms faster". Reserve wall-clock language for the duration metric.',
+            'Write a report that: (1) states the delta and whether it is meaningful given the spread (CV) and sample size;',
+            '(2) attributes it to the axis ONLY if the confound assessment is clean/caveated, otherwise says it cannot be',
+            'attributed; (3) offers a plausible root cause where reasonable (e.g. larger asset in v2, slower GPU on device B,',
+            'higher network latency in region Y); (4) lists the limitations (missing telemetry, small N, unobservable host load).',
+            'Be honest when a delta is within noise — a "no significant difference" result is a valid, useful outcome.',
+          ].filter(Boolean).join('\n'),
+        },
+      }],
+    })
+  );
+
   // ─── Collaborative Test Creation ───────────────────────────────────────────
 
   server.prompt(

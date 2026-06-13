@@ -506,10 +506,12 @@ export function formatTransactionList(transactions: Transaction[]): string {
       const cpu = fmt1(t.cpuAvg, '%');
       const mem = t.memAvg != null ? `${t.memAvg.toFixed(0)}MB` : 'n/a';
       const net = `↑${fmtBytes(t.totalUploadedBytes)} ↓${fmtBytes(t.totalDownloadedBytes)}`;
+      // Speed Index is a composite visual-progress score (lower = better), NOT a duration — labelled "SI" to avoid the ms confusion (v42).
+      const si = t.speedIndex != null ? `${t.speedIndex.toFixed(0)} SI` : 'n/a';
       return (
         `• [${t.id}] "${t.name}" — ${t.appName} v${t.appVersion || '?'} | ` +
         `${t.deviceOs} ${t.deviceVersion} | ${t.deviceName}\n` +
-        `  Duration: ${dur} | CPU avg: ${cpu} | Mem avg: ${mem} | Net: ${net} | ${t.date}`
+        `  Speed Index: ${si} | Duration: ${dur} | CPU avg: ${cpu} | Mem avg: ${mem} | Net: ${net} | ${t.date}`
       );
     })
     .join('\n\n');
@@ -522,7 +524,7 @@ export function formatTransaction(t: Transaction): string {
     `  App:      ${t.appName} v${t.appVersion || 'unknown'}`,
     `  Device:   ${t.deviceName} — ${t.deviceOs} ${t.deviceVersion} (${t.deviceModel})`,
     `  Date:     ${t.startTime}`,
-    `  Duration: ${dur}${t.speedIndex != null ? ` | Speed Index: ${t.speedIndex}ms` : ''}`,
+    `  Duration: ${dur}${t.speedIndex != null ? ` | Speed Index: ${t.speedIndex} SI (composite visual-progress score, not elapsed time)` : ''}`,
     `  Network:  ${t.networkProfile || 'none'} | ↑${fmtBytes(t.totalUploadedBytes)} ↓${fmtBytes(t.totalDownloadedBytes)}`,
     '',
     '  Performance metrics:',
