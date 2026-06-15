@@ -6,7 +6,7 @@
 
 # Digital.ai Continuous Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **169 tools**, **2 resources**, and **5 prompts** covering 24 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Continuous Testing device farm. The server exposes **170 tools**, **2 resources**, and **5 prompts** covering 24 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive inspection, and more.
 
 ---
 
@@ -86,7 +86,7 @@ Your Digital.ai access key determines what the MCP server can do on your behalf.
 
 | Key type | Format | Access |
 |---|---|---|
-| **Cloud Admin JWT** | `eyJ…` (long base-64 string) | All 169 tools: device management, user provisioning, project administration, infrastructure, performance data |
+| **Cloud Admin JWT** | `eyJ…` (long base-64 string) | All 170 tools: device management, user provisioning, project administration, infrastructure, performance data |
 | **Project API key** | `aut_1_…` | Scoped to the devices, apps, and reports within one specific project. v2 API tools (agents, regions, license data) return 403. |
 
 When a Cloud Admin tool is called with a project key, the MCP returns a plain-language error explaining what happened — and, if a Cloud Admin profile is configured, a ready-to-use `switch_environment(...)` command.
@@ -343,14 +343,14 @@ Once connected, talk to the server in plain language — no tool names needed:
 
 ## Capabilities
 
-169 tools across 24 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
+170 tools across 24 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
 
 | Domain | Tools | Highlights |
 |---|---|---|
 | [Devices](docs/tools.md#devices) | 18 | List/query devices, find available, release, reboot, tags, Mobile Studio |
 | [Device Groups](docs/tools.md#device-groups) | 9 | Create groups, move devices, control project access |
 | [Reservations](docs/tools.md#reservations) | 5 | Reserve devices, check availability windows |
-| [Applications](docs/tools.md#applications) | 13 | Upload, install/uninstall, find the latest build |
+| [Applications](docs/tools.md#applications) | 14 | Upload, generate local upload command, install/uninstall, find the latest build |
 | [Repository](docs/tools.md#repository) | 6 | Test-data file storage |
 | [Browsers](docs/tools.md#browsers) | 3 | Selenium browser sessions |
 | [Users](docs/tools.md#users) | 8 | Account provisioning, project assignment, tags |

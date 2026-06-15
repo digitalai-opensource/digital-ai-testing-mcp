@@ -29,7 +29,7 @@ const REGISTERED_TOOLS = [
   'delete_reservation', 'check_device_availability_window',
   // Applications
   'list_applications', 'get_application_info', 'upload_application_file',
-  'upload_application_from_url', 'delete_application', 'update_application_plugins',
+  'upload_application_from_url', 'get_application_upload_command', 'delete_application', 'update_application_plugins',
   'install_application', 'uninstall_application',
   'uninstall_application_by_package', 'uninstall_application_by_package_from_devices',
   'find_latest_application', 'extract_app_language_files', 'bulk_install_to_group',
@@ -155,7 +155,7 @@ export function registerMetaTools(server: McpServer): void {
         '  Devices            — list, detail, control, tag, health, find, release-orphaned (18 tools)',
         '  Device Groups      — list, create, edit, delete, assign (9 tools)',
         '  Reservations       — list, create, reserve-now, delete, check-window (5 tools)',
-        '  Applications       — list, upload, install, uninstall, bulk-install, plugins (13 tools)',
+        '  Applications       — list, upload, upload-command, install, uninstall, bulk-install, plugins (14 tools)',
         '  Repository         — list, upload, download, update, delete (6 tools)',
         '  Browsers           — list, selenium-session, manual-session (3 tools)',
         '  Projects           — list, create, delete, users (by id OR name), tokens, settings (16 tools)',
@@ -312,9 +312,10 @@ export function registerMetaTools(server: McpServer): void {
   server.tool(
     'list_environments',
     'List all named connection profiles configured in the environment. ' +
-    'Shows profile name, target URL, and auth type (JWT or API key) for each. ' +
-    'API keys are never included in the response. ' +
-    'Use switch_environment to activate a different profile.',
+    'Each profile typically corresponds to either a specific project (project API key, aut_1_...) or full platform access (Cloud Admin JWT). ' +
+    'Shows profile name, target URL, and auth type for each. API keys are never included in the response. ' +
+    'Use this when the user asks which projects or environments are available. ' +
+    'Use switch_environment to activate a different profile — that is how you change which project you are working with.',
     {},
     () => {
       const profiles = listProfiles();
@@ -343,8 +344,11 @@ export function registerMetaTools(server: McpServer): void {
   server.tool(
     'switch_environment',
     'Switch the active API connection to a different named profile. ' +
-    'All subsequent tool calls will use the new profile\'s URL and credentials immediately — no restart required. ' +
-    'Use list_environments to see available profile names.',
+    'Each profile holds a distinct set of credentials — typically either a project API key (scoped to one project) or a Cloud Admin JWT (full platform access). ' +
+    'TRIGGER PHRASES: "switch projects", "change project", "change project context", "use a different project", "access project X", "work on project X" — all of these mean the user wants to switch to the profile that holds the target project\'s key. ' +
+    'Project API keys are single-project scoped: there is no API call to change project within a key — the only way to work with a different project is to switch to a profile that holds that project\'s credentials. ' +
+    'Use list_environments first to show the user available profiles so they can pick the right one. ' +
+    'All subsequent tool calls use the new profile\'s URL and credentials immediately — no restart required.',
     {
       profileName: z
         .string()

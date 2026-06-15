@@ -234,11 +234,12 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'start_inspection_session',
     'Start a live WebDriver session on a real Android or iOS device for interactive test building. ' +
-    'Returns a session handle used by all other inspection tools, plus viewUrl/debugUrl — ' +
-    'SHARE BOTH URLS WITH THE USER IMMEDIATELY so they can watch (viewUrl) or interact (debugUrl) in real time. ' +
+    'Returns a session handle used by all other inspection tools, plus a viewUrl — ' +
+    'SHARE THE VIEW URL WITH THE USER IMMEDIATELY so they can watch the session live in a browser (read-only). ' +
+    'Do NOT share or offer a debug/interactive browser URL — the device is already reserved by this session and a second connection will conflict and error. ' +
     'The session reserves a device and gives you screenshot + element + gesture access. ' +
     'Session creation takes 20-90 s while a device is allocated.\n\n' +
-    'TEST-CREATION MODE ROUTER — choose INTERACTIVE (this tool, narrated step by step with the user watching via viewUrl, ' +
+    'TEST-CREATION MODE ROUTER — choose INTERACTIVE (this tool, narrated step by step with the user watching via the View URL, ' +
     'or the collaborative_test_creation prompt) when: the request is vague ("I want a test for app X"); the user answers ' +
     'scoping questions with "let\'s decide as we go" / "let\'s see what\'s there" / "not sure yet" (exploration signals — ' +
     'an unambiguous redirect to interactive, at any point in the conversation); the user has no app ' +
@@ -250,9 +251,10 @@ export function registerInspectionTools(server: McpServer): void {
     'IF UNSURE WHICH MODE THE USER WANTS, ASK: "Want me to create this test for you based on best practices, ' +
     'or start an interactive session where we build it together?"\n\n' +
     'Typical workflow:\n' +
+    '  0. list_applications + version check — call list_applications to find the app; show the user the version found (buildVersion / releaseVersion) and ask "Is this the build you want to test, or do you have a newer one?" WAIT for the answer. If not found or a newer build is wanted: ask for local file path and OS, call get_application_upload_command, share the command, and WAIT for upload confirmation before re-checking list_applications. Do not advance until the user has confirmed the version.\n' +
     '  1. find_available_device — find a healthy device (region preference is automatic)\n' +
     '  2. install_application — BEFORE starting the session; install fails while the device is reserved\n' +
-    '  3. start_inspection_session(device: <id from step 1>) — PIN the session to the device you just installed on; share viewUrl/debugUrl\n' +
+    '  3. start_inspection_session(device: <id from step 1>) — PIN the session to the device you just installed on; share the viewUrl so the user can watch live\n' +
     '  4. launch_app — foreground the app (Android: packageName + mainActivity from get_application_info; iOS: bundleIdentifier)\n' +
     '  5. take_inspection_screenshot / get_element_tree — see the screen, discover locators\n' +
     '  6. find_elements / tap_element / type_into_element / swipe_screen / press_back — interact and verify\n' +
@@ -366,19 +368,20 @@ export function registerInspectionTools(server: McpServer): void {
         });
 
         // Resolve the numeric platform device ID from the UDID so the user-facing
-        // view/debug URLs can be emitted without a follow-up list_devices call.
+        // view URL can be emitted without a follow-up list_devices call.
+        // Note: the debug URL (/3) is intentionally NOT generated — the device is
+        // already reserved by this WebDriver session, and opening a second interactive
+        // connection causes a conflict error.
         let deviceId: string | null = null;
         let viewUrl: string | null = null;
-        let debugUrl: string | null = null;
         if (session.deviceUDID) {
           try {
             const resolved = await resolveDevice(session.deviceUDID);
             deviceId = resolved.id;
             const base = getActiveUrl().replace(/\/+$/, '');
             viewUrl = `${base}/#/open/device/${deviceId}/1`;
-            debugUrl = `${base}/#/open/device/${deviceId}/3`;
           } catch {
-            // Non-fatal — session is usable without the URLs
+            // Non-fatal — session is usable without the URL
           }
         }
 
@@ -395,7 +398,6 @@ export function registerInspectionTools(server: McpServer): void {
           },
           appPackage: session.appPackage,
           viewUrl,
-          debugUrl,
           cloudViewLink: session.cloudViewLink,
           reportUrl: session.reportUrl,
           idleTimeoutNote:
@@ -404,7 +406,7 @@ export function registerInspectionTools(server: McpServer): void {
             'If the user takes longer than ~4 minutes, expect a 404 on your next call: stop_inspection_session to clean up, ' +
             'start a fresh session, and re-find elements (your noted selectors stay valid; raw elementIds do not survive sessions).',
           shareWithUser: viewUrl
-            ? `Emit these URLs to the user immediately so they can follow along: watch live at ${viewUrl} or interact in debug mode at ${debugUrl}`
+            ? `Share this URL with the user immediately so they can watch the session live (read-only): ${viewUrl}`
             : null,
         };
 
@@ -478,6 +480,10 @@ export function registerInspectionTools(server: McpServer): void {
         } else {
           text = `✅ Session ${args.handle} stopped. Device released.`;
         }
+
+        text +=
+          '\n\n📌 If you have the View URL open in a browser, please close that tab now — ' +
+          'the device has been released but the browser session may still appear connected.';
 
         return { content: [{ type: 'text' as const, text }] };
       } catch (e) {

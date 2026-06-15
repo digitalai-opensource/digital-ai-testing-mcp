@@ -66,7 +66,8 @@ TEST-AUTHORING POLICY — read this BEFORE you plan or create any test for an ap
 3. If you have no selector source, you are in INTERACTIVE mode by definition — start_inspection_session first. If you are unsure which mode the user wants, ASK before calling any tool. A test-type label picked from a menu ("login test", "smoke", "e2e") is a category, not a specification.
 4. Before you present or save ANY test — generated here OR written by hand — run validate_test_script on it. If it flags placeholder selectors, a scaffold fail-guard, or placeholder credentials, the test is not runnable; fix it before delivering.
 
-GENERAL: credentials and base URL come from the active profile (switch_environment changes it — never read them from env). Destructive tools require confirmDeletion:true. Reporter and transaction tools require a Cloud Admin JWT profile.`;
+GENERAL: credentials and base URL come from the active profile (switch_environment changes it — never read them from env). Destructive tools require confirmDeletion:true. Reporter and transaction tools require a Cloud Admin JWT profile.
+PROJECT CONTEXT: each project API key is scoped to exactly one project — there is no API call to change project within the same key. "Switch projects", "change project context", "use a different project", or "access project X" all mean switch_environment to the profile holding that project's key. Use list_environments to show available profiles.`;
 
 const server = new McpServer({ name, version }, { instructions: SERVER_INSTRUCTIONS });
 

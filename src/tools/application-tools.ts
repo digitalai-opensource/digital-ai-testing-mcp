@@ -22,6 +22,7 @@ import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatApplicationList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { getActiveAccessKey, getActiveUrl, getActiveKeyType } from '../api/client.js';
 
 // v43 Fix C — structured (not prose) test-creation guidance, attached to the entry-point
 // tools an agent calls first when building a test. The doc's argument: agents treat a
@@ -187,7 +188,7 @@ export function registerApplicationTools(server: McpServer): void {
       uniqueName: z.string().optional().describe('A short unique alias for this app (optional).'),
       camera: z.boolean().optional().describe('Enable camera support instrumentation.'),
       touchId: z.boolean().optional().describe('Enable Touch ID support (iOS).'),
-      project: z.string().optional().describe('Project name to assign the app to.'),
+      project: z.string().optional().describe('Project name to assign the app to. Cloud Admin JWT only — project API keys upload to their default project and this parameter is ignored by the platform.'),
       uuid: z.string().optional().describe('iOS provisioning profile UUID for signing.'),
       fixKeychainAccess: z.boolean().optional().describe('Fix keychain access for iOS.'),
       allowResign: z.boolean().optional().describe('Allow app re-signing for iOS.'),
@@ -259,7 +260,7 @@ export function registerApplicationTools(server: McpServer): void {
       uniqueName: z.string().optional().describe('A short unique alias for this app.'),
       camera: z.boolean().optional().describe('Enable camera support.'),
       touchId: z.boolean().optional().describe('Enable Touch ID support (iOS).'),
-      project: z.string().optional().describe('Project name to assign to.'),
+      project: z.string().optional().describe('Project name to assign the app to. Cloud Admin JWT only — project API keys upload to their default project and this parameter is ignored by the platform.'),
       uuid: z.string().optional().describe('iOS provisioning profile UUID.'),
       fixKeychainAccess: z.boolean().optional().describe('Fix keychain access (iOS).'),
       allowResign: z.boolean().optional().describe('Allow re-signing (iOS).'),
@@ -300,6 +301,138 @@ export function registerApplicationTools(server: McpServer): void {
         }
         return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
       }
+    }
+  );
+
+  server.tool(
+    'get_application_upload_command',
+    'Generates a ready-to-run curl or PowerShell command for uploading an app binary directly from the user\'s local machine to the Digital.ai platform. ' +
+    'The MCP server itself does not handle the binary — the user runs the generated command locally so the file never passes through the Docker container. ' +
+    'Use this instead of upload_application_file when the binary is on a local machine and volume-mounting is not practical.\n\n' +
+    'WARNING: The generated command embeds the active access key in plaintext. ' +
+    'Instruct the user to run it immediately and not save or share the output.',
+    {
+      localFilePath: z.string().describe(
+        'Full path to the binary on the user\'s local machine, used verbatim in the generated command. ' +
+        'Examples: "C:\\\\Downloads\\\\MyApp.apk" (Windows), "/Users/joe/Downloads/MyApp.ipa" (macOS).'
+      ),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe(
+        'Platform of the machine where the command will be run. ' +
+        '"windows" produces both a Git Bash curl command and a PowerShell alternative. ' +
+        '"macos"/"linux" produce a bash curl command. Cannot be inferred — the MCP runs in Docker.'
+      ),
+      uniqueName: z.string().optional().describe('Short unique alias to assign to the uploaded app.'),
+      project: z.string().optional().describe(
+        'Project name to assign the app to. Cloud Admin JWT only — project API keys upload to their default project and this parameter is ignored by the platform.'
+      ),
+      camera: z.boolean().optional().describe('Enable camera support instrumentation.'),
+      touchId: z.boolean().optional().describe('Enable Touch ID support (iOS).'),
+      uuid: z.string().optional().describe('iOS provisioning profile UUID for signing.'),
+      fixKeychainAccess: z.boolean().optional().describe('Fix keychain access for iOS.'),
+      allowResign: z.boolean().optional().describe('Allow app re-signing for iOS.'),
+      signPlugins: z.boolean().optional().describe('Sign app plugins/extensions for iOS.'),
+      installMDM: z.boolean().optional().describe('Install via MDM (iOS).'),
+      autoTrustEnterpriseDeveloper: z.boolean().optional().describe('Auto-trust enterprise developer (iOS).'),
+      keystorePassword: z.string().optional().describe('Keystore password for Android custom signing. Will appear in plaintext in the generated command.'),
+      keyAlias: z.string().optional().describe('Key alias for Android custom signing.'),
+      keyPassword: z.string().optional().describe('Key password for Android custom signing. Will appear in plaintext in the generated command.'),
+      networkCaptureSupport: z.boolean().optional().describe('Enable network capture for Android.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({
+      localFilePath, localPlatform, uniqueName, project, camera, touchId, uuid,
+      fixKeychainAccess, allowResign, signPlugins, installMDM, autoTrustEnterpriseDeveloper,
+      keystorePassword, keyAlias, keyPassword, networkCaptureSupport, outputFormat,
+    }) => {
+      const accessKey = getActiveAccessKey();
+      const baseUrl = getActiveUrl();
+      const isJwt = getActiveKeyType() === 'jwt';
+      const isWindows = localPlatform === 'windows';
+      const endpoint = `${baseUrl}/api/v1/applications/new`;
+
+      // Collect optional form fields in declaration order (mirrors upload_application_file)
+      const fields: [string, string][] = [];
+      if (uniqueName) fields.push(['uniqueName', uniqueName]);
+      if (camera !== undefined) fields.push(['camera', String(camera)]);
+      if (touchId !== undefined) fields.push(['touchId', String(touchId)]);
+      if (project) fields.push(['project', project]);
+      if (uuid) fields.push(['uuid', uuid]);
+      if (fixKeychainAccess !== undefined) fields.push(['fixKeychainAccess', String(fixKeychainAccess)]);
+      if (allowResign !== undefined) fields.push(['allowResign', String(allowResign)]);
+      if (signPlugins !== undefined) fields.push(['signPlugins', String(signPlugins)]);
+      if (installMDM !== undefined) fields.push(['installMDM', String(installMDM)]);
+      if (autoTrustEnterpriseDeveloper !== undefined) fields.push(['autoTrustEnterpriseDeveloper', String(autoTrustEnterpriseDeveloper)]);
+      if (keystorePassword) fields.push(['keystorePassword', keystorePassword]);
+      if (keyAlias) fields.push(['keyAlias', keyAlias]);
+      if (keyPassword) fields.push(['keyPassword', keyPassword]);
+      if (networkCaptureSupport !== undefined) fields.push(['networkCaptureSupport', String(networkCaptureSupport)]);
+
+      // curl — works on macOS, Linux, Git Bash, and WSL
+      const curlFilePath = localFilePath.replace(/\\/g, '/');
+      const curlLines: string[] = ['curl -X POST \\'];
+      if (isJwt) {
+        curlLines.push(`  -H "Authorization: Bearer ${accessKey}" \\`);
+      } else {
+        curlLines.push(`  -H "X-API-KEY: ${accessKey}" \\`);
+        curlLines.push(`  -H "Authorization: Bearer ${accessKey}" \\`);
+      }
+      curlLines.push(`  -F "file=@${curlFilePath}" \\`);
+      for (const [k, v] of fields) curlLines.push(`  -F "${k}=${v}" \\`);
+      curlLines.push(`  "${endpoint}"`);
+      const curlCommand = curlLines.join('\n');
+
+      // PowerShell (Invoke-RestMethod) — Windows native
+      const psLines: string[] = [];
+      psLines.push('$headers = @{');
+      if (isJwt) {
+        psLines.push(`    "Authorization" = "Bearer ${accessKey}"`);
+      } else {
+        psLines.push(`    "X-API-KEY"     = "${accessKey}"`);
+        psLines.push(`    "Authorization" = "Bearer ${accessKey}"`);
+      }
+      psLines.push('}');
+      psLines.push('$form = @{');
+      psLines.push(`    "file" = Get-Item "${localFilePath}"`);
+      for (const [k, v] of fields) psLines.push(`    "${k}" = "${v}"`);
+      psLines.push('}');
+      psLines.push(`Invoke-RestMethod -Uri "${endpoint}" \``);
+      psLines.push('    -Method POST `');
+      psLines.push('    -Headers $headers `');
+      psLines.push('    -Form $form');
+      const psCommand = psLines.join('\n');
+
+      // Build human-readable output
+      const lines: string[] = [];
+      lines.push('⚠️  WARNING: The commands below embed your access key in plaintext.');
+      lines.push('   Run immediately — do not save, share, or commit this output.');
+      lines.push('');
+
+      if (!isJwt && project) {
+        lines.push('⚠️  NOTE: The "project" field requires a Cloud Admin JWT. The active key is a project API key —');
+        lines.push('   the platform will ignore "project" and upload to your default project.');
+        lines.push('   To target a specific project: switch_environment("<admin-profile>") → re-run → switch back.');
+        lines.push('');
+      }
+
+      if (isWindows) {
+        lines.push('─── Git Bash / WSL / macOS curl ─────────────────────────────────');
+        lines.push('');
+        lines.push('```bash');
+        lines.push(curlCommand);
+        lines.push('```');
+        lines.push('');
+        lines.push('─── PowerShell (Invoke-RestMethod) ──────────────────────────────');
+        lines.push('');
+        lines.push('```powershell');
+        lines.push(psCommand);
+        lines.push('```');
+      } else {
+        lines.push('```bash');
+        lines.push(curlCommand);
+        lines.push('```');
+      }
+
+      return respond(outputFormat, { endpoint, curlCommand, psCommand: isWindows ? psCommand : null }, lines.join('\n'));
     }
   );
 

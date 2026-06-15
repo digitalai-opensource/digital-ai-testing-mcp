@@ -26,6 +26,7 @@ export function registerDebugTools(server: McpServer): void {
     'Appium MCP, and command-line ADB all see it without reconfiguration. ' +
     'The MCP server constructs a ready-to-run script file; the user runs it locally.\n\n' +
     'IMPORTANT — sequence before connecting rdb:\n' +
+    '  0. list_applications + version check — call list_applications to find the app; show the user the version found (buildVersion / releaseVersion) and ask "Is this the build you want to test, or do you have a newer one?" WAIT for the answer. If not found or a newer build is wanted: ask for local file path and OS, call get_application_upload_command, share the command, and WAIT for upload confirmation before re-checking list_applications. Do not advance until the user has confirmed the version.\n' +
     '  1. install_application — install the app while the device is still available.\n' +
     '     install_application FAILS while a device is reserved via rdb.\n' +
     '  2. get_remote_debug_command — connect rdb (device is now reserved)\n' +

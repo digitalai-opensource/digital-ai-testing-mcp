@@ -93,8 +93,9 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `list_applications` | List all apps in the repository | nameContains, osType, packageName, bundleIdentifier, fileType, isForSimulator; sortBy/sortOrder | Any |
 | `get_application_info` | Full app detail | — | Any |
 | `find_latest_application` | Find the newest uploaded version by name, bundle ID, or package name. Returns `appCapabilityString` (e.g. `cloud:MyApp`) ready for the Appium `app` capability. | — | Any |
-| `upload_application_file` | Upload APK/IPA/AAB from a local file path | — | Cloud Admin |
-| `upload_application_from_url` | Upload from a direct-download URL | — | Cloud Admin |
+| `upload_application_file` | Upload APK/IPA/AAB from a local file path visible to the MCP container (volume-mount required). Project API keys upload to their default project; use `project` to target a specific project (Cloud Admin JWT only). | — | Any |
+| `upload_application_from_url` | Upload from a direct-download URL. Project API keys upload to their default project; use `project` to target a specific project (Cloud Admin JWT only). | — | Any |
+| `get_application_upload_command` | Generate a ready-to-run curl or PowerShell command for uploading a binary directly from the user's local machine — the MCP is not the middleman. Use when volume-mounting Docker is impractical. Embeds the active access key; instruct the user to run immediately and discard. | — | Any |
 | `delete_application` | Delete an app from the repository | — | Cloud Admin |
 | `update_application_plugins` | Update iOS plugin signing profiles | — | Cloud Admin |
 | `install_application` | Install an app on one or more devices. The app must be assigned to a project containing the target device — call `assign_app_to_project` first if you get a 400 error. | — | Any |
@@ -303,6 +304,14 @@ Six tools cover POC and general project lifecycle management. See the [Workflow 
 **1. Test script development** — discover element selectors before writing code:
 
 ```
+list_applications(nameContains="MyApp")
+# → show the user the found version (buildVersion / releaseVersion) and ask:
+#   "Is this the build you want to test, or do you have a newer one?"
+# → WAIT for confirmation before continuing
+# → if a newer build is needed:
+get_application_upload_command(localFilePath, localPlatform)  # generate curl/PowerShell command for the user
+# (share the command, wait for the user to confirm upload succeeded, re-run list_applications)
+
 install_application(appId, deviceId)          # install while device is Available
 get_remote_debug_command(serialNumber, ...)   # device is now reserved
 adb shell am start -n <package>/<activity>    # launch the app
@@ -332,7 +341,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `start_inspection_session` | Reserve a device and open a live WebDriver session. Allocates a real Android device and returns a session handle plus `viewUrl`/`debugUrl` so the operator can watch or interact in a browser. Device allocation takes 20–90 s. | No |
+| `start_inspection_session` | Reserve a device and open a live WebDriver session. Allocates a real Android device and returns a session handle plus `viewUrl` so the operator can watch the session live in a browser (read-only). Device allocation takes 20–90 s. | No |
 | `stop_inspection_session` | Release the device and delete the probe report from the reporter. `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | No |
 | `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Claude. Use after each interaction to verify UI state. | No |
 | `get_element_tree` | Get the full UI hierarchy as a formatted element table. Shows resource-id, content-desc, text, and clickability for all elements on screen. | No |
@@ -358,11 +367,19 @@ Network checks are especially important before NV-dependent tests (`startPerform
 **Typical workflow:**
 
 ```
-list_applications(nameContains="MyApp")             → appId
+list_applications(nameContains="MyApp")
+# → show the user the found version (buildVersion / releaseVersion) and ask:
+#   "Is this the build you want to test, or do you have a newer one?"
+# → WAIT for confirmation before continuing
+# → if not found or a newer build is needed:
+get_application_upload_command(localFilePath, localPlatform)  → curl/PowerShell command for the user to run locally
+# (share the command, wait for the user to confirm upload succeeded, re-run list_applications)
+
+list_applications(nameContains="MyApp")             → confirmed appId
 get_application_info(appId)                         → packageName + mainActivity
 find_available_device(os="Android")                 → healthy device (region preference automatic)
 install_application(appId, deviceId)                → BEFORE the session; install fails on reserved devices
-start_inspection_session(region="US2")              → handle + viewUrl/debugUrl (share with the operator!)
+start_inspection_session(region="US2")              → handle + viewUrl (share with the operator — watch-only)
 launch_app(handle, packageName, mainActivity)       → foreground the app
 take_inspection_screenshot(handle="A1B2C3D4")       → AI sees the current screen
 get_element_tree(handle="A1B2C3D4")                 → discover element resource-ids
@@ -379,7 +396,7 @@ get_test_boilerplate(...)                           → generate the test script
 - iOS specifics: locate elements by `name`/`label`/`value` (`accessibility id`, `name`, or xpath like `//*[@label='...']`); launch apps by bundle ID (no activity); `press_back` taps the nav-bar back button; clear-app-data and Grid-device clipboard are unavailable.
 - Session reports are created in the Digital.ai reporter automatically. `stop_inspection_session` deletes them. If the MCP server restarts before you call stop, run `cleanup_inspection_sessions` to delete orphaned reports.
 - The session connects to `{BASE_URL}/wd/hub` — the same Grid endpoint used by all Appium tests.
-- `viewUrl` (watch) and `debugUrl` (interact) in the start response are operator-facing browser URLs — share them with the user immediately. `cloudViewLink` is the equivalent Mobile Studio link.
+- `viewUrl` in the start response is a read-only browser URL — share it with the user so they can watch the session live. Do NOT offer or open the debug URL (`/3`) — the device is already reserved by the WebDriver session and a second interactive connection will conflict and error. `cloudViewLink` is the equivalent Mobile Studio link (also watch-only while the session is active).
 - The `collaborative_test_creation` prompt packages this entire flow as a guided, narrated workflow.
 
 ### Resources & Prompts

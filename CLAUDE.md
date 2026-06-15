@@ -428,6 +428,7 @@ The script reads `DIGITAL_AI_ACCESS_KEY` from `.env` if present (avoids persisti
 `install_application` **fails while a device is reserved via rdb**. The correct sequence is:
 
 ```
+get_application_upload_command(localFilePath, localPlatform)  ← (if app not yet in repo) share command, wait for user to confirm upload
 install_application(appId, deviceId)     ← device must be Available, not reserved
 get_remote_debug_command(serialNumber)   ← device is now reserved
 adb shell am start -n <pkg>/<activity>  ← launch the app
@@ -435,7 +436,7 @@ adb shell am start -n <pkg>/<activity>  ← launch the app
 get_test_boilerplate(...)               ← generate reusable script
 ```
 
-If the agent calls `install_application` after `get_remote_debug_command`, it will get a 400 error. Correct order: install first, connect second.
+If the agent calls `install_application` after `get_remote_debug_command`, it will get a 400 error. Correct order: upload (if needed) → install → connect.
 
 ### UI element ID extraction
 
