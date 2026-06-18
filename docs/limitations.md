@@ -30,7 +30,7 @@ License **limits** are readable via `get_license_info` and current usage vs. lim
 
 ## 7. Device Reboot and Cleanup Limitations for Non-Admin Users
 
-`reboot_device` and `reset_device_usb` are Cloud Admin-only operations. Regular users and Project Admins cannot trigger hardware-level device operations.
+`reboot_device` and `reset_device_usb` are Cloud Admin-only operations. Project Admin and Project User keys cannot trigger hardware-level device operations.
 
 ## 8. Backup API Availability on SaaS
 
