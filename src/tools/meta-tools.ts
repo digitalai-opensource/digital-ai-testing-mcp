@@ -81,9 +81,9 @@ const REGISTERED_TOOLS = [
   'list_nv_servers', 'get_nv_server',
   // Sessions / Storage / License (Cloud Admin only)
   'list_active_sessions', 'get_reporter_project_storage', 'get_license_info',
-  // Project admin (v2, Cloud Admin JWT only)
+  // Project admin (v2, Project Admin or higher)
   'get_project_admin_settings',
-  // Transactions / Performance reporting (Cloud Admin JWT only)
+  // Transactions / Performance reporting (all roles; project-scoped for project-level keys)
   'list_transactions', 'get_transaction', 'get_transaction_performance_summary',
   'get_performance_trend',
   // Aggregation / analytics
@@ -102,7 +102,7 @@ const REGISTERED_TOOLS = [
   'long_press', 'double_tap', 'drag_and_drop', 'pinch_zoom', 'scroll_to_element',
   'press_key', 'hide_keyboard', 'app_control', 'device_control',
   'list_inspection_sessions', 'cleanup_inspection_sessions',
-  // Performance comparison (Cloud Admin JWT only; transaction-control is session-based)
+  // Performance comparison (all roles; transaction-control is session-based)
   'compare_performance_transactions', 'assess_comparison_confounds',
   'detect_performance_outliers', 'performance_transaction_control',
 ] as const;
@@ -135,7 +135,7 @@ export function registerMetaTools(server: McpServer): void {
       }
 
       const keyType = getActiveKeyType();
-      const keyLabel = keyType === 'jwt' ? 'Cloud Admin JWT — full access' : 'project API key — limited access (Cloud Admin tools return 403)';
+      const keyLabel = keyType === 'jwt' ? 'Cloud Admin — full access' : 'project-level key (Project Admin or Project User) — scoped access (some Cloud Admin tools return 403)';
       const envLine = envCount > 1
         ? `Active profile:   "${activeProfile}" — ${keyLabel} (${envCount} profiles — use list_environments / switch_environment)`
         : `Active profile:   "${activeProfile}" — ${keyLabel}`;
@@ -172,8 +172,8 @@ export function registerMetaTools(server: McpServer): void {
         '  Regions            — list_regions, get_region_topology (2 tools, Cloud Admin only)',
         '  NV Servers         — list_nv_servers, get_nv_server (2 tools, Cloud Admin only)',
         '  Sessions/Storage   — list_active_sessions, get_reporter_project_storage, get_license_info (3 tools, Cloud Admin only)',
-        '  Project Admin      — get_project_admin_settings (1 tool, Cloud Admin JWT only — 35+ config fields in one call)',
-        '  Transactions       — list_transactions, get_transaction, get_transaction_performance_summary, get_performance_trend (4 tools, Cloud Admin JWT only)',
+        '  Project Admin      — get_project_admin_settings (1 tool, Project Admin or higher — 35+ config fields in one call)',
+        '  Transactions       — list_transactions, get_transaction, get_transaction_performance_summary, get_performance_trend (4 tools, all roles — project-scoped for project-level keys)',
         '  Analytics          — get_test_stability_report, get_cross_platform_divergence, get_daily_execution_trend (3 tools)',
         '  Coverage           — get_device_coverage_summary, get_regional_test_coverage (2 tools)',
         '  Utilization        — get_license_utilization (1 tool, Cloud Admin only)',
@@ -312,7 +312,7 @@ export function registerMetaTools(server: McpServer): void {
   server.tool(
     'list_environments',
     'List all named connection profiles configured in the environment. ' +
-    'Each profile typically corresponds to either a specific project (project API key, aut_1_...) or full platform access (Cloud Admin JWT). ' +
+    'Each profile typically corresponds to either a specific project (project-level key — Project Admin or Project User, aut_1_...) or full platform access (Cloud Admin). ' +
     'Shows profile name, target URL, and auth type for each. API keys are never included in the response. ' +
     'Use this when the user asks which projects or environments are available. ' +
     'Use switch_environment to activate a different profile — that is how you change which project you are working with.',
@@ -344,31 +344,82 @@ export function registerMetaTools(server: McpServer): void {
   server.tool(
     'switch_environment',
     'Switch the active API connection to a different named profile. ' +
-    'Each profile holds a distinct set of credentials — typically either a project API key (scoped to one project) or a Cloud Admin JWT (full platform access). ' +
+    'Each profile holds a distinct set of credentials — typically either a project-level key (Project Admin or Project User, scoped to one project) or a Cloud Admin key (full platform access). ' +
     'TRIGGER PHRASES: "switch projects", "change project", "change project context", "use a different project", "access project X", "work on project X" — all of these mean the user wants to switch to the profile that holds the target project\'s key. ' +
-    'Project API keys are single-project scoped: there is no API call to change project within a key — the only way to work with a different project is to switch to a profile that holds that project\'s credentials. ' +
+    '"Switch to cloud admin", "switch to admin", "switch to full access" — these mean the user wants the Cloud Admin profile. ' +
+    'Project-level keys are single-project scoped: there is no API call to change project within a key — the only way to work with a different project is to switch to a profile that holds that project\'s credentials. ' +
     'Use list_environments first to show the user available profiles so they can pick the right one. ' +
-    'All subsequent tool calls use the new profile\'s URL and credentials immediately — no restart required.',
+    'All subsequent tool calls use the new profile\'s URL and credentials immediately — no restart required. ' +
+    'Accepts either the exact profile name OR role-based aliases: "cloud admin" / "admin" / "full access" resolve to the first Cloud Admin profile; "project" resolves to the only project-level profile (or lists options if multiple exist).',
     {
       profileName: z
         .string()
-        .describe('Name of the profile to activate (case-insensitive). Use list_environments to see available names.'),
+        .describe('Profile name (case-insensitive) OR a role alias: "cloud admin", "admin", "full access" → first Cloud Admin profile; "project" → first/only project-level profile. Use list_environments to see available names.'),
     },
     async ({ profileName }) => {
-      const creds = getProfileCredentials(profileName);
+      const profiles = listProfiles();
+      let resolvedName = profileName;
+
+      // Role-based fuzzy resolution — only when the exact name is not found.
+      if (!getProfileCredentials(profileName)) {
+        const lower = profileName.toLowerCase().trim();
+        const isAdminAlias = ['cloud admin', 'cloudadmin', 'admin', 'full access', 'cloud', 'jwt'].includes(lower);
+        const isProjectAlias = ['project', 'project key', 'project-level', 'project admin', 'project user'].includes(lower);
+
+        if (isAdminAlias) {
+          const adminProfiles = profiles.filter(p => p.keyType === 'jwt');
+          if (adminProfiles.length === 1) {
+            resolvedName = adminProfiles[0].name;
+          } else if (adminProfiles.length > 1) {
+            const names = adminProfiles.map(p => `"${p.name}"`).join(', ');
+            return {
+              content: [{ type: 'text' as const, text: `Multiple Cloud Admin profiles found: ${names}. Which one do you want to switch to?` }],
+            };
+          } else {
+            return {
+              content: [{ type: 'text' as const, text: `No Cloud Admin profiles configured. Add a Cloud Admin key to your .env:\n  DAI_PROFILE_ADMIN_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_ADMIN_KEY=eyJ...your-cloud-admin-key...` }],
+            };
+          }
+        } else if (isProjectAlias) {
+          const projectProfiles = profiles.filter(p => p.keyType === 'api-key');
+          if (projectProfiles.length === 1) {
+            resolvedName = projectProfiles[0].name;
+          } else if (projectProfiles.length > 1) {
+            const names = projectProfiles.map(p => `"${p.name}"`).join(', ');
+            return {
+              content: [{ type: 'text' as const, text: `Multiple project profiles found: ${names}. Which project do you want to switch to?` }],
+            };
+          } else {
+            return {
+              content: [{ type: 'text' as const, text: `No project-level profiles configured. Add a project key to your .env:\n  DAI_PROFILE_PROJECT_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_PROJECT_KEY=aut_1_...your-project-key...` }],
+            };
+          }
+        } else {
+          // Unrecognized name — return helpful disambiguation without isError
+          const available = profiles.map(p => {
+            const type = p.keyType === 'jwt' ? 'Cloud Admin' : 'project-level';
+            return `"${p.name}" (${type})`;
+          }).join(', ');
+          return {
+            content: [{ type: 'text' as const, text: `Profile "${profileName}" not found. Available profiles: ${available}.\n\nYou can also use aliases: "cloud admin" → Cloud Admin profile; "project" → project-level profile.` }],
+          };
+        }
+      }
+
+      const creds = getProfileCredentials(resolvedName);
       if (!creds) {
-        const available = listProfiles().map(p => `"${p.name}"`).join(', ');
+        const available = profiles.map(p => `"${p.name}"`).join(', ');
         return {
           content: [{
             type: 'text',
-            text: `Profile "${profileName}" not found. Available profiles: ${available}.\n\nTo add a profile, add these lines to your .env and restart:\n  DAI_PROFILE_${profileName.toUpperCase()}_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_${profileName.toUpperCase()}_KEY=your_access_key`,
+            text: `Profile "${resolvedName}" not found. Available profiles: ${available}.\n\nTo add a profile, add these lines to your .env and restart:\n  DAI_PROFILE_${profileName.toUpperCase()}_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_${profileName.toUpperCase()}_KEY=your_access_key`,
           }],
           isError: true,
         };
       }
 
       const previousProfile = getActiveProfileName();
-      resetClient(creds.url, creds.key, profileName.toLowerCase());
+      resetClient(creds.url, creds.key, resolvedName.toLowerCase());
 
       // Verify the new connection works
       let verifyLine = '';
@@ -379,14 +430,13 @@ export function registerMetaTools(server: McpServer): void {
         verifyLine = '⚠️  Connection established but account verification failed — check that the key is valid for this environment.';
       }
 
-      const profiles = listProfiles();
-      const activeProfile = profiles.find(p => p.name === profileName.toLowerCase());
+      const activeProfile = profiles.find(p => p.name === resolvedName.toLowerCase());
 
       return {
         content: [{
           type: 'text',
           text: [
-            `✅ Switched from "${previousProfile}" to "${profileName.toLowerCase()}"`,
+            `✅ Switched from "${previousProfile}" to "${resolvedName.toLowerCase()}"${resolvedName.toLowerCase() !== profileName.toLowerCase() ? ` (resolved from "${profileName}")` : ''}`,
             `   URL: ${activeProfile?.url ?? creds.url}`,
             `   Auth: ${activeProfile?.keyType ?? 'unknown'}`,
             `   ${verifyLine}`,

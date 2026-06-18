@@ -134,8 +134,8 @@ export async function createInspectionSession(
     );
   }
 
-  // POST /reporter/api/tests/delete is CSRF-blocked for project API keys.
-  // Only Cloud Admin JWT (Bearer token) bypasses the CSRF check on reporter mutation endpoints.
+  // POST /reporter/api/tests/delete is CSRF-blocked for project-level keys (Project Admin and Project User).
+  // Only Cloud Admin credentials (JWT Bearer token) bypass the CSRF check on reporter mutation endpoints.
   const canDeleteReport = getActiveKeyType() === 'jwt';
 
   const handle = crypto.randomUUID().slice(0, 8).toUpperCase();

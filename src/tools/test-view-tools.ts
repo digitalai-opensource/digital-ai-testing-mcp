@@ -123,12 +123,17 @@ export function registerTestViewTools(server: McpServer): void {
     'get_test_view',
     'Get full configuration details for a specific test view group by its ID, including its grouping keys and filter settings.',
     {
-      id: z.number().int().describe('The numeric test view group ID.'),
+      id: z.number().int().optional().describe('The numeric test view group ID.'),
+      viewId: z.number().int().optional().describe('Deprecated — use id instead.'),
       outputFormat: outputFormatParam,
     },
-    async ({ id, outputFormat }) => {
+    async ({ id, viewId: viewIdParam, outputFormat }) => {
+      const resolvedId = id ?? viewIdParam;
+      if (resolvedId === undefined) {
+        return { content: [{ type: 'text' as const, text: 'Error: id is required' }], isError: true };
+      }
       try {
-        const view = await getTestViewById(id);
+        const view = await getTestViewById(resolvedId);
         const lines = [
           `Test View: ${view.name} (ID: ${view.id})`,
           `  View by key:    ${view.byKey}`,
@@ -185,7 +190,7 @@ export function registerTestViewTools(server: McpServer): void {
 
   server.tool(
     'create_test_view',
-    'Create a new test view group. Test views define how reports are grouped and visualised in the reporting dashboard. The byKey, groupByKey1 and groupByKey2 fields must be valid test report key names.',
+    'Create a new test view group. Test views define how reports are grouped and visualised in the reporting dashboard. The byKey field must be a valid test report key name (e.g. "device.os", "status", "appVersion").',
     {
       name: z.string().describe('Display name for the new test view group.'),
       byKey: z
@@ -193,10 +198,12 @@ export function registerTestViewTools(server: McpServer): void {
         .describe('The primary "View by" key, e.g. "device.os" or "browser". Must exist in test data.'),
       groupByKey1: z
         .string()
-        .describe('Left "Group by" panel key, e.g. "environment". Must exist in test data.'),
+        .optional()
+        .describe('Left "Group by" panel key (default: "status"). Common values: status, device.os, device.model, appVersion.'),
       groupByKey2: z
         .string()
-        .describe('Right "Group by" panel key, e.g. "version". Must exist in test data.'),
+        .optional()
+        .describe('Right "Group by" panel key (default: "device.model"). Common values: device.model, device.os, appVersion.'),
       keys: z
         .array(z.string())
         .optional()
@@ -211,8 +218,8 @@ export function registerTestViewTools(server: McpServer): void {
         const view = await createTestView({
           name,
           byKey,
-          groupByKey1,
-          groupByKey2,
+          groupByKey1: groupByKey1 ?? 'status',
+          groupByKey2: groupByKey2 ?? 'device.model',
           ...(keys && { keys }),
           showInDashboard: showInDashboard ?? false,
         });
@@ -236,16 +243,21 @@ export function registerTestViewTools(server: McpServer): void {
     'update_test_view',
     'Update the name or dashboard visibility of an existing test view group.',
     {
-      id: z.number().int().describe('The numeric ID of the test view to update.'),
+      id: z.number().int().optional().describe('The numeric ID of the test view to update.'),
+      viewId: z.number().int().optional().describe('Deprecated — use id instead.'),
       name: z.string().optional().describe('New display name for the test view.'),
       showInDashboard: z
         .boolean()
         .optional()
         .describe('Set to true to show on the dashboard, false to hide it.'),
     },
-    async ({ id, name, showInDashboard }) => {
+    async ({ id, viewId: viewIdParam, name, showInDashboard }) => {
+      const resolvedId = id ?? viewIdParam;
+      if (resolvedId === undefined) {
+        return { content: [{ type: 'text' as const, text: 'Error: id is required' }], isError: true };
+      }
       try {
-        const view = await updateTestView({ id, ...(name && { name }), ...(showInDashboard !== undefined && { showInDashboard }) });
+        const view = await updateTestView({ id: resolvedId, ...(name && { name }), ...(showInDashboard !== undefined && { showInDashboard }) });
         return {
           content: [{ type: 'text', text: `✅ Test view "${view.name}" (ID: ${view.id}) updated.` }],
         };
@@ -261,18 +273,23 @@ export function registerTestViewTools(server: McpServer): void {
     'delete_test_view',
     'Permanently delete a test view group. This removes the view configuration but does not delete any underlying test data. Requires confirmDeletion: true.',
     {
-      id: z.number().int().describe('The numeric ID of the test view to delete.'),
+      id: z.number().int().optional().describe('The numeric ID of the test view to delete.'),
+      viewId: z.number().int().optional().describe('Deprecated — use id instead.'),
       confirmDeletion: z
         .boolean()
         .optional()
         .describe('Must be true to confirm the deletion.'),
     },
-    async ({ id, confirmDeletion }) => {
-      const guard = checkDestructiveGuard(confirmDeletion, `Delete test view ${id}`);
+    async ({ id, viewId: viewIdParam, confirmDeletion }) => {
+      const resolvedId = id ?? viewIdParam;
+      if (resolvedId === undefined) {
+        return { content: [{ type: 'text' as const, text: 'Error: id is required' }], isError: true };
+      }
+      const guard = checkDestructiveGuard(confirmDeletion, `Delete test view ${resolvedId}`);
       if (guard) return { content: [{ type: 'text', text: guard }] };
       try {
-        await deleteTestView(id);
-        return { content: [{ type: 'text', text: `✅ Test view ${id} deleted.` }] };
+        await deleteTestView(resolvedId);
+        return { content: [{ type: 'text', text: `✅ Test view ${resolvedId} deleted.` }] };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

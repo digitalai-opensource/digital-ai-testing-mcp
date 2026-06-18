@@ -146,7 +146,7 @@ export async function listTests(
       finalRequest = { ...request, filter: sanitizeReporterFilter(request.filter) };
     }
 
-    // Sort params are CSRF-blocked for project API keys — silently strip so callers don't fail.
+    // Sort params are CSRF-blocked for project-level keys — silently strip so callers don't fail.
     // Date-range pagination in reporting-tools.ts must not rely on sorted order for project keys.
     if (getActiveKeyType() !== 'jwt' && finalRequest.sort && finalRequest.sort.length > 0) {
       finalRequest = { ...finalRequest, sort: undefined };

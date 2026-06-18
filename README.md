@@ -82,14 +82,15 @@ Then ask: *"Show me the overall health of the device farm."*
 
 ## Access Keys
 
-Your Digital.ai access key determines what the MCP server can do on your behalf. There are two types.
+Your Digital.ai access key determines what the MCP server can do on your behalf. There are three access levels.
 
-| Key type | Format | Access |
+| Access level | Key format | Access |
 |---|---|---|
-| **Cloud Admin JWT** | `eyJ…` (long base-64 string) | All 170 tools: device management, user provisioning, project administration, infrastructure, performance data |
-| **Project API key** | `aut_1_…` | Scoped to the devices, apps, and reports within one specific project. v2 API tools (agents, regions, license data) return 403. |
+| **Cloud Admin** | `eyJ…` (long base-64 string) | All tools: device management, user provisioning, project administration, infrastructure, performance data |
+| **Project Admin** | `aut_1_…` | Scoped to one project. Can manage device tags, view project admin settings, list users. v2 API tools (agents, regions, license data) return 403. |
+| **Project User** | `aut_1_…` | Scoped to one project. Read/test operations only. Cannot manage tags, access admin settings, or delete reports. |
 
-When a Cloud Admin tool is called with a project key, the MCP returns a plain-language error explaining what happened — and, if a Cloud Admin profile is configured, a ready-to-use `switch_environment(...)` command.
+When a Cloud Admin tool is called with a project-level key, the MCP returns a plain-language error explaining what happened — and, if a Cloud Admin profile is configured, a ready-to-use `switch_environment(...)` command.
 
 ### Finding your key
 
@@ -104,9 +105,9 @@ The key shown is tied to the **project currently selected in the portal**. If yo
 Configure named profiles in `.env` to switch contexts at runtime without editing files:
 
 ```
-# Default connection (typically a Cloud Admin JWT)
+# Default connection (typically Cloud Admin credentials)
 DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com
-DIGITAL_AI_ACCESS_KEY=eyJ...your-cloud-admin-jwt...
+DIGITAL_AI_ACCESS_KEY=eyJ...your-cloud-admin-key...
 
 # Project-scoped profiles
 DAI_PROFILE_QA_URL=https://your-tenant.experitest.com
@@ -186,7 +187,7 @@ Use `digital-ai-testing-mcp:latest` as the image name in your AI client configur
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DIGITAL_AI_BASE_URL` | ✅ | — | Your Digital.ai tenant URL |
-| `DIGITAL_AI_ACCESS_KEY` | ✅ | — | Access key (JWT or project API key — see [Access Keys](#access-keys)) |
+| `DIGITAL_AI_ACCESS_KEY` | ✅ | — | Access key — see [Access Keys](#access-keys) for the three access levels and key formats |
 | `MCP_SERVER_NAME` | Optional | `digital-ai-testing-mcp` | Server identity shown in the AI client |
 | `MCP_SERVER_VERSION` | Optional | version from `package.json` | Override the reported server version (rarely needed) |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
@@ -361,16 +362,16 @@ Once connected, talk to the server in plain language — no tool names needed:
 | [Coverage Analytics](docs/tools.md#coverage-analytics) | 2 | Tested-vs-available device gap analysis |
 | [Reporting](docs/tools.md#reporting) | 17 | Search/filter test reports, stability, trends, cleanup |
 | [Test Views](docs/tools.md#test-views) | 7 | Dashboard view groups |
-| [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics *(JWT)* |
-| [Agents](docs/tools.md#agents) | 2 | Host machine status *(JWT)* |
-| [Regions](docs/tools.md#regions) | 2 | Region status and infrastructure topology *(JWT)* |
-| [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(JWT)* |
+| [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics *(Cloud Admin)* |
+| [Agents](docs/tools.md#agents) | 2 | Host machine status *(Cloud Admin)* |
+| [Regions](docs/tools.md#regions) | 2 | Region status and infrastructure topology *(Cloud Admin)* |
+| [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(Cloud Admin)* |
 | [Environment Management](docs/tools.md#environment-management) | 2 | Named connection profiles, runtime switching |
 | [Workflows](docs/tools.md#workflows) | 6 | POC and project lifecycle orchestration |
 | [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 2 | Ready-to-run Appium test scripts in 4 languages; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud device as a local ADB device |
 | [Inspection Sessions](docs/tools.md#inspection-sessions) | 22 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control |
-| [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation *(JWT)* |
+| [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation *(Cloud Admin)* |
 | [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 5 guided prompts |
 
 ---
@@ -600,7 +601,7 @@ All boilerplate defaults to the ExperiBank demo app as the starting point. Exper
 
 ## Performance Comparison Reports
 
-Compare performance (Speed Index, CPU, memory, battery, duration) between two sets of conditions — app v1 vs v2, device A vs device B, OS version X vs Y, region to region, two network profiles, or two automation scripts. **All four tools require a Cloud Admin JWT** (transaction data 401s on project API keys).
+Compare performance (Speed Index, CPU, memory, battery, duration) between two sets of conditions — app v1 vs v2, device A vs device B, OS version X vs Y, region to region, two network profiles, or two automation scripts. Works with all access levels — Cloud Admin sees all projects; project-level keys (Project Admin and Project User) see only their own project's transactions.
 
 The headline metric is reported three ways every time — **trimmed mean, median, and raw mean** — so a small or noisy sample can't hide behind a single number.
 
@@ -731,7 +732,7 @@ The first call describes exactly what will be deleted. The second call — with 
 
 Two further guards run before any request leaves the server:
 
-- **Auth pre-flight:** report-deletion tools (`delete_test_reports*`, `cleanup_inspection_sessions`) check the active key type first and return a clear "switch to a Cloud Admin JWT profile" message instead of an opaque CSRF 401 when called with a project key.
+- **Auth pre-flight:** report-deletion tools (`delete_test_reports*`, `cleanup_inspection_sessions`) check the active key type first and return a clear "switch to a Cloud Admin profile" message instead of an opaque CSRF 401 when called with a project-level key.
 - **Upload path validation:** tools that read local files for upload refuse relative paths, path traversal, and credential-file names (`.env*`, SSH private keys) — a misdirected request cannot publish secrets to the cloud repository.
 
 ---
@@ -777,13 +778,13 @@ Tests can also be run from VS Code: `Ctrl+Shift+P` → "Tasks: Run Task".
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `403 Forbidden` on admin tools (agents, regions, license, transactions) | Active profile is a project API key — v2 endpoints require Cloud Admin JWT | The error names the active profile and suggests the command: `switch_environment("<jwt-profile>")` |
-| Report delete tools return "Cloud Admin JWT required" | Reporter mutation endpoints are CSRF-blocked for project API keys | Switch to a Cloud Admin JWT profile, re-run, switch back |
+| `403 Forbidden` on admin tools (agents, regions, license) | Active profile is a project-level key — v2 endpoints require Cloud Admin access | Ask Claude: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one |
+| Report delete tools return "Cloud Admin access required" | Reporter mutation endpoints are CSRF-blocked for project-level keys (Project Admin and Project User) | Switch to a Cloud Admin profile, re-run, switch back |
 | `install_application` returns 400 on a device you can see | Device is reserved via an rdb (remote debug) session | Install **first**, then run `get_remote_debug_command` — not the other way around |
 | `install_application` returns 400 (no rdb involved) | App not assigned to a project containing the target device | Call `assign_app_to_project` first |
 | Repeatable `NoSuchElementException` while sibling tests pass | Device health, not test code — device stuck in a wrong state or offline-but-pooled | Run `get_device_health_summary`; scope the deviceQuery with `@region='<healthy-region>'` |
 | Tests missing from `list_test_reports` results | Project has its own reporter instance — unscoped queries search the default scope | Pass `projectName` (exact name from `list_projects`) |
-| rdb fails: `validation error / Failed to reserve device` | Project API key resolved an internal device ID instead of the real serial | `switch_environment("default")` → regenerate the rdb script → switch back |
+| rdb fails: `validation error / Failed to reserve device` | Project-level key resolved an internal device ID instead of the real serial | Ask Claude: *"switch to Cloud Admin"* → regenerate the rdb script → switch back |
 | Device query returns nothing for `@manufacturer` / `@tag` | These fields are silently ignored server-side | Use the `manufacturer`/`tags` parameters on `find_available_device` — they filter client-side |
 
 ### `Failed to reconnect to digital-ai-testing: -32000`
@@ -830,6 +831,6 @@ The four most commonly encountered:
 1. **No API to trigger Appium test execution.** Tests launch from Appium clients (IDE, CI scripts). The server manages devices, apps, reservations, and results — it cannot start an Appium session itself. (Interactive [inspection sessions](docs/tools.md#inspection-sessions) are the exception: live WebDriver sessions for element discovery on both Android and iOS.)
 2. **Inspection sessions support Android and iOS** on both the legacy Appium Grid (JWP) and Appium Server (W3C/OSS) projects. iOS caveats: no clear-app-data, no clipboard on Grid devices, and back navigation uses the nav-bar button (iOS has no Back button).
 3. **No user disable/lock endpoint.** Removing access for a user provisioned solely for a POC means deleting the account — which is why `close_poc` requires per-user confirmation.
-4. **Reporter API restrictions for project API keys** — server-side sort and report deletion require a Cloud Admin JWT. Tools compensate automatically (client-side sorting, clear pre-flight errors), at the cost of slower full-scan queries under project keys.
+4. **Reporter API restrictions for project-level keys** — server-side sort and report deletion require Cloud Admin access. Tools compensate automatically (client-side sorting, clear pre-flight errors), at the cost of slower full-scan queries under project-level keys.
 
 See [docs/limitations.md](docs/limitations.md) for the full list of 14.

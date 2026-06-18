@@ -311,7 +311,7 @@ export interface AutomationProperty {
   id: number;
 }
 
-// Full project detail from GET /api/v2/projects/{id} — Cloud Admin JWT only.
+// Full project detail from GET /api/v2/projects/{id} — Cloud Admin only.
 // Contains 35+ fields not available in the v1 list endpoint.
 export interface ProjectAdminDetail {
   id: number;
@@ -452,8 +452,8 @@ export interface TestView {
 export interface CreateTestViewParams {
   name: string;
   byKey: string;
-  groupByKey1: string;
-  groupByKey2: string;
+  groupByKey1?: string;
+  groupByKey2?: string;
   keys?: string[];
   showInDashboard?: boolean;
 }
@@ -622,7 +622,7 @@ export interface ActiveSession {
   lastInteractionTime: number;
 }
 
-// ─── Reporter Project Storage (reporter API — Cloud Admin JWT only) ────────────
+// ─── Reporter Project Storage (reporter API — Cloud Admin only) ────────────────
 
 export interface ReporterProject {
   id: number;
@@ -792,7 +792,7 @@ export interface InspectionSession {
   startedAt: number;        // Unix ms timestamp
   lastUsedAt: number;       // Unix ms of the most recent command — idle-timeout awareness
   lastIdleMs?: number;      // Idle gap measured at the start of the current command
-  // true when session was started with Cloud Admin JWT — enables automatic report cleanup
+  // true when session was started with Cloud Admin credentials — enables automatic report cleanup
   canDeleteReport: boolean;
   // Protocol of the allocating agent: JWP (Appium 1.x) uses touch/perform and
   // /appium/device/* routes; W3C (Appium 2/3) uses /actions and mobile: execute commands.

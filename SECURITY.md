@@ -5,7 +5,7 @@
 | Version | Supported |
 |---|---|
 | 1.3.x (latest) | ✅ |
-| < 1.3.0 | ❌ |
+| < 1.3.3 | ❌ |
 
 Security fixes are applied to the latest release only. We do not backport to older minor versions.
 

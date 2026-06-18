@@ -3,7 +3,7 @@
 Complete per-tool reference for the Digital.ai Continuous Testing MCP Server — all 164 tools, 2 resources, and 5 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
-- **Admin Required?** — *Cloud Admin* requires a Cloud Admin JWT key; *Any* works with both JWT and project API keys. See [Access Keys](../README.md#access-keys).
+- **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (the long eyJ... key); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
 - **Filters / Sort** — server-side parameters accepted by list tools. See [List Filters & Sorting](../README.md#list-filters--sorting).
 - Destructive tools require `confirmDeletion: true` — see [Safety Guards](../README.md#safety-guards).
 
@@ -66,7 +66,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `list_device_groups` | List all device groups. Full detail (device counts, type) with Cloud Admin JWT; simplified id/name list with project keys. | Any |
+| `list_device_groups` | List all device groups. Full detail (device counts, type) with Cloud Admin; simplified id/name list with project-level keys. | Any |
 | `get_devices_in_group` | List devices in a group | Cloud Admin |
 | `get_projects_in_group` | List projects with access to a group | Cloud Admin |
 | `create_device_group` | Create a new device group | Cloud Admin |
@@ -93,8 +93,8 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `list_applications` | List all apps in the repository | nameContains, osType, packageName, bundleIdentifier, fileType, isForSimulator; sortBy/sortOrder | Any |
 | `get_application_info` | Full app detail | — | Any |
 | `find_latest_application` | Find the newest uploaded version by name, bundle ID, or package name. Returns `appCapabilityString` (e.g. `cloud:MyApp`) ready for the Appium `app` capability. | — | Any |
-| `upload_application_file` | Upload APK/IPA/AAB from a local file path visible to the MCP container (volume-mount required). Project API keys upload to their default project; use `project` to target a specific project (Cloud Admin JWT only). | — | Any |
-| `upload_application_from_url` | Upload from a direct-download URL. Project API keys upload to their default project; use `project` to target a specific project (Cloud Admin JWT only). | — | Any |
+| `upload_application_file` | Upload APK/IPA/AAB from a local file path visible to the MCP container (volume-mount required). Project-level keys upload to their assigned project; use `project` to target a specific project (Cloud Admin only). | — | Any |
+| `upload_application_from_url` | Upload from a direct-download URL. Project-level keys upload to their assigned project; use `project` to target a specific project (Cloud Admin only). | — | Any |
 | `get_application_upload_command` | Generate a ready-to-run curl or PowerShell command for uploading a binary directly from the user's local machine — the MCP is not the middleman. Use when volume-mounting Docker is impractical. Embeds the active access key; instruct the user to run immediately and discard. | — | Any |
 | `delete_application` | Delete an app from the repository | — | Cloud Admin |
 | `update_application_plugins` | Update iOS plugin signing profiles | — | Cloud Admin |
@@ -141,7 +141,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `get_project_tokens` | Get token configuration | — | Cloud/Project Admin |
 | `set_project_tokens` | Update token mode | — | Cloud Admin |
 | `get_project_settings` | Basic project settings | — | Cloud/Project Admin |
-| `get_project_admin_settings` | Full project configuration via v2 API — 35+ fields in one call: per-type license limits, cleanup flags, reservation policies, feature flags, user/app counts | — | Cloud Admin (JWT) |
+| `get_project_admin_settings` | Full project configuration via v2 API — 35+ fields in one call: per-type license limits, cleanup flags, reservation policies, feature flags, user/app counts | — | Cloud Admin / Project Admin |
 | `update_project_settings` | Update cleanup, concurrency, and limit settings | — | Cloud Admin |
 | `set_telephony_status` | Enable/disable calls and SMS | — | Cloud Admin |
 | `get_project_notes` | Get project notes | — | Any |
@@ -227,7 +227,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 
 Transactions are performance-instrumented segments of a test session. Developers mark start and end points in their app or test script; the platform records CPU, memory, battery, and network metrics for each interval. These tools support performance regression testing — compare metrics across app versions or identify slow operations.
 
-> Requires a Cloud Admin JWT. Server-side filtering is not supported on the transaction API; all filters are applied client-side after fetching.
+> Works for all access levels — Cloud Admin sees all projects; project-level keys (Project Admin and Project User) see only their own project's transactions. Server-side filtering is not supported on the transaction API; all filters are applied client-side after fetching.
 
 | Tool | What it does |
 |---|---|
@@ -238,7 +238,7 @@ Transactions are performance-instrumented segments of a test session. Developers
 
 ### Agents
 
-> Requires a Cloud Admin JWT.
+> Requires Cloud Admin access.
 
 | Tool | What it does |
 |---|---|
@@ -247,7 +247,7 @@ Transactions are performance-instrumented segments of a test session. Developers
 
 ### Regions
 
-> Requires a Cloud Admin JWT.
+> Requires Cloud Admin access.
 
 | Tool | What it does |
 |---|---|
@@ -256,7 +256,7 @@ Transactions are performance-instrumented segments of a test session. Developers
 
 ### NV Servers
 
-> Requires a Cloud Admin JWT.
+> Requires Cloud Admin access.
 
 | Tool | What it does |
 |---|---|
@@ -295,9 +295,9 @@ Six tools cover POC and general project lifecycle management. See the [Workflow 
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `get_remote_debug_command` | Generate a ready-to-run `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) script that connects a cloud device as a locally attached ADB/USB device. Install the app first — `install_application` fails while a device is reserved via rdb. Also useful for device diagnostics (ping, nslookup, dumpsys) before NV-dependent tests. **Requires Cloud Admin credentials for reliable serial resolution** — a project API key may produce an internal device ID that rdb rejects. | Any¹ |
+| `get_remote_debug_command` | Generate a ready-to-run `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) script that connects a cloud device as a locally attached ADB/USB device. Install the app first — `install_application` fails while a device is reserved via rdb. Also useful for device diagnostics (ping, nslookup, dumpsys) before NV-dependent tests. **Cloud Admin recommended for reliable serial resolution** — a project-level key may produce an internal device ID that rdb rejects. | Any¹ |
 
-> ¹ Callable with any API key, but **Cloud Admin JWT recommended** for reliable device serial resolution. If called with a project API key and rdb fails with `"validation error / Failed to reserve device"`, switch to your Cloud Admin profile first: `switch_environment("default")` → `get_remote_debug_command` → switch back.
+> ¹ Callable with any access level, but **Cloud Admin recommended** for reliable device serial resolution. If called with a project-level key and rdb fails with `"validation error / Failed to reserve device"`, switch to your Cloud Admin profile first: `switch_environment("default")` → `get_remote_debug_command` → switch back.
 
 **rdb connects the cloud device as a locally attached ADB/USB device.** Once the tunnel is running, the device is visible to Android Studio, Xcode, Appium MCP, and command-line ADB — without any reconfiguration. This makes rdb useful for two distinct workflows:
 
@@ -362,7 +362,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 | `app_control` | App lifecycle: `terminate`, `clear_data` (reset to first launch), `query_state`, `deep_link` (jump straight to a screen). Grid limits: query_state is foreground-only, deep_link best-effort. | No |
 | `device_control` | Device-level actions: orientation get/set, clipboard get/set, geolocation set/reset, alert accept/dismiss, file push/pull. Grid limits: alerts and reset_geolocation are Appium Server only. | No |
 | `list_inspection_sessions` | List all active inspection sessions in the current server process. | No |
-| `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions (scoped to the project each session was created under). Requires `confirmDeletion: true`. | Cloud Admin JWT (reporter delete is CSRF-blocked for project keys) |
+| `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions (scoped to the project each session was created under). Requires `confirmDeletion: true`. | Cloud Admin (reporter delete is CSRF-blocked for project-level keys) |
 
 **Typical workflow:**
 

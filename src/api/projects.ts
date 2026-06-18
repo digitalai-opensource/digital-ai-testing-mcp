@@ -273,7 +273,7 @@ export async function assignApplicationToProject(
   }
 }
 
-// v2 API — Cloud Admin JWT only. Returns the full project detail including
+// v2 API — Cloud Admin only. Returns the full project detail including
 // 35+ configuration fields not available in the v1 list endpoint:
 // license limits per type, cleanup flags, reservation settings, feature flags.
 export async function getProjectAdminDetail(projectId: number): Promise<ProjectAdminDetail> {

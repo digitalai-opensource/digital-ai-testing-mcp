@@ -24,7 +24,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
     'Use this to find a group\'s numeric ID — required by get_devices_in_group, add_devices_to_group, remove_devices_from_group, assign_group_to_project, and the create_poc / close_poc / delete_poc workflows. ' +
     'Returns the Default device group ID (the source pool for POC device selection) and any named groups (e.g. "Acme Corp POC"). ' +
     'Device groups organize devices and control which projects can access which devices. ' +
-    'Cloud Admin JWT returns full group data (numberOfDevices, type, acceptNewDevices). Project API keys receive a simplified response via the v1 fallback (id and name only).',
+    'Cloud Admin returns full group data (numberOfDevices, type, acceptNewDevices). Project-level keys (Project Admin and Project User) receive a simplified response via the v1 fallback (id and name only).',
     {
       maxResults: z
         .number()
@@ -35,13 +35,13 @@ export function registerDeviceGroupTools(server: McpServer): void {
     },
     async ({ maxResults, outputFormat }) => {
       try {
-        // Try v2 first (Cloud Admin JWT) — returns richer data (numberOfDevices, type, acceptNewDevices).
-        // Falls back to v1 (project API key) which returns a flat {id→name} dict.
+        // Try v2 first (Cloud Admin) — returns richer data (numberOfDevices, type, acceptNewDevices).
+        // Falls back to v1 (project-level keys) which returns a flat {id→name} dict.
         let v2Groups: Array<{ id: number | string; name: string; numberOfDevices?: number; type?: string; acceptNewDevices?: boolean }> | null = null;
         try {
           v2Groups = await getDeviceGroupsV2();
         } catch {
-          // v2 unavailable (project key or older server) — fall through to v1
+          // v2 unavailable (project-level key or older server) — fall through to v1
         }
 
         if (v2Groups && v2Groups.length > 0) {

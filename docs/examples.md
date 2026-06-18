@@ -187,7 +187,7 @@ Natural language prompts you can use with Claude when this MCP server is connect
 - "Switch back to the default connection"
 - "I'm getting 403 errors — which profile has Cloud Admin access?"
 - "Connect to the QA project key so I can run tests without full admin access"
-- "What key type am I currently connected with — is it a JWT or a project API key?"
+- "What access level am I currently connected with — Cloud Admin, Project Admin, or Project User?"
 
 ---
 
@@ -255,7 +255,7 @@ Before generating boilerplate, always find an available device first so the corr
 - "Login, tap Transfer, pick account 43x, set $50.00, tap Transfer Now — make that a test" *(step-level detail → autonomous, no collaboration needed)*
 - "I want a test for app X" *(vague → the agent starts the interactive experience, or asks which mode you want)*
 - "What inspection sessions are still open? Stop them all."
-- "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin JWT)*
+- "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin — reporter delete is CSRF-blocked for project-level keys)*
 
 ---
 
@@ -298,7 +298,7 @@ Before generating boilerplate, always find an available device first so the corr
 
 ## Functional Test Analytics
 
-> **Cross-project scoping:** When using Cloud Admin JWT, reporter tools accept a `projectName` parameter to scope results to a specific project. Use the exact name from `list_projects`. The numeric `projectId` parameter is not supported on reporter endpoints (CSRF-blocked) — always use `projectName` instead.
+> **Cross-project scoping:** Cloud Admin can pass a `projectName` parameter to reporter tools to scope results to a specific project. Use the exact name from `list_projects`. The numeric `projectId` parameter is not supported on reporter endpoints (CSRF-blocked) — always use `projectName` instead.
 
 - "Show me the last 20 failed tests sorted by most recent"
 - "Did the last run of 'Login Flow' pass or fail?"
@@ -354,7 +354,7 @@ Before generating boilerplate, always find an available device first so the corr
 
 ## Performance Testing Analytics
 
-> *Performance transaction analytics require Cloud Admin JWT. If you receive a 401 error, switch to a Cloud Admin access key.*
+> *Performance transaction analytics work for all access levels. Cloud Admin sees all projects; project-level keys (Project Admin and Project User) see only their own project's transactions.*
 
 - "Show me all performance transactions for ExperiBank app version 10553 on iOS"
 - "Which transactions take more than 5 seconds on average?"

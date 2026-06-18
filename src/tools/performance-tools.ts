@@ -2,7 +2,6 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { listTransactions, getTransaction } from '../api/transactions.js';
 import { performanceTransaction } from '../api/webdriver.js';
-import { getActiveKeyType } from '../api/client.js';
 import type { Transaction } from '../types/digital-ai.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import {
@@ -14,20 +13,6 @@ import {
   type PerfMetric,
 } from '../utils/performance-comparison.js';
 import type { PerformanceComparison, ConfoundAssessment } from '../types/digital-ai.js';
-
-// All transaction data is Cloud Admin JWT only — project API keys 401 on the
-// reporter transaction endpoints. Fail fast with an actionable message rather
-// than surfacing a raw 401 from deep in the API layer.
-function requireJwt(): string | null {
-  if (getActiveKeyType() !== 'jwt') {
-    return (
-      'Cloud Admin JWT required. Performance transaction data is not accessible with a project API key ' +
-      '(the reporter transaction endpoints return 401). Switch to a Cloud Admin JWT profile first: ' +
-      'switch_environment("default").'
-    );
-  }
-  return null;
-}
 
 // ─── Shared schema fragments ──────────────────────────────────────────────────
 
@@ -182,7 +167,7 @@ export function registerPerformanceTools(server: McpServer): void {
     'STRONGLY RECOMMENDED: pass comparisonAxis (what is SUPPOSED to differ) so the tool also runs a confound check ' +
     'and tells you whether the delta is attributable to that axis or polluted by an uncontrolled factor — a raw delta ' +
     'without a confound check is easy to misread (e.g. a Speed Index gap that is really a device-model difference). ' +
-    'Cloud Admin JWT required.',
+    'Works with all access levels — project-level keys (Project Admin and Project User) see only transactions from their own project.',
     {
       sideALabel: z.string().describe('Human label for side A, e.g. "v1.0" or "Galaxy S21".'),
       sideBLabel: z.string().describe('Human label for side B, e.g. "v2.0" or "Pixel 7".'),
@@ -198,8 +183,6 @@ export function registerPerformanceTools(server: McpServer): void {
       outputFormat: outputFormatParam,
     },
     async (args) => {
-      const jwtErr = requireJwt();
-      if (jwtErr) return { content: [{ type: 'text', text: jwtErr }], isError: true };
       try {
         const sideA = buildSide(args.sideALabel, args.sideATransactionIds, args.sideAFilter as TransactionFilter | undefined);
         const sideB = buildSide(args.sideBLabel, args.sideBTransactionIds, args.sideBFilter as TransactionFilter | undefined);
@@ -250,7 +233,7 @@ export function registerPerformanceTools(server: McpServer): void {
     'OTHER dimension (device model, OS, OS version, network profile, project, transaction name) that varies across ' +
     'or within the sides, plus transactions missing CPU/memory telemetry and sample-size imbalance. Returns a ' +
     'validity verdict: clean / caveated / confounded. Use this to scrub a comparison plan during the planning phase, ' +
-    'or to explain why a surprising delta is untrustworthy. Cloud Admin JWT required.',
+    'or to explain why a surprising delta is untrustworthy. Works with all access levels — project-level keys see only their own project\'s transactions.',
     {
       sideALabel: z.string().describe('Human label for side A.'),
       sideBLabel: z.string().describe('Human label for side B.'),
@@ -262,8 +245,6 @@ export function registerPerformanceTools(server: McpServer): void {
       outputFormat: outputFormatParam,
     },
     async (args) => {
-      const jwtErr = requireJwt();
-      if (jwtErr) return { content: [{ type: 'text', text: jwtErr }], isError: true };
       try {
         const sideA = buildSide(args.sideALabel, args.sideATransactionIds, args.sideAFilter as TransactionFilter | undefined);
         const sideB = buildSide(args.sideBLabel, args.sideBTransactionIds, args.sideBFilter as TransactionFilter | undefined);
@@ -283,7 +264,7 @@ export function registerPerformanceTools(server: McpServer): void {
     '3.5). Returns each transaction with its score, the kept set, and the recommended exclusions — use it to decide ' +
     'which samples to re-run or drop before computing a comparison aggregate. Robust for the small samples (N=5–10) ' +
     'this workflow uses, where one bad run would inflate a standard-deviation bound enough to hide itself. ' +
-    'Cloud Admin JWT required.',
+    'Works with all access levels — project-level keys see only their own project\'s transactions.',
     {
       label: z.string().optional().default('set').describe('Optional label for the set in output.'),
       transactionIds: z.array(z.number().int()).optional().describe('Explicit transaction IDs. Provide this OR filter.'),
@@ -293,8 +274,6 @@ export function registerPerformanceTools(server: McpServer): void {
       outputFormat: outputFormatParam,
     },
     async (args) => {
-      const jwtErr = requireJwt();
-      if (jwtErr) return { content: [{ type: 'text', text: jwtErr }], isError: true };
       try {
         const sel = buildSide(args.label ?? 'set', args.transactionIds, args.filter as TransactionFilter | undefined);
         const all = await gatherPool([sel]);
@@ -341,7 +320,7 @@ export function registerPerformanceTools(server: McpServer): void {
     '(2) The recorded transaction appears in the reporter ~1 minute AFTER end (not instantly) — wait, then read it ' +
     'with list_transactions(transactionName, deviceName, startDate) → get_transaction. ' +
     '(3) networkProfile must exist on the NV server ("Monitor" is broadly guaranteed; others are deployment-specific). ' +
-    'Reading the resulting transactions back requires a Cloud Admin JWT.',
+    'Reading the resulting transactions back works for all access levels — Cloud Admin sees all projects; project-level keys see only their own project\'s transactions.',
     {
       handle: z.string().describe('Inspection session handle from start_inspection_session.'),
       action: z.enum(['start', 'end']).describe('"start" begins measurement (needs networkProfile); "end" finalizes it (needs transactionName).'),

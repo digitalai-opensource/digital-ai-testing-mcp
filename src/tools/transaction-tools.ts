@@ -9,7 +9,8 @@ import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js'
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import type { Transaction } from '../types/digital-ai.js';
 
-// All transaction endpoints require Cloud Admin JWT. Project API keys return 401.
+// Transaction endpoints work for all access levels. Cloud Admin sees all projects;
+// project-level keys (Project Admin and Project User) see only their own project.
 // Server-side filtering is CSRF-blocked; all filters are applied client-side.
 
 export function registerTransactionTools(server: McpServer): void {
@@ -24,7 +25,7 @@ export function registerTransactionTools(server: McpServer): void {
     'If these transactions were collected without a verified NV server connection (see list_nv_servers), Speed Index ' +
     'values may be invalid. ' +
     'Server-side filtering is not available; all filters are applied client-side. ' +
-    'Cloud Admin JWT required — project API keys are not accepted by this endpoint.',
+    'Works with all access levels — Cloud Admin sees all projects; project-level keys (Project Admin and Project User) see only their own project\'s transactions.',
     {
       appName: z.string().optional().describe('Filter by app package/bundle name (case-insensitive substring match).'),
       appVersion: z.string().optional().describe('Filter by app version string (case-insensitive substring match).'),
@@ -136,7 +137,7 @@ export function registerTransactionTools(server: McpServer): void {
     'get_transaction',
     'Get full details for a single performance transaction, including time-series sample arrays for CPU, memory, battery, ' +
     'and network metrics sampled throughout the transaction duration. Use this to drill into a specific transaction after ' +
-    'identifying it via list_transactions. Cloud Admin JWT required.',
+    'identifying it via list_transactions. Works with all access levels.',
     {
       transactionId: z.number().int().describe('Numeric transaction ID from list_transactions.'),
       outputFormat: outputFormatParam,
@@ -179,7 +180,7 @@ export function registerTransactionTools(server: McpServer): void {
     'avgSpeedIndex is a composite visual-progress score (area above the progressive-render curve), NOT elapsed time. ' +
     'Compare it directionally (lower is better) but do not interpret a delta as a shift in render-completion time. ' +
     'Accepts the same filters as list_transactions to scope the analysis. ' +
-    'Cloud Admin JWT required.',
+    'Works with all access levels — project-level keys see only their own project\'s transactions.',
     {
       groupBy: z
         .enum(['appVersion', 'name', 'deviceModel', 'deviceType', 'deviceScreen', 'deviceName', 'networkProfile'])
@@ -304,7 +305,7 @@ export function registerTransactionTools(server: McpServer): void {
     'Show how performance metrics (Speed Index, CPU, memory, duration) change over time, ' +
     'bucketed by day, week, or month. Use this to detect sprint-over-sprint regressions, ' +
     'confirm that a performance fix held, or identify when a regression was introduced. ' +
-    'Accepts the same filters as list_transactions. Cloud Admin JWT required.',
+    'Accepts the same filters as list_transactions. Works with all access levels — project-level keys see only their own project\'s transactions.',
     {
       bucketBy: z.enum(['day', 'week', 'month']).optional().default('week')
         .describe('Time bucket size: "day", "week" (default), or "month".'),

@@ -62,9 +62,21 @@ export async function addReservation(
   params: AddReservationParams
 ): Promise<Array<{ message: string; reservationId: number; deviceUid: string }>> {
   try {
+    // Spring MVC binds deviceUid as @RequestParam String[] — must be repeated query
+    // string params (deviceUid=v1&deviceUid=v2), not a JSON body array. URLSearchParams
+    // handles the repeated-key encoding; the remaining scalar fields are also in the
+    // query string so the server picks them up via @RequestParam regardless of body.
+    const qs = new URLSearchParams();
+    params.deviceUid.forEach(uid => qs.append('deviceUid', uid));
+    qs.set('reservationStart', params.reservationStart);
+    qs.set('reservationEnd', params.reservationEnd);
+    if (params.username) qs.set('username', params.username);
+    if (params.project) qs.set('project', params.project);
+    if (params.notes) qs.set('notes', params.notes);
+
     const res = await apiPost<
       ApiResponse<Array<{ message: string; reservationId: number; deviceUid: string }>>
-    >('/api/v1/device-reservations', params);
+    >(`/api/v1/device-reservations?${qs.toString()}`);
     return res.data;
   } catch (e) {
     throw new Error(`addReservation failed: ${(e as Error).message}`);

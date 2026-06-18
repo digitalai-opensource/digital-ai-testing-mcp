@@ -442,7 +442,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports',
-    'Permanently delete one or more test execution records by their numeric IDs. This cannot be undone. Requires confirmDeletion: true. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint. PREFERRED cleanup method whenever the IDs are already known (e.g. from a filtered list_test_reports call) — more precise than name or date matching.',
+    'Permanently delete one or more test execution records by their numeric IDs. This cannot be undone. Requires confirmDeletion: true. Cloud Admin only — project-level keys (Project Admin and Project User) are CSRF-blocked on the reporter delete endpoint. PREFERRED cleanup method whenever the IDs are already known (e.g. from a filtered list_test_reports call) — more precise than name or date matching.',
     {
       ids: z
         .array(z.number().int())
@@ -457,7 +457,7 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ ids, confirmDeletion, projectId, projectName }) => {
       if (getActiveKeyType() !== 'jwt') {
-        return { content: [{ type: 'text', text: 'Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. Use switch_environment() to switch to a Cloud Admin JWT profile.' }], isError: true };
+        return { content: [{ type: 'text', text: 'Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). Use switch_environment() to switch to a Cloud Admin profile.' }], isError: true };
       }
       const guard = checkDestructiveGuard(confirmDeletion, `Delete ${ids.length} test report(s): [${ids.join(', ')}]`);
       if (guard) return { content: [{ type: 'text', text: guard }] };
@@ -476,7 +476,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports_by_name',
-    'Find and permanently delete test execution records matching a name. Accepts exact match (name) or substring match (nameContains). Searches across all pages. Show a preview first via confirmDeletion: false, then re-call with confirmDeletion: true to execute. If you already have the numeric IDs (e.g. from a filtered list_test_reports call), use delete_test_reports instead — no name-matching ambiguity. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint. IMPORTANT: always pass projectName (exact project name from list_projects) when using Cloud Admin JWT — without it the search spans the default reporter scope and tests from separate project reporter instances will not appear. The numeric projectId param is CSRF-blocked on reporter endpoints and is silently ignored.',
+    'Find and permanently delete test execution records matching a name. Accepts exact match (name) or substring match (nameContains). Searches across all pages. Show a preview first via confirmDeletion: false, then re-call with confirmDeletion: true to execute. If you already have the numeric IDs (e.g. from a filtered list_test_reports call), use delete_test_reports instead — no name-matching ambiguity. Cloud Admin only — project-level keys (Project Admin and Project User) are CSRF-blocked on the reporter delete endpoint. IMPORTANT: always pass projectName (exact project name from list_projects) when using Cloud Admin access — without it the search spans the default reporter scope and tests from separate project reporter instances will not appear. The numeric projectId param is CSRF-blocked on reporter endpoints and is silently ignored.',
     {
       name: z
         .string()
@@ -500,7 +500,7 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ name, nameContains, confirmDeletion, maxPreviewResults, projectId, projectName }) => {
       if (getActiveKeyType() !== 'jwt') {
-        return { content: [{ type: 'text', text: 'Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. Use switch_environment() to switch to a Cloud Admin JWT profile.' }], isError: true };
+        return { content: [{ type: 'text', text: 'Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). Use switch_environment() to switch to a Cloud Admin profile.' }], isError: true };
       }
       try {
         if (!name && !nameContains) {
@@ -742,7 +742,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports_before_date',
-    'Permanently delete all test execution records started before a given date. Fetches matching IDs automatically then deletes them. Requires confirmDeletion: true. This cannot be undone. Cloud Admin JWT only — project API keys are CSRF-blocked on the reporter delete endpoint.',
+    'Permanently delete all test execution records started before a given date. Fetches matching IDs automatically then deletes them. Requires confirmDeletion: true. This cannot be undone. Cloud Admin only — project-level keys (Project Admin and Project User) are CSRF-blocked on the reporter delete endpoint.',
     {
       beforeDate: z
         .string()
@@ -756,7 +756,7 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ beforeDate, confirmDeletion, projectId, projectName }) => {
       if (getActiveKeyType() !== 'jwt') {
-        return { content: [{ type: 'text', text: 'Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. Use switch_environment() to switch to a Cloud Admin JWT profile.' }], isError: true };
+        return { content: [{ type: 'text', text: 'Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). Use switch_environment() to switch to a Cloud Admin profile.' }], isError: true };
       }
       try {
         // The reporter API does not support start_time filter via API key (CSRF restriction).

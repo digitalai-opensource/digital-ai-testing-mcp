@@ -647,7 +647,7 @@ export function registerProjectTools(server: McpServer): void {
     '35+ fields in a single call including per-type license limits, all cleanup flags, ' +
     'reservation policies, feature flags, and user/app counts. ' +
     'Supersedes get_project_settings for admin use cases. ' +
-    'Cloud Admin JWT only — project API keys receive 403.',
+    'Available to Cloud Admin and Project Admin — Project User receives 403.',
     {
       projectId: z.number().int().describe('Numeric project ID (use list_projects to find it).'),
       outputFormat: outputFormatParam,

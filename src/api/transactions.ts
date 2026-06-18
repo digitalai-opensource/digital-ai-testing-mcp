@@ -5,7 +5,8 @@ import type { Transaction } from '../types/digital-ai.js';
 // Records CPU, memory, battery, and network metrics between developer-marked
 // start/end points in the app or test script.
 //
-// Auth: Cloud Admin JWT ONLY — project API keys return 401 on all endpoints.
+// Auth: works for all roles. Cloud Admin sees all projects; project-level keys
+// (Project Admin and Project User) see only their own project's transactions.
 //
 // Filtering: ALL filter/sort/pagination body params are CSRF-blocked (401) or
 // silently ignored. The list endpoint always returns all records; filter client-side.

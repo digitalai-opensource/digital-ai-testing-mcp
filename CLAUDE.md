@@ -171,7 +171,7 @@ Single-record GET (`/reporter/api/tests/{id}`) uses camelCase (`startTime`, `id`
 
 ## Reporter API: Filter Capabilities
 
-Confirmed live-tested on both Cloud Admin JWT and Project API key. Blocked fields fail with 401 on **both** key types — this is server middleware, not auth-type-dependent.
+Confirmed live-tested on Cloud Admin, Project Admin, and Project User. Blocked fields fail with 401 on all access levels — this is server middleware, not auth-type-dependent.
 
 **CONFIRMED WORKING filter properties** (operators: `=`, `>`, `<`, `>=`, `<=`):
 
@@ -194,7 +194,7 @@ Confirmed live-tested on both Cloud Admin JWT and Project API key. Blocked field
 
 **CSRF-BLOCKED** operators: `!=`, `like`, `startsWith`, `in`
 
-**Sort** — ALL sort fields are CSRF-blocked for project API keys (non-JWT). Cloud Admin JWT only. `listTests` silently strips `sort` for project keys; callers must not rely on sorted order.
+**Sort** — ALL sort fields are CSRF-blocked for project-level keys (Project Admin and Project User). Cloud Admin only. `listTests` silently strips `sort` for project-level keys; callers must not rely on sorted order.
 
 **Any caller that needs "latest"/"most recent" semantics must use `listTestsSortedDesc`** (in `reporting.ts`), never `listTests` with a sort param. JWT: single server-sorted call. Project keys: scans all pages (up to 5 000 records, returns `scanCapped: true` when truncated), sorts client-side, trims to the requested limit. Used by `find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`, and the `recent-test-failures` resource.
 
@@ -213,17 +213,17 @@ Reporter endpoints (`/reporter/api/*`) have a split CSRF behavior on project-sco
 
 `reporting.ts` functions (`listTests`, `deleteTests`, `getGroupedTests`, `getDistinctKeyValues`) accept `projectId` in their TypeScript signature for forward-compatibility but **silently ignore it** when building query params — only `projectName` is sent.
 
-Without `projectName`, Cloud Admin JWT searches its own scoped reporter context (which may not include projects with separate reporter instances). If tests from a specific project aren't appearing, pass `projectName` matching the exact project name from `list_projects`.
+Without `projectName`, Cloud Admin searches its own scoped reporter context (which may not include projects with separate reporter instances). If tests from a specific project aren't appearing, pass `projectName` matching the exact project name from `list_projects`.
 
 ## Project settings — v2 vs v1
 
-`GET /api/v2/projects/{id}` returns 35+ fields not in the v1 list: per-type license limits (`maxDevelopmentLicense`, `maxManualLicense`, `maxGridLicenses`, `maxEmulatorsLicense`, `maxSeleniumSessions`), all `enable*` cleanup flags, reservation policies (`maxReservations`, `maxReservationsPerUser`, `maxReservationTime`), feature flags, and user/app counts. Cloud Admin JWT only. Use `get_project_admin_settings` tool to access this.
+`GET /api/v2/projects/{id}` returns 35+ fields not in the v1 list: per-type license limits (`maxDevelopmentLicense`, `maxManualLicense`, `maxGridLicenses`, `maxEmulatorsLicense`, `maxSeleniumSessions`), all `enable*` cleanup flags, reservation policies (`maxReservations`, `maxReservationsPerUser`, `maxReservationTime`), feature flags, and user/app counts. Available to Cloud Admin and Project Admin — Project User receives 403. Use `get_project_admin_settings` tool to access this.
 
 `GET /api/v1/projects` returns only `id`, `name`, `isAppiumOss`, `created`, `notes`. There is no `GET /api/v1/projects/{id}` single-record endpoint (returns 404).
 
-## v2 API (Cloud Admin JWT only)
+## v2 API (Cloud Admin only, except where noted)
 
-Several endpoints exist only under `/api/v2/` and require Cloud Admin JWT. Project API keys receive 403 Forbidden.
+Several endpoints exist only under `/api/v2/` and require Cloud Admin access. Project-level keys (Project Admin and Project User) receive 403 Forbidden.
 
 | Endpoint | Tool | Description |
 |---|---|---|
@@ -255,7 +255,7 @@ Single-record GET (`/reporter/api/transactions/{id}`) adds time-series arrays: `
 `POST /reporter/api/transactions/compare` — CSRF-blocked, browser session only.
 HAR/video download endpoints return Angular SPA HTML, not data.
 
-Auth: Cloud Admin JWT only. Project API keys return 401 on all transaction endpoints.
+Auth: works for all access levels. Cloud Admin sees all projects; project-level keys (Project Admin and Project User) see only their own project's transactions.
 
 ## Performance Comparison Tools
 
@@ -267,7 +267,7 @@ Built on transaction data. Layering follows the repo convention — pure math is
 
 **`gatherPool()` — cross-scope ID resolution (confirmed live).** `listTransactions()` is PROJECT-SCOPED to the active JWT's reporter context: a transaction created under a different project's reporter instance is absent from the bulk list (live case — 1894 is in "DAIMCP POC", invisible to a Default-scoped JWT; 1895 is in "Default"). `getTransaction(id)` is a direct GET that works across scopes. So `gatherPool` resolves explicit `transactionIds` via `getTransaction` (cross-scope, and bounded by the IDs given — no full-list fetch when both sides are explicit) and only fetches the bulk list when a side uses a FILTER. Mixed selectors merge both, deduped by id.
 
-**JWT gate:** the three analytical tools call `requireJwt()` (checks `getActiveKeyType() !== 'jwt'`) and return the `Cloud Admin JWT required … switch_environment("default")` message with `isError: true` BEFORE any API call — asserted in `tests/tools.test.ts`. `performance_transaction_control` is NOT gated (it drives an inspection session, which works on project keys) but reading the resulting transactions back IS JWT-only.
+**No JWT gate.** The three analytical tools (`compare_performance_transactions`, `assess_comparison_confounds`, `detect_performance_outliers`) work for all access levels — confirmed live with Project Admin and Project User. The `requireJwt()` gate was removed (v43 fix). `performance_transaction_control` drives an inspection session and also works for all roles; reading the resulting transactions back is likewise unrestricted (project-level keys see only their own project's transactions).
 
 **Speed Index is composite, not duration (`SI`, not `ms`).** Speed Index is the area above the visual-progress curve (WebPageTest methodology: integral of `(1 − VisualCompletion(t))` over the render window) — a lower value means content was visible more completely earlier, NOT that the screen rendered N ms sooner. `METRIC_UNITS.speedIndex` is `'SI'` and every renderer (compare, summary, trend, `formatTransactionList`, `formatTransaction`) labels it `SI` with a composite-metric annotation. Misreading a `−160ms` delta as "renders 160ms faster" was the v42 failure. Reserve `ms`/wall-clock language for the `duration` metric. The compare tool emits `metricSemantics.speedIndex.{isCompositeMetric, unit, meaning}` in structured output.
 
@@ -335,7 +335,7 @@ Parse with the dedicated `parseProvisioningDate`/`parseReservationDate` helpers 
 
 ## Sortable/Filterable Report Fields
 
-Sort properties work for **Cloud Admin JWT only**. All sort fields are CSRF-blocked for project API keys — `listTests` silently strips them.
+Sort properties work for **Cloud Admin only**. All sort fields are CSRF-blocked for project-level keys (Project Admin and Project User) — `listTests` silently strips them.
 
 - `start_time` — ascending or descending (JWT only)
 
@@ -351,7 +351,7 @@ These make multiple or expensive API calls — avoid calling in tight loops:
 - `get_performance_trend` — fetches ALL transactions then buckets client-side
 - `get_cross_platform_divergence` — calls `getGroupedTests` which can return large multi-field result sets
 - `get_daily_execution_trend` — paginates up to `maxRecords` (default 5 000) test records serially
-- `find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions` — fast for JWT, but under a **project API key** each does a full-scan via `listTestsSortedDesc` (up to 5 000 records) because server-side sort is CSRF-blocked
+- `find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions` — fast for Cloud Admin (JWT), but under a **project-level key** (Project Admin or Project User) each does a full-scan via `listTestsSortedDesc` (up to 5 000 records) because server-side sort is CSRF-blocked
 
 ## Destructive Operations
 

@@ -57,7 +57,7 @@ export function registerDebugTools(server: McpServer): void {
     '  Network checks are especially important before running NV-dependent tests (startPerformanceTransaction):\n' +
     '  a device with broken DNS will crash immediately when NV throttling activates.\n\n' +
     'AUTH NOTE: rdb serial number resolution requires Cloud Admin credentials. If the active profile is a\n' +
-    '  project API key (aut_1_...), device serial lookup may fall back to the internal numeric device ID,\n' +
+    '  project-level key (Project Admin or User, aut_1_...), device serial lookup may fall back to the internal numeric device ID,\n' +
     '  which rdb rejects ("validation error / Failed to reserve device"). If this happens, switch to your\n' +
     '  Cloud Admin profile first: switch_environment("default") → get_remote_debug_command → switch back.\n\n' +
     'Discovery → codification workflow:\n' +
@@ -214,7 +214,7 @@ export function registerDebugTools(server: McpServer): void {
         if (isProjectApiKey || serialLooksLikeInternalId) {
           lines.push('⚠️  AUTH WARNING: rdb serial resolution requires Cloud Admin credentials.');
           if (isProjectApiKey) {
-            lines.push('   The active profile is a project API key — device serial lookup may be incomplete.');
+            lines.push('   The active profile is a project-level key (Project Admin or User) — device serial lookup may be incomplete.');
           }
           if (serialLooksLikeInternalId) {
             lines.push(`   "${serial}" is an internal device ID, not an ADB serial. rdb will likely reject it.`);

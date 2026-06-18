@@ -188,7 +188,7 @@ export function registerApplicationTools(server: McpServer): void {
       uniqueName: z.string().optional().describe('A short unique alias for this app (optional).'),
       camera: z.boolean().optional().describe('Enable camera support instrumentation.'),
       touchId: z.boolean().optional().describe('Enable Touch ID support (iOS).'),
-      project: z.string().optional().describe('Project name to assign the app to. Cloud Admin JWT only — project API keys upload to their default project and this parameter is ignored by the platform.'),
+      project: z.string().optional().describe('Project name to assign the app to. Cloud Admin only — project-level keys (Project Admin and Project User) upload to their assigned project and this parameter is ignored by the platform.'),
       uuid: z.string().optional().describe('iOS provisioning profile UUID for signing.'),
       fixKeychainAccess: z.boolean().optional().describe('Fix keychain access for iOS.'),
       allowResign: z.boolean().optional().describe('Allow app re-signing for iOS.'),
@@ -260,7 +260,7 @@ export function registerApplicationTools(server: McpServer): void {
       uniqueName: z.string().optional().describe('A short unique alias for this app.'),
       camera: z.boolean().optional().describe('Enable camera support.'),
       touchId: z.boolean().optional().describe('Enable Touch ID support (iOS).'),
-      project: z.string().optional().describe('Project name to assign the app to. Cloud Admin JWT only — project API keys upload to their default project and this parameter is ignored by the platform.'),
+      project: z.string().optional().describe('Project name to assign the app to. Cloud Admin only — project-level keys (Project Admin and Project User) upload to their assigned project and this parameter is ignored by the platform.'),
       uuid: z.string().optional().describe('iOS provisioning profile UUID.'),
       fixKeychainAccess: z.boolean().optional().describe('Fix keychain access (iOS).'),
       allowResign: z.boolean().optional().describe('Allow re-signing (iOS).'),
@@ -323,7 +323,7 @@ export function registerApplicationTools(server: McpServer): void {
       ),
       uniqueName: z.string().optional().describe('Short unique alias to assign to the uploaded app.'),
       project: z.string().optional().describe(
-        'Project name to assign the app to. Cloud Admin JWT only — project API keys upload to their default project and this parameter is ignored by the platform.'
+        'Project name to assign the app to. Cloud Admin only — project-level keys (Project Admin and Project User) upload to their assigned project and this parameter is ignored by the platform.'
       ),
       camera: z.boolean().optional().describe('Enable camera support instrumentation.'),
       touchId: z.boolean().optional().describe('Enable Touch ID support (iOS).'),
@@ -408,7 +408,7 @@ export function registerApplicationTools(server: McpServer): void {
       lines.push('');
 
       if (!isJwt && project) {
-        lines.push('⚠️  NOTE: The "project" field requires a Cloud Admin JWT. The active key is a project API key —');
+        lines.push('⚠️  NOTE: The "project" field requires Cloud Admin access. The active key is a project-level key —');
         lines.push('   the platform will ignore "project" and upload to your default project.');
         lines.push('   To target a specific project: switch_environment("<admin-profile>") → re-run → switch back.');
         lines.push('');

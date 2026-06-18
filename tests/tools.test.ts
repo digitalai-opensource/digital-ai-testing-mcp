@@ -103,21 +103,23 @@ describe('Reporter delete tools gate on Cloud Admin JWT before guard or API', ()
   ];
 
   for (const { tool, args } of DELETE_TOOLS) {
-    it(`${tool} with a project API key returns the JWT-gate message`, async () => {
+    it(`${tool} with a project-level key returns the Cloud Admin gate message`, async () => {
       const res = await callTool(tool, args);
       const text = textOf(res);
-      assert.match(text, /Cloud Admin JWT required/, `${tool}: got: ${text.slice(0, 200)}`);
+      assert.match(text, /Cloud Admin access required/, `${tool}: got: ${text.slice(0, 200)}`);
       assert.match(text, /switch_environment/);
       assert.equal(res.isError, true);
     });
   }
 });
 
-describe('Performance comparison tools gate on Cloud Admin JWT before any API call', () => {
+describe('Performance comparison tools work for all access levels (no JWT gate)', () => {
   beforeAll(() => {
     resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
   });
 
+  // These tools previously required Cloud Admin JWT but live testing confirmed they work
+  // for Project Admin and Project User (project-scoped). The requireJwt() gate was removed.
   const PERF_TOOLS: Array<{ tool: string; args: Record<string, unknown> }> = [
     { tool: 'compare_performance_transactions', args: { sideALabel: 'A', sideBLabel: 'B', sideATransactionIds: [1], sideBTransactionIds: [2] } },
     { tool: 'assess_comparison_confounds', args: { sideALabel: 'A', sideBLabel: 'B', sideATransactionIds: [1], sideBTransactionIds: [2], comparisonAxis: ['appVersion'] } },
@@ -125,12 +127,12 @@ describe('Performance comparison tools gate on Cloud Admin JWT before any API ca
   ];
 
   for (const { tool, args } of PERF_TOOLS) {
-    it(`${tool} with a project API key returns the JWT-gate message`, async () => {
+    it(`${tool} with a project-level key does NOT return a JWT-gate error`, async () => {
       const res = await callTool(tool, args);
       const text = textOf(res);
-      assert.match(text, /Cloud Admin JWT required/, `${tool}: got: ${text.slice(0, 200)}`);
-      assert.match(text, /switch_environment/);
-      assert.equal(res.isError, true);
+      // Should not hit the old JWT gate — the tool proceeds (hits unreachable host or returns empty data)
+      assert.doesNotMatch(text, /Cloud Admin JWT required/, `${tool}: unexpectedly got JWT gate: ${text.slice(0, 200)}`);
+      assert.doesNotMatch(text, /switch_environment.*Cloud Admin JWT/);
     });
   }
 });

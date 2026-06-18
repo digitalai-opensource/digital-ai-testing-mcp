@@ -67,11 +67,11 @@ function build403Hint(): string {
   const profiles = listProfiles();
   const current = profiles.find(p => p.name === _activeProfileName);
   const currentLabel = current
-    ? `"${current.name}" (${current.keyType === 'jwt' ? 'Cloud Admin JWT' : 'project API key — limited access'})`
+    ? `"${current.name}" (${current.keyType === 'jwt' ? 'Cloud Admin' : 'project-level key (Project Admin or Project User) — limited access'})`
     : `"${_activeProfileName}"`;
 
   const lines = [
-    `This endpoint requires Cloud Admin JWT access.`,
+    `This endpoint requires Cloud Admin access.`,
     `Current connection: ${currentLabel}.`,
   ];
 
@@ -83,7 +83,7 @@ function build403Hint(): string {
       const names = jwtProfiles.map(p => `"${p.name}"`).join(', ');
       lines.push(`💡 Switch to a Cloud Admin profile — available: ${names}. Call switch_environment("<name>").`);
     } else {
-      lines.push(`💡 No Cloud Admin profiles configured. Add DAI_PROFILE_ADMIN_KEY=eyJ... to your .env and restart.`);
+      lines.push(`💡 No Cloud Admin profiles configured. Add a Cloud Admin key (the long eyJ... string from the portal) to your .env and restart: DAI_PROFILE_ADMIN_URL=... / DAI_PROFILE_ADMIN_KEY=eyJ...`);
     }
   }
 

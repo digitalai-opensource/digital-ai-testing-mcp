@@ -14,19 +14,19 @@ Devices designated as "shared" in Digital.ai may not be fully managed through th
 
 ## 4. Reporter API: Date Filter CSRF Restriction
 
-The Digital.ai reporter API routes certain filter properties through CSRF-protected middleware. The following are blocked for all callers (both JWT and API key): `start_time`, `create_time`, `uuid`. For date-range filtering, use the `startDate`/`endDate` parameters on `list_test_reports` — these fetch records server-sorted (Cloud Admin JWT) or via full scan (project API key) and apply the date comparison client-side.
+The Digital.ai reporter API routes certain filter properties through CSRF-protected middleware. The following are blocked for all callers (Cloud Admin, Project Admin, and Project User): `start_time`, `create_time`, `uuid`. For date-range filtering, use the `startDate`/`endDate` parameters on `list_test_reports` — these fetch records server-sorted (Cloud Admin) or via full scan (project-level keys) and apply the date comparison client-side.
 
 Confirmed working filter properties: `status`, `name` (with `contains`), `has_attachment`, `success` (boolean), `test_id`, `project_id`, `device.os` (case-sensitive), `duration`, `attachment_count`, `attachments_size`, `status_code`.
 
-**Sort** works for Cloud Admin JWT only — ALL sort fields are CSRF-blocked for project API keys. Tools that need newest-first results (`find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`) compensate automatically under a project key by scanning all records and sorting client-side — correct results, but slower on large report sets.
+**Sort** works for Cloud Admin only — ALL sort fields are CSRF-blocked for project-level keys (Project Admin and Project User). Tools that need newest-first results (`find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`) compensate automatically under a project-level key by scanning all records and sorting client-side — correct results, but slower on large report sets.
 
 ## 5. Region Management
 
-Listing and inspecting regions is available via the v2 API (`list_regions`, `get_region_topology`) — Cloud Admin JWT only. However, **creating, editing, or deleting regions** is not exposed via the public REST API; region configuration is done through the Digital.ai web UI.
+Listing and inspecting regions is available via the v2 API (`list_regions`, `get_region_topology`) — Cloud Admin only. However, **creating, editing, or deleting regions** is not exposed via the public REST API; region configuration is done through the Digital.ai web UI.
 
 ## 6. License Management
 
-License **limits** are readable via `get_license_info` and current usage vs. limits via `get_license_utilization` — Cloud Admin JWT only. License **purchasing, upgrading, or modifying entitlements** is not available through the API; those operations require contacting Digital.ai.
+License **limits** are readable via `get_license_info` and current usage vs. limits via `get_license_utilization` — Cloud Admin only. License **purchasing, upgrading, or modifying entitlements** is not available through the API; those operations require contacting Digital.ai.
 
 ## 7. Device Reboot and Cleanup Limitations for Non-Admin Users
 
@@ -58,11 +58,11 @@ The Digital.ai Continuous Testing platform does not expose a REST endpoint for c
 
 To observe a device screen, the AI agent must hold a live WebDriver session: `start_inspection_session` + `take_inspection_screenshot` provide exactly this (Android and iOS — see the [Inspection Sessions](tools.md#inspection-sessions) reference). Without a session, screen observation requires the Mobile Studio browser UI (developer-facing only) or Android Studio Layout Inspector via an rdb connection. Test attachments (screenshots captured during a test run) are available after the session ends via `download_test_attachments`.
 
-## 13. `get_remote_debug_command` Requires Cloud Admin JWT for Reliable Serial Resolution
+## 13. `get_remote_debug_command` Requires Cloud Admin for Reliable Serial Resolution
 
-When the active `DIGITAL_AI_ACCESS_KEY` is a **Project API Key**, the device serial lookup API may return an internal numeric ID rather than the actual device UDID. The generated `adb connect` command in the output script will use that internal ID, which the ADB server cannot resolve — the connection will fail silently or immediately disconnect.
+When the active `DIGITAL_AI_ACCESS_KEY` is a **project-level key** (Project Admin or Project User), the device serial lookup API may return an internal numeric ID rather than the actual device UDID. The generated `adb connect` command in the output script will use that internal ID, which the ADB server cannot resolve — the connection will fail silently or immediately disconnect.
 
-Use a **Cloud Admin JWT** when running `get_remote_debug_command` to ensure the device serial is resolved to the real UDID. The tool includes an `authWarning` field in its structured response when a project API key is detected, flagging this condition before the script is written to disk.
+Use a **Cloud Admin** profile when running `get_remote_debug_command` to ensure the device serial is resolved to the real UDID. The tool includes an `authWarning` field in its structured response when a project-level key is detected, flagging this condition before the script is written to disk.
 
 ## 14. Android 15+ Samsung Devices: UIAutomator Dump Silently Fails
 

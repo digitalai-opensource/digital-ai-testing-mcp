@@ -21,7 +21,13 @@ export async function getAllTestViews(): Promise<TestView[]> {
 
 export async function getTestViewById(id: number): Promise<TestView> {
   try {
-    return await apiGet<TestView>(`/reporter/api/testView/${id}`);
+    const result = await apiGet<unknown>(`/reporter/api/testView/${id}`);
+    // Guard against SPA HTML redirect — the reporter returns Angular app HTML (not JSON)
+    // for missing resources instead of a proper 404. Detect by checking for the id field.
+    if (typeof result !== 'object' || result === null || typeof (result as Record<string, unknown>).id !== 'number') {
+      throw new Error(`Test view with id ${id} not found (may have been deleted)`);
+    }
+    return result as TestView;
   } catch (e) {
     throw new Error(`getTestViewById failed: ${(e as Error).message}`);
   }
@@ -65,7 +71,11 @@ export async function createTestView(params: CreateTestViewParams): Promise<Test
 
 export async function updateTestView(params: UpdateTestViewParams): Promise<TestView> {
   try {
-    return await apiPut<TestView>('/reporter/api/testView', params);
+    const result = await apiPut<unknown>('/reporter/api/testView', params);
+    if (typeof result !== 'object' || result === null || typeof (result as Record<string, unknown>).id !== 'number') {
+      throw new Error(`Test view with id ${params.id} not found (may have been deleted)`);
+    }
+    return result as TestView;
   } catch (e) {
     throw new Error(`updateTestView failed: ${(e as Error).message}`);
   }

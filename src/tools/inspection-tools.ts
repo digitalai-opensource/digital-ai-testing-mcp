@@ -412,10 +412,10 @@ export function registerInspectionTools(server: McpServer): void {
 
         if (!session.canDeleteReport) {
           structured.authWarning =
-            'Project API key detected. The reporter delete endpoint (POST /reporter/api/tests/delete) ' +
-            'is CSRF-blocked for project API keys — inspection session reports will NOT be automatically ' +
+            'Project-level key detected (Project Admin or Project User). The reporter delete endpoint (POST /reporter/api/tests/delete) ' +
+            'is CSRF-blocked for project-level keys — inspection session reports will NOT be automatically ' +
             'deleted. Delete them manually from the Digital.ai reporter UI, or switch to a Cloud Admin ' +
-            'JWT profile before using inspection sessions: switch_environment("default").';
+            'profile before using inspection sessions: switch_environment("default").';
         }
 
         return {
@@ -475,8 +475,8 @@ export function registerInspectionTools(server: McpServer): void {
           text =
             `✅ Session ${args.handle} stopped. Device released.\n\n` +
             `⚠️  Report NOT deleted (test_id=${reportTestId}): the reporter delete endpoint is CSRF-blocked ` +
-            `for project API keys. Delete it manually from the Digital.ai reporter UI, or switch to a ` +
-            `Cloud Admin JWT profile before running inspection sessions: switch_environment("default").`;
+            `for project-level keys (Project Admin and Project User). Delete it manually from the Digital.ai reporter UI, or switch to a ` +
+            `Cloud Admin profile before running inspection sessions: switch_environment("default").`;
         } else {
           text = `✅ Session ${args.handle} stopped. Device released.`;
         }
@@ -1296,9 +1296,9 @@ export function registerInspectionTools(server: McpServer): void {
           content: [{
             type: 'text' as const,
             text:
-              `Error: Cloud Admin JWT required. The reporter delete endpoint is CSRF-blocked for project API keys. ` +
+              `Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). ` +
               `The ${pending.length} tracked report ID(s) are preserved — use switch_environment() to switch to a ` +
-              `Cloud Admin JWT profile, then re-run cleanup_inspection_sessions.`,
+              `Cloud Admin profile, then re-run cleanup_inspection_sessions.`,
           }],
           isError: true,
         };
