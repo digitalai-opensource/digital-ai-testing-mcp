@@ -1,0 +1,19 @@
+# Setup
+
+# 1. Create the project folder
+mkdir my-appium-tests
+cd my-appium-tests
+
+# 2. Save the provided files into this layout:
+#    package.json          ← project root
+#    wdio.conf.js          ← project root
+#    test/specs/iOSNative.js
+
+mkdir -p test/specs
+# (copy each file from the boilerplate output into the path shown above)
+
+# 3. Install dependencies
+npm install
+
+# 4. Run the test
+npm run wdio

@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  # Called by auto-release.yml — releases created with GITHUB_TOKEN do not emit
+  # a `release: published` event (GitHub recursion prevention), so the auto
+  # workflow invokes this one directly with the version as an input.
+  workflow_call:
+    inputs:
+      version:
+        description: 'Semver version to tag the image with (e.g. 1.2.0, no leading v)'
+        required: true
+        type: string
+
+jobs:
+  docker:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tag-ref runs (release event / dispatch on a tag) resolve semver tags from
+      # the ref; workflow_call runs come from a branch ref, so the version input
+      # supplies the tags instead.
+      - name: Compute version tags from input
+        id: ver
+        if: inputs.version != ''
+        run: |
+          echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          echo "majorminor=$(echo "${{ inputs.version }}" | cut -d. -f1,2)" >> $GITHUB_OUTPUT
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/dai-continuous-testing/digital-ai-testing-mcp
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ inputs.version != '' }}
+            type=raw,value=${{ steps.ver.outputs.majorminor }},enable=${{ inputs.version != '' }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

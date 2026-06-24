@@ -1,0 +1,50 @@
+{
+  "name": "digital-ai-testing-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Digital.ai Testing — device farm management, app lifecycle, and test automation",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "nodemon --exec ts-node --esm src/index.ts",
+    "lint": "eslint src/**/*.ts tests/**/*.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:users": "vitest run tests/users.test.ts",
+    "test:devices": "vitest run tests/devices.test.ts",
+    "test:device-groups": "vitest run tests/device-groups.test.ts",
+    "test:reservations": "vitest run tests/reservations.test.ts",
+    "test:applications": "vitest run tests/applications.test.ts",
+    "test:repository": "vitest run tests/repository.test.ts",
+    "test:browsers": "vitest run tests/browsers.test.ts",
+    "test:projects": "vitest run tests/projects.test.ts",
+    "test:provisioning": "vitest run tests/provisioning-profiles.test.ts",
+    "test:health": "vitest run tests/health.test.ts",
+    "test:utils": "vitest run tests/utils.test.ts",
+    "test:reporting": "vitest run tests/reporting.test.ts",
+    "test:test-views": "vitest run tests/test-views.test.ts",
+    "test:transactions": "vitest run tests/transactions.test.ts",
+    "test:analytics": "vitest run tests/analytics.test.ts",
+    "test:infrastructure": "vitest run tests/infrastructure.test.ts",
+    "test:performance": "vitest run tests/performance.test.ts",
+    "test:tools": "vitest run tests/tools.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "^1.18.0",
+    "dotenv": "^17.4.2",
+    "form-data": "^4.0.6",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "eslint": "^10.5.0",
+    "nodemon": "^3.0.0",
+    "ts-node": "^10.9.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1",
+    "vitest": "^4.1.9"
+  }
+}
