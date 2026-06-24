@@ -47,7 +47,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/dai-continuous-testing/digital-ai-testing-mcp
+          images: ghcr.io/digitalai-opensource/digital-ai-testing-mcp
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
