@@ -68,6 +68,7 @@ Then ask: *"Show me the overall health of the device farm."*
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Known Limitations](#known-limitations)
+- [License](#license)
 
 ---
 
