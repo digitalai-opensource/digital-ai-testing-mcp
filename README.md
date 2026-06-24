@@ -14,10 +14,10 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
 
 ```bash
 # 1. Pull the image (see Installation for GHCR authentication)
-docker pull ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 
 # 2. Create your .env
-curl -O https://raw.githubusercontent.com/dai-continuous-testing/digital-ai-testing-mcp/main/.env.example
+curl -O https://raw.githubusercontent.com/digitalai-opensource/digital-ai-testing-mcp/main/.env.example
 cp .env.example .env   # set DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY
 ```
 
@@ -29,7 +29,7 @@ Add to your AI client (Claude Desktop shown — see [Connecting AI Clients](#con
     "digital-ai-testing": {
       "command": "docker",
       "args": ["run", "--rm", "-i", "--env-file", "/ABSOLUTE/PATH/TO/.env",
-               "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"]
+               "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"]
     }
   }
 }
@@ -146,22 +146,22 @@ echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password
 **Step 2 — Pull the image**
 
 ```bash
-docker pull ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 ```
 
 **Step 3 — Set up your `.env`**
 
 ```bash
-curl -O https://raw.githubusercontent.com/dai-continuous-testing/digital-ai-testing-mcp/main/.env.example
+curl -O https://raw.githubusercontent.com/digitalai-opensource/digital-ai-testing-mcp/main/.env.example
 cp .env.example .env
 # Edit .env — set DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY
 ```
 
-Use `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` as the image name in your AI client configuration below.
+Use `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` as the image name in your AI client configuration below.
 
 > Images are published when a GitHub Release is created — not on every commit. If `latest` is not available yet, use [Option B](#option-b--build-from-source) to build from source.
 
-> To update: `docker pull ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest`
+> To update: `docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest`
 
 ---
 
@@ -170,7 +170,7 @@ Use `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` as the image 
 Required only for local development or modifying the server.
 
 ```bash
-git clone https://github.com/dai-continuous-testing/digital-ai-testing-mcp
+git clone https://github.com/digitalai-opensource/digital-ai-testing-mcp
 cd digital-ai-testing-mcp
 cp .env.example .env
 # Edit .env — set DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY
@@ -216,14 +216,14 @@ Find your config file:
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
+        "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
       ]
     }
   }
 }
 ```
 
-> **Built from source?** Replace `ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest`.
+> **Built from source?** Replace `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest`.
 
 Restart Claude Desktop after editing — the tools appear automatically.
 
@@ -239,10 +239,10 @@ Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code
 
 ```bash
 # macOS / Linux
-claude mcp add digital-ai-testing -- docker run --rm -i --env-file /absolute/path/to/.env ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+claude mcp add digital-ai-testing -- docker run --rm -i --env-file /absolute/path/to/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 
 # Windows (use forward slashes — backslashes are stripped by Claude Code)
-claude mcp add digital-ai-testing -- docker run --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest
+claude mcp add digital-ai-testing -- docker run --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 ```
 
 > **Windows users:** Always use forward slashes (`C:/path/to/.env`), never backslashes — regardless of whether you register via the CLI command above or through the Claude Code panel (**Settings → MCP Servers**). Backslashes are silently stripped when Claude Code writes the configuration to `~/.claude.json`, resulting in a broken path and a cryptic `-32000` reconnection error.
@@ -268,7 +268,7 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
         "args": [
           "run", "--rm", "-i",
           "--env-file", "/ABSOLUTE/PATH/TO/.env",
-          "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
+          "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
         ]
       }
     }
@@ -286,7 +286,7 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
+        "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
       ]
     }
   }
@@ -311,7 +311,7 @@ Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → M
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "ghcr.io/dai-continuous-testing/digital-ai-testing-mcp:latest"
+        "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
       ]
     }
   }
