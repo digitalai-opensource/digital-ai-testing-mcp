@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semver version to tag the image with (e.g. 1.0.0, no leading v). Leave blank to push latest tag only.'
+        required: false
+        type: string
   # Called by auto-release.yml — releases created with GITHUB_TOKEN do not emit
   # a `release: published` event (GitHub recursion prevention), so the auto
   # workflow invokes this one directly with the version as an input.
