@@ -15,7 +15,7 @@ Security fixes are applied to the latest release only. We do not backport to old
 
 **Please do not report security vulnerabilities via GitHub Issues.**
 
-To report a vulnerability, use [GitHub's private security advisory feature](https://github.com/dai-continuous-testing/digital-ai-testing-mcp/security/advisories/new). This keeps the report confidential until a fix is available.
+To report a vulnerability, use [GitHub's private security advisory feature](https://github.com/digitalai-opensource/digital-ai-testing-mcp/security/advisories/new). This keeps the report confidential until a fix is available.
 
 Include as much of the following as you can:
 
