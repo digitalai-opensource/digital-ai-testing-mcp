@@ -13,7 +13,7 @@ An MCP (Model Context Protocol) server that connects AI assistants like Claude t
 ## Quick Start
 
 ```bash
-# 1. Pull the image (see Installation for GHCR authentication)
+# 1. Pull the image
 docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 
 # 2. Create your .env
@@ -76,7 +76,6 @@ Then ask: *"Show me the overall health of the device farm."*
 
 - **Docker** — required to run the server
 - **Node.js 22+** — required only if building from source (see Installation, Option B)
-- **GitHub org membership** — required to pull the pre-built image from GHCR (see Installation, Option A)
 - **Digital.ai Testing account** with a valid access key
 
 ---
@@ -135,21 +134,13 @@ The switch takes effect immediately — no restart needed.
 
 No cloning or building required. Use this for standard deployment.
 
-**Step 1 — Authenticate with GHCR (one-time per machine)**
-
-Generate a GitHub **classic** Personal Access Token with `read:packages` scope at https://github.com/settings/tokens/new, then:
-
-```bash
-echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-```
-
-**Step 2 — Pull the image**
+**Step 1 — Pull the image**
 
 ```bash
 docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 ```
 
-**Step 3 — Set up your `.env`**
+**Step 2 — Set up your `.env`**
 
 ```bash
 curl -O https://raw.githubusercontent.com/digitalai-opensource/digital-ai-testing-mcp/main/.env.example
