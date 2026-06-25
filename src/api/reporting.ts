@@ -30,7 +30,7 @@ interface RawSingleTest {
   duration: number | null;
   status: string;
   success: boolean;
-  keyValuePairs?: Record<string, unknown>;
+  keyValuePairs?: Record<string, string | null | undefined>;
   testAttachments?: Array<{
     id: number;
     filePath: string;
@@ -65,6 +65,9 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
     has_attachment: attachments.length > 0 ? 'Y' : 'N',
     attachment_count: attachments.length,
     attachments_size: totalSize,
+    cause: raw.keyValuePairs?.cause ?? undefined,
+    errorCategory: raw.keyValuePairs?.errorCategory ?? undefined,
+    errorClassification: raw.keyValuePairs?.errorClassification ?? undefined,
     testAttachments: attachments.map((a) => ({
       filePath: a.filenameToOpen ?? a.filePath,
       type: a.type,

@@ -133,9 +133,9 @@ export function registerApplicationTools(server: McpServer): void {
           structured._storeInstallGuidance = {
             appNotInRepository: true,
             suggestion: 'Ask the user if this is a public store app they want to test. If yes, install it directly onto a farm device without needing a repository upload.',
-            androidFlow: 'start_inspection_session(no appId) → device_control(action:"deep_link", url:"market://details?id=<packageName>") → find_elements + tap_element to tap Install',
-            iosFlow: 'start_inspection_session(no appId) → device_control(action:"deep_link", url:"itms-apps://itunes.apple.com/app/id<numericAppStoreId>") → user taps GET (open_mobile_studio). iOS numeric App Store ID is in the apps.apple.com URL after /id.',
-            iosAuthNote: 'iOS may require Face ID/Touch ID or Apple ID password to confirm install — cannot be automated unless the device has no-password-required configured in App Store settings.',
+            androidFlow: 'start_inspection_session(no appId) → app_control(action:"deep_link", url:"market://details?id=<packageName>") — returns 500 but succeeds on-device (confirmed live), ignore the error → take_inspection_screenshot to verify Play Store opened → find_elements(xpath,"//*[@content-desc=\'Install\']") + tap_element',
+            iosFlow: 'start_inspection_session(no appId) → launch_app(packageName:"com.apple.AppStore") — itms-apps:// deep links return 500 on Grid iOS (confirmed), use launch_app instead → take_inspection_screenshot — if consent/onboarding screen with disabled buttons appears, stop session and use open_mobile_studio for manual interaction → user taps GET (Face ID/Touch ID cannot be automated). iOS numeric App Store ID is in the apps.apple.com URL after /id.',
+            iosAuthNote: 'iOS install requires human confirmation (Face ID, Touch ID, or Apple ID password) — cannot be automated. Use open_mobile_studio to hand control to the user for the GET tap.',
             repositoryNote: 'Installing from the store adds the app to that device only. It will not appear in list_applications and cannot be pushed to other devices via install_application.',
           };
         }
