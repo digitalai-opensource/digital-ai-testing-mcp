@@ -298,7 +298,7 @@ export function registerPrompts(server: McpServer): void {
             '1. get_environment_summary — overall environment snapshot.',
             '2. get_agent_status — check which agents are connected and report any offline agents.',
             '3. check_ios_readiness — verify iOS devices and provisioning profiles are ready.',
-            '4. check_android_readiness — verify Android devices are ready.',
+            '4. find_available_device(os=Android) — verify Android devices are ready.',
             '5. release_orphaned_sessions with maxAgeHours=4 (dry run, no confirmDeletion) — identify any stuck sessions.',
             '',
             'After gathering the data, provide:',

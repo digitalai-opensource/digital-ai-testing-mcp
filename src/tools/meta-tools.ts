@@ -52,8 +52,7 @@ const REGISTERED_TOOLS = [
   // Backup
   'create_backup',
   // Health
-  'get_environment_summary', 'check_ios_readiness',
-  'check_android_readiness', 'get_agent_status',
+  'get_environment_summary', 'check_ios_readiness', 'get_agent_status',
   // Reporting
   'get_test_report', 'get_test_by_report_id', 'list_test_reports',
   'find_latest_test_for_name', 'get_grouped_test_reports',
