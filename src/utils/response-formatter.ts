@@ -268,6 +268,14 @@ export function formatTestReport(report: TestReport): string {
     `   Status: ${report.status} | Duration: ${durationSec}s | Started: ${started}`,
   ];
 
+  if (report.cause) {
+    lines.push(`   Cause: ${report.cause}`);
+  }
+  if (report.errorCategory) {
+    const classification = report.errorClassification ? ` (${report.errorClassification})` : '';
+    lines.push(`   Error Category: ${report.errorCategory}${classification}`);
+  }
+
   if (report.testAttachments && report.testAttachments.length > 0) {
     lines.push(`   Attachments: ${report.testAttachments.length}`);
   }
