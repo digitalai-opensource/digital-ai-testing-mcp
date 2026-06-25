@@ -172,7 +172,6 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 |---|---|---|
 | `get_environment_summary` | Full environment snapshot: devices, agents, groups | Any |
 | `check_ios_readiness` | iOS device and provisioning profile readiness | Any |
-| `check_android_readiness` | Android device readiness. If `available: 0`, counts may be project-scoped — `find_available_device` searches a broader pool. | Any |
 | `get_agent_status` | Agent connectivity overview | Any |
 | `get_server_info` | Server version, active profile, URL, tool count, and capability domains | Any |
 | `check_connectivity` | Verify the MCP server can reach the Digital.ai API | Any |

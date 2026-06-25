@@ -60,6 +60,8 @@ export function registerDeviceTools(server: McpServer): void {
         .optional()
         .describe(
           "Server-side device query filter using @ syntax. " +
+          "SYNTAX: values MUST be in single quotes and clauses joined with ' and ' — e.g. \"@os='android' and @category='PHONE' and @version>'14.0'\". " +
+          "Missing quotes or using a space instead of ' and ' silently returns 0 results. " +
           "CONFIRMED WORKING fields: " +
           "@os ('android'/'iOS', case-insensitive), " +
           "@version (decimal required — '14.0' works, '14' matches nothing; supports =, >, <, !=), " +
@@ -74,6 +76,10 @@ export function registerDeviceTools(server: McpServer): void {
           "@manufacturer, @tag, @deviceName, @id, @udid, @status, @agentName, @region+manufacturer combined. " +
           "For manufacturer, tag, model substring, or region filtering prefer the dedicated params below — those apply client-side and always work."
         ),
+      os: z
+        .enum(['iOS', 'Android'])
+        .optional()
+        .describe("Filter by OS (client-side convenience param — equivalent to @os in query but without needing query syntax)."),
       region: z
         .string()
         .optional()
@@ -98,9 +104,12 @@ export function registerDeviceTools(server: McpServer): void {
         .describe('Maximum number of results to return (default: 50, max: 500).'),
       outputFormat: outputFormatParam,
     },
-    async ({ query, region, model, sortBy, sortOrder, maxResults, outputFormat }) => {
+    async ({ query, os, region, model, sortBy, sortOrder, maxResults, outputFormat }) => {
       try {
         let devices = query ? await getDevicesByQuery(query) : await getAllDevices();
+        if (os) {
+          devices = devices.filter(d => d.deviceOs === os);
+        }
         if (region) {
           const q = region.toLowerCase();
           devices = devices.filter(d => d.region.toLowerCase().includes(q));
@@ -122,6 +131,7 @@ export function registerDeviceTools(server: McpServer): void {
         }
         const filterDesc = [
           query ? `query="${query}"` : '',
+          os ? `os="${os}"` : '',
           region ? `region~"${region}"` : '',
           model ? `model~"${model}"` : '',
         ].filter(Boolean).join(', ');
@@ -670,9 +680,8 @@ export function registerDeviceTools(server: McpServer): void {
         // No explicit preference → derive from the active cloud URL. An explicit [] opts out.
         const effectiveRegions = preferRegions ?? defaultPreferRegions();
         const regionsDefaulted = !preferRegions && !!effectiveRegions;
-        // Only @os, @category, and @emulator are confirmed to work server-side.
-        // @manufacturer and @tag look valid but silently return 0 results from the API
-        // (even combined with working fields). Filter these client-side instead.
+        // @os and @category are confirmed to work server-side (live-verified).
+        // @manufacturer and @tag silently return 0 results — filter those client-side.
         const clauses: string[] = [];
         if (os) clauses.push(`@os='${os}'`);
         if (category) clauses.push(`@category='${category}'`);
