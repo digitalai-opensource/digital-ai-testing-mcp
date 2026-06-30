@@ -9,6 +9,7 @@ import type {
   RepositoryFile,
   Browser,
   TestReport,
+  FailureSummary,
   TestView,
   TestViewSummary,
   Agent,
@@ -300,6 +301,25 @@ export function formatTestReport(report: TestReport): string {
     }
   }
 
+  return lines.join('\n');
+}
+
+export function formatFailureSummary(s: FailureSummary): string {
+  if (s.totalFailures === 0) return 'No failed tests found in the window.';
+  const lines: string[] = [];
+  const classified = s.detailsFetched > 0 ? `, ${s.detailsFetched} classified via single-record fetch` : '';
+  const capNote = s.capped
+    ? ' ⚠️ capped at maxReports — increase maxReports or narrow the window for a complete picture'
+    : '';
+  const failNote = s.fetchFailures > 0 ? ` ⚠️ ${s.fetchFailures} report(s) could not be fetched and were excluded` : '';
+  lines.push(`Failure summary by ${s.groupBy} — ${s.totalFailures} failure(s)${classified}${capNote}${failNote}:`);
+  // Percentages are over what was actually bucketed (excludes any unfetchable reports).
+  const bucketed = s.buckets.reduce((sum, b) => sum + b.count, 0) || 1;
+  for (const b of s.buckets) {
+    const pct = Math.round((b.count / bucketed) * 100);
+    const ex = b.examples.map((e) => `#${e.testId} "${e.name}"`).join(', ');
+    lines.push(`  • ${b.key} — ${b.count} (${pct}%)${ex ? `  e.g. ${ex}` : ''}`);
+  }
   return lines.join('\n');
 }
 

@@ -7,6 +7,8 @@ import type {
   TestListResponse,
   TestGroupRequest,
   TestFilterField,
+  FailureBucket,
+  FailureSummary,
 } from '../types/digital-ai.js';
 
 // The reporter API does not use the standard ApiResponse {status,data,code} envelope.
@@ -210,6 +212,125 @@ export async function listTestsSortedDesc(
   }
   all.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   return { count: all.length, data: all.slice(0, limit), scanCapped };
+}
+
+export type FailureGroupBy = 'errorClassification' | 'errorCategory' | 'name';
+
+// Pure aggregation — no network, unit-tested with fixtures. Buckets failed test
+// reports by a dimension, counts each, and keeps a few examples per bucket.
+// Empty/missing dimension values collapse into a single '(unclassified)' bucket.
+export function bucketFailures(
+  reports: TestReport[],
+  groupBy: FailureGroupBy,
+  maxExamples = 3
+): FailureBucket[] {
+  const map = new Map<string, FailureBucket>();
+  for (const r of reports) {
+    const raw = r[groupBy];
+    const key = raw == null || raw === '' ? '(unclassified)' : String(raw);
+    let bucket = map.get(key);
+    if (!bucket) {
+      bucket = { key, count: 0, examples: [] };
+      map.set(key, bucket);
+    }
+    bucket.count++;
+    if (bucket.examples.length < maxExamples) {
+      bucket.examples.push({ testId: r.test_id, name: r.name });
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
+}
+
+// Summarize WHY tests failed by bucketing them on a dimension. The reporter LIST
+// endpoint does not carry errorClassification/errorCategory (confirmed live), so
+// bucketing on those requires a single-record fetch per failed test (N+1). The
+// fan-out is bounded by maxReports; groupBy:'name' needs no detail (name is on the
+// list record) and skips the fan-out entirely.
+export async function summarizeTestFailures(opts: {
+  startDate?: string;
+  endDate?: string;
+  projectId?: number;
+  projectName?: string;
+  nameFilter?: string;
+  groupBy?: FailureGroupBy;
+  maxReports?: number;
+}): Promise<FailureSummary> {
+  try {
+    const groupBy = opts.groupBy ?? 'errorClassification';
+    const maxReports = opts.maxReports ?? 200;
+
+    const filter: TestFilterField[] = [{ property: 'status', operator: '=', value: 'Failed' }];
+    if (opts.nameFilter) filter.push({ property: 'name', operator: 'contains', value: opts.nameFilter });
+
+    // Same window-scan strategy as list_test_reports: start_time filtering is
+    // CSRF-blocked, so fetch (sorted desc for JWT to allow early-exit) and filter
+    // the date window client-side.
+    const isSorted = getActiveKeyType() === 'jwt';
+    const startTs = opts.startDate ? new Date(opts.startDate).getTime() : 0;
+    const endTs = opts.endDate ? new Date(opts.endDate).getTime() : Date.now();
+
+    const collected: TestReport[] = [];
+    let page = 1;
+    let scanned = 0;
+    let done = false;
+    const maxScan = 5000;
+
+    while (!done && collected.length < maxReports) {
+      const batch = await listTests(
+        {
+          limit: 500,
+          page,
+          returnTotalCount: false,
+          filter,
+          ...(isSorted && { sort: [{ property: 'start_time', descending: true }] }),
+        },
+        opts.projectId,
+        opts.projectName
+      );
+      const recs = batch.data ?? [];
+      if (recs.length === 0) break;
+      scanned += recs.length;
+      for (const r of recs) {
+        const t = new Date(r.start_time).getTime();
+        if (isSorted && t < startTs) { done = true; break; }
+        if (t >= startTs && t <= endTs) {
+          collected.push(r);
+          if (collected.length >= maxReports) { done = true; break; }
+        }
+      }
+      if (recs.length < 500) done = true;
+      if (!done && scanned >= maxScan) { done = true; }
+      page++;
+    }
+
+    // Only errorClassification/errorCategory require the per-test detail fetch.
+    // Tolerate per-report failures (a deleted/unreadable report must not abort the
+    // whole summary) — skip and count them, mirroring bulk_install_to_group.
+    const needsDetail = groupBy === 'errorClassification' || groupBy === 'errorCategory';
+    let classified = collected;
+    let fetchFailures = 0;
+    if (needsDetail) {
+      classified = [];
+      for (const summary of collected) {
+        try {
+          classified.push(await getTestById(summary.test_id));
+        } catch {
+          fetchFailures++;
+        }
+      }
+    }
+
+    return {
+      totalFailures: collected.length,
+      detailsFetched: needsDetail ? classified.length : 0,
+      fetchFailures,
+      capped: collected.length >= maxReports,
+      groupBy,
+      buckets: bucketFailures(classified, groupBy),
+    };
+  } catch (e) {
+    throw new Error(`summarizeTestFailures failed: ${(e as Error).message}`);
+  }
 }
 
 export async function getGroupedTests(

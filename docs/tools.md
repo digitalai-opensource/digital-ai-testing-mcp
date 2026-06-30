@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 187 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 188 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (the long eyJ... key); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -207,6 +207,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `get_cross_platform_divergence` | Tests passing on one OS but failing on the other, with configurable minimum run count and divergence threshold | Any |
 | `get_daily_execution_trend` | Execution counts and pass rates bucketed by day or week. Stops at `lookbackDays` or `maxRecords` (default 5,000; max 25,000), whichever comes first. | Any |
 | `get_project_test_summary` | All-time pass/fail totals and top failing tests in a time window | Any |
+| `summarize_test_failures` | "Why are my tests failing?" — buckets failed tests by error classification/category (or name) in one call (e.g. "44 failures: 42 element_not_found"). Fetches per-test detail (N+1, capped by `maxReports`). | Any |
 | `get_failure_rate_by_app_version` | Pass/fail breakdown grouped by app version | Any |
 | `get_distinct_test_key_values` | Discover all distinct values recorded for a report metadata key | Any |
 | `list_active_test_executions` | Currently-running test executions (Incomplete status with null duration) | Any |
