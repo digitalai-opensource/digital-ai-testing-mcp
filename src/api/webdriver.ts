@@ -1559,8 +1559,8 @@ export function getPendingReportIds(): number[] {
   return [...allReports.keys()];
 }
 
-export async function deleteAllTrackedReports(): Promise<number[]> {
-  if (allReports.size === 0) return [];
+export async function deleteAllTrackedReports(): Promise<{ deleted: number[]; failed: number[] }> {
+  if (allReports.size === 0) return { deleted: [], failed: [] };
   // Group by originating project — each project's reports live in its own
   // reporter instance and must be deleted with a matching projectName scope.
   const byProject = new Map<string | undefined, number[]>();
@@ -1569,13 +1569,20 @@ export async function deleteAllTrackedReports(): Promise<number[]> {
     list.push(id);
     byProject.set(project, list);
   }
+  // Tolerate per-project failures: one project's delete failing must not abort
+  // the rest, and failed reports stay tracked so a later cleanup can retry them.
   const deleted: number[] = [];
+  const failed: number[] = [];
   for (const [project, ids] of byProject) {
-    await deleteTests(ids, undefined, project);
-    for (const id of ids) {
-      allReports.delete(id);
-      deleted.push(id);
+    try {
+      await deleteTests(ids, undefined, project);
+      for (const id of ids) {
+        allReports.delete(id);
+        deleted.push(id);
+      }
+    } catch {
+      failed.push(...ids);
     }
   }
-  return deleted;
+  return { deleted, failed };
 }

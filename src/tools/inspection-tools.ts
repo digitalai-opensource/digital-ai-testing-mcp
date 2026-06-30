@@ -1338,12 +1338,15 @@ export function registerInspectionTools(server: McpServer): void {
       if (guard) return { content: [{ type: 'text' as const, text: guard }] };
 
       try {
-        const deleted = await deleteAllTrackedReports();
+        const { deleted, failed } = await deleteAllTrackedReports();
+        const failNote = failed.length > 0
+          ? ` ⚠️ ${failed.length} could not be deleted and remain tracked (IDs: ${failed.join(', ')}) — run cleanup again to retry.`
+          : '';
         return {
           content: [
             {
               type: 'text' as const,
-              text: `✅ Deleted ${deleted.length} inspection report${deleted.length !== 1 ? 's' : ''} (IDs: ${deleted.join(', ')}).`,
+              text: `✅ Deleted ${deleted.length} inspection report${deleted.length !== 1 ? 's' : ''} (IDs: ${deleted.join(', ')}).${failNote}`,
             },
           ],
         };
