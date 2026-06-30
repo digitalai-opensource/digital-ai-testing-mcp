@@ -280,6 +280,94 @@ describe('Upload tools reject unsafe input paths before reading any file', () =>
   });
 });
 
+describe('Upload-command tools emit a runnable command without any API call', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
+  });
+
+  it('get_repository_upload_command returns a curl command for the files endpoint', async () => {
+    const res = await callTool('get_repository_upload_command', {
+      localFilePath: '/home/me/data.csv',
+      uniqueName: 'mydata',
+      localPlatform: 'linux',
+      outputFormat: 'human',
+    });
+    const text = textOf(res);
+    assert.notEqual(res.isError, true);
+    assert.match(text, /curl -X POST/);
+    assert.match(text, /api\/v1\/files/);
+    assert.match(text, /-F "file=@\/home\/me\/data\.csv"/);
+    assert.match(text, /-F "uniqueName=mydata"/);
+    // Project key → both headers present
+    assert.match(text, /X-API-KEY/);
+  });
+
+  it('get_provisioning_profile_upload_command emits both files and a PowerShell variant on windows', async () => {
+    const res = await callTool('get_provisioning_profile_upload_command', {
+      p12FilePath: 'C:\\certs\\dist.p12',
+      password: 'secret',
+      mobileprovisionFilePath: 'C:\\certs\\app.mobileprovision',
+      localPlatform: 'windows',
+      outputFormat: 'human',
+    });
+    const text = textOf(res);
+    assert.notEqual(res.isError, true);
+    assert.match(text, /provisioning-profiles/);
+    assert.match(text, /p12file=@/);
+    assert.match(text, /mobileprovisionfile=@/);
+    assert.match(text, /-F "password=secret"/);
+    // windows → PowerShell block included
+    assert.match(text, /Invoke-RestMethod/);
+  });
+});
+
+describe('Download-command tools emit a runnable command without any API call', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
+  });
+
+  it('get_test_attachments_download_command returns a curl GET for the attachments ZIP', async () => {
+    const res = await callTool('get_test_attachments_download_command', {
+      uuid: 'abc-123-uuid',
+      localPath: '/home/me/session.zip',
+      localPlatform: 'linux',
+      outputFormat: 'human',
+    });
+    const text = textOf(res);
+    assert.notEqual(res.isError, true);
+    assert.match(text, /curl -L/);
+    assert.match(text, /reporter\/api\/reports\/abc-123-uuid\/attachments/);
+    assert.match(text, /-o "\/home\/me\/session\.zip"/);
+    assert.match(text, /X-API-KEY/);
+  });
+
+  it('get_repository_file_download_command emits a PowerShell Invoke-WebRequest on windows', async () => {
+    const res = await callTool('get_repository_file_download_command', {
+      fileId: 4242,
+      localPath: 'C:\\data\\file.bin',
+      localPlatform: 'windows',
+      outputFormat: 'human',
+    });
+    const text = textOf(res);
+    assert.notEqual(res.isError, true);
+    assert.match(text, /api\/v1\/files\/4242\/download/);
+    assert.match(text, /Invoke-WebRequest/);
+    assert.match(text, /-OutFile "C:\\data\\file\.bin"/);
+  });
+
+  it('get_provisioning_profile_download_command targets the profile download endpoint', async () => {
+    const res = await callTool('get_provisioning_profile_download_command', {
+      profileUUID: 'PROF-UUID-9',
+      localPath: '/tmp/p.mobileprovision',
+      localPlatform: 'macos',
+      outputFormat: 'human',
+    });
+    const text = textOf(res);
+    assert.notEqual(res.isError, true);
+    assert.match(text, /provisioning-profiles\/PROF-UUID-9\/download/);
+  });
+});
+
 describe('path-guard unit behavior', () => {
   it('validateInputPath blocks credential filenames and traversal, allows normal files', () => {
     assert.notEqual(validateInputPath('C:\\builds\\.env'), null);

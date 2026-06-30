@@ -1,4 +1,5 @@
 import { writeFile } from 'fs/promises';
+import AdmZip from 'adm-zip';
 import { apiGet, apiPost, apiDownload, getActiveKeyType } from './client.js';
 import type {
   TestReport,
@@ -30,6 +31,8 @@ interface RawSingleTest {
   duration: number | null;
   status: string;
   success: boolean;
+  count?: number;        // total sub-tests in a merged report (1 for a plain test)
+  failedCount?: number;  // failed sub-tests in a merged report
   keyValuePairs?: Record<string, string | null | undefined>;
   testAttachments?: Array<{
     id: number;
@@ -65,9 +68,12 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
     has_attachment: attachments.length > 0 ? 'Y' : 'N',
     attachment_count: attachments.length,
     attachments_size: totalSize,
+    subTestCount: raw.count ?? undefined,
+    failedSubTestCount: raw.failedCount ?? undefined,
     cause: raw.keyValuePairs?.cause ?? undefined,
     errorCategory: raw.keyValuePairs?.errorCategory ?? undefined,
     errorClassification: raw.keyValuePairs?.errorClassification ?? undefined,
+    errorDetail: raw.keyValuePairs?.['error.object'] ?? undefined,
     testAttachments: attachments.map((a) => ({
       filePath: a.filenameToOpen ?? a.filePath,
       type: a.type,
@@ -85,9 +91,9 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
 // Retrieve a single test report by its numeric test_id.
 // The UUID-based endpoint (/api/reports/{uuid}) does not exist in this API surface;
 // this is the correct path for API-key authenticated single-record retrieval.
-export async function getTestById(testId: number, includeSteps = false): Promise<TestReport> {
+export async function getTestById(testId: number): Promise<TestReport> {
   try {
-    const raw = await apiGet<RawSingleTest>(`/reporter/api/tests/${testId}`, { includeSteps });
+    const raw = await apiGet<RawSingleTest>(`/reporter/api/tests/${testId}`);
     return normalizeSingleTest(raw);
   } catch (e) {
     throw new Error(`getTestById failed: ${(e as Error).message}`);
@@ -278,6 +284,34 @@ export async function deleteTests(
     await apiPost('/reporter/api/tests/delete', ids, params);
   } catch (e) {
     throw new Error(`deleteTests failed: ${(e as Error).message}`);
+  }
+}
+
+export async function extractAttachmentLog(
+  uuid: string,
+  logType: 'appium' | 'device' | 'ws'
+): Promise<{ filename: string; content: string; totalLines: number }> {
+  try {
+    const data = await apiDownload(`/reporter/api/reports/${uuid}/attachments`);
+    const zip = new AdmZip(data);
+    const logEntries = zip.getEntries().filter((e) => !e.isDirectory && e.entryName.endsWith('.log'));
+
+    const matchers: Record<string, (name: string) => boolean> = {
+      appium: (n) => n.includes('appium-server') || n.includes('appium'),
+      device: (n) => n.includes('device') && !n.includes('ws') && !n.includes('tcp'),
+      ws: (n) => n.includes('ws_on_device') || n.includes('tcp_to_ws'),
+    };
+    const entry = logEntries.find((e) => matchers[logType](e.entryName.toLowerCase()));
+
+    if (!entry) {
+      const available = logEntries.map((e) => e.entryName).join(', ');
+      throw new Error(`No ${logType} log found in attachments ZIP. Available log files: ${available || 'none'}`);
+    }
+
+    const content = entry.getData().toString('utf8');
+    return { filename: entry.entryName, content, totalLines: content.split('\n').length };
+  } catch (e) {
+    throw new Error(`extractAttachmentLog failed: ${(e as Error).message}`);
   }
 }
 

@@ -10,10 +10,12 @@ import {
   getDistinctKeyValues,
   deleteTests,
   downloadTestAttachments,
+  extractAttachmentLog,
 } from '../api/reporting.js';
 import { getActiveKeyType } from '../api/client.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
+import { buildDownloadCommand } from '../utils/download-command.js';
 import {
   formatTestReport,
   formatTestReportList,
@@ -30,14 +32,16 @@ export function registerReportingTools(server: McpServer): void {
     'get_test_report',
     'Retrieve a full test execution report by its numeric test ID or by the report URL printed in tearDown (digitalai:reportUrl capability). ' +
     'Provide either testId OR reportUrl — reportUrl is parsed to extract the numeric test ID automatically. ' +
-    'The test ID (test_id field) is also returned by list_test_reports and find_latest_test_for_name.',
+    'The test ID (test_id field) is also returned by list_test_reports and find_latest_test_for_name. ' +
+    'NOTE: Step-level detail is not available via numeric test ID — the backend API does not support it on this endpoint. ' +
+    'To get steps, use get_test_by_report_id with the report_api_id from a live session. ' +
+    'For failure diagnosis use the cause/errorCategory/errorDetail fields in this response, or get_test_log for the full Appium log.',
     {
       testId: z.number().int().optional().describe('The numeric test ID (test_id field from list results, e.g. 377918). Provide this OR reportUrl.'),
       reportUrl: z.string().optional().describe('The report URL printed by tearDown (digitalai:reportUrl capability value). The numeric test ID is extracted automatically.'),
-      includeSteps: z.boolean().optional().describe('If true, include step-level detail. Default: false.'),
       outputFormat: outputFormatParam,
     },
-    async ({ testId, reportUrl, includeSteps, outputFormat }) => {
+    async ({ testId, reportUrl, outputFormat }) => {
       let resolvedId = testId;
 
       if (!resolvedId && reportUrl) {
@@ -72,7 +76,7 @@ export function registerReportingTools(server: McpServer): void {
       }
 
       try {
-        const report = await getTestById(resolvedId, includeSteps ?? false);
+        const report = await getTestById(resolvedId);
         return respond(outputFormat, report, formatTestReport(report));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
@@ -84,7 +88,8 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'get_test_by_report_id',
-    'Retrieve a test execution report using the report_api_id returned when starting a manual or web-control test session. CRITICAL: report_api_id is NOT the same as test_id (integer) or uuid (hex UUID). It is a separate opaque string returned only by create_mobile_manual_test, start_manual_test_session, or start_device_web_control. This only works AFTER the session has fully ended — allow up to 60 seconds after session close.',
+    'Retrieve a test execution report using the report_api_id returned when starting a manual or web-control test session. CRITICAL: report_api_id is NOT the same as test_id (integer) or uuid (hex UUID). It is a separate opaque string returned only by create_mobile_manual_test, start_manual_test_session, or start_device_web_control. This only works AFTER the session has fully ended AND a tester actually executed it — allow up to 60 seconds after session close. A session that was created but never opened/executed produces NO report and its report_api_id stays 404 permanently. ' +
+    'Unlike get_test_report (numeric ID), THIS endpoint supports includeSteps — but the steps array is only populated for tests that logged steps (manual sessions a tester ran, or scripted tests calling the reporter step API). An empty/absent steps array means the test logged no steps, NOT that the tool is broken.',
     {
       reportApiId: z
         .string()
@@ -133,7 +138,9 @@ export function registerReportingTools(server: McpServer): void {
     'For date-range filtering use startDate/endDate — server-side start_time filtering is CSRF-blocked. ' +
     'When the user asks for "my reports" / "reports linked to my account", filter by user immediately: ' +
     '[{"property":"user","operator":"=","value":"<email from get_my_account_info>"}] — do not return a global count first. ' +
-    'Scoped to a project if projectId or projectName is provided.',
+    'Scoped to a project if projectId or projectName is provided. ' +
+    'NOTE: the list response does NOT include failure diagnostics — the cause, errorCategory, and errorDetail fields are only returned by get_test_report (single-record). ' +
+    'To diagnose why a listed test failed, call get_test_report with its test_id, or get_test_log for the full Appium log.',
     {
       limit: z
         .number()
@@ -614,12 +621,15 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'download_test_attachments',
-    'Download all attachments for a test execution as a ZIP file. The file is saved to the specified local path.',
+    'Download all attachments for a test execution as a ZIP file, saved to the MCP server\'s own filesystem. ' +
+    'WARNING: the file is written to the MCP server process filesystem — if the server runs in Docker or a remote container, ' +
+    'the path must be valid on that container and the file will NOT be accessible from your local machine or bash tools. ' +
+    'Use get_test_log instead to retrieve log content directly without a file download.',
     {
       uuid: z.string().describe('The test execution UUID.'),
       localPath: z
         .string()
-        .describe('Absolute local path where the ZIP file will be saved, e.g. "/tmp/test-attachments.zip".'),
+        .describe('Absolute path on the MCP server\'s own filesystem where the ZIP will be saved (e.g. "/tmp/test.zip" for Linux/Docker deployment).'),
     },
     async ({ uuid, localPath }) => {
       const pathErr = validateOutputPath(localPath);
@@ -629,6 +639,68 @@ export function registerReportingTools(server: McpServer): void {
         return {
           content: [{ type: 'text', text: `✅ Attachments downloaded to: ${localPath}` }],
         };
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ─── get_test_attachments_download_command ─────────────────────────────────
+
+  server.tool(
+    'get_test_attachments_download_command',
+    'Generates a ready-to-run curl or PowerShell command for downloading a test execution\'s full attachment ZIP (session video .mp4, Appium/device logs) directly to the user\'s local machine. ' +
+    'Use this instead of download_test_attachments when the MCP server runs in Docker/remote: download_test_attachments writes to the SERVER\'s filesystem (invisible to the user), whereas this command runs on the user\'s machine so the binary lands locally. ' +
+    'For text logs only, get_test_log is simpler (returns log text inline, no command). This is the path for the BINARY artifacts (video).\n\n' +
+    'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
+    {
+      uuid: z.string().describe('Test execution UUID (uuid field from get_test_report or list_test_reports).'),
+      localPath: z.string().optional().default('test-attachments.zip').describe('Path on the user\'s local machine to save the ZIP. Default: "test-attachments.zip" in the current directory.'),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ uuid, localPath, localPlatform, outputFormat }) => {
+      const result = buildDownloadCommand({
+        path: `/reporter/api/reports/${uuid}/attachments`,
+        localPath: localPath ?? 'test-attachments.zip',
+        localPlatform,
+        notes: ['The downloaded file is a ZIP — unzip it to access the .mp4 video and the appium/device/ws logs.'],
+      });
+      return respond(outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
+    }
+  );
+
+  // ─── get_test_log ──────────────────────────────────────────────────────────
+
+  server.tool(
+    'get_test_log',
+    'Retrieve log content from a test execution directly as text — no file download required. ' +
+    'Fetches the attachment ZIP and extracts the requested log in memory, returning the tail. ' +
+    'Use this to diagnose test failures when get_test_report shows cause/errorDetail but you need the full Appium trace. ' +
+    'Requires the test execution UUID (uuid field from get_test_report or list_test_reports).',
+    {
+      uuid: z.string().describe('Test execution UUID (uuid field from get_test_report or list_test_reports).'),
+      logType: z
+        .enum(['appium', 'device', 'ws'])
+        .optional()
+        .default('appium')
+        .describe("Which log file to extract: 'appium' (default) — Appium server log with test steps and errors; 'device' — on-device logcat; 'ws' — WebSocket/network bridge log."),
+      maxLines: z
+        .number()
+        .int()
+        .optional()
+        .default(200)
+        .describe('Number of lines to return from the END of the log. Default: 200.'),
+    },
+    async ({ uuid, logType, maxLines }) => {
+      try {
+        const { filename, content, totalLines } = await extractAttachmentLog(uuid, logType ?? 'appium');
+        const tail = content.split('\n').slice(-(maxLines ?? 200));
+        const truncated = totalLines > (maxLines ?? 200);
+        const header = truncated
+          ? `[${filename} — showing last ${maxLines ?? 200} of ${totalLines} lines]\n\n`
+          : `[${filename} — ${totalLines} lines]\n\n`;
+        return { content: [{ type: 'text', text: header + tail.join('\n') }] };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
