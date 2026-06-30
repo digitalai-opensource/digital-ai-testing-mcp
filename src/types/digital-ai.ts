@@ -409,6 +409,21 @@ export interface TestReport {
   steps?: TestReportStep[];
 }
 
+export interface FailureBucket {
+  key: string;
+  count: number;
+  examples: Array<{ testId: number; name: string }>;
+}
+
+export interface FailureSummary {
+  totalFailures: number;   // failed tests collected in the window (≤ maxReports)
+  detailsFetched: number;  // single-record reports successfully fetched for classification (0 when groupBy needs no detail)
+  fetchFailures: number;   // reports that could not be fetched during the fan-out (excluded from buckets)
+  capped: boolean;         // true when more failures exist beyond maxReports
+  groupBy: string;
+  buckets: FailureBucket[];
+}
+
 export interface TestSortField {
   property: string;
   descending: boolean;

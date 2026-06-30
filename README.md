@@ -6,7 +6,7 @@
 
 # Digital.ai Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Testing device farm. The server exposes **187 tools**, **2 resources**, and **6 prompts** covering 25 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Testing device farm. The server exposes **188 tools**, **2 resources**, and **6 prompts** covering 25 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -336,7 +336,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 
 ## Capabilities
 
-187 tools across 25 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
+188 tools across 25 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
 
 | Domain | Tools | Highlights |
 |---|---|---|
@@ -352,7 +352,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 | [Backup](docs/tools.md#backup) | 1 | Trigger a system backup |
 | [Health & Diagnostics](docs/tools.md#health--diagnostics) | 11 | Farm health, readiness checks, license utilization |
 | [Coverage Analytics](docs/tools.md#coverage-analytics) | 2 | Tested-vs-available device gap analysis |
-| [Reporting](docs/tools.md#reporting) | 19 | Search/filter test reports, stability, trends, logs, attachment download command, cleanup |
+| [Reporting](docs/tools.md#reporting) | 20 | Search/filter test reports, failure summarization, stability, trends, logs, attachment download command, cleanup |
 | [Test Views](docs/tools.md#test-views) | 7 | Dashboard view groups |
 | [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics *(Cloud Admin)* |
 | [Agents](docs/tools.md#agents) | 2 | Host machine status *(Cloud Admin)* |

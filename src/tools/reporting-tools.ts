@@ -11,6 +11,7 @@ import {
   deleteTests,
   downloadTestAttachments,
   extractAttachmentLog,
+  summarizeTestFailures,
 } from '../api/reporting.js';
 import { getActiveKeyType } from '../api/client.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -19,6 +20,7 @@ import { buildDownloadCommand } from '../utils/download-command.js';
 import {
   formatTestReport,
   formatTestReportList,
+  formatFailureSummary,
   formatTestAttachments,
   formatGroupedTestReports,
   formatProjectTestSummary,
@@ -140,7 +142,8 @@ export function registerReportingTools(server: McpServer): void {
     '[{"property":"user","operator":"=","value":"<email from get_my_account_info>"}] — do not return a global count first. ' +
     'Scoped to a project if projectId or projectName is provided. ' +
     'NOTE: the list response does NOT include failure diagnostics — the cause, errorCategory, and errorDetail fields are only returned by get_test_report (single-record). ' +
-    'To diagnose why a listed test failed, call get_test_report with its test_id, or get_test_log for the full Appium log.',
+    'To diagnose why a listed test failed, call get_test_report with its test_id, or get_test_log for the full Appium log. ' +
+    'For "why are my tests failing?" across many failures, use summarize_test_failures — it buckets failures by error classification in one call.',
     {
       limit: z
         .number()
@@ -701,6 +704,41 @@ export function registerReportingTools(server: McpServer): void {
           ? `[${filename} — showing last ${maxLines ?? 200} of ${totalLines} lines]\n\n`
           : `[${filename} — ${totalLines} lines]\n\n`;
         return { content: [{ type: 'text', text: header + tail.join('\n') }] };
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ─── summarize_test_failures ───────────────────────────────────────────────
+
+  server.tool(
+    'summarize_test_failures',
+    'Answer "why are my tests failing?" in one call: buckets failed tests by error classification and returns the breakdown (e.g. "44 failures: 38 element_not_found, 6 timeout"). ' +
+    'Use this instead of fanning out get_test_report manually across many failures. ' +
+    'SLOW: the reporter list endpoint does not carry error classification, so this fetches the single-record report for each failed test (N+1) — bounded by maxReports. ' +
+    'groupBy "name" needs no per-test fetch (name is on the list record) and is fast. ' +
+    'Scope with startDate/endDate (client-side window), projectName/projectId, and nameFilter (substring on test name).',
+    {
+      startDate: z.string().optional().describe('ISO 8601 start of window, e.g. "2026-06-01T00:00:00Z". Omit for all-time (bounded by maxReports).'),
+      endDate: z.string().optional().describe('ISO 8601 end of window. Defaults to now.'),
+      groupBy: z
+        .enum(['errorClassification', 'errorCategory', 'name'])
+        .optional()
+        .default('errorClassification')
+        .describe("Dimension to bucket by. 'errorClassification' (default, e.g. element_not_found) and 'errorCategory' (e.g. assertion) require per-test fetches; 'name' is fast (no fetch)."),
+      nameFilter: z.string().optional().describe('Only include failures whose test name contains this substring (e.g. "Login").'),
+      maxReports: z.number().int().min(1).max(1000).optional().default(200).describe('Cap on failures analyzed (fan-out bound). Default 200. capped:true in the result means more failures exist beyond this.'),
+      projectId: z.number().int().optional().describe('Scope to a project by numeric ID.'),
+      projectName: z.string().optional().describe('Scope to a project by name.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ startDate, endDate, groupBy, nameFilter, maxReports, projectId, projectName, outputFormat }) => {
+      try {
+        const summary = await summarizeTestFailures({
+          startDate, endDate, groupBy, nameFilter, maxReports, projectId, projectName,
+        });
+        return respond(outputFormat, summary, formatFailureSummary(summary));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

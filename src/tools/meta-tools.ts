@@ -63,7 +63,8 @@ const REGISTERED_TOOLS = [
   'get_project_test_summary', 'get_failure_rate_by_app_version',
   'get_distinct_test_key_values', 'delete_test_reports',
   'delete_test_reports_before_date', 'delete_test_reports_by_name', 'download_test_attachments',
-  'get_test_attachments_download_command', 'get_test_log', 'list_test_attachments', 'list_active_test_executions',
+  'get_test_attachments_download_command', 'get_test_log', 'summarize_test_failures',
+  'list_test_attachments', 'list_active_test_executions',
   // Test Views
   'list_test_views', 'search_test_views', 'get_test_view', 'get_test_view_summary',
   'create_test_view', 'update_test_view', 'delete_test_view',
@@ -169,7 +170,7 @@ export function registerMetaTools(server: McpServer): void {
         '  Provisioning       — list, detail, upload, upload-command, download, download-command, delete (7 tools)',
         '  Backup             — create (1 tool)',
         '  Health             — environment, iOS-readiness, Android-readiness, agent-status (4 tools)',
-        '  Reporting          — list+date-filter, find-latest, grouped, summary, attachments, download-command, logs, delete, active-executions (16 tools)',
+        '  Reporting          — list+date-filter, find-latest, grouped, summary, failure-summary, attachments, download-command, logs, delete, active-executions (17 tools)',
         '  Test Views         — list, search, detail, summary, create, update, delete (7 tools)',
         '  Meta               — get_server_info, check_connectivity, check_workflow_readiness, list_environments, switch_environment (5 tools)',
         '  Workflows — POC    — create_poc, close_poc, delete_poc (3 tools, Cloud Admin only)',
