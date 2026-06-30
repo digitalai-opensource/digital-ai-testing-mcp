@@ -187,6 +187,7 @@ export function registerDeviceTools(server: McpServer): void {
           `Manufacturer: ${d.manufacturer}`,
           `Status: ${d.displayStatus}`,
           `Category: ${d.deviceCategory}`,
+          d.project ? `Projects: ${d.project}` : '',
           `Agent: ${d.agentName} (${d.agentIp})`,
           `Region: ${d.region}`,
           `Current User: ${d.currentUser || 'none'}`,
