@@ -348,6 +348,23 @@ Before generating boilerplate, always find an available device first so the corr
 
 ---
 
+## Root Cause Analysis (Why Tests Are Failing)
+
+> **The chain:** `list_test_reports` (find the failures) → `summarize_test_failures` (classify them all in one call) → `get_test_report` (per-test cause, error category, and stack trace) → `get_test_log` (full Appium/device log returned inline as text — no download) → `get_test_attachments_download_command` (a curl/PowerShell command to pull the session video + logs onto your own machine). The reporter *list* never carries the failure cause — only the single-record report does — so summarization fetches each failed report (N+1, bounded by `maxReports`); `groupBy: "name"` skips that fan-out.
+
+- "Why are my tests failing? Give me a breakdown by error type."
+- "Summarize the failures in the DAIMCP POC project — what's the dominant cause?"
+- "Of this week's failures, how many are element-not-found vs. timeout?"
+- "Summarize failures for tests named 'SampleApp Login', bucketed by error classification"
+- "Group this week's failures by test name — which test is failing the most?"
+- "Test 69 failed — what was the actual cause and error category?"
+- "Show me the full Appium log for test UUID abc-456 so I can see exactly where it failed"
+- "Get the device logcat for the failed Login test"
+- "I'm running the MCP in Docker — give me a command to download test 69's session video to my Mac"
+- "Pull the attachment ZIP (video + logs) for the failed run onto my local machine"
+
+---
+
 ## Test Stability Analytics
 
 - "Show me the last 25 runs of the 'Login Flow' test — is it stable or flaky?"
