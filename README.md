@@ -6,7 +6,7 @@
 
 # Digital.ai Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Testing device farm. The server exposes **180 tools**, **2 resources**, and **6 prompts** covering 25 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Testing device farm. The server exposes **187 tools**, **2 resources**, and **6 prompts** covering 25 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -336,23 +336,23 @@ Once connected, talk to the server in plain language — no tool names needed:
 
 ## Capabilities
 
-180 tools across 25 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
+187 tools across 25 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
 
 | Domain | Tools | Highlights |
 |---|---|---|
-| [Devices](docs/tools.md#devices) | 18 | List/query devices, find available, release, reboot, tags, Mobile Studio |
+| [Devices](docs/tools.md#devices) | 19 | List/query devices, find available, release, reboot, tags, Mobile Studio |
 | [Device Groups](docs/tools.md#device-groups) | 9 | Create groups, move devices, control project access |
 | [Reservations](docs/tools.md#reservations) | 5 | Reserve devices, check availability windows |
-| [Applications](docs/tools.md#applications) | 14 | Upload, generate local upload command, install/uninstall, find the latest build |
-| [Repository](docs/tools.md#repository) | 6 | Test-data file storage |
+| [Applications](docs/tools.md#applications) | 15 | Upload, generate local upload/download commands, install/uninstall, find the latest build |
+| [Repository](docs/tools.md#repository) | 8 | Test-data file storage |
 | [Browsers](docs/tools.md#browsers) | 3 | Selenium browser session management |
 | [Users](docs/tools.md#users) | 8 | Account provisioning, project assignment, tags |
 | [Projects](docs/tools.md#projects) | 17 | Create/configure projects, settings, app assignment |
-| [Provisioning Profiles](docs/tools.md#provisioning-profiles) | 5 | iOS signing profile lifecycle |
+| [Provisioning Profiles](docs/tools.md#provisioning-profiles) | 7 | iOS signing profile lifecycle |
 | [Backup](docs/tools.md#backup) | 1 | Trigger a system backup |
 | [Health & Diagnostics](docs/tools.md#health--diagnostics) | 11 | Farm health, readiness checks, license utilization |
 | [Coverage Analytics](docs/tools.md#coverage-analytics) | 2 | Tested-vs-available device gap analysis |
-| [Reporting](docs/tools.md#reporting) | 17 | Search/filter test reports, stability, trends, cleanup |
+| [Reporting](docs/tools.md#reporting) | 19 | Search/filter test reports, stability, trends, logs, attachment download command, cleanup |
 | [Test Views](docs/tools.md#test-views) | 7 | Dashboard view groups |
 | [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics *(Cloud Admin)* |
 | [Agents](docs/tools.md#agents) | 2 | Host machine status *(Cloud Admin)* |
@@ -706,6 +706,18 @@ Report fields use **snake_case** to match the API response:
 | `project_id` | number | Owning project |
 | `has_attachment` | string | `"Y"` or `"N"` |
 
+**Diagnostic fields — `get_test_report` (single record) only, NOT present on `list_test_reports`:**
+
+| Field | Type | Description |
+|---|---|---|
+| `cause` | string | Human-readable failure cause (e.g. `"no such element - …"`) |
+| `errorCategory` | string | Broad bucket (e.g. `assertion`) |
+| `errorClassification` | string | Specific class (e.g. `element_not_found`) |
+| `errorDetail` | string | Full error object including stack trace |
+| `subTestCount` / `failedSubTestCount` | number | Sub-test totals for merged reports |
+
+To diagnose a failure, list with `list_test_reports`, then call `get_test_report(testId)` per test — the list view does not carry the diagnostic fields (the backend omits them there).
+
 **Confirmed working filter properties:** `status`, `name` (with `contains` for substring match), `has_attachment`, `success`, `test_id`, `project_id`, `device.os` (case-sensitive: `"Android"` / `"iOS"`), `duration`, `attachment_count`, `attachments_size`, `status_code`. Operators: `=`, `>`, `<`, `>=`, `<=`, `contains`.
 
 **CSRF-blocked filters** — return 401 regardless of key type: `start_time`, `create_time`, `uuid`. Use the `startDate`/`endDate` parameters on `list_test_reports` for date-range filtering instead — these are applied client-side after fetching.
@@ -742,6 +754,45 @@ get_project_test_summary
   startDate:   "2026-05-01T00:00:00Z"
   projectName: "My Project"
 ```
+
+#### Root cause analysis of a failure
+
+```
+# 1. Find the failures
+list_test_reports
+  filter: [{"property":"status","operator":"=","value":"Failed"}]
+
+# 2. Diagnose — structured cause without any download
+get_test_report(testId: 69)
+  → cause, errorCategory, errorClassification, errorDetail (stack trace)
+
+# 3. Full Appium log as text, when the structured fields aren't enough
+get_test_log(uuid: "…", logType: "appium")
+
+# 4. Pull the binary artifacts (session video .mp4, full ZIP) to YOUR machine
+#    when the server runs in Docker/remote
+get_test_attachments_download_command(uuid: "…", localPlatform: "macos")
+  → a curl command you run locally; the file never transits the container
+```
+
+### Local File Transfer (Docker / remote deployments)
+
+Any tool that reads or writes a local file path operates on the **MCP server's own filesystem** — which, in the published Docker image or a remote deployment, is **not** your machine. A `download_*` tool writes into the container; an `upload_*` tool reads from it. Neither is reachable from your local shell unless you volume-mount a shared directory.
+
+For those deployments, every file-transfer tool has a **command-generator sibling** that emits a `curl` / PowerShell command you run locally, so the bytes move directly between your machine and the platform — never through the container:
+
+| Direction | Server-side tool (shared FS only) | Local-command sibling (Docker/remote) |
+|---|---|---|
+| Upload app | `upload_application_file` | `get_application_upload_command` |
+| Upload repo file | `upload_repository_file` | `get_repository_upload_command` |
+| Upload profile | `upload_provisioning_profile` | `get_provisioning_profile_upload_command` |
+| Download test attachments (.mp4, logs) | `download_test_attachments` | `get_test_attachments_download_command` |
+| Download repo file | `download_repository_file` | `get_repository_file_download_command` |
+| Download profile | `download_provisioning_profile` | `get_provisioning_profile_download_command` |
+| Download app language files | `extract_app_language_files` | `get_app_language_files_download_command` |
+| Download iOS app container | `download_ios_app_container` | `get_ios_app_container_download_command` |
+
+For test **logs** specifically, `get_test_log` is simpler still — it returns the Appium/device log text inline in the response, no command or download needed. The generated commands embed the active access key in plaintext, so run them immediately and don't save the output.
 
 ---
 
@@ -856,7 +907,7 @@ The four most commonly encountered:
 3. **No user disable/lock endpoint.** Removing access for a user provisioned solely for a POC means deleting the account — which is why `close_poc` requires per-user confirmation.
 4. **Reporter API restrictions for project-level keys** — server-side sort and report deletion require Cloud Admin access. Tools compensate automatically (client-side sorting, clear pre-flight errors), at the cost of slower full-scan queries under project-level keys.
 
-See [docs/limitations.md](docs/limitations.md) for the full list of 14.
+See [docs/limitations.md](docs/limitations.md) for the full list of 15.
 
 ---
 

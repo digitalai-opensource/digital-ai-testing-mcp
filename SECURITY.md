@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 1.0.x (latest) | ✅ |
-| < 1.0.2 | ❌ |
+| 1.1.x (latest) | ✅ |
+| < 1.1.0 | ❌ |
 
 Security fixes are applied to the latest release only. We do not backport to older minor versions.
 

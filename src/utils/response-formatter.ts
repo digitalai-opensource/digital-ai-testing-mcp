@@ -268,12 +268,18 @@ export function formatTestReport(report: TestReport): string {
     `   Status: ${report.status} | Duration: ${durationSec}s | Started: ${started}`,
   ];
 
+  if (report.subTestCount != null && report.subTestCount > 1) {
+    lines.push(`   Sub-tests: ${report.subTestCount} (${report.failedSubTestCount ?? 0} failed)`);
+  }
   if (report.cause) {
     lines.push(`   Cause: ${report.cause}`);
   }
   if (report.errorCategory) {
     const classification = report.errorClassification ? ` (${report.errorClassification})` : '';
     lines.push(`   Error Category: ${report.errorCategory}${classification}`);
+  }
+  if (report.errorDetail) {
+    lines.push(`   Error Detail: ${report.errorDetail}`);
   }
 
   if (report.testAttachments && report.testAttachments.length > 0) {

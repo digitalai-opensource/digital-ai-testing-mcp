@@ -399,9 +399,12 @@ export interface TestReport {
   has_attachment: string;
   attachment_count: number;
   attachments_size: number;
+  subTestCount?: number;
+  failedSubTestCount?: number;
   cause?: string;
   errorCategory?: string;
   errorClassification?: string;
+  errorDetail?: string;
   testAttachments?: TestReportAttachment[];
   steps?: TestReportStep[];
 }

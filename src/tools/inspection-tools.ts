@@ -1192,7 +1192,7 @@ export function registerInspectionTools(server: McpServer): void {
       latitude: z.number().optional().describe('For set_geolocation.'),
       longitude: z.number().optional().describe('For set_geolocation.'),
       remotePath: z.string().optional().describe('For push_file/pull_file: absolute device path, e.g. "/sdcard/Download/fixture.png".'),
-      localPath: z.string().optional().describe('For push_file (source) / pull_file (destination): local file path visible to the MCP server process (volume-mount when running in Docker).'),
+      localPath: z.string().optional().describe('For push_file (source) / pull_file (destination): absolute path on the MCP SERVER\'s own filesystem, NOT your local machine. If the server runs in Docker/remote, push_file needs the file already present there (volume-mount), and pull_file writes to a location your local bash/file tools cannot see.'),
     },
     async (args) => {
       const mobileErr = requireMobileSession(args.handle, 'device_control');

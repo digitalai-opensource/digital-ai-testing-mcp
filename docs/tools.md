@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 179 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 187 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (the long eyJ... key); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -37,7 +37,8 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 | `start_device_web_control` | Open a browser-based control session | — | Cloud Admin |
 | `open_mobile_studio` | Open the platform's browser-based UI Inspector for a device — shows live element tree with resource IDs, XPaths, and accessibility IDs. **Primary tool for element locator discovery before writing test code.** | — | Any |
 | `create_mobile_manual_test` | Create a structured manual test session | — | Any |
-| `download_ios_app_container` | Download an iOS app data container | — | Cloud Admin |
+| `download_ios_app_container` | Download an iOS app data container (writes to the MCP server's filesystem) | — | Cloud Admin |
+| `get_ios_app_container_download_command` | Generate a curl/PowerShell command to download the iOS app container to the user's local machine — use when the server is Docker/remote | — | Cloud Admin |
 | `get_device_health_summary` | Device farm health overview | — | Any |
 | `get_device_tags` | List all tags on a device | — | Any |
 | `add_device_tag` | Add a tag to a device | — | Cloud/Project Admin |
@@ -102,7 +103,8 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `uninstall_application` | Uninstall from one or more devices. Requires `confirmDeletion: true`. | — | Any |
 | `uninstall_application_by_package` | Uninstall by package name on a single device. Requires `confirmDeletion: true`. | — | Any |
 | `uninstall_application_by_package_from_devices` | Uninstall by package name across multiple devices. Requires `confirmDeletion: true`. | — | Any |
-| `extract_app_language_files` | Download localization files from an app | — | Any |
+| `extract_app_language_files` | Download localization files from an app (writes to the MCP server's filesystem) | — | Any |
+| `get_app_language_files_download_command` | Generate a curl/PowerShell command to download an app's language-file ZIP to the user's local machine — use when the server is Docker/remote | — | Any |
 | `bulk_install_to_group` | Install on every device in a device group | — | Any |
 
 > **Upload from URL:** Must be a direct-download link accessible from the Digital.ai server's network. Redirect URLs, auth-gated URLs, and unsupported file types return a 400 with a diagnostic message.
@@ -115,8 +117,10 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 |---|---|---|
 | `list_repository_files` | List files in the repository | Any |
 | `get_repository_file_info` | Get file details by ID | Any |
-| `upload_repository_file` | Upload a file | Any |
-| `download_repository_file` | Download a file by ID | Any |
+| `upload_repository_file` | Upload a file (reads from the MCP server's filesystem) | Any |
+| `get_repository_upload_command` | Generate a curl/PowerShell command to upload a file from the user's local machine — use when the server runs in Docker/remote and cannot read the local file | Any |
+| `download_repository_file` | Download a file by ID (writes to the MCP server's filesystem) | Any |
+| `get_repository_file_download_command` | Generate a curl/PowerShell command to download a repository file to the user's local machine — use when the server is Docker/remote | Any |
 | `update_repository_file` | Replace file content in-place | Any |
 | `delete_repository_file` | Delete a file | Any |
 
@@ -156,8 +160,10 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 |---|---|---|
 | `list_provisioning_profiles` | List iOS signing profiles with expiry dates | Cloud Admin |
 | `get_provisioning_profile` | Get profile details | Cloud Admin |
-| `upload_provisioning_profile` | Upload P12 + mobileprovision | Cloud Admin |
-| `download_provisioning_profile` | Download a profile | Cloud Admin |
+| `upload_provisioning_profile` | Upload P12 + mobileprovision (reads from the MCP server's filesystem) | Cloud Admin |
+| `get_provisioning_profile_upload_command` | Generate a curl/PowerShell command to upload P12 + mobileprovision from the user's local machine — use when the server runs in Docker/remote | Cloud Admin |
+| `download_provisioning_profile` | Download a profile (writes to the MCP server's filesystem) | Cloud Admin |
+| `get_provisioning_profile_download_command` | Generate a curl/PowerShell command to download a profile to the user's local machine — use when the server is Docker/remote | Cloud Admin |
 | `delete_provisioning_profile` | Delete a profile | Cloud Admin |
 
 ### Backup
@@ -205,7 +211,9 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `get_distinct_test_key_values` | Discover all distinct values recorded for a report metadata key | Any |
 | `list_active_test_executions` | Currently-running test executions (Incomplete status with null duration) | Any |
 | `list_test_attachments` | Attachment metadata for a test by numeric ID | Any |
-| `download_test_attachments` | Download test attachments as a ZIP file | Any |
+| `download_test_attachments` | Download test attachments as a ZIP file (writes to the MCP server's filesystem) | Any |
+| `get_test_attachments_download_command` | Generate a curl/PowerShell command to download the attachment ZIP (session video .mp4 + logs) to the user's local machine — use when the server is Docker/remote | Any |
+| `get_test_log` | Retrieve log content (Appium/device/ws) from a test directly as text — no file download; ideal for diagnosing failures | Any |
 | `delete_test_reports` | Permanently delete test records by ID list | Cloud Admin |
 | `delete_test_reports_before_date` | Delete all test records started before a given date | Cloud Admin |
 | `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin |

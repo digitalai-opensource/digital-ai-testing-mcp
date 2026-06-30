@@ -19,6 +19,8 @@ import { listActiveSessions } from '../api/webdriver.js';
 import { resolveDevice } from '../utils/device-resolver.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
+import { SERVER_FS_DOWNLOAD_NOTICE, SERVER_FS_OUTPUT_PARAM } from '../utils/locality.js';
+import { buildDownloadCommand } from '../utils/download-command.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatApplicationList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
@@ -817,10 +819,10 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'extract_app_language_files',
-    'Downloads the localization/language files from an app as a ZIP archive. Useful for reviewing or auditing app translations. APK and IPA only.',
+    'Downloads the localization/language files from an app as a ZIP archive. Useful for reviewing or auditing app translations. APK and IPA only.' + SERVER_FS_DOWNLOAD_NOTICE,
     {
       applicationId: z.number().describe('The numeric application ID (APK or IPA only).'),
-      localPath: z.string().describe('Local file path where the ZIP will be saved.'),
+      localPath: z.string().describe(SERVER_FS_OUTPUT_PARAM),
     },
     async ({ applicationId, localPath }) => {
       const pathErr = validateOutputPath(localPath);
@@ -838,6 +840,23 @@ export function registerApplicationTools(server: McpServer): void {
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
+    }
+  );
+
+  server.tool(
+    'get_app_language_files_download_command',
+    'Generates a ready-to-run curl or PowerShell command for downloading an app\'s localization/language-file ZIP directly to the user\'s local machine. ' +
+    'Use this instead of extract_app_language_files when the MCP server runs in Docker/remote and the written file would be inaccessible to the user. APK and IPA only.\n\n' +
+    'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
+    {
+      applicationId: z.number().describe('The numeric application ID (APK or IPA only).'),
+      localPath: z.string().optional().default('language-files.zip').describe('Path on the user\'s local machine to save the ZIP. Default: "language-files.zip".'),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ applicationId, localPath, localPlatform, outputFormat }) => {
+      const result = buildDownloadCommand({ path: `/api/v1/applications/${applicationId}/language-file`, localPath: localPath ?? 'language-files.zip', localPlatform });
+      return respond(outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
     }
   );
 
