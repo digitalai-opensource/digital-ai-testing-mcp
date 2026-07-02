@@ -1,9 +1,9 @@
 # Example Prompts
 
-Natural language prompts you can use with Claude when this MCP server is connected.
+Natural language prompts you can use with your AI Agent when this MCP server is connected.
 
 > **Destructive operations** (delete, release, remove) require explicit confirmation.
-> Claude will present a safety summary before acting — reply "yes, confirm" or include
+> Your Agent will present a safety summary before acting — reply "yes, confirm" or include
 > `confirmDeletion: true` in your request to proceed.
 
 > **File uploads from local paths**: the MCP server runs inside Docker. Local file paths
@@ -298,13 +298,13 @@ Before generating boilerplate, always find an available device first so the corr
 
 ## Execution Pipelines
 
-*In Claude Code (with file system and shell access), the agent can run the full loop: generate → write to disk → execute → retrieve results.*
+*Using Code Agent (with file system and shell access), the agent can run the full loop: generate → write to disk → execute → retrieve results.*
 
-- "Find an available Android device, generate a JUnit5 test for app ID 456, write it to disk, run it, and show me whether it passed" *(Claude Code)*
-- "Generate a Python test for our iOS app, save it to /tmp/test_login.py, run pytest, then get the result from the reporter" *(Claude Code)*
-- "Run our NodeJS regression script against the latest app build on an available Android 14 device and show me the results" *(Claude Code)*
+- "Find an available Android device, generate a JUnit5 test for app ID 456, write it to disk, run it, and show me whether it passed" *(Code Agent)*
+- "Generate a Python test for our iOS app, save it to /tmp/test_login.py, run pytest, then get the result from the reporter" *(Code Agent)*
+- "Run our NodeJS regression script against the latest app build on an available Android 14 device and show me the results" *(Code Agent)*
 - "Generate a test script for the 'Checkout' flow, run it on an available iPhone 15, and show me the step-level failure detail"
-- "The 'Login' test failed last night — find the device it failed on, generate a matching test script, run it again to confirm whether it's fixed" *(Claude Code)*
+- "The 'Login' test failed last night — find the device it failed on, generate a matching test script, run it again to confirm whether it's fixed" *(Code Agent)*
 - "I just ended a manual test session — its report_api_id is abc-123-xyz. Show me the results."
 
 ---

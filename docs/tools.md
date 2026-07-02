@@ -353,7 +353,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 |---|---|---|
 | `start_inspection_session` | Reserve a device and open a live WebDriver session. Allocates a real Android device and returns a session handle plus `viewUrl` so the operator can watch the session live in a browser (read-only). Device allocation takes 20–90 s. | No |
 | `stop_inspection_session` | Release the device and delete the probe report from the reporter. `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | No |
-| `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Claude. Use after each interaction to verify UI state. | No |
+| `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Agent. Use after each interaction to verify UI state. | No |
 | `get_element_tree` | Get the full UI hierarchy as a formatted element table. Shows resource-id, content-desc, text, and clickability for all elements on screen. | No |
 | `find_elements` | Find elements by strategy (xpath, id, accessibility id, class name) and return their element IDs and attributes for use with tap/type. | No |
 | `tap_element` | Tap a UI element by its element ID. | No |
@@ -474,7 +474,7 @@ Four tools for structured performance regression analysis — compare Speed Inde
 | `digital-ai://farm/status` | Live device farm status: counts by availability, OS, and agent health |
 | `digital-ai://reporting/recent-failures` | The 20 most recent failed test executions in the active connection's reporter scope |
 
-**Prompts** — invoked by name in prompt-aware clients (Claude Desktop). Tool-first clients like Claude Code use the equivalent tool directly.
+**Prompts** — invoked by name in prompt-aware clients. Tool-first clients like Code Agents use the equivalent tool directly.
 
 | Prompt | Equivalent Tool | What it does |
 |---|---|---|

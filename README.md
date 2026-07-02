@@ -6,7 +6,7 @@
 
 # Digital.ai Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants like Claude to a Digital.ai Testing device farm. The server exposes **188 tools**, **2 resources**, and **6 prompts** covering 25 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants to a Digital.ai Testing device farm. The server exposes **188 tools**, **2 resources**, and **6 prompts** covering 25 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -117,7 +117,7 @@ DAI_PROFILE_STAGING_URL=https://your-tenant.experitest.com
 DAI_PROFILE_STAGING_KEY=aut_1_...your-staging-key...
 ```
 
-Then ask Claude:
+Then ask your AI:
 - *"What environments are configured?"* → `list_environments`
 - *"Switch to QA"* → `switch_environment("qa")`
 - *"Switch back to Cloud Admin"* → `switch_environment("default")`
@@ -852,13 +852,13 @@ Tests can also be run from VS Code: `Ctrl+Shift+P` → "Tasks: Run Task".
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `403 Forbidden` on admin tools (agents, regions, license) | Active profile is a project-level key — v2 endpoints require Cloud Admin access | Ask Claude: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one |
+| `403 Forbidden` on admin tools (agents, regions, license) | Active profile is a project-level key — v2 endpoints require Cloud Admin access | Ask Agent: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one |
 | Report delete tools return "Cloud Admin access required" | Reporter mutation endpoints are CSRF-blocked for project-level keys (Project Admin and Project User) | Switch to a Cloud Admin profile, re-run, switch back |
 | `install_application` returns 400 on a device you can see | Device is reserved via an rdb (remote debug) session | Install **first**, then run `get_remote_debug_command` — not the other way around |
 | `install_application` returns 400 (no rdb involved) | App not assigned to a project containing the target device | Call `assign_app_to_project` first |
 | Repeatable `NoSuchElementException` while sibling tests pass | Device health, not test code — device stuck in a wrong state or offline-but-pooled | Run `get_device_health_summary`; scope the deviceQuery with `@region='<healthy-region>'` |
 | Tests missing from `list_test_reports` results | Project has its own reporter instance — unscoped queries search the default scope | Pass `projectName` (exact name from `list_projects`) |
-| rdb fails: `validation error / Failed to reserve device` | Project-level key resolved an internal device ID instead of the real serial | Ask Claude: *"switch to Cloud Admin"* → regenerate the rdb script → switch back |
+| rdb fails: `validation error / Failed to reserve device` | Project-level key resolved an internal device ID instead of the real serial | Ask Agent: *"switch to Cloud Admin"* → regenerate the rdb script → switch back |
 | Device query returns nothing for `@manufacturer` / `@tag` | These fields are silently ignored server-side | Use the `manufacturer`/`tags` parameters on `find_available_device` — they filter client-side |
 
 ### `Failed to reconnect to digital-ai-testing: -32000`
