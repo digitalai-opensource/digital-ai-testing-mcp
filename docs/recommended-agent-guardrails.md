@@ -16,7 +16,7 @@ looks plausible and runs nowhere.
 The server defends against this in two ways that travel with it automatically:
 
 - **Server `instructions`** — a mode-first / no-guessed-selectors policy delivered in the MCP
-  `initialize` handshake. Most clients (Claude Code, Claude Desktop) surface it into the model's
+  `initialize` handshake. Most clients surface it into the model's
   context before it acts.
 - **Structural tool behavior** — `get_test_boilerplate` returns *no code* for a real app unless a
   live inspection session exists (or you explicitly confirm verified selectors), and
