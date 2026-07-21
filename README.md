@@ -6,7 +6,7 @@
 
 # Digital.ai Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants to a Digital.ai Testing device farm. The server exposes **188 tools**, **2 resources**, and **6 prompts** covering 25 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants to a Digital.ai Testing device farm. The server exposes **190 tools**, **2 resources**, and **6 prompts** covering 26 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -330,13 +330,13 @@ Once connected, talk to the server in plain language — no tool names needed:
 - *"Did the latest release introduce a CPU regression? Compare version 10553 vs 10554 on Android."*
 - *"Set up a new POC for Acme Corp — 6 devices in US2, 3 iOS and 3 Android, through August 31st"*
 
-**[→ docs/examples.md](docs/examples.md)** has 200+ prompts organized by scenario: farm health, device groups, regression sign-off, test analytics, performance, interactive inspection, POC lifecycle, and more.
+**[→ docs/examples.md](docs/examples.md)** has 200+ prompts organized by scenario: farm health, device groups, regression sign-off, test analytics, performance, usage reports, interactive inspection, POC lifecycle, and more.
 
 ---
 
 ## Capabilities
 
-188 tools across 25 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
+190 tools across 26 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
 
 | Domain | Tools | Highlights |
 |---|---|---|
@@ -365,6 +365,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 | [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 22 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control |
 | [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 8 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
 | [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation *(Cloud Admin)* |
+| [Usage Reports](docs/tools.md#usage-reports) | 2 | Platform usage-report CSV export — device reservations, users/devices/browser usage, license usage *(Cloud Admin)* |
 | [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 6 guided prompts |
 
 ---

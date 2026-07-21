@@ -28,6 +28,7 @@ import { registerDebugTools } from './tools/debug-tools.js';
 import { registerInspectionTools } from './tools/inspection-tools.js';
 import { registerWebInspectionTools } from './tools/web-inspection-tools.js';
 import { registerPerformanceTools } from './tools/performance-tools.js';
+import { registerUsageReportTools } from './tools/usage-report-tools.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
@@ -106,6 +107,7 @@ registerDebugTools(server);
 registerInspectionTools(server);
 registerWebInspectionTools(server);
 registerPerformanceTools(server);
+registerUsageReportTools(server);
 registerMetaTools(server);
 
 console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 6 prompts).`);

@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 188 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 190 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (the long eyJ... key); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -464,6 +464,38 @@ Four tools for structured performance regression analysis — compare Speed Inde
 | `assess_comparison_confounds` | Verdict — **clean / caveated / confounded** — by flagging any dimension other than the declared axis (device model, OS, OS version, network profile, project, transaction name) that varies across or within sides, plus missing telemetry and sample imbalance. | Any |
 | `detect_performance_outliers` | Robust median/MAD (Iglewicz–Hoaglin modified z-score, default k=3.5) outlier flagging on a single transaction set. Returns the kept set and recommended exclusions or re-runs. | Any |
 | `performance_transaction_control` | Generate fresh transaction samples inside an active inspection session: `start` (activates the NV network profile) → run the flow → `end` (names the record). Records appear in the reporter ~1 min after `end`. An NV server must be ONLINE and tunnel-connected in the device region. | Any |
+
+### Usage Reports
+
+Two tools for exporting platform usage-report CSVs — Cloud Admin only (confirmed live: a project-level key gets a 403). Backed by `GET /api/v2/configuration/get-CSV-reports/{projectId}/{userId}/{startMs}/{endMs}/{objectType}`.
+
+| Tool | What it does |
+|---|---|
+| `download_usage_report` | Downloads the CSV to the MCP server's own filesystem. |
+| `get_usage_report_download_command` | Generates a curl/PowerShell command so the CSV downloads straight to the user's machine — the preferred path for large exports, since it doesn't proxy the download through the MCP process. |
+
+**Dates are whole UTC calendar days** — `startDate`/`endDate` are `"YYYY-MM-DD"` strings interpreted as `00:00:00.000 UTC` to `23:59:59.999 UTC`, regardless of the caller's or server's local timezone. This was a real footgun found during live testing: computing the same boundary in Pacific Time instead of UTC silently dropped the first 7-8 hours of each day's data.
+
+**Size guard:** an unfiltered request spanning more than 31 days is blocked with a message (not an error) instructing you to add a `projectId`/`userId` filter, shorten the range, or pass `confirmLargeExport: true`. Measured live: one unfiltered month of `License Usage` was ~27 MB; one unfiltered week of `Device Reservations` was ~6.4 MB — a multi-month or full-year unfiltered pull can run into the hundreds of MB and take minutes. `License Usage` has no filter to narrow by, so its guard fires on date range alone.
+
+**`projectId: 0` / `userId: 0` mean "All"** — same as omitting the parameter — and do NOT satisfy the size guard's narrowing requirement.
+
+#### Report types: columns, purpose, and when to reach for each
+
+Every row below reflects a real sample pulled live, not the object-type name alone — two of the six behave differently from what their name implies (see the notes column).
+
+| Report type | Columns (confirmed live) | What it actually answers | Use it for | Don't use it for |
+|---|---|---|---|
+| `Device Reservations` | `Project, Start Date, End Date, Total Reservation Time (hours)[, Tokens]` | Total device-reservation hours per project over the range. One row per project. | Capacity planning, chargeback-by-project, "how many device-hours did project X consume last month" | Per-device or per-user breakdown (too coarse — see `Devices Usage` / pass `userId` to `Users Usage`) |
+| `Users Usage` | Identical shape to `Device Reservations`: `Project, Start Date, End Date, Total Reservation Time (hours), Tokens` | **Without a `userId`, this returns the exact same project-aggregate rows as `Device Reservations`** — confirmed live, byte-identical shape and totals. It only becomes user-scoped when you pass a specific non-zero `userId`; then each row is that one user's reservation-hours within a project. | Only when you already have a specific `userId` and want their reservation-hours by project. If you don't have a `userId`, call `Device Reservations` instead — this report adds nothing over it. | General project-level reporting (redundant with `Device Reservations`) — and it can never break down "hours by user" across *all* users in one call, only one user at a time |
+| `Devices Usage` | `Device ID, Device name, OS, OS Version, Project, Total duration (in hours)` | Per-device utilization — one row per physical/virtual device. | "Which devices are idle/underused", per-device utilization audits, device-pool right-sizing | Per-user or per-session detail (not present here) |
+| `Browser Usage` | `Session Start Timestamp, Session Start Time, Session End Timestamp, Session End Time, Session Duration, Session Host, Browser Platform, Browser Name, Browser Version, Username, User Email, Project, Execution Type` | Per-Selenium/browser-session log — one row per session. | Browser/version distribution, session-host load, "who ran what browser session when", web-testing audit trail | Mobile device usage (use `Devices Usage`/`Device Reservations`) or license-seat accounting (use `License Usage`) |
+| `Users Statistics` | `Time Logged, Time Logged Formatted, User, Project, Clicks, Swipe Distance, Keys Sent, Installs, Screens Sent, Screen Minutes, Screen Time Min (ms), Screen Time Max (ms), Screen Time Avg (ms), User Tag` | Per-interaction-event telemetry from interactive/manual sessions (clicks, gestures, screen streaming) — one row per logged event, not a rollup. | Manual-testing engagement/activity analysis, "how actively is user X interacting", auditing interactive session intensity | Aggregate reservation-time totals (use `Device Reservations`/`Users Usage`) or automated test-execution results (use `list_test_reports` / reporting tools, not this) |
+| `License Usage` | `Session Start Timestamp, Session Start Date, Session Start Hour, Session End Timestamp, Session End Date, Session End Hour, Session Duration, Session Duration (in hours), User ID, Username, User's first/last name, User's email, Project, Session type, License type, Reservation Host, Device ID/Name/UDID/OS/OS Version/Model/Manufacturer, Product` | The most granular report — one row per license-consuming session, across every project (no project/user filter exists). | License-seat exhaustion analysis, per-product/per-license-type consumption, full session-level compliance audit trail | Anything a coarser report already answers — this is also the **largest and slowest** report (measured ~27 MB/month unfiltered), so reach for `Device Reservations` or `Devices Usage` first if they contain the field you actually need |
+
+**Corrected finding:** an earlier internal note assumed the `Users Statistics` wire value was misspelled `"Users Stastistics"`. Live testing against this tenant disproved that — the correctly-spelled `"Users Statistics"` returns real data (200) and the misspelled variant 500s consistently. The implementation uses the correct spelling; if a future platform version flips this, re-verify both before trusting either.
+
+**Column sets are not perfectly fixed** — the optional `Tokens` column on `Device Reservations`/`Users Usage` appeared in some live samples and was absent in others (likely tied to whether the queried project has token-based licensing configured). Parse the CSV's own header row rather than hardcoding a column list.
 
 ### Resources & Prompts
 

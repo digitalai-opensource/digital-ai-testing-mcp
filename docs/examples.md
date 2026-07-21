@@ -438,6 +438,44 @@ Before generating boilerplate, always find an available device first so the corr
 
 ---
 
+## Usage Reports (Platform Administration & FinOps)
+
+> **These CSV exports are for platform administration and cost/capacity accounting — not test
+> result analysis.** For pass/fail rates, failures, or execution trends, use the Functional Test
+> Analytics / Root Cause Analysis / Test Stability tools above, not these reports. Cloud Admin only.
+> See [docs/tools.md](tools.md#usage-reports) for the full column reference per report type.
+
+**Capacity planning & chargeback (→ Device Reservations):**
+- "How many device-hours did the 'iOS Regression' project consume last month? Export it as a CSV."
+- "Pull device-reservation hours for every project for Q2 2026, broken down by project" *(a 3-month unfiltered pull crosses the size guard — expect the agent to either narrow by project or confirm the large export)*
+- "Export this week's device reservations for the Default project so I can include it in the capacity review"
+
+**Idle / underused device audits (→ Devices Usage):**
+- "Which specific devices have barely been used this month? Pull a per-device usage report for the QA project."
+- "Export device utilization hours for the last 2 weeks — I want to find candidates to retire from the pool"
+
+**Per-user reservation breakdown (→ Users Usage, only when you already have a user ID):**
+- "Bob's user ID is 26062411 — break down his device-reservation hours by project for the last quarter"
+- "How many device-hours did jane@company.com personally use across all projects last month?" *(the agent should resolve her user ID first, e.g. via list_users, then call Users Usage with it — calling it without a userId would just return the same data as Device Reservations)*
+
+**Browser/version testing audits (→ Browser Usage):**
+- "Export browser and version usage for the last two weeks — I want to see if our Safari coverage has picked up"
+- "Which browser versions were exercised by the DigitalSSO project last month? Give me a CSV."
+
+**Manual-session engagement analysis (→ Users Statistics):**
+- "How actively is jane@company.com using manual/interactive sessions? Pull her click and screen-time stats for this week"
+- "Export interactive-session activity for the Accenture S-Payment PoV project — clicks, swipes, screen time"
+
+**License-seat consumption & compliance audit (→ License Usage — the largest report, use last):**
+- "Check overall license utilization first" *(get_license_utilization for the aggregate view)* "— then pull a session-level License Usage export for the Default project for last week for the compliance file"
+- "Export a full year of License Usage across all projects for the annual audit — I know it'll be large, go ahead" *(confirmLargeExport: true — License Usage has no project/user filter, so the guard only relaxes on explicit confirmation)*
+- "Which license type is closest to being exhausted, and who's actually consuming it right now?"
+
+**Delivery mode:**
+- "Generate the download command for last month's Device Reservations CSV so I can save it to my own laptop, not the server" *(get_usage_report_download_command — use this whenever the MCP runs in Docker/remote)*
+
+---
+
 ## POC Lifecycle
 
 - "Set up a new POC for Acme Corp — we need 6 devices in the US2 region, 3 iOS and 3 Android, running through August 31st. Users are alice@acme.com (ProjectAdmin) and bob@acme.com (User). Salesforce URL is https://acme.salesforce.com/opp/001."
