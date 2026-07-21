@@ -26,6 +26,7 @@ import { registerPerformanceTools } from '../src/tools/performance-tools.js';
 import { registerBoilerplateTools } from '../src/tools/boilerplate-tools.js';
 import { registerWebInspectionTools } from '../src/tools/web-inspection-tools.js';
 import { registerInspectionTools } from '../src/tools/inspection-tools.js';
+import { registerUsageReportTools } from '../src/tools/usage-report-tools.js';
 import { resetClient, getActiveKeyType, getActiveAccessKey, getActiveUrl } from '../src/api/client.js';
 import { validateInputPath, validateOutputPath } from '../src/utils/path-guard.js';
 
@@ -62,6 +63,7 @@ beforeAll(async () => {
   registerBoilerplateTools(server);
   registerWebInspectionTools(server);
   registerInspectionTools(server);
+  registerUsageReportTools(server);
 
   client = new Client({ name: 'harness-client', version: '0.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -365,6 +367,174 @@ describe('Download-command tools emit a runnable command without any API call', 
     const text = textOf(res);
     assert.notEqual(res.isError, true);
     assert.match(text, /provisioning-profiles\/PROF-UUID-9\/download/);
+  });
+});
+
+describe('Usage-report size guard fires before any API call', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+  });
+
+  it('download_usage_report: unfiltered 90-day License Usage triggers the guard, not an error', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      localPath: '/tmp/license.csv',
+    });
+    assert.notEqual(res.isError, true);
+    assert.match(textOf(res), /Large export guard triggered/);
+    assert.match(textOf(res), /confirmLargeExport: true/);
+  });
+
+  it('download_usage_report: unfiltered 90-day Device Reservations triggers the guard', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'Device Reservations',
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      localPath: '/tmp/reservations.csv',
+    });
+    assert.notEqual(res.isError, true);
+    assert.match(textOf(res), /Large export guard triggered/);
+    assert.match(textOf(res), /projectId/);
+  });
+
+  it('download_usage_report: same 90-day Device Reservations narrowed by projectId proceeds past the guard (then hits the unreachable host)', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'Device Reservations',
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      projectId: 27754602,
+      localPath: '/tmp/reservations.csv',
+    });
+    // Guard did not fire — the request proceeded to the (unreachable) API and failed at the network layer.
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(textOf(res), /Large export guard triggered/);
+  });
+
+  it('download_usage_report: a 10-day unfiltered range stays under the guard threshold', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-06-01',
+      endDate: '2026-06-10',
+      localPath: '/tmp/license.csv',
+    });
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(textOf(res), /Large export guard triggered/);
+  });
+
+  it('download_usage_report: confirmLargeExport:true bypasses the guard', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      localPath: '/tmp/license.csv',
+      confirmLargeExport: true,
+    });
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(textOf(res), /Large export guard triggered/);
+  });
+});
+
+describe('Usage-report parameter validation blocks before any API call or guard', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+  });
+
+  it('rejects projectId for "License Usage"', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-06-01',
+      endDate: '2026-06-01',
+      projectId: 5,
+      localPath: '/tmp/license.csv',
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /does not support project filtering/);
+  });
+
+  it('rejects userId for "Devices Usage"', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'Devices Usage',
+      startDate: '2026-06-01',
+      endDate: '2026-06-01',
+      userId: 5,
+      localPath: '/tmp/devices.csv',
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /does not support user filtering/);
+  });
+
+  it('rejects a malformed startDate', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'License Usage',
+      startDate: '06/01/2026',
+      endDate: '2026-06-30',
+      localPath: '/tmp/license.csv',
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /startDate must be/);
+  });
+
+  it('rejects an unsafe localPath before validation of report params matters', async () => {
+    const res = await callTool('download_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-06-01',
+      endDate: '2026-06-01',
+      localPath: 'relative/path.csv',
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /must be an absolute path/);
+  });
+});
+
+describe('get_usage_report_download_command respects validation and the size guard', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+  });
+
+  it('emits a curl command for a project-scoped request (no guard, no API call)', async () => {
+    const res = await callTool('get_usage_report_download_command', {
+      reportType: 'Device Reservations',
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      projectId: 27754602,
+      localPath: '/home/me/reservations.csv',
+      localPlatform: 'linux',
+      outputFormat: 'human',
+    });
+    assert.notEqual(res.isError, true);
+    const text = textOf(res);
+    assert.match(text, /curl -L/);
+    assert.match(text, /get-CSV-reports\/27754602\/0\/\d+\/\d+\/Device%20Reservations/);
+  });
+
+  it('returns the guard message instead of a command for a wide unfiltered range', async () => {
+    const res = await callTool('get_usage_report_download_command', {
+      reportType: 'License Usage',
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      localPath: '/home/me/license.csv',
+      localPlatform: 'linux',
+      outputFormat: 'human',
+    });
+    assert.notEqual(res.isError, true);
+    assert.match(textOf(res), /Large export guard triggered/);
+    assert.doesNotMatch(textOf(res), /curl -L/);
+  });
+
+  it('the wire path segment for "Users Statistics" uses the correctly-spelled value (confirmed live)', async () => {
+    const res = await callTool('get_usage_report_download_command', {
+      reportType: 'Users Statistics',
+      startDate: '2026-06-01',
+      endDate: '2026-06-01',
+      projectId: 27754602,
+      localPath: '/home/me/stats.csv',
+      localPlatform: 'linux',
+      outputFormat: 'human',
+    });
+    assert.notEqual(res.isError, true);
+    assert.match(textOf(res), /Users%20Statistics/);
   });
 });
 
