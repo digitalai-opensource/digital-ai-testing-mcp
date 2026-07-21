@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 190 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 191 tools, 2 resources, and 6 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (the long eyJ... key); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -467,18 +467,35 @@ Four tools for structured performance regression analysis — compare Speed Inde
 
 ### Usage Reports
 
-Two tools for exporting platform usage-report CSVs — Cloud Admin only (confirmed live: a project-level key gets a 403). Backed by `GET /api/v2/configuration/get-CSV-reports/{projectId}/{userId}/{startMs}/{endMs}/{objectType}`.
+Three tools for platform usage-report CSVs — Cloud Admin only (confirmed live: a project-level key gets a 403). Backed by `GET /api/v2/configuration/get-CSV-reports/{projectId}/{userId}/{startMs}/{endMs}/{objectType}`.
 
 | Tool | What it does |
 |---|---|
 | `download_usage_report` | Downloads the CSV to the MCP server's own filesystem. |
 | `get_usage_report_download_command` | Generates a curl/PowerShell command so the CSV downloads straight to the user's machine — the preferred path for large exports, since it doesn't proxy the download through the MCP process. |
+| `summarize_usage_report` | Fetches the CSV into memory and aggregates it by a column (e.g. session counts by username) — returns a compact JSON summary directly, **no file is written anywhere**. Use this for count/breakdown questions, and especially from a client whose filesystem is not the MCP server's own (a written file is frequently unreachable in that case; this tool has nothing for that boundary to break). `groupBy` is validated against the CSV's real header — an unmatched value errors with the actual column names, so there's no need to guess. |
 
 **Dates are whole UTC calendar days** — `startDate`/`endDate` are `"YYYY-MM-DD"` strings interpreted as `00:00:00.000 UTC` to `23:59:59.999 UTC`, regardless of the caller's or server's local timezone. This was a real footgun found during live testing: computing the same boundary in Pacific Time instead of UTC silently dropped the first 7-8 hours of each day's data.
 
 **Size guard:** an unfiltered request spanning more than 31 days is blocked with a message (not an error) instructing you to add a `projectId`/`userId` filter, shorten the range, or pass `confirmLargeExport: true`. Measured live: one unfiltered month of `License Usage` was ~27 MB; one unfiltered week of `Device Reservations` was ~6.4 MB — a multi-month or full-year unfiltered pull can run into the hundreds of MB and take minutes. `License Usage` has no filter to narrow by, so its guard fires on date range alone.
 
 **`projectId: 0` / `userId: 0` mean "All"** — same as omitting the parameter — and do NOT satisfy the size guard's narrowing requirement.
+
+**File isolation between the MCP server and the calling client is a real, confirmed failure mode.** `download_usage_report` writes to the MCP server's OWN filesystem — if the server runs in Docker/remote (the common case) and the client is a separate sandboxed session (e.g. a Cowork-style remote agent), the written file is frequently unreachable to the client's own file tools, even with a validated absolute path. This isn't a bug in path validation — `validateOutputPath` correctly requires a path absolute *on whatever OS the MCP process itself runs on* (a Windows-style path is genuinely non-absolute to a Linux Docker process). The fix is to avoid the file entirely: use `summarize_usage_report` when you want a count/breakdown, or `get_usage_report_download_command` when the user needs the raw CSV on their own machine.
+
+#### `summarize_usage_report`'s `groupBy` works on ANY column, not just Username
+
+`groupBy`/`sumColumn` are matched case-insensitively against whatever the report's real CSV header contains — confirmed live across multiple columns and report types, not just the `Username` example used above:
+
+| Report type | Other useful `groupBy` columns |
+|---|---|
+| `License Usage` | `Project`, `License type`, `Session type`, `Device Model`, `Device Manufacturer`, `Product`, `Device OS` (confirmed live: a 42,942-row week split into `Android`/`iOS`/blank) |
+| `Device Reservations` / `Users Usage` | `Project` (the only real grouping dimension — these reports already return one row per project) |
+| `Devices Usage` | `Project`, `OS`, `OS Version`, `Device name` |
+| `Browser Usage` | `Browser Platform`, `Project`, `Execution Type`, `Username` (confirmed live: grouping by `Browser Name` split a day's sessions into safari/firefox/chrome/MicrosoftEdge/opera) |
+| `Users Statistics` | `Project`, `User Tag` |
+
+**Caveat:** grouping by a near-unique column (`Device UDID`, `Session Start Timestamp`, any per-row ID) technically works but produces mostly-1-count buckets — not a useful summary. `groupBy` is best suited to columns with real repeated values, not identifiers. There's no hardcoded allowlist enforcing this; it's a judgment call left to the caller.
 
 #### Report types: columns, purpose, and when to reach for each
 

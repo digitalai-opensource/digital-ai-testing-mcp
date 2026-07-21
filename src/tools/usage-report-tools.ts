@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { downloadUsageReport, buildUsageReportPath } from '../api/usage-reports.js';
+import { downloadUsageReport, summarizeUsageReport, buildUsageReportPath } from '../api/usage-reports.js';
 import { validateUsageReportParams, checkUsageReportSizeGuard, MAX_UNSCOPED_RANGE_DAYS } from '../utils/usage-report-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { SERVER_FS_DOWNLOAD_NOTICE, SERVER_FS_OUTPUT_PARAM } from '../utils/locality.js';
@@ -134,6 +134,52 @@ export function registerUsageReportTools(server: McpServer): void {
         { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand },
         result.humanText
       );
+    }
+  );
+
+  server.tool(
+    'summarize_usage_report',
+    'Fetches a usage-report CSV and aggregates it by a column (e.g. session counts by username) WITHOUT writing any ' +
+      'file — the result is a compact JSON summary returned directly. Use this instead of download_usage_report when ' +
+      'you want a count/breakdown rather than the raw CSV, and especially when the caller\'s filesystem is not the MCP ' +
+      'server\'s own (e.g. a remote/sandboxed client) — a written file is often unreachable in that case, while this ' +
+      'tool never writes one. Same reportType/date/filter/size-guard rules as download_usage_report.\n\n' +
+      'groupBy must name an actual column in that report\'s CSV — if it doesn\'t match, the error lists the real ' +
+      'column names so you can retry correctly. Common groupBy values: "Username" (License Usage, Browser Usage), ' +
+      '"User" (Users Statistics), "Project" (Device Reservations, Users Usage, Devices Usage).',
+    {
+      reportType: REPORT_TYPE_ENUM.describe(REPORT_TYPE_DESCRIPTION),
+      startDate: z.string().describe(START_DATE_DESC),
+      endDate: z.string().describe(END_DATE_DESC),
+      projectId: z.number().optional().describe(PROJECT_ID_DESC),
+      userId: z.number().optional().describe(USER_ID_DESC),
+      groupBy: z.string().describe('Column name to group rows by, e.g. "Username" or "Project". Case-insensitive, must match a real column in this report\'s CSV header.'),
+      sumColumn: z.string().optional().describe('Optional numeric column to sum per group, e.g. "Session Duration (in hours)".'),
+      topN: z.number().optional().describe('Max number of groups to return, sorted by count descending (default 50). Excess groups are noted as truncated, not silently dropped.'),
+      confirmLargeExport: z.boolean().optional().describe(CONFIRM_LARGE_DESC),
+      outputFormat: outputFormatParam,
+    },
+    async ({ reportType, startDate, endDate, projectId, userId, groupBy, sumColumn, topN, confirmLargeExport, outputFormat }) => {
+      const params = { reportType, startDate, endDate, projectId, userId, confirmLargeExport };
+
+      const validationErr = validateUsageReportParams(params);
+      if (validationErr) return { content: [{ type: 'text', text: `Error: ${validationErr}` }], isError: true };
+
+      const guardMsg = checkUsageReportSizeGuard(params);
+      if (guardMsg) return { content: [{ type: 'text', text: guardMsg }] };
+
+      try {
+        const summary = await summarizeUsageReport(reportType, { startDate, endDate, projectId, userId }, { groupBy, sumColumn, topN });
+        const lines = [
+          `"${reportType}" grouped by "${groupBy}"${sumColumn ? ` (summing "${sumColumn}")` : ''}: ${summary.totalRows} row(s), ${summary.totalGroups} group(s)${summary.truncated ? ` — showing top ${summary.groups.length}` : ''}`,
+          '',
+          ...summary.groups.map((g) => `- ${g.value || '(blank)'}: ${g.count}${g.sum !== undefined ? ` (sum: ${g.sum})` : ''}`),
+        ];
+        if (summary.truncated) lines.push('', `⚠️ Truncated to top ${summary.groups.length} of ${summary.totalGroups} groups. Narrow the date range or filters to see the rest.`);
+        return respond(outputFormat, summary, lines.join('\n'));
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
     }
   );
 }

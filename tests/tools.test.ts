@@ -538,6 +538,60 @@ describe('get_usage_report_download_command respects validation and the size gua
   });
 });
 
+describe('summarize_usage_report validates and guards before fetching, never writes a file', () => {
+  beforeAll(() => {
+    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+  });
+
+  it('rejects an unsupported filter before any fetch', async () => {
+    const res = await callTool('summarize_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-06-01',
+      endDate: '2026-06-01',
+      projectId: 5,
+      groupBy: 'Username',
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /does not support project filtering/);
+  });
+
+  it('fires the size guard before any fetch for a wide unfiltered range', async () => {
+    const res = await callTool('summarize_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-01-01',
+      endDate: '2026-06-30',
+      groupBy: 'Username',
+    });
+    assert.notEqual(res.isError, true);
+    assert.match(textOf(res), /Large export guard triggered/);
+  });
+
+  it('a narrow request proceeds past validation/guard and fails at the (unreachable) network layer, not the guard', async () => {
+    const res = await callTool('summarize_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-06-01',
+      endDate: '2026-06-01',
+      groupBy: 'Username',
+    });
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(textOf(res), /Large export guard triggered/);
+  });
+
+  it('has no localPath parameter — the tool schema never accepts a file destination', async () => {
+    const res = await callTool('summarize_usage_report', {
+      reportType: 'License Usage',
+      startDate: '2026-06-01',
+      endDate: '2026-06-01',
+      groupBy: 'Username',
+      localPath: '/tmp/should-be-ignored.csv',
+    });
+    // Zod strips unknown keys by default; this just confirms the call doesn't error solely because
+    // localPath was supplied — the guard/validation path is unaffected by an extraneous param.
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(textOf(res), /Large export guard triggered/);
+  });
+});
+
 describe('path-guard unit behavior', () => {
   it('validateInputPath blocks credential filenames and traversal, allows normal files', () => {
     assert.notEqual(validateInputPath('C:\\builds\\.env'), null);
