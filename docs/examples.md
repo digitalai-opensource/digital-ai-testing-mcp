@@ -473,6 +473,13 @@ Before generating boilerplate, always find an available device first so the corr
 
 **Delivery mode:**
 - "Generate the download command for last month's Device Reservations CSV so I can save it to my own laptop, not the server" *(get_usage_report_download_command — use this whenever the MCP runs in Docker/remote)*
+- "Summarize License Usage sessions by username for July 14–21 — I don't need the raw file, just counts per user" *(summarize_usage_report — aggregates in memory and returns counts directly; no file is written, so this works even when the caller's session can't reach the MCP server's filesystem at all)*
+- "How many browser sessions did each user run last week, and how much total duration?" *(summarize_usage_report on Browser Usage, groupBy: "Username", sumColumn: "Session Duration")*
+- "I tried grouping by 'user' but got an error listing different column names — use the exact one it gave me" *(the tool validates groupBy against the CSV's real header and lists the actual columns on a mismatch, so retry with the name it reports)*
+- "Split last week's License Usage sessions by Android vs iOS" *(groupBy isn't limited to Username — any real column works, e.g. "Device OS")*
+- "Which license types are we actually consuming, and how much total time each?" *(groupBy: "License type", sumColumn: "Session Duration (in hours)")*
+- "Break down yesterday's browser sessions by browser name" *(groupBy: "Browser Name" on Browser Usage — confirmed live: safari/firefox/chrome/MicrosoftEdge/opera split)*
+- "Don't group License Usage by Device UDID or timestamp — group by something with repeated values" *(near-unique columns technically work but just produce mostly-1-count buckets, not a useful summary)*
 
 ---
 

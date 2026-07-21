@@ -114,7 +114,7 @@ const REGISTERED_TOOLS = [
   'compare_performance_transactions', 'assess_comparison_confounds',
   'detect_performance_outliers', 'performance_transaction_control',
   // Usage reports (v2, Cloud Admin only)
-  'download_usage_report', 'get_usage_report_download_command',
+  'download_usage_report', 'get_usage_report_download_command', 'summarize_usage_report',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
