@@ -33,7 +33,7 @@
     "test:usage-reports": "vitest run tests/usage-reports.test.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "adm-zip": "^0.6.0",
     "axios": "^1.18.1",
     "dotenv": "^17.4.2",
