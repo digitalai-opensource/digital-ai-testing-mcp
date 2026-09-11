@@ -103,3 +103,10 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --provenance --access public
+        env:
+          # actions/setup-node injects a dummy placeholder NODE_AUTH_TOKEN
+          # whenever registry-url is set, even with no real token configured.
+          # A present-but-fake token makes npm authenticate with garbage
+          # instead of falling through to the OIDC/Trusted Publishing
+          # exchange — clearing it here is what lets Trusted Publishing work.
+          NODE_AUTH_TOKEN: ''
