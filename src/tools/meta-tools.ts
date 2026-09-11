@@ -5,6 +5,7 @@ import { resetClient, getActiveProfileName, getActiveUrl, getActiveKeyType } fro
 import { getServerVersion } from '../utils/version.js';
 import { listProfiles, getProfileCredentials, profileCount } from '../utils/profile-loader.js';
 import { computeWorkflowReadiness, WORKFLOW_DEPS } from '../utils/tool-registry.js';
+import { staleBuildRemedy } from '../utils/locality.js';
 
 // Canonical list of every tool registered by this server.
 // Update this when adding or removing tools so get_server_info stays accurate.
@@ -124,7 +125,7 @@ export function registerMetaTools(server: McpServer): void {
 
   server.tool(
     'get_server_info',
-    'Returns the running server version, target API URL, registered tool count, and capability domains. Call this first to verify the deployed Docker image matches the expected build — if tools are missing, rebuild the image.',
+    'Returns the running server version, target API URL, registered tool count, and capability domains. Call this first to verify the running build matches the expected version — if tools are missing, update it: ' + staleBuildRemedy(),
     {},
     async () => {
       const name = process.env['MCP_SERVER_NAME'] ?? 'digital-ai-testing-mcp';
@@ -158,7 +159,7 @@ export function registerMetaTools(server: McpServer): void {
         `Request timeout:  ${requestTimeout}ms`,
         `Upload timeout:   ${uploadTimeout}ms`,
         '',
-        `Registered tools: ${TOOL_COUNT} tools + 2 resources + 6 prompts`,
+        `Registered tools: ${TOOL_COUNT} tools + 2 resources + 7 prompts`,
         '',
         'Capability domains:',
         '  Users              — list, create, delete, assign, tag, get-tags (8 tools)',
@@ -220,8 +221,8 @@ export function registerMetaTools(server: McpServer): void {
         '    • Active browser/Selenium sessions by user and project     →  list_active_sessions',
         '  See docs/analytics-gap-analysis.md for the full 50-item capability map.',
         '',
-        'If a tool you expect is missing, the Docker image is stale.',
-        'Rebuild: docker build -t digital-ai-testing-mcp:latest .',
+        'If a tool you expect is missing, the running build is stale.',
+        staleBuildRemedy(),
         'Then call check_connectivity to verify the backend is reachable.',
       ];
 
@@ -262,8 +263,8 @@ export function registerMetaTools(server: McpServer): void {
     'Returns a structured readiness report for all six workflow tools (create_poc, close_poc, delete_poc, setup_project, close_project_resources, teardown_project). ' +
     'For each workflow, reports whether the tool itself is registered and whether every tool it depends on ' +
     '(read and write) is available in the current runtime. ' +
-    'Call this first when diagnosing workflow execution failures — a stale Docker image is the most common cause of missing tools. ' +
-    'If any workflow shows ready: false, rebuild the image: docker build -t digital-ai-testing-mcp:latest .',
+    'Call this first when diagnosing workflow execution failures — a stale build is the most common cause of missing tools. ' +
+    'If any workflow shows ready: false, update: ' + staleBuildRemedy(),
     {},
     async () => {
       const readiness = computeWorkflowReadiness(server);

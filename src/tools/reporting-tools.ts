@@ -13,6 +13,7 @@ import {
   extractAttachmentLog,
   summarizeTestFailures,
 } from '../api/reporting.js';
+import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { getActiveKeyType } from '../api/client.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
@@ -624,15 +625,11 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'download_test_attachments',
-    'Download all attachments for a test execution as a ZIP file, saved to the MCP server\'s own filesystem. ' +
-    'WARNING: the file is written to the MCP server process filesystem — if the server runs in Docker or a remote container, ' +
-    'the path must be valid on that container and the file will NOT be accessible from your local machine or bash tools. ' +
-    'Use get_test_log instead to retrieve log content directly without a file download.',
+    'Download all attachments for a test execution as a ZIP file.' + serverFsDownloadNotice() +
+    ' Use get_test_log instead to retrieve log content directly without a file download.',
     {
       uuid: z.string().describe('The test execution UUID.'),
-      localPath: z
-        .string()
-        .describe('Absolute path on the MCP server\'s own filesystem where the ZIP will be saved (e.g. "/tmp/test.zip" for Linux/Docker deployment).'),
+      localPath: z.string().describe(serverFsOutputParam()),
     },
     async ({ uuid, localPath }) => {
       const pathErr = validateOutputPath(localPath);
@@ -653,13 +650,13 @@ export function registerReportingTools(server: McpServer): void {
   server.tool(
     'get_test_attachments_download_command',
     'Generates a ready-to-run curl or PowerShell command for downloading a test execution\'s full attachment ZIP (session video .mp4, Appium/device logs) directly to the user\'s local machine. ' +
-    'Use this instead of download_test_attachments when the MCP server runs in Docker/remote: download_test_attachments writes to the SERVER\'s filesystem (invisible to the user), whereas this command runs on the user\'s machine so the binary lands locally. ' +
+    commandGeneratorNotice('download_test_attachments', 'download') + ' ' +
     'For text logs only, get_test_log is simpler (returns log text inline, no command). This is the path for the BINARY artifacts (video).\n\n' +
     'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
     {
       uuid: z.string().describe('Test execution UUID (uuid field from get_test_report or list_test_reports).'),
       localPath: z.string().optional().default('test-attachments.zip').describe('Path on the user\'s local machine to save the ZIP. Default: "test-attachments.zip" in the current directory.'),
-      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. ' + localPlatformParamNotice()),
       outputFormat: outputFormatParam,
     },
     async ({ uuid, localPath, localPlatform, outputFormat }) => {

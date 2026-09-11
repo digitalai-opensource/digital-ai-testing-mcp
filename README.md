@@ -6,19 +6,20 @@
 
 # Digital.ai Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants to a Digital.ai Testing device farm. The server exposes **191 tools**, **2 resources**, and **6 prompts** covering 26 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants to a Digital.ai Testing device farm. The server exposes **191 tools**, **2 resources**, and **7 prompts** covering 26 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Pull the image
-docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+# 0. Confirm Node.js 22+ is installed (installs npm alongside it)
+node --version
+npm --version
+# Don't have it? Install from https://nodejs.org (LTS) first.
 
-# 2. Create your .env
-curl -O https://raw.githubusercontent.com/digitalai-opensource/digital-ai-testing-mcp/main/.env.example
-cp .env.example .env   # set DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY
+# 1. Install the MCP server
+npm install -g digital-ai-testing-mcp
 ```
 
 Add to your AI client (Claude Desktop shown — see [Connecting AI Clients](#connecting-ai-clients) for VS Code, JetBrains, Copilot, and Cursor):
@@ -27,15 +28,21 @@ Add to your AI client (Claude Desktop shown — see [Connecting AI Clients](#con
 {
   "mcpServers": {
     "digital-ai-testing": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", "--env-file", "/ABSOLUTE/PATH/TO/.env",
-               "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"]
+      "command": "digital-ai-testing-mcp",
+      "args": [],
+      "env": {
+        "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
+        "MCP_DEPLOYMENT_MODE": "local"
+      }
     }
   }
 }
 ```
 
 Then ask: *"Show me the overall health of the device farm."*
+
+> Prefer a container? See [Option B — Pull from GitHub Container Registry](#option-b--pull-from-github-container-registry).
 
 ---
 
@@ -74,8 +81,8 @@ Then ask: *"Show me the overall health of the device farm."*
 
 ## Prerequisites
 
-- **Docker** — required for [Option A/B](#installation) (container-based install)
-- **Node.js 22+** — required for [Option C](#option-c--install-via-npm) (no Docker needed), or if building from source (Option B)
+- **Node.js 22+** — required for [Option A](#option-a--install-via-npm-recommended) (recommended — no Docker needed)
+- **Docker** — required for [Option B](#option-b--pull-from-github-container-registry) or [Option C](#option-c--build-from-source) (container-based install)
 - **Digital.ai Testing account** with a valid access key
 
 ---
@@ -130,9 +137,31 @@ The switch takes effect immediately — no restart needed.
 
 ## Installation
 
-### Option A — Pull from GitHub Container Registry (Recommended)
+### Option A — Install via npm (Recommended)
 
-No cloning or building required. Use this for standard deployment.
+No Docker required — runs directly under Node.js.
+
+```bash
+npm install -g digital-ai-testing-mcp
+```
+
+This installs a `digital-ai-testing-mcp` command onto your `PATH`. Use it directly as the `"command"` in your AI client configuration below — no image name or `.env` file path needed; environment variables go directly in the client's `env` block instead (see [Configuration](#configuration)).
+
+Set `MCP_DEPLOYMENT_MODE=local` alongside your credentials (already included in the config blocks below). This tells the server its filesystem is your own machine — tool descriptions and a handful of upload/download behaviors adjust accordingly (no Docker/volume-mount caveats, no path-locality warnings), instead of defaulting to the cautious Docker-deployment framing.
+
+**Upgrading to the latest release:**
+
+```bash
+npm install -g digital-ai-testing-mcp@latest
+```
+
+Then restart your AI client (or reconnect the MCP server from its settings panel) so it respawns the process — npm installing a new version doesn't affect an already-running process. Confirm the upgrade worked by asking your AI to call `get_server_info`, which reports the running version.
+
+---
+
+### Option B — Pull from GitHub Container Registry
+
+No cloning or building required. Use this if you'd rather run the server in a container than install it with npm.
 
 **Step 1 — Pull the image**
 
@@ -150,13 +179,19 @@ cp .env.example .env
 
 Use `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` as the image name in your AI client configuration below.
 
-> Images are published when a GitHub Release is created — not on every commit. If `latest` is not available yet, use [Option B](#option-b--build-from-source) to build from source.
+> Images are published when a GitHub Release is created — not on every commit. If `latest` is not available yet, use [Option C](#option-c--build-from-source) to build from source.
 
-> To update: `docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest`
+**Upgrading to the latest release:**
+
+```bash
+docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+```
+
+Since the server is launched fresh each time via `docker run --rm` (see the client configs below), there's no running container to stop or remove first — the next time your AI client starts the server, it uses the freshly pulled image automatically. Confirm with `get_server_info`.
 
 ---
 
-### Option B — Build from source
+### Option C — Build from source
 
 Required only for local development or modifying the server.
 
@@ -170,23 +205,12 @@ docker build -t digital-ai-testing-mcp:latest .
 
 Use `digital-ai-testing-mcp:latest` as the image name in your AI client configuration below.
 
-> Rebuild after making changes: `docker build -t digital-ai-testing-mcp:latest .`
-
----
-
-### Option C — Install via npm
-
-No Docker required — runs directly under Node.js. Use this if Docker Desktop isn't available (e.g. locked-down or Docker-unable machines).
+**Upgrading to the latest release:**
 
 ```bash
-npm install -g digital-ai-testing-mcp
+git pull
+docker build -t digital-ai-testing-mcp:latest .
 ```
-
-This installs a `digital-ai-testing-mcp` command onto your `PATH`. Use it directly as the `"command"` in your AI client configuration below (see the "**No Docker? Using the npm package**" callout under each client) — no image name or `.env` file path needed; environment variables go directly in the client's `env` block instead (see [Configuration](#configuration)).
-
-> To update: `npm install -g digital-ai-testing-mcp` again (npm updates in place).
-
-> This package is currently published and maintained under an individual maintainer's npm account rather than an organization account. Functionally identical to Options A/B; flagging for transparency.
 
 ---
 
@@ -198,6 +222,7 @@ This installs a `digital-ai-testing-mcp` command onto your `PATH`. Use it direct
 | `DIGITAL_AI_ACCESS_KEY` | ✅ | — | Access key — see [Access Keys](#access-keys) for the three access levels and key formats |
 | `MCP_SERVER_NAME` | Optional | `digital-ai-testing-mcp` | Server identity shown in the AI client |
 | `MCP_SERVER_VERSION` | Optional | version from `package.json` | Override the reported server version (rarely needed) |
+| `MCP_DEPLOYMENT_MODE` | Optional | `docker` | `docker` (default) or `local` — set to `local` when running via the npm package ([Option A](#option-a--install-via-npm-recommended)) so tool descriptions and upload/download behavior reflect that the server's filesystem is your own machine, not a container's |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
 
@@ -207,7 +232,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ## Connecting AI Clients
 
-The examples below default to launching the server as a Docker container (using the GHCR image name from Option A — if you built from source with Option B, replace the image name with `digital-ai-testing-mcp:latest`; replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file in all cases). Each client section also includes a **no-Docker config** for the [npm package](#option-c--install-via-npm) (Option C) — use whichever matches how you installed the server.
+The examples below default to the npm package (Option A) — no image name or `.env` file path needed; credentials go directly in the client's `env` block. Each client section also includes a **Docker config** (Options B/C) for anyone running the server as a container instead — replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file, and swap the GHCR image name for `digital-ai-testing-mcp:latest` if you built from source (Option C).
 
 ### Claude Desktop
 
@@ -219,34 +244,34 @@ Find your config file:
 {
   "mcpServers": {
     "digital-ai-testing": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
-      ]
+      "command": "digital-ai-testing-mcp",
+      "args": [],
+      "env": {
+        "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
+        "MCP_DEPLOYMENT_MODE": "local"
+      }
     }
   }
 }
 ```
 
-> **Built from source?** Replace `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest`.
-
-> **No Docker? Using the npm package (Option C):**
+> **Using Docker instead (Option B/C)?**
 > ```json
 > {
 >   "mcpServers": {
 >     "digital-ai-testing": {
->       "command": "digital-ai-testing-mcp",
->       "args": [],
->       "env": {
->         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
->         "DIGITAL_AI_ACCESS_KEY": "your-access-key"
->       }
+>       "command": "docker",
+>       "args": [
+>         "run", "--rm", "-i",
+>         "--env-file", "/ABSOLUTE/PATH/TO/.env",
+>         "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
+>       ]
 >     }
 >   }
 > }
 > ```
+> **Built from source (Option C)?** Replace `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest`.
 
 Restart Claude Desktop after editing — the tools appear automatically.
 
@@ -254,30 +279,28 @@ Restart Claude Desktop after editing — the tools appear automatically.
 
 1. Open the Claude Code extension panel
 2. Go to **Settings → MCP Servers**
-3. Add a new server with the Docker command above, or — if using the npm package (Option C) — command `digital-ai-testing-mcp` with no args, and `DIGITAL_AI_BASE_URL`/`DIGITAL_AI_ACCESS_KEY` set in the server's environment variables
+3. Add a new server with command `digital-ai-testing-mcp`, no args, and `DIGITAL_AI_BASE_URL`/`DIGITAL_AI_ACCESS_KEY`/`MCP_DEPLOYMENT_MODE=local` set in the server's environment variables — or, if running via Docker instead, the Docker command shown for Claude Desktop above
 
 ### Claude Code (JetBrains / Android Studio)
 
 Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then open your project and run this command from the project root:
 
 ```bash
-# macOS / Linux
-claude mcp add digital-ai-testing -- docker run --rm -i --env-file /absolute/path/to/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
-
-# Windows (use forward slashes — backslashes are stripped by Claude Code)
-claude mcp add digital-ai-testing -- docker run --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key --env MCP_DEPLOYMENT_MODE=local -- digital-ai-testing-mcp
 ```
 
-> **Windows users:** Always use forward slashes (`C:/path/to/.env`), never backslashes — regardless of whether you register via the CLI command above or through the Claude Code panel (**Settings → MCP Servers**). Backslashes are silently stripped when Claude Code writes the configuration to `~/.claude.json`, resulting in a broken path and a cryptic `-32000` reconnection error.
+This stores the server configuration in `~/.claude.json` scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same command used for Claude Desktop above.
 
-This stores the server configuration in `~/.claude.json` scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same Docker command used for Claude Desktop (using forward slashes for the path on Windows).
-
-> **Built from source?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
-
-> **No Docker? Using the npm package (Option C):**
+> **Using Docker instead (Option B/C)?**
 > ```bash
-> claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key -- digital-ai-testing-mcp
+> # macOS / Linux
+> claude mcp add digital-ai-testing -- docker run --rm -i --env-file /absolute/path/to/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+>
+> # Windows (use forward slashes — backslashes are stripped by Claude Code)
+> claude mcp add digital-ai-testing -- docker run --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 > ```
+> **Windows users on Docker:** Always use forward slashes (`C:/path/to/.env`), never backslashes — regardless of whether you register via the CLI command above or through the Claude Code panel (**Settings → MCP Servers**). Backslashes are silently stripped when Claude Code writes the configuration to `~/.claude.json`, resulting in a broken path and a cryptic `-32000` reconnection error.
+> **Built from source (Option C)?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
 
 Restart the Claude Code panel after adding the server — the tools appear automatically.
 
@@ -292,12 +315,13 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
   "mcp": {
     "servers": {
       "digital-ai-testing": {
-        "command": "docker",
-        "args": [
-          "run", "--rm", "-i",
-          "--env-file", "/ABSOLUTE/PATH/TO/.env",
-          "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
-        ]
+        "command": "digital-ai-testing-mcp",
+        "args": [],
+        "env": {
+          "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+          "DIGITAL_AI_ACCESS_KEY": "your-access-key",
+          "MCP_DEPLOYMENT_MODE": "local"
+        }
       }
     }
   }
@@ -310,12 +334,13 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
 {
   "servers": {
     "digital-ai-testing": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
-      ]
+      "command": "digital-ai-testing-mcp",
+      "args": [],
+      "env": {
+        "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
+        "MCP_DEPLOYMENT_MODE": "local"
+      }
     }
   }
 }
@@ -323,15 +348,15 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
 
 Committing `.vscode/mcp.json` to source control shares the server configuration with the entire team automatically.
 
-> **No Docker? Using the npm package (Option C):** in either settings file above, replace the `"digital-ai-testing"` entry's `command`/`args` with:
+> **Using Docker instead (Option B/C)?** in either settings file above, replace the `"digital-ai-testing"` entry's `command`/`args`/`env` with:
 > ```json
 > {
->   "command": "digital-ai-testing-mcp",
->   "args": [],
->   "env": {
->     "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
->     "DIGITAL_AI_ACCESS_KEY": "your-access-key"
->   }
+>   "command": "docker",
+>   "args": [
+>     "run", "--rm", "-i",
+>     "--env-file", "/ABSOLUTE/PATH/TO/.env",
+>     "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
+>   ]
 > }
 > ```
 
@@ -341,18 +366,19 @@ To use the tools: open Copilot Chat (`Ctrl+Alt+I`), switch the mode dropdown to 
 
 ### Cursor
 
-Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → MCP** (or `Cursor Settings → Features → MCP`) using the same Docker command:
+Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → MCP** (or `Cursor Settings → Features → MCP`):
 
 ```json
 {
   "mcpServers": {
     "digital-ai-testing": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "--env-file", "/ABSOLUTE/PATH/TO/.env",
-        "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
-      ]
+      "command": "digital-ai-testing-mcp",
+      "args": [],
+      "env": {
+        "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
+        "MCP_DEPLOYMENT_MODE": "local"
+      }
     }
   }
 }
@@ -360,23 +386,22 @@ Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → M
 
 Alternatively, create a `.cursor/mcp.json` file in your project root with the same `mcpServers` object — this scopes the server to that workspace and can be committed to share it with your team.
 
-> **Built from source?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
-
-> **No Docker? Using the npm package (Option C):**
+> **Using Docker instead (Option B/C)?**
 > ```json
 > {
 >   "mcpServers": {
 >     "digital-ai-testing": {
->       "command": "digital-ai-testing-mcp",
->       "args": [],
->       "env": {
->         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
->         "DIGITAL_AI_ACCESS_KEY": "your-access-key"
->       }
+>       "command": "docker",
+>       "args": [
+>         "run", "--rm", "-i",
+>         "--env-file", "/ABSOLUTE/PATH/TO/.env",
+>         "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
+>       ]
 >     }
 >   }
 > }
 > ```
+> **Built from source (Option C)?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
 
 > Cursor is available on macOS, Windows, and Linux. It is the recommended option for iOS developers on macOS where Xcode is the primary IDE but does not natively support MCP.
 

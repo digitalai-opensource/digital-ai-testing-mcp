@@ -10,7 +10,7 @@
  * after an API call, the test fails with a network error instead of guard text
  * — which is exactly the regression signal we want.
  */
-import { describe, it, beforeAll } from 'vitest';
+import { describe, it, beforeAll, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 import dotenv from 'dotenv';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -745,5 +745,34 @@ describe('Web inspection tools return isError on unknown handle (no HTTP call ne
     // Mobile-only guard fires before requireSession — message distinguishes platform mismatch from missing handle
     const res = await callTool('launch_app', { handle: UNKNOWN, activityUrl: 'com.example/.MainActivity' });
     assert.equal(res.isError, true);
+  });
+});
+
+describe('upload_application_file HOST_PATH_UNREACHABLE gate is deployment-mode-aware', () => {
+  const ORIGINAL = process.env.MCP_DEPLOYMENT_MODE;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.MCP_DEPLOYMENT_MODE;
+    else process.env.MCP_DEPLOYMENT_MODE = ORIGINAL;
+  });
+
+  // A path that is BOTH a host-machine path (triggers the Docker-only gate)
+  // AND a credential-filename (triggers validateInputPath's own refusal) —
+  // lets each mode's expected error be distinguished synchronously, with no
+  // filesystem read or network call needed either way.
+  const HOST_AND_CREDENTIAL_PATH = '/Users/joe/.env';
+
+  it('rejects a host-machine path as HOST_PATH_UNREACHABLE by default (docker)', async () => {
+    delete process.env.MCP_DEPLOYMENT_MODE;
+    const res = await callTool('upload_application_file', { filePath: HOST_AND_CREDENTIAL_PATH });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /HOST_PATH_UNREACHABLE/);
+  });
+
+  it('skips the host-path gate under local mode, falling through to normal path validation', async () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'local';
+    const res = await callTool('upload_application_file', { filePath: HOST_AND_CREDENTIAL_PATH });
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(textOf(res), /HOST_PATH_UNREACHABLE/);
+    assert.match(textOf(res), /credential-file pattern/);
   });
 });

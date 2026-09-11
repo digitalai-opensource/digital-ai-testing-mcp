@@ -11,10 +11,12 @@ import {
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import {
-  SERVER_FS_DOWNLOAD_NOTICE,
-  SERVER_FS_UPLOAD_NOTICE,
-  SERVER_FS_OUTPUT_PARAM,
-  SERVER_FS_INPUT_PARAM,
+  serverFsDownloadNotice,
+  serverFsUploadNotice,
+  serverFsOutputParam,
+  serverFsInputParam,
+  commandGeneratorNotice,
+  localPlatformParamNotice,
 } from '../utils/locality.js';
 import { buildUploadCommand } from '../utils/upload-command.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
@@ -95,10 +97,9 @@ export function registerRepositoryTools(server: McpServer): void {
 
   server.tool(
     'upload_repository_file',
-    'Uploads a file to the repository. You can assign it a unique name for easy reference in test scripts. Returns the numeric file ID — save this for future updates or downloads.' + SERVER_FS_UPLOAD_NOTICE +
-    ' For a remote/Docker server, use get_repository_upload_command to get a command you run on your own machine instead.',
+    'Uploads a file to the repository. You can assign it a unique name for easy reference in test scripts. Returns the numeric file ID — save this for future updates or downloads.' + serverFsUploadNotice(),
     {
-      localFilePath: z.string().describe('Absolute path to the local file to upload. ' + SERVER_FS_INPUT_PARAM),
+      localFilePath: z.string().describe('Absolute path to the local file to upload. ' + serverFsInputParam()),
       uniqueName: z.string().optional().describe('A short unique alias for this file.'),
       description: z
         .string()
@@ -142,7 +143,7 @@ export function registerRepositoryTools(server: McpServer): void {
   server.tool(
     'get_repository_upload_command',
     'Generates a ready-to-run curl or PowerShell command for uploading a file to the repository directly from the user\'s local machine. ' +
-    'Use this instead of upload_repository_file when the MCP server runs in Docker/remote and cannot read the local file. The user runs the generated command locally so the file never passes through the container.\n\n' +
+    commandGeneratorNotice('upload_repository_file', 'upload') + '\n\n' +
     'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
     {
       localFilePath: z.string().describe('Full path to the file on the user\'s local machine, used verbatim in the command.'),
@@ -150,7 +151,7 @@ export function registerRepositoryTools(server: McpServer): void {
       description: z.string().max(255).optional().describe('Description of the file (max 255 characters).'),
       projectId: z.string().optional().describe('Project ID to associate with.'),
       projectName: z.string().optional().describe('Project name to associate with.'),
-      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. ' + localPlatformParamNotice()),
       outputFormat: outputFormatParam,
     },
     async ({ localFilePath, uniqueName, description, projectId, projectName, localPlatform, outputFormat }) => {
@@ -171,10 +172,10 @@ export function registerRepositoryTools(server: McpServer): void {
 
   server.tool(
     'download_repository_file',
-    'Downloads a file from the repository using its numeric ID.' + SERVER_FS_DOWNLOAD_NOTICE,
+    'Downloads a file from the repository using its numeric ID.' + serverFsDownloadNotice(),
     {
       fileId: z.number().describe('The numeric file ID.'),
-      localPath: z.string().describe(SERVER_FS_OUTPUT_PARAM),
+      localPath: z.string().describe(serverFsOutputParam()),
     },
     async ({ fileId, localPath }) => {
       const pathErr = validateOutputPath(localPath);
@@ -193,12 +194,12 @@ export function registerRepositoryTools(server: McpServer): void {
   server.tool(
     'get_repository_file_download_command',
     'Generates a ready-to-run curl or PowerShell command for downloading a repository file directly to the user\'s local machine. ' +
-    'Use this instead of download_repository_file when the MCP server runs in Docker/remote and the written file would be inaccessible to the user.\n\n' +
+    commandGeneratorNotice('download_repository_file', 'download') + '\n\n' +
     'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
     {
       fileId: z.number().describe('The numeric file ID.'),
       localPath: z.string().describe('Path on the user\'s local machine to save the file.'),
-      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. ' + localPlatformParamNotice()),
       outputFormat: outputFormatParam,
     },
     async ({ fileId, localPath, localPlatform, outputFormat }) => {
@@ -212,7 +213,7 @@ export function registerRepositoryTools(server: McpServer): void {
     "Replaces a file's content in-place while keeping the same numeric ID. Useful for updating test data files that your test scripts already reference by ID. You can also update the unique name or description.",
     {
       fileId: z.number().describe('The numeric file ID to update.'),
-      localFilePath: z.string().optional().describe('New file path (replaces file content). ' + SERVER_FS_INPUT_PARAM),
+      localFilePath: z.string().optional().describe('New file path (replaces file content). ' + serverFsInputParam()),
       uniqueName: z.string().optional().describe('New unique name alias.'),
       description: z.string().optional().describe('New description.'),
     },

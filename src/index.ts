@@ -33,6 +33,7 @@ import { registerUsageReportTools } from './tools/usage-report-tools.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
+import { getDeploymentMode } from './utils/deployment-mode.js';
 
 dotenv.config({ quiet: true });
 
@@ -53,6 +54,7 @@ const version = getServerVersion();
 
 console.error(`[${name}] v${version} starting...`);
 console.error(`[${name}] Target: ${process.env.DIGITAL_AI_BASE_URL}`);
+console.error(`[${name}] Deployment mode: ${getDeploymentMode()}`);
 
 // Server instructions are delivered to the client at connect time — BEFORE the agent
 // forms a plan — so they carry more weight than tool descriptions (which are read at
@@ -111,7 +113,7 @@ registerPerformanceTools(server);
 registerUsageReportTools(server);
 registerMetaTools(server);
 
-console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 6 prompts).`);
+console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 7 prompts).`);
 
 // Startup parity check: verify all workflow dependency tools are actually registered.
 // A missing tool here means a module failed to load — the image needs to be rebuilt.

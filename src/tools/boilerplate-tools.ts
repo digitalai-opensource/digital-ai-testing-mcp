@@ -7,6 +7,7 @@ import { getApplicationInfo } from '../api/applications.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
 import { listActiveSessions } from '../api/webdriver.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { staleBuildRemedy } from '../utils/locality.js';
 
 type Platform = 'android' | 'ios';
 type Language = 'java-junit5' | 'java-testng' | 'nodejs' | 'python';
@@ -959,7 +960,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         return {
           content: [{
             type: 'text',
-            text: `Failed to read boilerplate files: ${(e as Error).message}\n\nEnsure the Docker image was built from the latest source — the resources/boilerplate directory must be present in the image.`,
+            text: `Failed to read boilerplate files: ${(e as Error).message}\n\nEnsure the running build is up to date — the resources/boilerplate directory must be present. ${staleBuildRemedy()}`,
           }],
           isError: true,
         };
