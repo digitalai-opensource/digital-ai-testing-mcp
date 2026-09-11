@@ -6,10 +6,12 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 > Your Agent will present a safety summary before acting — reply "yes, confirm" or include
 > `confirmDeletion: true` in your request to proceed.
 
-> **File uploads from local paths**: the MCP server runs inside Docker. Local file paths
-> must be mounted as Docker volumes (e.g. `-v /host/builds:/builds`) and referenced by
-> their container path (`/builds/MyApp.ipa`). Use `upload_application_from_url` to avoid
-> this — provide a direct-download URL accessible from the server's network instead.
+> **File uploads from local paths**: when running via Docker (Options A/B), the MCP server runs inside
+> a container. Local file paths must be mounted as Docker volumes (e.g. `-v /host/builds:/builds`) and
+> referenced by their container path (`/builds/MyApp.ipa`). Use `upload_application_from_url` to avoid
+> this — provide a direct-download URL accessible from the server's network instead. **If installed via
+> the [npm package](../README.md#option-c--install-via-npm) (Option C)** and run directly on your own
+> machine, none of this applies — local paths just work, no volume mount needed.
 
 ---
 

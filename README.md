@@ -74,8 +74,8 @@ Then ask: *"Show me the overall health of the device farm."*
 
 ## Prerequisites
 
-- **Docker** — required to run the server
-- **Node.js 22+** — required only if building from source (see Installation, Option B)
+- **Docker** — required for [Option A/B](#installation) (container-based install)
+- **Node.js 22+** — required for [Option C](#option-c--install-via-npm) (no Docker needed), or if building from source (Option B)
 - **Digital.ai Testing account** with a valid access key
 
 ---
@@ -174,6 +174,22 @@ Use `digital-ai-testing-mcp:latest` as the image name in your AI client configur
 
 ---
 
+### Option C — Install via npm
+
+No Docker required — runs directly under Node.js. Use this if Docker Desktop isn't available (e.g. locked-down or Docker-unable machines).
+
+```bash
+npm install -g digital-ai-testing-mcp
+```
+
+This installs a `digital-ai-testing-mcp` command onto your `PATH`. Use it directly as the `"command"` in your AI client configuration below (see the "**No Docker? Using the npm package**" callout under each client) — no image name or `.env` file path needed; environment variables go directly in the client's `env` block instead (see [Configuration](#configuration)).
+
+> To update: `npm install -g digital-ai-testing-mcp` again (npm updates in place).
+
+> This package is currently published and maintained under an individual maintainer's npm account rather than an organization account. Functionally identical to Options A/B; flagging for transparency.
+
+---
+
 ## Configuration
 
 | Variable | Required | Default | Description |
@@ -191,7 +207,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ## Connecting AI Clients
 
-All clients launch the server as a Docker container. The examples below use the GHCR image name (Option A). If you built from source (Option B), replace the image name with `digital-ai-testing-mcp:latest`. Replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file in all cases.
+The examples below default to launching the server as a Docker container (using the GHCR image name from Option A — if you built from source with Option B, replace the image name with `digital-ai-testing-mcp:latest`; replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file in all cases). Each client section also includes a **no-Docker config** for the [npm package](#option-c--install-via-npm) (Option C) — use whichever matches how you installed the server.
 
 ### Claude Desktop
 
@@ -216,13 +232,29 @@ Find your config file:
 
 > **Built from source?** Replace `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest`.
 
+> **No Docker? Using the npm package (Option C):**
+> ```json
+> {
+>   "mcpServers": {
+>     "digital-ai-testing": {
+>       "command": "digital-ai-testing-mcp",
+>       "args": [],
+>       "env": {
+>         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+>         "DIGITAL_AI_ACCESS_KEY": "your-access-key"
+>       }
+>     }
+>   }
+> }
+> ```
+
 Restart Claude Desktop after editing — the tools appear automatically.
 
 ### Claude Code (VS Code)
 
 1. Open the Claude Code extension panel
 2. Go to **Settings → MCP Servers**
-3. Add a new server with the Docker command above
+3. Add a new server with the Docker command above, or — if using the npm package (Option C) — command `digital-ai-testing-mcp` with no args, and `DIGITAL_AI_BASE_URL`/`DIGITAL_AI_ACCESS_KEY` set in the server's environment variables
 
 ### Claude Code (JetBrains / Android Studio)
 
@@ -241,6 +273,11 @@ claude mcp add digital-ai-testing -- docker run --rm -i --env-file C:/projects/d
 This stores the server configuration in `~/.claude.json` scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same Docker command used for Claude Desktop (using forward slashes for the path on Windows).
 
 > **Built from source?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
+
+> **No Docker? Using the npm package (Option C):**
+> ```bash
+> claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key -- digital-ai-testing-mcp
+> ```
 
 Restart the Claude Code panel after adding the server — the tools appear automatically.
 
@@ -286,6 +323,18 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
 
 Committing `.vscode/mcp.json` to source control shares the server configuration with the entire team automatically.
 
+> **No Docker? Using the npm package (Option C):** in either settings file above, replace the `"digital-ai-testing"` entry's `command`/`args` with:
+> ```json
+> {
+>   "command": "digital-ai-testing-mcp",
+>   "args": [],
+>   "env": {
+>     "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+>     "DIGITAL_AI_ACCESS_KEY": "your-access-key"
+>   }
+> }
+> ```
+
 To use the tools: open Copilot Chat (`Ctrl+Alt+I`), switch the mode dropdown to **Agent**, and type your request.
 
 > GitHub Copilot on the web (`github.com/copilot`) does not support external MCP servers. VS Code is required.
@@ -312,6 +361,22 @@ Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → M
 Alternatively, create a `.cursor/mcp.json` file in your project root with the same `mcpServers` object — this scopes the server to that workspace and can be committed to share it with your team.
 
 > **Built from source?** Replace the GHCR image name with `digital-ai-testing-mcp:latest`.
+
+> **No Docker? Using the npm package (Option C):**
+> ```json
+> {
+>   "mcpServers": {
+>     "digital-ai-testing": {
+>       "command": "digital-ai-testing-mcp",
+>       "args": [],
+>       "env": {
+>         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
+>         "DIGITAL_AI_ACCESS_KEY": "your-access-key"
+>       }
+>     }
+>   }
+> }
+> ```
 
 > Cursor is available on macOS, Windows, and Linux. It is the recommended option for iOS developers on macOS where Xcode is the primary IDE but does not natively support MCP.
 

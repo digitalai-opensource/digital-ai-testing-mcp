@@ -6,6 +6,7 @@ Complete per-tool reference for the Digital.ai Testing MCP Server — all 191 to
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (the long eyJ... key); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
 - **Filters / Sort** — server-side parameters accepted by list tools. See [List Filters & Sorting](../README.md#list-filters--sorting).
 - Destructive tools require `confirmDeletion: true` — see [Safety Guards](../README.md#safety-guards).
+- **"Writes to the MCP server's filesystem" / "use when the server is Docker/remote" / volume-mount notes** apply to the Docker deployment path (Options A/B). If the server is installed via the [npm package](../README.md#option-c--install-via-npm) and run directly on your own machine, its filesystem *is* your filesystem — these caveats and the `*_upload_command`/`*_download_command` workarounds don't apply; use the direct `upload_*`/`download_*` tools with local paths. See [limitations.md #15](limitations.md#15-local-file-io-runs-on-the-mcp-servers-filesystem-not-yours).
 
 ### Users
 

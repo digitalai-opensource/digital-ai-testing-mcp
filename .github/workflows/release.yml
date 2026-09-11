@@ -67,3 +67,39 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  npm:
+    name: Publish npm package
+    runs-on: ubuntu-latest
+    # Authenticates via npm Trusted Publishing (OIDC) — no NPM_TOKEN secret.
+    # Requires a trusted publisher registered on the npm package pointing at
+    # this repo + workflow file (npmjs.com package → Settings → Trusted
+    # Publisher). Until that's configured, this job fails safely on its own
+    # (doesn't affect the sibling `docker` job or the release itself).
+    permissions:
+      contents: read
+      id-token: write # required for OIDC / Trusted Publishing and --provenance
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Trusted Publishing needs a recent npm CLI — the version bundled with
+      # actions/setup-node's Node 22 may predate OIDC support.
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
