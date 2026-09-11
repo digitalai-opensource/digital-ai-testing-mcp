@@ -44,16 +44,28 @@ jobs:
             --latest
 
   # Releases created above use GITHUB_TOKEN, which suppresses the
-  # `release: published` event (GitHub recursion prevention) — so the Docker
-  # build in release.yml would never fire. Call it directly instead.
-  docker:
-    name: Publish Docker image
+  # `release: published` event (GitHub recursion prevention) — so release.yml
+  # would never fire on its own. Dispatching it as an independent top-level
+  # workflow_dispatch run (rather than calling it as a nested reusable
+  # workflow via `uses:`) is deliberate: a reusable-workflow call did NOT
+  # propagate id-token permission to the npm job even with `id-token: write`
+  # declared on both the caller and callee (confirmed live — the npm publish
+  # step got ENEEDAUTH, never reaching the OIDC/Trusted Publishing exchange,
+  # while Docker's GITHUB_TOKEN-based GHCR login worked fine either way).
+  # A direct workflow_dispatch run gives release.yml its own full, ungated
+  # permission set — exactly the invocation path already confirmed to work.
+  trigger-release:
+    name: Dispatch Docker + npm publish
     needs: auto-release
     if: needs.auto-release.outputs.created == 'true'
-    uses: ./.github/workflows/release.yml
-    with:
-      version: ${{ needs.auto-release.outputs.version }}
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      actions: write
+    steps:
+      - name: Dispatch release.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run release.yml \
+            --repo digitalai-opensource/digital-ai-testing-mcp \
+            -f version=${{ needs.auto-release.outputs.version }}
