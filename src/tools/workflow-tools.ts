@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { computeWorkflowReadiness } from '../utils/tool-registry.js';
+import { staleBuildRemedy } from '../utils/locality.js';
 
 /** Normalise an end-date string to YYYY-MM-DD.
  *  Accepts ISO dates, relative offsets (+14d, +2w, "in 2 weeks"), or
@@ -57,9 +58,9 @@ export function registerWorkflowTools(server: McpServer): void {
           `❌ ${workflow} cannot execute — ${missing.length} required tool(s) are not registered in this runtime:`,
           ...missing.map(t => `  • ${t}`),
           '',
-          'This indicates the deployed Docker image is incomplete or a module failed to load at startup.',
+          'This indicates the running build is incomplete or a module failed to load at startup.',
           'Call check_workflow_readiness for the full dependency report.',
-          'To fix: docker build -t digital-ai-testing-mcp:latest . then restart the container.',
+          'To fix: ' + staleBuildRemedy() + ' then restart the server.',
         ].join('\n'),
       }],
       isError: true,

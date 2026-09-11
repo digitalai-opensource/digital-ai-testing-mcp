@@ -1,4 +1,4 @@
-import { describe, it } from 'vitest';
+import { describe, it, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 import { applyMaxResults, appendTruncationNotice, DEFAULT_MAX_RESULTS, ABSOLUTE_MAX_RESULTS } from '../src/utils/pagination.js';
 import { checkDestructiveGuard } from '../src/utils/destructive-guard.js';
@@ -6,6 +6,83 @@ import { validateOutputPath } from '../src/utils/path-guard.js';
 import { formatDeviceTimestamp } from '../src/utils/timestamp.js';
 import { getStatusEmoji, formatProvisioningProfileList } from '../src/utils/response-formatter.js';
 import type { ProvisioningProfile } from '../src/types/digital-ai.js';
+import { getDeploymentMode } from '../src/utils/deployment-mode.js';
+import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, staleBuildRemedy } from '../src/utils/locality.js';
+
+// ─── getDeploymentMode / locality notices ───────────────────────────────────
+
+describe('getDeploymentMode', () => {
+  const ORIGINAL = process.env.MCP_DEPLOYMENT_MODE;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.MCP_DEPLOYMENT_MODE;
+    else process.env.MCP_DEPLOYMENT_MODE = ORIGINAL;
+  });
+
+  it('defaults to docker when unset', () => {
+    delete process.env.MCP_DEPLOYMENT_MODE;
+    assert.equal(getDeploymentMode(), 'docker');
+  });
+
+  it('resolves "local" case-insensitively', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'Local';
+    assert.equal(getDeploymentMode(), 'local');
+  });
+
+  it('resolves "http"', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'http';
+    assert.equal(getDeploymentMode(), 'http');
+  });
+
+  it('falls back to docker for an unrecognized value', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'bogus';
+    assert.equal(getDeploymentMode(), 'docker');
+  });
+});
+
+describe('locality notices vary by deployment mode', () => {
+  const ORIGINAL = process.env.MCP_DEPLOYMENT_MODE;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.MCP_DEPLOYMENT_MODE;
+    else process.env.MCP_DEPLOYMENT_MODE = ORIGINAL;
+  });
+
+  it('serverFsDownloadNotice warns about Docker by default', () => {
+    delete process.env.MCP_DEPLOYMENT_MODE;
+    assert.match(serverFsDownloadNotice(), /Docker/);
+  });
+
+  it('serverFsDownloadNotice does not warn about Docker under local mode', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'local';
+    const text = serverFsDownloadNotice();
+    assert.doesNotMatch(text, /Docker/);
+    assert.match(text, /npm package/);
+  });
+
+  it('serverFsOutputParam gives a real local-path example under local mode', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'local';
+    assert.doesNotMatch(serverFsOutputParam(), /NOT a path on your local machine/);
+  });
+
+  it('commandGeneratorNotice frames the generator as optional under local mode', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'local';
+    const text = commandGeneratorNotice('download_repository_file', 'download');
+    assert.match(text, /usually unnecessary/);
+    assert.match(text, /download_repository_file/);
+  });
+
+  it('commandGeneratorNotice frames the generator as the Docker workaround by default', () => {
+    delete process.env.MCP_DEPLOYMENT_MODE;
+    const text = commandGeneratorNotice('download_repository_file', 'download');
+    assert.match(text, /Docker\/remote/);
+  });
+
+  it('staleBuildRemedy suggests npm reinstall under local mode, docker rebuild otherwise', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'local';
+    assert.match(staleBuildRemedy(), /npm install -g/);
+    delete process.env.MCP_DEPLOYMENT_MODE;
+    assert.match(staleBuildRemedy(), /docker build/);
+  });
+});
 
 // ─── applyMaxResults ─────────────────────────────────────────────────────────
 

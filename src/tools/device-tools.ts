@@ -20,7 +20,7 @@ import {
 } from '../api/devices.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
-import { SERVER_FS_DOWNLOAD_NOTICE, SERVER_FS_OUTPUT_PARAM } from '../utils/locality.js';
+import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatDeviceList, formatDeviceHealthSummary } from '../utils/response-formatter.js';
@@ -415,13 +415,13 @@ export function registerDeviceTools(server: McpServer): void {
 
   server.tool(
     'download_ios_app_container',
-    "Downloads the app data container from an iOS device as a ZIP file (useful for inspecting app state after a test). The device must be reserved and the app must be a debug build. Cloud Admin only. iOS only. Accepts numeric device ID, serial number, UDID, or device name." + SERVER_FS_DOWNLOAD_NOTICE,
+    "Downloads the app data container from an iOS device as a ZIP file (useful for inspecting app state after a test). The device must be reserved and the app must be a debug build. Cloud Admin only. iOS only. Accepts numeric device ID, serial number, UDID, or device name." + serverFsDownloadNotice(),
     {
       deviceId: z.string().describe('Numeric device ID, serial number, UDID, or iOS device name.'),
       bundleId: z
         .string()
         .describe('iOS bundle identifier, e.g. com.mycompany.myapp.'),
-      localPath: z.string().describe(SERVER_FS_OUTPUT_PARAM),
+      localPath: z.string().describe(serverFsOutputParam()),
     },
     async ({ deviceId, bundleId, localPath }) => {
       const pathErr = validateOutputPath(localPath);
@@ -446,14 +446,14 @@ export function registerDeviceTools(server: McpServer): void {
   server.tool(
     'get_ios_app_container_download_command',
     'Generates a ready-to-run curl or PowerShell command for downloading an iOS app data container ZIP directly to the user\'s local machine. ' +
-    'Use this instead of download_ios_app_container when the MCP server runs in Docker/remote and the written file would be inaccessible to the user. ' +
+    commandGeneratorNotice('download_ios_app_container', 'download') + ' ' +
     'The device must be reserved and the app must be a debug build. Cloud Admin only. iOS only.\n\n' +
     'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
     {
       deviceId: z.string().describe('Numeric device ID, serial number, UDID, or iOS device name.'),
       bundleId: z.string().describe('iOS bundle identifier, e.g. com.mycompany.myapp.'),
       localPath: z.string().optional().default('app-container.zip').describe('Path on the user\'s local machine to save the ZIP. Default: "app-container.zip".'),
-      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. ' + localPlatformParamNotice()),
       outputFormat: outputFormatParam,
     },
     async ({ deviceId, bundleId, localPath, localPlatform, outputFormat }) => {

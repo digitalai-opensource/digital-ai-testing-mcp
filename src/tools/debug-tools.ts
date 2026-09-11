@@ -4,6 +4,7 @@ import { getDevicesByQuery, getDevice } from '../api/devices.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import type { Device } from '../types/digital-ai.js';
+import { getDeploymentMode } from '../utils/deployment-mode.js';
 
 function resolveSerial(d: Device): string {
   return d.deviceOs === 'iOS' ? (d.iosUdid || d.udid) : d.udid;
@@ -73,7 +74,9 @@ export function registerDebugTools(server: McpServer): void {
       ),
       localPlatform: z.enum(['windows', 'macos']).describe(
         'Platform of the machine where the user will run the rdb script. ' +
-        'Required — cannot be inferred because the MCP server runs in Docker. ' +
+        (getDeploymentMode() === 'local'
+          ? 'This server runs on your own machine, so pick to match your own OS. '
+          : 'Required — cannot be inferred because the MCP server runs in Docker. ') +
         'Determines the download URL, script format (.ps1 vs .sh), and binary name.'
       ),
       devicePlatform: z.enum(['android', 'ios']).optional().describe(

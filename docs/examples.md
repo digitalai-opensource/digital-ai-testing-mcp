@@ -10,7 +10,7 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 > a container. Local file paths must be mounted as Docker volumes (e.g. `-v /host/builds:/builds`) and
 > referenced by their container path (`/builds/MyApp.ipa`). Use `upload_application_from_url` to avoid
 > this — provide a direct-download URL accessible from the server's network instead. **If installed via
-> the [npm package](../README.md#option-c--install-via-npm) (Option C)** and run directly on your own
+> the [npm package](../README.md#option-a--install-via-npm-recommended) (Option A)** and run directly on your own
 > machine, none of this applies — local paths just work, no volume mount needed.
 
 ---

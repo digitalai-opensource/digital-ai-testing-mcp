@@ -3,7 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { downloadUsageReport, summarizeUsageReport, buildUsageReportPath } from '../api/usage-reports.js';
 import { validateUsageReportParams, checkUsageReportSizeGuard, MAX_UNSCOPED_RANGE_DAYS } from '../utils/usage-report-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
-import { SERVER_FS_DOWNLOAD_NOTICE, SERVER_FS_OUTPUT_PARAM } from '../utils/locality.js';
+import { serverFsDownloadNotice, serverFsOutputParam, localPlatformParamNotice } from '../utils/locality.js';
+import { getDeploymentMode } from '../utils/deployment-mode.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
@@ -59,14 +60,14 @@ export function registerUsageReportTools(server: McpServer): void {
       '(measured live: ~27 MB for one unfiltered month of License Usage, ~6.4 MB for one unfiltered week of Device ' +
       `Reservations) — beyond ${MAX_UNSCOPED_RANGE_DAYS} days with no project/user filter, a size guard blocks the ` +
       'download until you narrow the request or pass confirmLargeExport: true.' +
-      SERVER_FS_DOWNLOAD_NOTICE,
+      serverFsDownloadNotice(),
     {
       reportType: REPORT_TYPE_ENUM.describe(REPORT_TYPE_DESCRIPTION),
       startDate: z.string().describe(START_DATE_DESC),
       endDate: z.string().describe(END_DATE_DESC),
       projectId: z.number().optional().describe(PROJECT_ID_DESC),
       userId: z.number().optional().describe(USER_ID_DESC),
-      localPath: z.string().describe(SERVER_FS_OUTPUT_PARAM),
+      localPath: z.string().describe(serverFsOutputParam()),
       confirmLargeExport: z.boolean().optional().describe(CONFIRM_LARGE_DESC),
     },
     async ({ reportType, startDate, endDate, projectId, userId, localPath, confirmLargeExport }) => {
@@ -95,10 +96,13 @@ export function registerUsageReportTools(server: McpServer): void {
   server.tool(
     'get_usage_report_download_command',
     'Generates a ready-to-run curl or PowerShell command for downloading a usage-report CSV directly to the user\'s ' +
-      'local machine. Use this instead of download_usage_report when the MCP server runs in Docker/remote and the ' +
-      'written file would be inaccessible to the user — this is the preferred path for large exports, since the ' +
-      'download runs on the user\'s own network instead of proxying through the MCP process. Same date/filter/size-guard ' +
-      'rules as download_usage_report.\n\n' +
+      'local machine. This is the preferred path for large exports regardless of deployment, since the ' +
+      'download runs on the user\'s own network instead of proxying through the MCP process' +
+      (getDeploymentMode() === 'local'
+        ? '. It is also unnecessary purely for locality here — download_usage_report already writes directly to your own machine — ' +
+          'but still worth using for a large export to avoid holding the whole file in the MCP process\'s memory. '
+        : '; it also avoids download_usage_report writing to the server\'s own filesystem, which is inaccessible to the user when the MCP runs in Docker/remote. ') +
+      'Same date/filter/size-guard rules as download_usage_report.\n\n' +
       'WARNING: The generated command embeds the active access key in plaintext. Run immediately, do not save or share.',
     {
       reportType: REPORT_TYPE_ENUM.describe(REPORT_TYPE_DESCRIPTION),
@@ -109,7 +113,7 @@ export function registerUsageReportTools(server: McpServer): void {
       localPath: z.string().describe('Path on the user\'s local machine to save the CSV.'),
       localPlatform: z
         .enum(['windows', 'macos', 'linux'])
-        .describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+        .describe('Platform of the machine that will run the command. ' + localPlatformParamNotice()),
       confirmLargeExport: z.boolean().optional().describe(CONFIRM_LARGE_DESC),
       outputFormat: outputFormatParam,
     },

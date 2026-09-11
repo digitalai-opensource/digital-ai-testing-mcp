@@ -19,7 +19,8 @@ import { listActiveSessions } from '../api/webdriver.js';
 import { resolveDevice } from '../utils/device-resolver.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
-import { SERVER_FS_DOWNLOAD_NOTICE, SERVER_FS_OUTPUT_PARAM } from '../utils/locality.js';
+import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
+import { getDeploymentMode } from '../utils/deployment-mode.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatApplicationList } from '../utils/response-formatter.js';
@@ -194,9 +195,16 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'upload_application_file',
-    'Uploads an app binary (APK, IPA, AAB) from a local file path visible to the MCP server process. IMPORTANT: the MCP server runs in Docker — host machine paths (e.g. C:\\AppSec\\app.apk) are NOT accessible unless the directory is volume-mounted into the container. Mount the directory when starting the container (e.g. -v /host/apk-dir:/uploads) and pass the in-container path (e.g. /uploads/app.apk). If mounting is not possible, use upload_application_from_url instead with a direct artifact URL.',
+    'Uploads an app binary (APK, IPA, AAB) from a local file path visible to the MCP server process.' +
+    (getDeploymentMode() === 'local'
+      ? ' This server runs locally via the npm package, so a normal path on your own machine (e.g. "C:\\Downloads\\app.apk" or "/Users/you/Downloads/app.apk") works directly.'
+      : ' IMPORTANT: the MCP server runs in Docker — host machine paths (e.g. C:\\AppSec\\app.apk) are NOT accessible unless the directory is volume-mounted into the container. Mount the directory when starting the container (e.g. -v /host/apk-dir:/uploads) and pass the in-container path (e.g. /uploads/app.apk). If mounting is not possible, use upload_application_from_url instead with a direct artifact URL.'),
     {
-      filePath: z.string().describe('Absolute path inside the MCP container (not the host path). Volume-mount the directory first. Example: /uploads/MyApp.apk'),
+      filePath: z.string().describe(
+        getDeploymentMode() === 'local'
+          ? 'Absolute path to the binary on your own machine. Example: "C:\\Downloads\\MyApp.apk" or "/Users/you/Downloads/MyApp.apk".'
+          : 'Absolute path inside the MCP container (not the host path). Volume-mount the directory first. Example: /uploads/MyApp.apk'
+      ),
       uniqueName: z.string().optional().describe('A short unique alias for this app (optional).'),
       camera: z.boolean().optional().describe('Enable camera support instrumentation.'),
       touchId: z.boolean().optional().describe('Enable Touch ID support (iOS).'),
@@ -223,9 +231,11 @@ export function registerApplicationTools(server: McpServer): void {
       const { filePath, installAttributesMDM, ...rest } = params;
 
       // Detect host-machine paths that are unreachable inside the Docker container.
+      // Running locally via the npm package, the server's filesystem IS the host
+      // machine's — these paths are exactly what's expected, so skip the check.
       const isWindowsHostPath = /^[A-Za-z]:[\\\/]/.test(filePath);
       const isHostHomePath = /^\/(Users|home|root)\//.test(filePath);
-      if (isWindowsHostPath || isHostHomePath) {
+      if (getDeploymentMode() !== 'local' && (isWindowsHostPath || isHostHomePath)) {
         return {
           content: [{ type: 'text', text: JSON.stringify({
             error: 'HOST_PATH_UNREACHABLE',
@@ -319,8 +329,8 @@ export function registerApplicationTools(server: McpServer): void {
   server.tool(
     'get_application_upload_command',
     'Generates a ready-to-run curl or PowerShell command for uploading an app binary directly from the user\'s local machine to the Digital.ai platform. ' +
-    'The MCP server itself does not handle the binary — the user runs the generated command locally so the file never passes through the Docker container. ' +
-    'Use this instead of upload_application_file when the binary is on a local machine and volume-mounting is not practical.\n\n' +
+    'The MCP server itself does not handle the binary — the user runs the generated command locally so the file never passes through the container. ' +
+    commandGeneratorNotice('upload_application_file', 'upload') + '\n\n' +
     'WARNING: The generated command embeds the active access key in plaintext. ' +
     'Instruct the user to run it immediately and not save or share the output.',
     {
@@ -329,9 +339,7 @@ export function registerApplicationTools(server: McpServer): void {
         'Examples: "C:\\\\Downloads\\\\MyApp.apk" (Windows), "/Users/joe/Downloads/MyApp.ipa" (macOS).'
       ),
       localPlatform: z.enum(['windows', 'macos', 'linux']).describe(
-        'Platform of the machine where the command will be run. ' +
-        '"windows" produces both a Git Bash curl command and a PowerShell alternative. ' +
-        '"macos"/"linux" produce a bash curl command. Cannot be inferred — the MCP runs in Docker.'
+        'Platform of the machine where the command will be run. ' + localPlatformParamNotice()
       ),
       uniqueName: z.string().optional().describe('Short unique alias to assign to the uploaded app.'),
       project: z.string().optional().describe(
@@ -819,10 +827,10 @@ export function registerApplicationTools(server: McpServer): void {
 
   server.tool(
     'extract_app_language_files',
-    'Downloads the localization/language files from an app as a ZIP archive. Useful for reviewing or auditing app translations. APK and IPA only.' + SERVER_FS_DOWNLOAD_NOTICE,
+    'Downloads the localization/language files from an app as a ZIP archive. Useful for reviewing or auditing app translations. APK and IPA only.' + serverFsDownloadNotice(),
     {
       applicationId: z.number().describe('The numeric application ID (APK or IPA only).'),
-      localPath: z.string().describe(SERVER_FS_OUTPUT_PARAM),
+      localPath: z.string().describe(serverFsOutputParam()),
     },
     async ({ applicationId, localPath }) => {
       const pathErr = validateOutputPath(localPath);
@@ -846,12 +854,12 @@ export function registerApplicationTools(server: McpServer): void {
   server.tool(
     'get_app_language_files_download_command',
     'Generates a ready-to-run curl or PowerShell command for downloading an app\'s localization/language-file ZIP directly to the user\'s local machine. ' +
-    'Use this instead of extract_app_language_files when the MCP server runs in Docker/remote and the written file would be inaccessible to the user. APK and IPA only.\n\n' +
+    commandGeneratorNotice('extract_app_language_files', 'download') + ' APK and IPA only.\n\n' +
     'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
     {
       applicationId: z.number().describe('The numeric application ID (APK or IPA only).'),
       localPath: z.string().optional().default('language-files.zip').describe('Path on the user\'s local machine to save the ZIP. Default: "language-files.zip".'),
-      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. "windows" emits both Git Bash curl and PowerShell. Cannot be inferred — the MCP runs in Docker.'),
+      localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. ' + localPlatformParamNotice()),
       outputFormat: outputFormatParam,
     },
     async ({ applicationId, localPath, localPlatform, outputFormat }) => {

@@ -45,6 +45,7 @@ import { resolveDevice } from '../utils/device-resolver.js';
 import { getAllDevices } from '../api/devices.js';
 import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
 import { readFileSync, writeFileSync } from 'fs';
+import { getDeploymentMode } from '../utils/deployment-mode.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1192,7 +1193,11 @@ export function registerInspectionTools(server: McpServer): void {
       latitude: z.number().optional().describe('For set_geolocation.'),
       longitude: z.number().optional().describe('For set_geolocation.'),
       remotePath: z.string().optional().describe('For push_file/pull_file: absolute device path, e.g. "/sdcard/Download/fixture.png".'),
-      localPath: z.string().optional().describe('For push_file (source) / pull_file (destination): absolute path on the MCP SERVER\'s own filesystem, NOT your local machine. If the server runs in Docker/remote, push_file needs the file already present there (volume-mount), and pull_file writes to a location your local bash/file tools cannot see.'),
+      localPath: z.string().optional().describe(
+        getDeploymentMode() === 'local'
+          ? 'For push_file (source) / pull_file (destination): absolute path on your own machine — this server runs locally via the npm package, so a normal local path works directly.'
+          : 'For push_file (source) / pull_file (destination): absolute path on the MCP SERVER\'s own filesystem, NOT your local machine. If the server runs in Docker/remote, push_file needs the file already present there (volume-mount), and pull_file writes to a location your local bash/file tools cannot see.'
+      ),
     },
     async (args) => {
       const mobileErr = requireMobileSession(args.handle, 'device_control');

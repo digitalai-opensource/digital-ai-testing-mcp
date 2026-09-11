@@ -81,4 +81,4 @@ This is a deployment characteristic, not a fixable bug — the server and the ca
 
 When running the server with a shared/volume-mounted directory (e.g. bare-metal or a mounted Docker volume), the direct `download_*`/`upload_*` tools work normally against that shared path.
 
-This entire limitation is specific to container/remote deployment. When the server is installed via the npm package (README [Option C](../README.md#option-c--install-via-npm)) and run directly with Node.js on the user's own machine, the MCP server's filesystem **is** the caller's filesystem — `download_*`/`upload_*` tools work directly against local paths with no volume mount or command-generator workaround needed.
+This entire limitation is specific to container/remote deployment. When the server is installed via the npm package (README [Option A](../README.md#option-a--install-via-npm-recommended)) and run directly with Node.js on the user's own machine, the MCP server's filesystem **is** the caller's filesystem — `download_*`/`upload_*` tools work directly against local paths with no volume mount or command-generator workaround needed.
