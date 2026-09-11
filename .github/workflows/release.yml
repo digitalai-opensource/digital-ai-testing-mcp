@@ -9,15 +9,13 @@ on:
         description: 'Semver version to tag the image with (e.g. 1.0.0, no leading v). Leave blank to push latest tag only.'
         required: false
         type: string
-  # Called by auto-release.yml — releases created with GITHUB_TOKEN do not emit
-  # a `release: published` event (GitHub recursion prevention), so the auto
-  # workflow invokes this one directly with the version as an input.
-  workflow_call:
-    inputs:
-      version:
-        description: 'Semver version to tag the image with (e.g. 1.2.0, no leading v)'
-        required: true
-        type: string
+  # Dispatched by auto-release.yml (via `gh workflow run`, not a reusable
+  # `workflow_call`) — releases created there with GITHUB_TOKEN don't emit a
+  # `release: published` event (GitHub recursion prevention), so it triggers
+  # this workflow_dispatch directly instead. A nested workflow_call was tried
+  # first but did not propagate id-token permission to the npm job (confirmed
+  # live: ENEEDAUTH, OIDC exchange never attempted) — a top-level
+  # workflow_dispatch run gets its own full permission set with no such gap.
 
 jobs:
   docker:
@@ -39,8 +37,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Tag-ref runs (release event / dispatch on a tag) resolve semver tags from
-      # the ref; workflow_call runs come from a branch ref, so the version input
-      # supplies the tags instead.
+      # the ref; a workflow_dispatch run from a branch ref (e.g. auto-release.yml's
+      # dispatch) has no tag to resolve from, so the version input supplies the tags instead.
       - name: Compute version tags from input
         id: ver
         if: inputs.version != ''

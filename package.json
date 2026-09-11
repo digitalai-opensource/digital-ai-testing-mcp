@@ -1,6 +1,6 @@
 {
   "name": "digital-ai-testing-mcp",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "MCP server for Digital.ai Testing — device farm management, app lifecycle, and test automation",
   "type": "module",
   "main": "dist/index.js",
