@@ -72,6 +72,8 @@ On affected devices, use `open_mobile_studio` instead of the uiautomator dump pa
 
 ## 15. Local File I/O Runs on the MCP Server's Filesystem, Not Yours
 
+**Applies only to Docker/remote deployment ([Option B or C](../README.md#installation)) — not the recommended [npm install](../README.md#option-a--install-via-npm-recommended) (Option A).** Running the server directly with Node.js on your own machine, its filesystem **is** your filesystem — `download_*`/`upload_*` tools work directly against local paths, no workaround needed. Set `MCP_DEPLOYMENT_MODE=local` (see [Configuration](../README.md#configuration)) and every affected tool's description reflects this automatically. The rest of this section describes the Docker/remote case only.
+
 Every tool that reads or writes a local file path operates on the **MCP server process's own filesystem**. In the published Docker image (or any remote deployment), that filesystem is the container's — **not** the caller's machine, and not visible to the agent's shell/file tools. A `download_*` tool that reports success has written the file *inside the container*; an `upload_*` tool reads from *inside the container*. This was the root cause of the v47 attachment-download failure: paths either validated against POSIX rules and wrote to an unreachable container path, or were rejected as "not absolute" when given a Windows path.
 
 This is a deployment characteristic, not a fixable bug — the server and the caller's shell do not share a filesystem unless a directory is explicitly volume-mounted. Two mitigations are built in:
@@ -80,5 +82,3 @@ This is a deployment characteristic, not a fixable bug — the server and the ca
 - **Inline text for logs.** `get_test_log` returns Appium/device/ws log content directly in the tool response — no file, no command — which covers the most common diagnostic need without touching a filesystem at all.
 
 When running the server with a shared/volume-mounted directory (e.g. bare-metal or a mounted Docker volume), the direct `download_*`/`upload_*` tools work normally against that shared path.
-
-This entire limitation is specific to container/remote deployment. When the server is installed via the npm package (README [Option A](../README.md#option-a--install-via-npm-recommended)) and run directly with Node.js on the user's own machine, the MCP server's filesystem **is** the caller's filesystem — `download_*`/`upload_*` tools work directly against local paths with no volume mount or command-generator workaround needed.
