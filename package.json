@@ -4,6 +4,23 @@
   "description": "MCP server for Digital.ai Testing — device farm management, app lifecycle, and test automation",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "digital-ai-testing-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "resources/boilerplate"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/digitalai-opensource/digital-ai-testing-mcp.git"
+  },
+  "homepage": "https://github.com/digitalai-opensource/digital-ai-testing-mcp#readme",
+  "bugs": "https://github.com/digitalai-opensource/digital-ai-testing-mcp/issues",
+  "license": "Apache-2.0",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
