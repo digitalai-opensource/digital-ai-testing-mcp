@@ -861,14 +861,16 @@ get_test_report(testId: 69)
 get_test_log(uuid: "…", logType: "appium")
 
 # 4. Pull the binary artifacts (session video .mp4, full ZIP) to YOUR machine
-#    when the server runs in Docker/remote
+#    — only needed if the server runs in Docker/remote (not the npm install)
 get_test_attachments_download_command(uuid: "…", localPlatform: "macos")
   → a curl command you run locally; the file never transits the container
 ```
 
-### Local File Transfer (Docker / remote deployments)
+### Local File Transfer (Docker / remote deployments only)
 
-Any tool that reads or writes a local file path operates on the **MCP server's own filesystem** — which, in the published Docker image or a remote deployment, is **not** your machine. A `download_*` tool writes into the container; an `upload_*` tool reads from it. Neither is reachable from your local shell unless you volume-mount a shared directory.
+**If you installed via the recommended [npm package](#option-a--install-via-npm-recommended) (Option A) and run the server on your own machine, skip this section** — `download_*`/`upload_*` tools already read/write your local filesystem directly, no workaround needed.
+
+The rest of this section applies only to Docker/remote deployment (Option B or C). There, any tool that reads or writes a local file path operates on the **MCP server's own filesystem** — which, in the published Docker image or a remote deployment, is **not** your machine. A `download_*` tool writes into the container; an `upload_*` tool reads from it. Neither is reachable from your local shell unless you volume-mount a shared directory.
 
 For those deployments, every file-transfer tool has a **command-generator sibling** that emits a `curl` / PowerShell command you run locally, so the bytes move directly between your machine and the platform — never through the container:
 
@@ -961,7 +963,7 @@ On Windows this usually means the `--env-file` path was stored with backslashes 
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 180) and active profile
+1. get_server_info           — confirm tool count (expect 191) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -971,7 +973,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 180,
+  "registeredToolCount": 191,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
@@ -979,13 +981,17 @@ Run this sequence:
 }
 ```
 
-If `ready` is `false`, `missingRead` and `missingWrite` list exactly which tools are absent. The most common cause is a stale Docker image — rebuild:
+If `ready` is `false`, `missingRead` and `missingWrite` list exactly which tools are absent. The most common cause is a stale build — update it:
 
 ```bash
-docker build -t digital-ai-testing-mcp:latest .
+# npm install (Option A)
+npm install -g digital-ai-testing-mcp@latest
+
+# Docker (Option B/C)
+docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest   # or: docker build -t digital-ai-testing-mcp:latest .
 ```
 
-The server also logs a readiness check at startup (visible in Docker logs): `Workflow readiness: all workflows ready ✓`, or `⚠️ DEGRADED: create_poc — missing: ...` when tools are absent.
+The server also logs a readiness check at startup (visible in your terminal, or `docker logs`/your AI client's MCP server logs if running in a container): `Workflow readiness: all workflows ready ✓`, or `⚠️ DEGRADED: create_poc — missing: ...` when tools are absent.
 
 ---
 
