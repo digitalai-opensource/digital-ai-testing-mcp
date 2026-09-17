@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { getApplicationInfo } from '../api/applications.js';
@@ -24,7 +25,8 @@ interface BoilerplateFile {
   isInstructions?: boolean;
 }
 
-const BOILERPLATE_DIR = join(process.cwd(), 'resources', 'boilerplate');
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const BOILERPLATE_DIR = join(PACKAGE_ROOT, 'resources', 'boilerplate');
 
 const PLATFORM_DIR: Record<Platform, string> = {
   android: 'Android-Native',
