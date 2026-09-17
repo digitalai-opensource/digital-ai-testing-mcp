@@ -120,8 +120,21 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
     issues.push({ severity, label, detail });
 
   // 1. Unfilled angle-bracket placeholders the scaffold emits, e.g. <resource-id from get_element_tree>, <value>, <visible text>.
-  const angle = content.match(/<[^>\n]*(resource-id|selector|element|value|visible text|udid|enter |your )[^>\n]*>/gi);
-  if (angle) add('high', 'placeholder selectors', `Unreplaced placeholder token(s): ${[...new Set(angle)].slice(0, 4).join(', ')}`);
+  // Only flag genuine placeholder phrasing — not bare single-token identifiers like Java/TS generic
+  // type parameters (`AndroidDriver<AndroidElement>`, `List<Value>`), which contain the same keyword
+  // substrings but aren't placeholders.
+  const PLACEHOLDER_KEYWORDS = /\b(resource-id|selector|element|value|visible text|udid|enter|your)\b/i;
+  const BARE_PLACEHOLDER_WORDS = new Set(['resource-id', 'selector', 'element', 'value', 'udid']);
+  const angleCandidates = content.match(/<[^>\n]+>/g) || [];
+  const angle = angleCandidates.filter((m) => {
+    const inner = m.slice(1, -1).trim();
+    if (!PLACEHOLDER_KEYWORDS.test(inner)) return false;
+    // A single token with no whitespace is only a placeholder if it's an exact, lowercase, known
+    // placeholder word — otherwise it's a bare identifier (a generic type parameter, a class name, etc.).
+    if (!/\s/.test(inner)) return BARE_PLACEHOLDER_WORDS.has(inner);
+    return true;
+  });
+  if (angle.length) add('high', 'placeholder selectors', `Unreplaced placeholder token(s): ${[...new Set(angle)].slice(0, 4).join(', ')}`);
 
   // 2. The deliberate scaffold fail-guard / "not a real test" markers left in place.
   if (/raise NotImplementedError|PLACEHOLDER TEST BODY|NOT A RUNNABLE TEST|NOT A FINISHED TEST|Replace this placeholder/i.test(content)) {

@@ -237,6 +237,21 @@ describe('validate_test_script (v43) flags fabricated/placeholder tests', () => 
     assert.notEqual(res.isError, true, `expected pass, got: ${textOf(res).slice(0, 200)}`);
     assert.match(textOf(res), /"verdict":"pass"|PASS/);
   });
+
+  it('does not flag Java generic type parameters as placeholder selectors', async () => {
+    const clean = [
+      'public class LoginTest {',
+      '    private AndroidDriver<AndroidElement> driver;',
+      '    void test() {',
+      '        List<Value> results = new ArrayList<>();',
+      '        driver.findElement(By.id("com.samsung.android.dialer:id/digits")).click();',
+      '    }',
+      '}',
+    ].join('\n');
+    const res = await callTool('validate_test_script', { scriptContent: clean });
+    assert.notEqual(res.isError, true, `expected pass, got: ${textOf(res).slice(0, 200)}`);
+    assert.doesNotMatch(textOf(res), /placeholder selectors/);
+  });
 });
 
 describe('Upload tools reject unsafe input paths before reading any file', () => {
