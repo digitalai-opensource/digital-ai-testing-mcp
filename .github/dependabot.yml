@@ -8,6 +8,11 @@ updates:
     schedule:
       interval: "weekly"       # opens PRs every Monday
     open-pull-requests-limit: 5 # max open PRs at once to avoid noise
+    ignore:
+      # typescript-eslint does not support TS 7.x yet ("typescript-eslint does not
+      # support TS 7.0"), so `npm run lint` fails. Remove once it ships TS 7 support.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "npm"
