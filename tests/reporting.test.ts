@@ -20,7 +20,12 @@ describe('Reporting API', () => {
       assert.ok(typeof r.uuid === 'string', 'uuid should be a string');
       assert.ok(typeof r.name === 'string', 'name should be a string');
       assert.ok(['Passed', 'Failed', 'Incomplete'].includes(r.status), `Unexpected status: ${r.status}`);
-      assert.ok(typeof r.duration === 'number', 'duration should be a number');
+      // duration is `number | null` (see TestReport): invalid/errored/in-progress reports may have none,
+      // but a finished Passed/Failed run must carry one.
+      assert.ok(r.duration == null || typeof r.duration === 'number', `duration should be a number or null/missing, got ${typeof r.duration}`);
+      if (r.status === 'Passed' || r.status === 'Failed') {
+        assert.ok(typeof r.duration === 'number', `${r.status} report ${r.uuid} should have a numeric duration`);
+      }
     }
   });
 
