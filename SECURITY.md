@@ -63,7 +63,7 @@ When run via Docker (the recommended deployment), the container has no access to
 
 ### Dependency Audit
 
-Runtime dependencies are minimal (Axios, dotenv, Zod, the MCP SDK). Development dependencies include Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies. No known findings are currently tracked.
+Runtime dependencies are minimal (the MCP SDK, Axios, adm-zip, dotenv, form-data, Zod). Development dependencies include Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies. No known findings are currently tracked.
 
 ---
 
