@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "nodemon --exec ts-node --esm src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "lint": "eslint src/**/*.ts tests/**/*.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -60,8 +60,6 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "eslint": "^10.8.1",
-    "nodemon": "^3.0.0",
-    "ts-node": "^10.9.0",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0",
