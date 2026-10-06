@@ -909,7 +909,7 @@ Two further guards run before any request leaves the server:
 ```bash
 npm install
 npm run build    # compile TypeScript to dist/
-npm run dev      # nodemon + ts-node for live reload
+npm run dev      # tsx watch for live reload
 ```
 
 **Running tests** — most suites require a live `.env` with valid credentials and call the real Digital.ai API. The exception is `test:tools`, which exercises registered tool handlers (guards, auth gates, path validation) through an in-memory MCP transport with no live API access:
