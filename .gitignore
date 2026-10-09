@@ -28,6 +28,8 @@ Thumbs.db
 # Test artifacts
 tests/fixtures/
 coverage/
+# Fidelity eval output — transcripts contain tenant data (keys are redacted, but report names, users and devices are not)
+fidelity-results/
 
 # Claude Code local state
 .claude/
@@ -38,6 +40,9 @@ coverage/
 # Developer guide — contains internal implementation notes not intended for public distribution.
 # Share manually with developer workstations; not needed by the MCP runtime.
 CLAUDE.md
+
+# Remediation Reports from the UAT Test Tooling
+reports/
 
 # Docs — only the customer-facing docs ship with the product (the README links
 # into each); everything else (gap analyses, UAT suite, API mapping, publishing

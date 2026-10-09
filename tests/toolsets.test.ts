@@ -112,6 +112,10 @@ describe('selection parsing and module coverage', () => {
     assert.equal(s.all, false);
     assert.deepEqual([...s.toolsets].sort(), ['inspection', 'reporting']);
     assert.deepEqual(s.unknown, ['bogus']);
+    const core = parseToolsetSelection('core');
+    assert.equal(core.all, false);
+    assert.deepEqual([...core.toolsets], []);
+    assert.deepEqual(core.unknown, [], '"core" is a valid keyword, not an unknown toolset');
   });
 
   it('every tool module registered in src/index.ts belongs to exactly one toolset (or the core)', () => {

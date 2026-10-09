@@ -73,7 +73,12 @@ export function parseToolsetSelection(raw: string | undefined): Selection {
   if (tokens.length === 0 || tokens.includes('all')) return { all: true, toolsets: new Set(Object.keys(TOOLSETS)), unknown: [] };
   const toolsets = new Set<string>();
   const unknown: string[] = [];
-  for (const t of tokens) (TOOLSETS[t] ? toolsets.add(t) : unknown.push(t));
+  // "core" = only the always-loaded core in full (every other tool is a placeholder) — the maximum-savings setting.
+  for (const t of tokens) {
+    if (t === 'core') continue;
+    if (TOOLSETS[t]) toolsets.add(t);
+    else unknown.push(t);
+  }
   return { all: false, toolsets, unknown };
 }
 

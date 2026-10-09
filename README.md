@@ -227,7 +227,7 @@ docker build -t digital-ai-testing-mcp:latest .
 | `MCP_DEPLOYMENT_MODE` | Optional | `docker` | `docker` (default) or `local` — set to `local` when running via the npm package ([Option A](#option-a--install-via-npm-recommended)) so tool descriptions and upload/download behavior reflect that the server's filesystem is your own machine, not a container's |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
-| `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`). See [Toolsets](#toolsets-reducing-context-size) |
+| `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
 
 Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure named profiles for multi-project or multi-environment use. See [Access Keys](#access-keys) and `.env.example` for examples.
 
