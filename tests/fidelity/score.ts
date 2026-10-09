@@ -60,7 +60,12 @@ export function parseTranscript(jsonl: string): Trajectory {
         const call = byId.get(b.tool_use_id)!;
         const text = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '');
         call.error = b.is_error === true;
-        call.denied = call.error && /requested permissions to use|permission/i.test(text) && /haven't granted|not granted|denied/i.test(text);
+        // Denied = refused by the harness: a permission denial for a side-effecting MCP tool, or a built-in tool
+        // (Bash, Read, Write…) that --tools "" removed ("No such tool available … disabled for this session").
+        call.denied = call.error && (
+          (/requested permissions to use|permission/i.test(text) && /haven't granted|not granted|denied/i.test(text)) ||
+          /No such tool available|is disabled for this session/i.test(text)
+        );
       }
     }
   }
@@ -81,7 +86,8 @@ export type Check =
   | { kind: 'noCallWhere'; tool: string; where: (input: Record<string, unknown>) => boolean; label: string; soft?: boolean }
   | { kind: 'calledWhere'; tool: string; where: (input: Record<string, unknown>) => boolean; label: string; soft?: boolean }
   | { kind: 'textMatches'; re: RegExp; label: string; soft?: boolean }
-  | { kind: 'textNotMatches'; re: RegExp; label: string; soft?: boolean }
+  /** ignoreNegated: skip sentences/lines that negate (e.g. 'a 165 SI delta does not mean "rendered 165ms"'). */
+  | { kind: 'textNotMatches'; re: RegExp; label: string; soft?: boolean; ignoreNegated?: boolean }
   | { kind: 'noFabricatedCode'; label: string; soft?: boolean }
   | { kind: 'askedUser'; label: string; soft?: boolean }
   /** Passes when ANY of the inner checks passes — for situations with more than one correct response. */
@@ -134,7 +140,10 @@ function evaluateOne(t: Trajectory, c: Check): CheckResult {
       case 'textMatches':
         return { label: c.label, soft, pass: c.re.test(t.allText), detail: c.re.test(t.allText) ? 'matched' : `no match for ${c.re}` };
       case 'textNotMatches': {
-        const m = t.allText.match(c.re);
+        const text = c.ignoreNegated
+          ? t.allText.split(/(?<=[.!?])\s+|\n/).filter((s) => !/\b(not|never|no longer|instead of|rather than)\b|n't\b/i.test(s)).join('\n')
+          : t.allText;
+        const m = text.match(c.re);
         return { label: c.label, soft, pass: !m, detail: m ? `found: "${m[0].slice(0, 120)}"` : 'not present' };
       }
       case 'noFabricatedCode': {

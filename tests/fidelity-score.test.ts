@@ -6,7 +6,7 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import { parseTranscript, evaluate, scenarioPassed, codeBlocks, type Check } from './fidelity/score.js';
-import { SCENARIOS } from './fidelity/scenarios.js';
+import { SCENARIOS, SI_WITH_TIME_UNITS } from './fidelity/scenarios.js';
 import { SAFE_TOOLS } from './fidelity/safety.js';
 import { REGISTERED_TOOLS } from '../src/tools/meta-tools.js';
 
@@ -106,6 +106,18 @@ describe('evaluate', () => {
     assert.match(r.detail, /asks/);
     const [none] = evaluate(traj([done('Done.')]), [{ kind: 'either', label: 'x', checks: [{ kind: 'askedUser', label: 'asks' }] }]);
     assert.equal(none.pass, false);
+  });
+
+  it('SI_WITH_TIME_UNITS catches table cells and threshold columns, not correct SI reporting', () => {
+    // Verbatim shape from the core-mode failure on 2026-10-09.
+    const bad = '| Model | n | Avg SI | Min | Max | Over 2s |\n|---|---|---|---|---|---|\n| **iPhone XR** | 12 | **4,450 ms** | 3,425 | 7,750 | 12 / 12 |';
+    assert.match(bad, SI_WITH_TIME_UNITS);
+    assert.match('Speed Index target: flag anything over 2s', SI_WITH_TIME_UNITS);
+    // ignoreNegated keeps correct explanations from failing the check, while the table above still fails it.
+    const check = { kind: 'textNotMatches' as const, re: SI_WITH_TIME_UNITS, label: 'si', ignoreNegated: true };
+    assert.equal(evaluate(traj([say('A 165 SI delta does not mean "rendered 165ms".')]), [check])[0].pass, true);
+    assert.equal(evaluate(traj([say(bad)]), [check])[0].pass, false);
+    assert.doesNotMatch('| Model | Avg SI |\n|---|---|\n| iPhone XR | 4,450 SI |\nSpeed Index is a composite score, not a time.', SI_WITH_TIME_UNITS);
   });
 
   it('textNotMatches catches Speed Index reported in milliseconds', () => {
