@@ -817,6 +817,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           'Add a Deque Axe DevTools accessibility scan to the generated test. ' +
           'When enabled: (1) sets appium:automationName to AxeUiAutomator2 (Android) or AxeXCUITest (iOS) ' +
           'and appiumVersion to "2.16.2" in setUp — required for the Axe integration to function; ' +
+          'do NOT raise appiumVersion to 3.3.0 or later — the Axe driver is unavailable on Appium Server >=3.3.0 (platform known issue, 26.6/26.7); ' +
           '(2) injects driver.executeScript("mobile: axeScan", settings) into the test body after the test steps. ' +
           'The Axe API key is read from AXE_DEVTOOLS_API_KEY in the MCP environment; if not set, a placeholder is used. ' +
           'Scan results appear in the Axe DevTools Mobile dashboard. ' +

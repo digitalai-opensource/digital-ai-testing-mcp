@@ -406,6 +406,8 @@ export interface TestReport {
   errorCategory?: string;
   errorClassification?: string;
   errorDetail?: string;
+  /** True when the run produced an Axe accessibility report. LIST records only — the single-record GET omits it. */
+  accessibility_report?: boolean;
   /** device.pool.actual (platform 26.7+): "shared" or "dedicated" — mobile automation tests only. */
   devicePool?: string;
   /** Set when fetched by UUID (/reporter/api/reports/{uuid}). */

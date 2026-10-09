@@ -273,6 +273,9 @@ export function formatTestReport(report: TestReport): string {
   if (report.projectName || report.devicePool) {
     lines.push(`   ${[report.projectName && `Project: ${report.projectName}`, report.devicePool && `Device pool: ${report.devicePool}`].filter(Boolean).join(' | ')}`);
   }
+  if (report.accessibility_report) {
+    lines.push('   Accessibility: Axe report attached (view it in the report UI)');
+  }
   if (report.subTestCount != null && report.subTestCount > 1) {
     lines.push(`   Sub-tests: ${report.subTestCount} (${report.failedSubTestCount ?? 0} failed)`);
   }
