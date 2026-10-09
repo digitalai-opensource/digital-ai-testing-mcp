@@ -27,6 +27,7 @@ import {
   formatProjectTestSummary,
 } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { countsFromPivotRow, tallyStatuses, passRate, statusOutcome, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
 
 export function registerReportingTools(server: McpServer): void {
   // ─── get_test_report ───────────────────────────────────────────────────────
@@ -822,7 +823,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'get_project_test_summary',
-    'Return a human-readable pass/fail summary for a project. Overall status counts (Passed/Failed/Incomplete) are all-time totals — the reporter API does not support date-range filtering for aggregate counts. Top failing test names are filtered to the requested time window client-side from the most recent 200 failures.',
+    'Return a pass/fail summary for a project. Status counts cover all six reporter statuses (Passed, Failed, Error, Incomplete, Skipped, Healed) and are all-time totals — the reporter API does not support date-range filtering for aggregate counts. Error = the test ended abnormally (crash, infrastructure, session ended early — since platform 26.9 these are no longer Incomplete). Pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error). Top failing and top erroring test names are filtered to the requested time window client-side from the most recent 200 of each.',
     {
       startDate: z
         .string()
@@ -841,66 +842,59 @@ export function registerReportingTools(server: McpServer): void {
         const defaultStart = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
         const resolvedStart = startDate ?? defaultStart;
 
-        // Fetch per-status counts + recent failures in parallel.
-        // The grouped endpoint returns empty data[] without grouping keys, so we
-        // use per-status listTests calls with returnTotalCount which reliably works.
-        const [passedResult, failedResult, incompleteResult] = await Promise.all([
-          listTests(
-            { limit: 1, page: 1, returnTotalCount: true, filter: [{ property: 'status', operator: '=', value: 'Passed' }] },
-            projectId, projectName
-          ),
+        // All six status counts in ONE call: grouped with pivotBy ["status"] and no groupBy returns a single row
+        // { passedCount, failedCount, errorCount, incompleteCount, skippedCount, healedCount, _count_ } (verified live
+        // 2026-10-09). The previous per-status listTests calls only asked for Passed/Failed/Incomplete, so Error,
+        // Skipped and Healed never reached the total — and since 26.9 every crash/infrastructure abort is Error.
+        // Recent Failed and Error records are fetched alongside for the windowed top-N names.
+        const recent = (status: 'Failed' | 'Error') =>
           listTestsSortedDesc(
-            { limit: 200, page: 1, returnTotalCount: true, filter: [{ property: 'status', operator: '=', value: 'Failed' }] },
+            { limit: 200, page: 1, returnTotalCount: false, filter: [{ property: 'status', operator: '=', value: status }] },
             projectId, projectName
-          ),
-          listTests(
-            { limit: 1, page: 1, returnTotalCount: true, filter: [{ property: 'status', operator: '=', value: 'Incomplete' }] },
-            projectId, projectName
-          ),
+          );
+        const [grouped, failedResult, errorResult] = await Promise.all([
+          getGroupedTests({ pivotBy: ['status'] }, projectId, projectName) as Promise<{ data?: Array<Record<string, unknown>> }>,
+          recent('Failed'),
+          recent('Error'),
         ]);
+        const counts = countsFromPivotRow(grouped?.data?.[0]);
 
-        const passed = passedResult.count ?? 0;
-        const failed = failedResult.count ?? 0;
-        const incomplete = incompleteResult.count ?? 0;
-        const total = passed + failed + incomplete;
-
-        // Apply date window client-side on the most recent 200 failures
+        // Apply the date window client-side on the most recent 200 of each
         // (start_time filter via API key triggers CSRF — filter locally instead).
         const endTs = endDate ? new Date(endDate).getTime() : Date.now();
         const startTs = new Date(resolvedStart).getTime();
-        const windowedFailures = (failedResult.data ?? []).filter((r) => {
-          const t = new Date(r.start_time).getTime();
-          return t >= startTs && t <= endTs;
-        });
+        const topNames = (records: TestReport[]) => {
+          const nameCounts: Record<string, number> = {};
+          for (const r of records) {
+            const t = new Date(r.start_time).getTime();
+            if (t >= startTs && t <= endTs) nameCounts[r.name] = (nameCounts[r.name] ?? 0) + 1;
+          }
+          return Object.entries(nameCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([name, count]) => `${name} (${count}x)`);
+        };
+        const topFailures = topNames(failedResult.data ?? []);
+        const topErrors = topNames(errorResult.data ?? []);
 
-        const nameCounts: Record<string, number> = {};
-        for (const r of windowedFailures) {
-          nameCounts[r.name] = (nameCounts[r.name] ?? 0) + 1;
-        }
-        const topFailures = Object.entries(nameCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([name, count]) => `${name} (${count}x)`);
-
-        const statusCounts = { Passed: passed, Failed: failed, Incomplete: incomplete };
         const windowLabel = endDate
           ? `${resolvedStart} → ${endDate}`
           : startDate
           ? `${resolvedStart} → now`
           : `last 48 hours`;
 
-        const passRate = total > 0 ? ((passed / total) * 100).toFixed(1) : '0.0';
+        const unknown = unknownStatusCount(counts);
         const structured = {
-          total,
-          passed,
-          failed,
-          incomplete,
-          passRate: parseFloat(passRate),
+          ...counts,
+          ...(unknown > 0 ? { otherStatus: unknown } : {}),
+          passRate: passRate(counts),
+          passRateBasis: PASS_RATE_BASIS,
           topFailures,
+          topErrors,
           window: windowLabel,
         };
 
-        return respond(outputFormat, structured, formatProjectTestSummary(statusCounts, total, windowLabel, topFailures));
+        return respond(outputFormat, structured, formatProjectTestSummary(counts, windowLabel, topFailures, topErrors));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -1103,17 +1097,17 @@ export function registerReportingTools(server: McpServer): void {
           return respond(outputFormat, { found: false }, `No executions found for test name containing "${testName}".`);
         }
 
-        const passed = runs.filter(r => r.status === 'Passed' || r.success).length;
-        const failed = runs.filter(r => r.status === 'Failed').length;
-        const other  = runs.length - passed - failed;
-        const passRate = runs.length > 0 ? ((passed / runs.length) * 100).toFixed(1) : '0.0';
+        // Classify by status, not `success` — success is false for Healed (verified live), true only for Passed.
+        const c = tallyStatuses(runs);
+        const passed = c.passed + c.healed;
+        const failed = c.failed;
+        const error  = c.error;
+        const other  = runs.length - passed - failed - error;
+        const rate = passRate(c);
 
-        // Sparkline: ✅ = Passed, ❌ = Failed, ⚠️ = other — newest last
-        const spark = [...runs].reverse().map(r => {
-          if (r.status === 'Passed' || r.success) return '✅';
-          if (r.status === 'Failed') return '❌';
-          return '⚠️';
-        }).join(' ');
+        // Sparkline: ✅ = Passed/Healed, ❌ = Failed, 💥 = Error, ⚠️ = other — newest last
+        const icon = (s: string) => (s === 'Error' ? '💥' : ({ pass: '✅', fail: '❌', other: '⚠️' } as const)[statusOutcome(s)]);
+        const spark = [...runs].reverse().map(r => icon(r.status)).join(' ');
 
         // Consecutive streak from the most recent run
         const latestStatus = runs[0].status;
@@ -1127,8 +1121,9 @@ export function registerReportingTools(server: McpServer): void {
         const structured = {
           testName: runs[0].name,
           runs: runs.length,
-          passed, failed, other,
-          passRate: parseFloat(passRate),
+          passed, failed, error, other,
+          passRate: rate,
+          passRateBasis: PASS_RATE_BASIS,
           latestStatus: runs[0].status,
           latestRun: runs[0].start_time,
           streak,
@@ -1142,8 +1137,8 @@ export function registerReportingTools(server: McpServer): void {
 
         const lines = [
           `📋 Stability report: "${runs[0].name}"`,
-          `   Runs examined: ${runs.length}  |  Pass rate: ${passRate}%  |  Latest: ${runs[0].status}${streakLabel}`,
-          `   ${passed} passed · ${failed} failed · ${other} other`,
+          `   Runs examined: ${runs.length}  |  Pass rate: ${rate == null ? 'n/a' : `${rate}%`}  |  Latest: ${runs[0].status}${streakLabel}`,
+          `   ${passed} passed · ${failed} failed · ${error} error · ${other} other`,
           ``,
           `   Trend (oldest → newest):`,
           `   ${spark}`,
@@ -1151,8 +1146,7 @@ export function registerReportingTools(server: McpServer): void {
           `   Most recent ${Math.min(5, runs.length)} runs:`,
           ...runs.slice(0, 5).map(r => {
             const dur = r.duration != null ? `${(r.duration / 1000).toFixed(1)}s` : 'n/a';
-            const icon = r.status === 'Passed' ? '✅' : r.status === 'Failed' ? '❌' : '⚠️';
-            return `     ${icon} ${r.status} — ${r.start_time} (${dur})`;
+            return `     ${icon(r.status)} ${r.status} — ${r.start_time} (${dur})`;
           }),
         ];
         return respond(outputFormat, structured, lines.join('\n'));
@@ -1189,8 +1183,9 @@ export function registerReportingTools(server: McpServer): void {
 
         const rows = Array.isArray(raw) ? raw : (raw.data ?? []);
 
-        // Build a map: testName → {Android: {passed, total}, iOS: {passed, total}}
-        type PlatformStat = { passed: number; total: number };
+        // Build a map: testName → {Android: {rate, total}, iOS: {rate, total}}. Rate uses the shared definition
+        // ((Passed+Healed)/(Passed+Healed+Failed+Error)) so a run that never reached a verdict doesn't count as a fail.
+        type PlatformStat = { rate: number; total: number };
         const map: Record<string, { Android?: PlatformStat; iOS?: PlatformStat }> = {};
 
         for (const row of rows) {
@@ -1198,11 +1193,9 @@ export function registerReportingTools(server: McpServer): void {
           const os   = String(row['device.os'] ?? '');
           if (!name || (os !== 'Android' && os !== 'iOS')) continue;
 
-          const passed = Number(row['passedCount'] ?? 0);
-          const total  = Number(row['_count_'] ?? (Number(row['passedCount'] ?? 0) + Number(row['failedCount'] ?? 0) + Number(row['incompleteCount'] ?? 0) + Number(row['errorCount'] ?? 0)));
-
+          const c = countsFromPivotRow(row);
           if (!map[name]) map[name] = {};
-          map[name][os as 'Android' | 'iOS'] = { passed, total };
+          map[name][os as 'Android' | 'iOS'] = { rate: passRate(c) ?? 0, total: c.total };
         }
 
         // Find divergent tests
@@ -1215,8 +1208,8 @@ export function registerReportingTools(server: McpServer): void {
           .map(([name, platforms]) => {
             const a = platforms.Android!;
             const i = platforms.iOS!;
-            const androidPct = a.total > 0 ? (a.passed / a.total) * 100 : 0;
-            const iosPct     = i.total > 0 ? (i.passed / i.total) * 100 : 0;
+            const androidPct = a.rate;
+            const iosPct     = i.rate;
             return {
               name,
               androidPassRate: parseFloat(androidPct.toFixed(1)),
@@ -1333,14 +1326,14 @@ export function registerReportingTools(server: McpServer): void {
           return d.toISOString().slice(0, 10);
         };
 
-        const buckets: Record<string, { total: number; passed: number; failed: number; other: number }> = {};
-        for (const r of records) {
-          const key = bucketKey(r.start_time);
-          if (!buckets[key]) buckets[key] = { total: 0, passed: 0, failed: 0, other: 0 };
-          buckets[key].total++;
-          if (r.status === 'Passed') buckets[key].passed++;
-          else if (r.status === 'Failed') buckets[key].failed++;
-          else buckets[key].other++;
+        const grouped: Record<string, Array<{ status?: string | null }>> = {};
+        for (const r of records) (grouped[bucketKey(r.start_time)] ??= []).push(r);
+        // passed = Passed + Healed; Error (abnormal end — crash/infrastructure, 26.9+) is its own column, not "other".
+        const buckets: Record<string, { total: number; passed: number; failed: number; error: number; other: number; passRate: number | null }> = {};
+        for (const [key, rs] of Object.entries(grouped)) {
+          const c = tallyStatuses(rs);
+          const passed = c.passed + c.healed;
+          buckets[key] = { total: c.total, passed, failed: c.failed, error: c.error, other: c.total - passed - c.failed - c.error, passRate: passRate(c) };
         }
 
         const sorted = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b));
@@ -1356,19 +1349,22 @@ export function registerReportingTools(server: McpServer): void {
             total: b.total,
             passed: b.passed,
             failed: b.failed,
+            error: b.error,
             other: b.other,
-            passRate: b.total > 0 ? parseFloat(((b.passed / b.total) * 100).toFixed(1)) : null,
+            passRate: b.passRate,
           })),
+          passRateBasis: PASS_RATE_BASIS,
         };
 
         const lines = [
           `📅 Test execution trend (${bucketBy === 'week' ? 'weekly' : 'daily'}, last ${lookbackDays} days — ${records.length} records scanned)\n`,
-          `  ${'Date'.padEnd(12)} ${'Total'.padStart(6)} ${'Passed'.padStart(7)} ${'Failed'.padStart(7)} ${'Pass%'.padStart(7)}`,
-          `  ${'─'.repeat(44)}`,
+          `  ${'Date'.padEnd(12)} ${'Total'.padStart(6)} ${'Passed'.padStart(7)} ${'Failed'.padStart(7)} ${'Error'.padStart(7)} ${'Pass%'.padStart(7)}`,
+          `  ${'─'.repeat(52)}`,
           ...sorted.map(([date, b]) => {
-            const pct = b.total > 0 ? ((b.passed / b.total) * 100).toFixed(1) : '—';
-            return `  ${date.padEnd(12)} ${String(b.total).padStart(6)} ${String(b.passed).padStart(7)} ${String(b.failed).padStart(7)} ${pct.padStart(7)}`;
+            const pct = b.passRate == null ? '—' : b.passRate.toFixed(1);
+            return `  ${date.padEnd(12)} ${String(b.total).padStart(6)} ${String(b.passed).padStart(7)} ${String(b.failed).padStart(7)} ${String(b.error).padStart(7)} ${pct.padStart(7)}`;
           }),
+          `\n  Passed includes Healed. Pass% = (Passed+Healed)/(Passed+Healed+Failed+Error).`,
         ];
         if (records.length >= maxRecords) {
           lines.push(`\n  ⚠️  Capped at ${maxRecords} records — increase maxRecords or reduce lookbackDays for a complete picture.`);

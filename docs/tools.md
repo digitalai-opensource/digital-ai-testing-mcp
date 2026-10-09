@@ -197,6 +197,8 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 
 ### Reporting
 
+Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipped, Healed. **Error** means the test ended abnormally (crash, infrastructure, session ended early); since platform 26.9 these are no longer reported as Incomplete. Every pass rate the summary tools report uses one definition: (Passed + Healed) / (Passed + Healed + Failed + Error). Incomplete and Skipped are excluded.
+
 | Tool | What it does | Admin Required? |
 |---|---|---|
 | `list_test_reports` | Search, filter, sort, and paginate test reports. See [Test Reporting Schema](../README.md#test-reporting-schema) for supported filters. | Any |
@@ -207,7 +209,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `get_test_stability_report` | Last N runs of a named test: pass rate, sparkline trend, and consecutive streak count | Any |
 | `get_cross_platform_divergence` | Tests passing on one OS but failing on the other, with configurable minimum run count and divergence threshold | Any |
 | `get_daily_execution_trend` | Execution counts and pass rates bucketed by day or week. Stops at `lookbackDays` or `maxRecords` (default 5,000; max 25,000), whichever comes first. | Any |
-| `get_project_test_summary` | All-time pass/fail totals and top failing tests in a time window | Any |
+| `get_project_test_summary` | All-time counts for all six statuses (Passed, Failed, Error, Incomplete, Skipped, Healed) and the top failing/erroring tests in a time window | Any |
 | `summarize_test_failures` | "Why are my tests failing?" — buckets failed tests by error classification/category (or name) in one call (e.g. "44 failures: 42 element_not_found"). Fetches per-test detail (N+1, capped by `maxReports`). | Any |
 | `get_failure_rate_by_app_version` | Pass/fail breakdown grouped by app version | Any |
 | `get_distinct_test_key_values` | Discover all distinct values recorded for a report metadata key | Any |
@@ -229,7 +231,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `list_test_views` | List all test view groups | Any |
 | `search_test_views` | Search and paginate test view groups | Any |
 | `get_test_view` | Get test view configuration detail | Any |
-| `get_test_view_summary` | Pass/fail/skip counts for a view | Any |
+| `get_test_view_summary` | Counts for all six statuses for a view, with its saved filter applied | Any |
 | `create_test_view` | Create a test view group | Cloud Admin |
 | `update_test_view` | Rename or toggle dashboard visibility | Cloud Admin |
 | `delete_test_view` | Delete a test view group | Cloud Admin |

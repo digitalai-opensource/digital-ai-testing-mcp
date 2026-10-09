@@ -212,12 +212,17 @@ export async function listTestsSortedDesc(
   const all: TestReport[] = [];
   let page = 1;
   let scanCapped = false;
+  // The scan is capped, so its length is NOT the total. When the caller asked for a total, take it from the server
+  // on page 1 (unsorted counts are fine) — reporting the capped scan length as `count` made get_project_test_summary
+  // print exactly "failed: 5000" for a tenant with 29k failures.
+  let serverTotal: number | undefined;
   while (true) {
     const batch = await listTests(
-      { ...request, limit: 500, page, sort: undefined, returnTotalCount: false },
+      { ...request, limit: 500, page, sort: undefined, returnTotalCount: page === 1 && request.returnTotalCount === true },
       projectId,
       projectName
     );
+    if (page === 1 && request.returnTotalCount === true && typeof batch.count === 'number') serverTotal = batch.count;
     const records = batch.data ?? [];
     all.push(...records);
     if (records.length < 500) break;
@@ -228,7 +233,7 @@ export async function listTestsSortedDesc(
     page++;
   }
   all.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  return { count: all.length, data: all.slice(0, limit), scanCapped };
+  return { count: serverTotal ?? all.length, data: all.slice(0, limit), scanCapped };
 }
 
 export type FailureGroupBy = 'errorClassification' | 'errorCategory' | 'name';

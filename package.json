@@ -53,7 +53,8 @@
     "test:reporting-sort": "vitest run tests/reporting-sort.test.ts",
     "test:boilerplate-templates": "vitest run tests/boilerplate-templates.test.ts",
     "test:test-orchestrator": "vitest run tests/test-orchestrator.test.ts",
-    "test:boilerplate-orchestration": "vitest run tests/boilerplate-orchestration.test.ts"
+    "test:boilerplate-orchestration": "vitest run tests/boilerplate-orchestration.test.ts",
+    "test:test-status": "vitest run tests/test-status.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

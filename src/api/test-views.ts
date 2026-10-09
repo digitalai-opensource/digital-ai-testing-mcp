@@ -46,10 +46,14 @@ export async function getTestViewSummary(
   filter?: Record<string, string>
 ): Promise<TestViewSummary> {
   try {
+    // Path is /{id}/summary. The `{id}:summary` form this used before is parsed by the server as the id itself and
+    // ALWAYS 400s ("For input string: \"52:summary\"") — verified live 2026-10-09. The filter must be a JSON MAP
+    // ({"device.os":"Android"}); the array filter form used by tests/list 500s here. The view's own saved filter is
+    // applied server-side on top of it.
     const params: Record<string, unknown> = {};
     if (filter) params['filter'] = JSON.stringify(filter);
     const res = await apiGet<{ data: TestViewSummary[] }>(
-      `/reporter/api/testView/${id}:summary`,
+      `/reporter/api/testView/${id}/summary`,
       params
     );
     if (!res.data || res.data.length === 0) {

@@ -1,4 +1,5 @@
 import { parseApiDate } from './timestamp.js';
+import { countsFromPivotRow, passRate, unknownStatusCount, type StatusCounts } from './test-status.js';
 import type {
   Device,
   DeviceReservation,
@@ -377,26 +378,33 @@ export function formatGroupedTestReports(result: unknown): string {
   return totalLine + [headerRow, divider, ...dataRows].join('\n');
 }
 
-export function formatProjectTestSummary(
-  statusCounts: Record<string, number>,
-  total: number,
-  timeWindow: string,
-  topFailures: string[]
-): string {
-  const passed = statusCounts['Passed'] ?? 0;
-  const failed = statusCounts['Failed'] ?? 0;
-  const incomplete = statusCounts['Incomplete'] ?? 0;
-  const passRate = total > 0 ? ((passed / total) * 100).toFixed(1) : '0.0';
+/** Status-count lines shared by the project and test-view summaries. Zero-count Skipped/Healed lines are omitted. */
+function statusCountLines(c: StatusCounts, indent: string): string[] {
+  const rate = passRate(c);
+  const other = unknownStatusCount(c);
+  return [
+    `${indent}✅ Passed:     ${c.passed}`,
+    ...(c.healed > 0 ? [`${indent}🩹 Healed:     ${c.healed}`] : []),
+    `${indent}❌ Failed:     ${c.failed}`,
+    `${indent}💥 Error:      ${c.error}`,
+    `${indent}⚠️  Incomplete: ${c.incomplete}`,
+    ...(c.skipped > 0 ? [`${indent}⏭️  Skipped:    ${c.skipped}`] : []),
+    ...(other > 0 ? [`${indent}❔ Other:      ${other}`] : []),
+    `${indent}Pass rate:    ${rate == null ? 'n/a' : `${rate}%`}  (Passed+Healed vs Failed+Error; Incomplete/Skipped excluded)`,
+  ];
+}
 
+export function formatProjectTestSummary(
+  counts: StatusCounts,
+  timeWindow: string,
+  topFailures: string[],
+  topErrors: string[] = []
+): string {
   const lines = [
     `📊 Project Test Summary`,
     ``,
-    `   All-time counts:`,
-    `     Total:      ${total}`,
-    `     ✅ Passed:   ${passed}`,
-    `     ❌ Failed:   ${failed}`,
-    `     ⚠️  Incomplete: ${incomplete}`,
-    `     Pass rate:  ${passRate}%`,
+    `   All-time counts (${counts.total} total):`,
+    ...statusCountLines(counts, '     '),
   ];
 
   if (topFailures.length > 0) {
@@ -404,6 +412,10 @@ export function formatProjectTestSummary(
     for (const name of topFailures) lines.push(`     • ${name}`);
   } else {
     lines.push(``, `   No failures found in window: ${timeWindow}`);
+  }
+  if (topErrors.length > 0) {
+    lines.push(``, `   Top erroring tests — ended abnormally (${timeWindow}):`);
+    for (const name of topErrors) lines.push(`     • ${name}`);
   }
 
   return lines.join('\n');
@@ -421,16 +433,8 @@ export function formatTestViewList(views: TestView[]): string {
 }
 
 export function formatTestViewSummary(summary: TestViewSummary): string {
-  const total = summary._count_;
-  const passRate = total > 0 ? ((summary.passedCount / total) * 100).toFixed(1) : '0.0';
-  return [
-    `📊 Test Results Summary (${total} total)`,
-    `  ✅ Passed:     ${summary.passedCount}`,
-    `  ❌ Failed:     ${summary.failedCount}`,
-    `  ⚠️  Incomplete: ${summary.incompleteCount}`,
-    `  ⏭️  Skipped:    ${summary.skippedCount}`,
-    `  Pass rate:    ${passRate}%`,
-  ].join('\n');
+  const counts = countsFromPivotRow(summary as unknown as Record<string, unknown>);
+  return [`📊 Test Results Summary (${counts.total} total)`, ...statusCountLines(counts, '  ')].join('\n');
 }
 
 export function formatBrowserList(browsers: Browser[]): string {
