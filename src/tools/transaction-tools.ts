@@ -265,8 +265,14 @@ export function registerTransactionTools(server: McpServer): void {
             totalUploadedBytes: group.reduce((s, t) => s + t.totalUploadedBytes, 0),
             totalDownloadedBytes: group.reduce((s, t) => s + t.totalDownloadedBytes, 0),
           }))
-          // Sort worst Speed Index first so regressions/outliers surface immediately
-          .sort((a, b) => (b.avgSpeedIndex ?? 0) - (a.avgSpeedIndex ?? 0));
+          // Sort worst Speed Index first so regressions/outliers surface immediately. Groups with no Speed Index (null)
+          // go strictly last — treating null as 0 interleaved them with real 0 values (UAT 2026-10-09).
+          .sort((a, b) => {
+            if (a.avgSpeedIndex == null && b.avgSpeedIndex == null) return 0;
+            if (a.avgSpeedIndex == null) return 1;
+            if (b.avgSpeedIndex == null) return -1;
+            return b.avgSpeedIndex - a.avgSpeedIndex;
+          });
 
         const structured = { groupBy, totalTransactions: txs.length, groups: aggregated };
 
