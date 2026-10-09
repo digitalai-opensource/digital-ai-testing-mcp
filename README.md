@@ -835,8 +835,8 @@ To diagnose a failure, list with `list_test_reports`, then call `get_test_report
 
 | Identifier | Source | How to retrieve |
 |---|---|---|
-| `test_id` | List results | `get_test_report(testId: N)` |
-| `uuid` | List results | No direct endpoint — look up via `test_id` |
+| `uuid` | List results, report URLs (`/reporter/video-report/<uuid>`) | `get_test_report(uuid: "...")` or `get_test_report(reportUrl: "...")` — preferred, globally unique |
+| `test_id` | List results | `get_test_report(testId: N)` — unique only within a project; the same number can be a different test in another project |
 | `report_api_id` | Returned by session-start tools | `get_test_by_report_id(reportApiId: "...")` — wait ~60 s after session close |
 
 **Examples:**

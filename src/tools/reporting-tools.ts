@@ -3,6 +3,7 @@ import type { TestReport } from '../types/digital-ai.js';
 import { z } from 'zod';
 import {
   getTestById,
+  getTestByUuid,
   getTestByReportApiId,
   listTests,
   listTestsSortedDesc,
@@ -27,6 +28,7 @@ import {
   formatProjectTestSummary,
 } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { parseReportRef } from '../utils/report-ref.js';
 import { countsFromPivotRow, tallyStatuses, passRate, statusOutcome, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
 
 export function registerReportingTools(server: McpServer): void {
@@ -34,53 +36,36 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'get_test_report',
-    'Retrieve a full test execution report by its numeric test ID or by the report URL printed in tearDown (digitalai:reportUrl capability). ' +
-    'Provide either testId OR reportUrl — reportUrl is parsed to extract the numeric test ID automatically. ' +
-    'The test ID (test_id field) is also returned by list_test_reports and find_latest_test_for_name. ' +
-    'NOTE: Step-level detail is not available via numeric test ID — the backend API does not support it on this endpoint. ' +
+    'Retrieve a full test execution report by UUID, numeric test ID, or the report URL printed in tearDown (digitalai:reportUrl — e.g. .../reporter/video-report/<uuid>). ' +
+    'Provide ONE of uuid, testId or reportUrl. PREFER uuid (or the report URL): UUIDs are global, while numeric test IDs are only unique per project and can resolve to a different test in another project. ' +
+    'uuid and test_id are both returned by list_test_reports and find_latest_test_for_name. ' +
+    'NOTE: Step-level detail is not available on this endpoint — the backend API does not support it here. ' +
     'To get steps, use get_test_by_report_id with the report_api_id from a live session. ' +
     'For failure diagnosis use the cause/errorCategory/errorDetail fields in this response, or get_test_log for the full Appium log.',
     {
-      testId: z.number().int().optional().describe('The numeric test ID (test_id field from list results, e.g. 377918). Provide this OR reportUrl.'),
-      reportUrl: z.string().optional().describe('The report URL printed by tearDown (digitalai:reportUrl capability value). The numeric test ID is extracted automatically.'),
+      uuid: z.string().optional().describe('The test execution UUID (uuid field from list results). Preferred — globally unique.'),
+      testId: z.number().int().optional().describe('The numeric test ID (test_id field from list results, e.g. 377918). Unique only within a project — prefer uuid.'),
+      reportUrl: z.string().optional().describe('The report URL printed by tearDown (digitalai:reportUrl), e.g. .../reporter/video-report/<uuid> or an older ...?test_id=<n> link. The identifier is extracted automatically.'),
       outputFormat: outputFormatParam,
     },
-    async ({ testId, reportUrl, outputFormat }) => {
-      let resolvedId = testId;
-
-      if (!resolvedId && reportUrl) {
-        const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-        const numericMatch = reportUrl.match(/\/(\d+)\/?(?:\?.*)?$/);
-        if (numericMatch) {
-          resolvedId = parseInt(numericMatch[1], 10);
-        } else if (UUID_RE.test(reportUrl)) {
-          return {
-            content: [{
-              type: 'text',
-              text: `The report URL contains a UUID, not a numeric test ID. The Digital.ai reporter API does not support UUID-based lookup.\n\n` +
-                `Use the numeric test ID from the "Report Test ID" line printed in tearDown (digitalai:reportTestId capability):\n` +
-                `  get_test_report(testId: <the number from "Report Test ID">)\n\n` +
-                `Or find it via: list_test_reports or find_latest_test_for_name.`,
-            }],
-            isError: true,
-          };
-        } else {
-          return {
-            content: [{ type: 'text', text: `Could not extract a numeric test ID from the report URL: ${reportUrl}. Provide testId directly instead.` }],
-            isError: true,
-          };
-        }
+    async ({ uuid, testId, reportUrl, outputFormat }) => {
+      const given = [uuid, testId, reportUrl].filter((v) => v != null && v !== '').length;
+      if (given === 0) {
+        return { content: [{ type: 'text', text: 'Provide one of uuid, testId or reportUrl.' }], isError: true };
       }
-
-      if (!resolvedId) {
+      if (given > 1) {
+        return { content: [{ type: 'text', text: 'Provide only ONE of uuid, testId or reportUrl — they could point at different reports.' }], isError: true };
+      }
+      const ref = parseReportRef(uuid ?? reportUrl ?? testId);
+      if (!ref) {
         return {
-          content: [{ type: 'text', text: 'Provide either testId or reportUrl.' }],
+          content: [{ type: 'text', text: `Could not find a report UUID or numeric test ID in: ${uuid ?? reportUrl}. Use list_test_reports or find_latest_test_for_name to look the test up.` }],
           isError: true,
         };
       }
 
       try {
-        const report = await getTestById(resolvedId);
+        const report = ref.kind === 'uuid' ? await getTestByUuid(ref.uuid) : await getTestById(ref.testId);
         return respond(outputFormat, report, formatTestReport(report));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
@@ -114,7 +99,7 @@ export function registerReportingTools(server: McpServer): void {
       }
       if (UUID_RE.test(reportApiId)) {
         return {
-          content: [{ type: 'text', text: `Error: "${reportApiId}" is a test UUID, not a report_api_id. There is no API endpoint to look up a test by UUID — use get_test_report(testId: <numeric_id>) instead. Find the numeric test_id via list_test_reports or find_latest_test_for_name. The report_api_id is a different identifier returned only when starting a manual or web-control session.` }],
+          content: [{ type: 'text', text: `Error: "${reportApiId}" is a test UUID, not a report_api_id. Use get_test_report(uuid: "${reportApiId}") instead. The report_api_id is a different identifier returned only when starting a manual or web-control session.` }],
           isError: true,
         };
       }
@@ -765,14 +750,18 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'list_test_attachments',
-    'Show attachment metadata (file names, types, sizes) for a test execution. Takes the numeric testId (integer), NOT the uuid string. Call this before download_test_attachments to confirm attachments exist — download_test_attachments then takes the uuid shown in the output.',
+    'Show attachment metadata (file names, types, sizes) for a test execution. Takes the uuid (preferred — globally unique) or the numeric testId. Call this before download_test_attachments to confirm attachments exist — download_test_attachments then takes the uuid shown in the output.',
     {
-      testId: z.number().int().describe('Numeric test ID (the test_id integer from list_test_reports or find_latest_test_for_name — NOT the uuid string).'),
+      uuid: z.string().optional().describe('Test execution UUID (uuid field from list_test_reports). Preferred.'),
+      testId: z.number().int().optional().describe('Numeric test ID (test_id from list_test_reports). Unique only within a project — prefer uuid.'),
       outputFormat: outputFormatParam,
     },
-    async ({ testId, outputFormat }) => {
+    async ({ uuid, testId, outputFormat }) => {
+      if ((uuid ? 1 : 0) + (testId != null ? 1 : 0) !== 1) {
+        return { content: [{ type: 'text', text: 'Provide exactly one of uuid or testId.' }], isError: true };
+      }
       try {
-        const report = await getTestById(testId);
+        const report = uuid ? await getTestByUuid(uuid) : await getTestById(testId!);
         const structured = {
           testId: report.test_id,
           uuid: report.uuid,

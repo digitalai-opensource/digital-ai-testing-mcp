@@ -406,6 +406,10 @@ export interface TestReport {
   errorCategory?: string;
   errorClassification?: string;
   errorDetail?: string;
+  /** Set when fetched by UUID (/reporter/api/reports/{uuid}). */
+  projectName?: string;
+  /** Whether public share links are enabled for this report's project (UUID fetch only). */
+  sharingEnabled?: boolean;
   testAttachments?: TestReportAttachment[];
   steps?: TestReportStep[];
 }

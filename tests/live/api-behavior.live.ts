@@ -1,7 +1,7 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { resolveAgentSource, loadAgentBytes, sha256Hex } from '../../src/api/test-orchestrator.js';
-import { getGroupedTests } from '../../src/api/reporting.js';
+import { getGroupedTests, getTestByUuid } from '../../src/api/reporting.js';
 import { getAllTestViews, getTestViewSummary } from '../../src/api/test-views.js';
 import {
   getTestById,
@@ -108,6 +108,17 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     const s = await getTestViewSummary(views[0].id);
     assert.equal(typeof s._count_, 'number');
     assert.equal(typeof s.errorCount, 'number', 'view summary stopped returning errorCount');
+  });
+
+  // FINDING 9 (2026-10-09): reports resolve by UUID (global) at /reporter/api/reports/{uuid}; get_test_report and
+  // list_test_attachments prefer it because numeric test_ids collide across reporter scopes.
+  it('GET /reporter/api/reports/{uuid} returns the same report as the numeric id', async () => {
+    const list = await listTests({ limit: 1, page: 1 });
+    const t = list.data[0];
+    assert.ok(t, 'precondition: at least one test must exist');
+    const byUuid = await getTestByUuid(t.uuid);
+    assert.equal(byUuid.test_id, t.test_id);
+    assert.equal(byUuid.uuid, t.uuid);
   });
 
   it('applications filter is honored server-side (fake bundle returns none)', async () => {
