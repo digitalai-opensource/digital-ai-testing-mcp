@@ -103,6 +103,18 @@ function getFilesForVariant(
   }
 }
 
+// Gradle templates declare `repositories { mavenCentral() }` so the default standalone project resolves its
+// dependencies (without it every standalone build failed: "no repositories are defined"). Inside an existing
+// Android project the module must NOT declare repositories: they are centralised in settings.gradle, often with
+// RepositoriesMode.FAIL_ON_PROJECT_REPOS, which turns a module-level block into a build error.
+export function adaptGradleForProjectType(content: string, projectType?: ProjectType): string {
+  if (projectType !== 'android-gradle-submodule') return content;
+  return content.replace(
+    /^\/\/ Standalone use only[^\n]*\r?\nrepositories \{ mavenCentral\(\) \}\r?\n(\r?\n)?/m,
+    ''
+  );
+}
+
 // ── v43 Fix D — fabricated-test detector ──────────────────────────────────────
 // A backstop for the failure the boilerplate gate cannot catch: an agent that
 // hand-writes (or fills) a test with invented selectors and ships it. Pure string
@@ -880,7 +892,10 @@ export function registerBoilerplateTools(server: McpServer): void {
       try {
         const resolved = files.map(f => {
           const raw = readBoilerplateFile(platform, language, f.diskName);
-          const content = substitute(raw, language, platform, vars);
+          const substituted = substitute(raw, language, platform, vars);
+          const content = f.diskName.startsWith('gradle')
+            ? adaptGradleForProjectType(substituted, projectType)
+            : substituted;
           return { ...f, content: gridHeader(f.filename) + content };
         });
 

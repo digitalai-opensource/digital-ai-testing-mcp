@@ -10,7 +10,7 @@ public class LocalAndroidTest {
 
     private AndroidDriver driver;
 
-    @BeforeTest
+    @BeforeMethod
     public void setUp() throws MalformedURLException {
         UiAutomator2Options options = new UiAutomator2Options();
         options.setCapability("digitalai:testName", "[Enter Test Name here]");
@@ -44,7 +44,7 @@ public class LocalAndroidTest {
         // [END_DEMO_STEPS]
     }
 
-    @AfterTest
+    @AfterMethod
     public void tearDown() {
         if (driver == null) return;
         try {
