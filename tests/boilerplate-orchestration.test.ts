@@ -210,6 +210,41 @@ describe('install_test_orchestrator_agent (local mode)', () => {
   });
 });
 
+describe('get_test_boilerplate — automotiveProjection (Android Auto / CarPlay)', () => {
+  const sources = (g: Gen) => g.files.filter((f) => /\.(java|py|js)$/.test(f.filename));
+  const all = (g: Gen) => g.files.map((f) => f.content).join('\n');
+
+  it('Appium Server: every language sets the capability and appends the head-unit screenshot step', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const language of ['java-junit5', 'java-testng', 'python', 'nodejs']) {
+      const { json, human } = await gen({ platform: 'android', language, automotiveProjection: '1280x720', orchestration: 'off' });
+      const text = all(json);
+      assert.match(text, /digitalai:automotiveProjection['"][,):]? ?['"]?1280x720/, `${language}: capability missing`);
+      assert.match(text, /digitalai:automotive\.getScreenshot/, `${language}: screenshot step missing`);
+      assert.match(text, /\/\/ .*digitalai:automotive\.tap|# .*digitalai:automotive\.tap/, `${language}: tap must stay a commented template`);
+      assert.ok(sources(json).length > 0);
+      assert.match(human, /Automotive projection: ON/);
+      assert.equal((json as unknown as { automotive: { applied: boolean } }).automotive.applied, true);
+    }
+  });
+
+  it('Appium Grid: classic boilerplate with an explicit "not applied" note', async () => {
+    account.isAppiumOss = false; account.fail = false;
+    const { json, human } = await gen({ platform: 'android', language: 'java-junit5', automotiveProjection: '800x480' });
+    assert.doesNotMatch(all(json), /digitalai:automotive/);
+    assert.match(human, /Automotive projection requested but not applied/);
+    account.isAppiumOss = true;
+  });
+
+  it('CarPlay (iOS) accepts 800x480 only', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const bad = await call('get_test_boilerplate', { platform: 'ios', language: 'python', automotiveProjection: '1920x1080' });
+    assert.equal(bad.isError, true);
+    const ok = await gen({ platform: 'ios', language: 'python', automotiveProjection: '800x480' });
+    assert.match(all(ok.json), /digitalai:automotiveProjection', '800x480'/);
+  });
+});
+
 describe('get_test_boilerplate — template line endings never disable the step markers', () => {
   // Regression: on a Windows checkout (core.autocrlf) the NodeJS templates are CRLF and the "\n"-only marker patterns
   // never matched — a custom-app NodeJS boilerplate shipped ExperiBank's demo steps with the package swapped in.

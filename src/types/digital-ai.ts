@@ -842,4 +842,9 @@ export interface InspectionSession {
   // Project the session was created under — report deletes must scope to this
   // project's reporter instance (test_ids are only unique per instance).
   projectName?: string;
+  // Android Auto / CarPlay projection. 'capability' = requested at session start (digitalai:automotiveProjection) —
+  // projection is on for the whole session and start/stop are refused by the platform. 'command' = toggled with
+  // automotive_control start/stop. Undefined = never requested.
+  automotiveMode?: 'capability' | 'command';
+  automotiveRunning?: boolean;
 }

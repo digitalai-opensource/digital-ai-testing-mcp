@@ -38,7 +38,17 @@ export interface InspectionSessionOptions {
   appActivity?: string;
   noReset?: boolean;
   testName?: string;
+  /** Android Auto / CarPlay projection resolution (digitalai:automotiveProjection) — projection runs for the whole session. */
+  automotiveProjection?: AutomotiveResolution;
+  /** iOS CarPlay only: instrument cluster content (digitalai:instrumentCluster). */
+  instrumentCluster?: InstrumentClusterContent;
 }
+
+/** Android Auto supports all three; CarPlay supports 800x480 only (platform docs). */
+export const AUTOMOTIVE_RESOLUTIONS = ['800x480', '1280x720', '1920x1080'] as const;
+export type AutomotiveResolution = (typeof AUTOMOTIVE_RESOLUTIONS)[number];
+export const INSTRUMENT_CLUSTER_CONTENT = ['Instruction Card', 'Map', 'Navigation App'] as const;
+export type InstrumentClusterContent = (typeof INSTRUMENT_CLUSTER_CONTENT)[number];
 
 export async function createInspectionSession(
   opts: InspectionSessionOptions
@@ -78,6 +88,8 @@ export async function createInspectionSession(
     desiredCapabilities['appPackage'] = opts.appPackage;
     if (opts.appActivity) desiredCapabilities['appActivity'] = opts.appActivity;
   }
+  if (opts.automotiveProjection) desiredCapabilities['digitalai:automotiveProjection'] = opts.automotiveProjection;
+  if (opts.instrumentCluster) desiredCapabilities['digitalai:instrumentCluster'] = opts.instrumentCluster;
 
   // Dual-protocol session request: the proprietary Grid (JWP) reads
   // desiredCapabilities; standard Appium Server (W3C) reads capabilities.alwaysMatch
@@ -161,6 +173,7 @@ export async function createInspectionSession(
     sessionFormat: isW3c ? 'w3c' : 'jwp',
     platform,
     projectName,
+    ...(opts.automotiveProjection ? { automotiveMode: 'capability' as const, automotiveRunning: true } : {}),
   };
 
   sessionRegistry.set(handle, session);
@@ -774,14 +787,104 @@ function execScript(
   client: AxiosInstance,
   session: InspectionSession,
   script: string,
-  args: unknown[]
+  args: unknown[],
+  timeoutMs = 30_000
 ): Promise<{ data: { value: unknown } }> {
   const path = session.sessionFormat === 'w3c' ? 'execute/sync' : 'execute';
   return client.post(
     `/session/${session.gridSessionId}/${path}`,
     { script, args },
-    { timeout: 30_000 }
+    { timeout: timeoutMs }
   );
+}
+
+// ─── Android Auto / CarPlay projection ────────────────────────────────────────
+// digitalai:automotive.* execute commands (platform 26.4+), verified live 2026-10-09 on Appium Server Android phones
+// (Pixel 7 / Pixel 8): start("800x480") takes ~20 s and brings up the Android Auto head unit (DHU); getScreenshot
+// returns a base64 PNG of the projected display; tap(x, y) is in projection coordinates; stop ends it and the phone
+// stays drivable; start works again after stop (any supported resolution). getDump is iOS-only ("not implemented for
+// Android devices"); getScreenshot("cluster") is the CarPlay instrument cluster (on Android it returns the main display).
+// When the session was created with digitalai:automotiveProjection, the platform refuses start AND stop. The capability
+// is the more reliable route: a Galaxy S10 / Android 12 fails mid-session start("LOW") yet projects fine with it.
+// Android Automotive OS emulators (e.g. @emulator='true' and @model='automotive_1024p_landscape') are NOT projection
+// targets — the head unit IS the device, driven with the normal inspection tools; these commands fail there.
+
+export type AutomotiveAction = 'start' | 'stop' | 'screenshot' | 'tap' | 'dump';
+
+export async function automotiveControl(
+  handle: string,
+  action: AutomotiveAction,
+  opts: { resolution?: AutomotiveResolution; clusterContent?: InstrumentClusterContent; x?: number; y?: number; display?: 'main' | 'cluster' } = {}
+): Promise<{ message: string; image?: { data: string; mimeType: string }; dump?: string }> {
+  const session = requireSession(handle);
+  if (session.platform === 'web') throw new Error('automotive_control needs a mobile inspection session (Android Auto / CarPlay), not a browser session.');
+  const client = makeClient();
+  const run = (script: string, args: unknown[], timeoutMs?: number) => execScript(client, session, script, args, timeoutMs);
+  try {
+    switch (action) {
+      case 'start': {
+        if (session.automotiveMode === 'capability') {
+          return { message: 'Projection is already running — this session was started with automotiveProjection, and the platform refuses start/stop for such sessions.' };
+        }
+        if (session.automotiveRunning) return { message: 'Projection is already running for this session — call stop first to change resolution.' };
+        const resolution = opts.resolution ?? '800x480';
+        const args: unknown[] = [resolution];
+        if (opts.clusterContent) {
+          if (session.platform !== 'ios') throw new Error('clusterContent (instrument cluster) is CarPlay / iOS only.');
+          args.push(opts.clusterContent);
+        }
+        await run('digitalai:automotive.start', args, 180_000);
+        session.automotiveMode = 'command';
+        session.automotiveRunning = true;
+        return { message: `Projection started at ${resolution}${opts.clusterContent ? ` with cluster content "${opts.clusterContent}"` : ''}. Use action "screenshot" to see the head unit.` };
+      }
+      case 'stop': {
+        if (session.automotiveMode === 'capability') {
+          return { message: 'This session was started with automotiveProjection — projection stays on until the session ends (the platform refuses stop).' };
+        }
+        await run('digitalai:automotive.stop', [], 120_000);
+        session.automotiveRunning = false;
+        return { message: 'Projection stopped. The phone remains controllable with the normal inspection tools.' };
+      }
+      case 'screenshot': {
+        const args = opts.display === 'cluster' ? ['cluster'] : [];
+        const res = await run('digitalai:automotive.getScreenshot', args, 60_000);
+        const data = String(res.data.value ?? '');
+        if (!data) throw new Error('the platform returned an empty projection screenshot');
+        const mimeType = data.startsWith('/9j/') ? 'image/jpeg' : 'image/png';
+        const note = opts.display === 'cluster' && session.platform !== 'ios' ? ' (the instrument cluster is CarPlay-only — Android returns the main display)' : '';
+        return { message: `Projection screenshot captured${note}.`, image: { data, mimeType } };
+      }
+      case 'tap': {
+        if (opts.x == null || opts.y == null) throw new Error('tap needs x and y in projection-display coordinates (e.g. 0–800 × 0–480 at 800x480).');
+        await run('digitalai:automotive.tap', [opts.x, opts.y], 30_000);
+        return { message: `Tapped the projected display at (${opts.x}, ${opts.y}).` };
+      }
+      case 'dump': {
+        if (session.platform !== 'ios') throw new Error('dump is CarPlay / iOS only — the platform does not implement it for Android. Use action "screenshot" instead.');
+        const res = await run('digitalai:automotive.getDump', [], 60_000);
+        return { message: 'Projection element dump captured.', dump: String(res.data.value ?? '') };
+      }
+    }
+  } catch (e) {
+    throw new Error(`automotive_control ${action} failed: ${automotiveError(e, handle)}`);
+  }
+}
+
+// The platform answers automotive commands it can't run with 404/500 + a specific message — NOT a dead session. Only
+// fall back to the dead-session diagnosis (sessionAwareError) when the message is not one of these.
+function automotiveError(e: unknown, handle: string): string {
+  const detail = describeWdError(e);
+  if (/start\("?LOW"?\)|Failed to execute start/i.test(detail)) {
+    return (
+      `${detail} — the mid-session start command is not supported on this device. Start a new session with ` +
+      `automotiveProjection instead (verified: a Galaxy S10 / Android 12 fails this command but projects fine with the ` +
+      `capability; Pixel 7/8 support both). An Android Automotive OS emulator is not a projection target at all — drive it ` +
+      `with the normal inspection tools.`
+    );
+  }
+  if (/automotive|projection|DHU|cluster|GetDump/i.test(detail)) return detail;
+  return sessionAwareError(e, handle);
 }
 
 // Start or end a Digital.ai performance transaction inside a live inspection
