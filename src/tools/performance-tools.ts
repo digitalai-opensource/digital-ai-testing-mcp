@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { listTransactions, getTransaction } from '../api/transactions.js';
 import { performanceTransaction } from '../api/webdriver.js';
 import type { Transaction } from '../types/digital-ai.js';
+import { SPEED_INDEX_SEMANTICS, SPEED_INDEX_SEMANTICS_SHORT } from '../utils/metric-semantics.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import {
   buildComparison,
@@ -47,14 +48,6 @@ const METRIC_LABEL: Record<string, string> = {
   duration: 'Duration', totalDownloadedBytes: 'Downloaded', totalUploadedBytes: 'Uploaded',
 };
 
-// Speed Index is a composite visual-progress score (area above the render curve,
-// WebPageTest methodology), NOT elapsed time. A delta of N SI does NOT mean the
-// screen rendered N ms sooner — it means cumulative rendering quality across the
-// whole render window improved. Surface this everywhere the metric appears (v42).
-const SPEED_INDEX_SEMANTICS =
-  'area above the visual-progress curve (WebPageTest methodology); a lower value means content was visible ' +
-  'more completely earlier across the render window. A delta is NOT a shift in render-completion time.';
-const SPEED_INDEX_SEMANTICS_SHORT = 'area above the visual-progress curve; lower = content visible earlier';
 
 // Force speedIndex to be present and first so it always anchors outlier exclusion
 // and delta ranking. Returns the normalized list and whether it was adjusted (v42 FP2).

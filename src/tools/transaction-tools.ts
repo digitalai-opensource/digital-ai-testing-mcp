@@ -7,6 +7,7 @@ import {
 } from '../utils/response-formatter.js';
 import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { METRIC_SEMANTICS } from '../utils/metric-semantics.js';
 import type { Transaction } from '../types/digital-ai.js';
 
 // Transaction endpoints work for all access levels. Cloud Admin sees all projects;
@@ -126,7 +127,7 @@ export function registerTransactionTools(server: McpServer): void {
           `Found ${paged.total} transaction(s):\n\n${formatTransactionList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, withPaging(structured, paged), humanText);
+        return respond(outputFormat, { ...withPaging(structured, paged), metricSemantics: METRIC_SEMANTICS }, humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -155,7 +156,7 @@ export function registerTransactionTools(server: McpServer): void {
             networkUpload: tx.networkUploadSamples?.length ?? 0,
           },
         };
-        return respond(outputFormat, structured as object, formatTransaction(tx));
+        return respond(outputFormat, { ...(structured as object), metricSemantics: METRIC_SEMANTICS }, formatTransaction(tx));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -297,7 +298,7 @@ export function registerTransactionTools(server: McpServer): void {
           lines.push(`    Speed Index: ${si}${siRange} | Duration: ${dur} | CPU: ${cpu} | Mem: ${mem}`);
         }
 
-        return respond(outputFormat, structured, lines.join('\n'));
+        return respond(outputFormat, { ...structured, metricSemantics: METRIC_SEMANTICS }, lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -400,7 +401,7 @@ export function registerTransactionTools(server: McpServer): void {
             return `  ${period.padEnd(12)} ${String(b.count).padStart(5)} ${si.padStart(9)} ${dur.padStart(9)} ${cpu.padStart(6)} ${mem.padStart(7)}`;
           }),
         ];
-        return respond(outputFormat, structured, lines.join('\n'));
+        return respond(outputFormat, { ...structured, metricSemantics: METRIC_SEMANTICS }, lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

@@ -111,6 +111,14 @@ describe('#20 transactions — deviceOs casing', () => {
     assert.equal(txs[0].speedIndex, null);
   });
 
+  it('transaction JSON carries Speed Index semantics (not a duration) — fidelity finding 2026-10-09', async () => {
+    for (const [tool, args] of [['list_transactions', {}], ['get_transaction_performance_summary', { groupBy: 'name' }], ['get_performance_trend', { lookbackDays: 730 }]] as const) {
+      const j = JSON.parse((await call(tool, { ...args, outputFormat: 'json' })).text);
+      assert.equal(j.metricSemantics?.speedIndex?.unit, 'SI', tool);
+      assert.equal(j.metricSemantics?.speedIndex?.notADuration, true, tool);
+    }
+  });
+
   it('list_transactions(deviceOs: "iOS") includes records the API stored as "IOS"', async () => {
     const { text } = await call('list_transactions', { deviceOs: 'iOS', outputFormat: 'json' });
     assert.deepEqual(JSON.parse(text).transactions.map((t: { id: number }) => t.id).sort(), [1, 2]);
