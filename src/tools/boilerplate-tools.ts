@@ -358,7 +358,12 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
 
 function readBoilerplateFile(platform: Platform, language: Language, diskName: string): string {
   const dir = join(BOILERPLATE_DIR, PLATFORM_DIR[platform], LANGUAGE_SUBDIR[platform][language]);
-  return readFileSync(join(dir, diskName), 'utf-8');
+  // Normalize to LF: the marker/injection patterns (DEMO_STEP_PATTERN etc.) match "\n" only. Git stores the templates
+  // with LF, but a Windows checkout with core.autocrlf materializes some as CRLF — and then, for those files, the
+  // custom-app placeholder never replaced the ExperiBank demo steps (the anti-fabrication guard silently did nothing)
+  // and includeAxeScan / includePerformanceTransactions were no-ops. Affects local runs and any Docker image built
+  // from a Windows working tree.
+  return readFileSync(join(dir, diskName), 'utf-8').replace(/\r\n/g, '\n');
 }
 
 function substitute(

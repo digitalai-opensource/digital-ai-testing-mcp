@@ -209,3 +209,18 @@ describe('install_test_orchestrator_agent (local mode)', () => {
     assert.equal(res.isError, true);
   });
 });
+
+describe('get_test_boilerplate — template line endings never disable the step markers', () => {
+  // Regression: on a Windows checkout (core.autocrlf) the NodeJS templates are CRLF and the "\n"-only marker patterns
+  // never matched — a custom-app NodeJS boilerplate shipped ExperiBank's demo steps with the package swapped in.
+  it('NodeJS custom app (android + ios): placeholder fail-guard, no demo steps, no leftover markers', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const [platform, appArg] of [['android', { packageName: 'com.acme.app', mainActivity: '.Main' }], ['ios', { bundleIdentifier: 'com.acme.app' }]] as const) {
+      const { json } = await gen({ platform, language: 'nodejs', confirmSelectorsVerified: true, ...appArg });
+      const test = json.files.find((f) => /Native\.js$/.test(f.filename))!.content;
+      assert.match(test, /PLACEHOLDER TEST BODY/, platform);
+      assert.doesNotMatch(test, /usernameTextField|BEGIN_DEMO_STEPS|END_DEMO_STEPS/, platform);
+      assert.doesNotMatch(test, /\r/, `${platform}: generated file must be LF`);
+    }
+  });
+});
