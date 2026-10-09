@@ -238,6 +238,7 @@ The platform schedules, runs and reports these suites itself — no local driver
 | `get_test_run_status` | State (Starting / Running / Finished / Cancelled) and pass/fail/skip counts; `waitSeconds` (≤ 50) polls until finished | Any |
 | `cancel_test_run` | Cancel the remaining tests of a run. Requires `confirmDeletion: true` | Any |
 | `get_test_run_command` | curl / PowerShell command that starts the run from the user's machine (for Docker installs) | Any |
+| `generate_maestro_flow` | Build a Maestro flow (YAML) from structured steps (launchApp, tapOn, inputText, assertVisible, scrollUntilVisible, …) and optionally write the bundle .zip for `execute_test_run`. Returns no flow without a live Android inspection session or `confirmSelectorsVerified: true`; rejects placeholder selectors | Any |
 
 ### Test Views
 

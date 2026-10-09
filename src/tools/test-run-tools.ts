@@ -13,17 +13,21 @@ import {
   type TestRunRequest,
   type TestRunStatus,
 } from '../api/test-runs.js';
-import { validateInputPath } from '../utils/path-guard.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { buildUploadCommand } from '../utils/upload-command.js';
-import { serverFsUploadNotice, serverFsInputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
+import { serverFsUploadNotice, serverFsInputParam, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import { commandPayload } from '../utils/command-payload.js';
+import AdmZip from 'adm-zip';
+import { listActiveSessions } from '../api/webdriver.js';
+import { detectFabricationIssues } from './boilerplate-tools.js';
+import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
+import { MAESTRO_ACTIONS, buildMaestroFlowYaml, validateMaestroFlow, bareIdWarnings, flowFileName, type MaestroFlowSpec } from '../utils/maestro-flow.js';
 
 const MAESTRO_BUNDLE_NOTE =
   'Maestro bundle = a .zip with a flows/ directory of .yaml flows (the platform rejects a bundle without flows/); ' +
   'an optional config.yaml and utils/ may sit alongside. Android only. Build flows from element IDs captured live ' +
-  '(start_inspection_session → get_element_tree) — never guessed IDs.';
+  '(start_inspection_session → get_element_tree) — never guessed IDs. generate_maestro_flow builds the YAML and the bundle.';
 
 // Shared by execute_test_run and get_test_run_command — one schema, so the two cannot drift.
 const runParams = {
@@ -220,6 +224,107 @@ export function registerTestRunTools(server: McpServer): void {
         notes: ['The response contains "Test Run Id" — pass it to get_test_run_status to follow the run.'],
       });
       return respond(args.outputFormat, commandPayload(result), result.humanText);
+    }
+  );
+
+  // ── generate_maestro_flow ───────────────────────────────────────────────────
+  // Same selector rule as get_test_boilerplate: a flow for a real app is only emitted while a live Android inspection
+  // session exists, or when the caller asserts the selectors were captured elsewhere (confirmSelectorsVerified).
+  server.tool(
+    'generate_maestro_flow',
+    'Build a Maestro flow (YAML) for an Android app from structured steps, and optionally write a ready-to-run bundle ' +
+    '(.zip with flows/<name>.yaml) for execute_test_run (executionType MAESTRO, testsPath = the bundle). ' +
+    'Steps use element IDs captured live (start_inspection_session → get_element_tree, full "pkg:id/name" resource-ids) ' +
+    'or visible text — never guessed IDs. Without a live Android inspection session the tool returns NO flow unless ' +
+    'confirmSelectorsVerified is true. Android only.',
+    {
+      appId: z.string().describe('Android package name, e.g. "com.experitest.ExperiBank".'),
+      flowName: z.string().optional().describe('Flow name (also the file name, e.g. "Login smoke" → flows/login_smoke.yaml).'),
+      tags: z.array(z.string()).optional().describe('Maestro tags, e.g. ["smoke"].'),
+      steps: z
+        .array(
+          z.object({
+            action: z.enum(MAESTRO_ACTIONS).describe('Maestro command.'),
+            id: z.string().optional().describe('Element resource-id — the FULL "pkg:id/name" from get_element_tree. For inputText: the field to tap first.'),
+            text: z.string().optional().describe('Element visible text (tapOn/assert*/scrollUntilVisible), or the value to type (inputText).'),
+            clearState: z.boolean().optional().describe('launchApp: clear app data first.'),
+            direction: z.enum(['UP', 'DOWN', 'LEFT', 'RIGHT']).optional().describe('scrollUntilVisible (default DOWN) / swipe.'),
+            value: z.string().optional().describe('pressKey: key name ("Enter", "Home"); takeScreenshot: file name; eraseText: character count.'),
+            optional: z.boolean().optional().describe('Continue the flow if this step fails.'),
+          })
+        )
+        .min(1)
+        .describe('Ordered steps. Typical: launchApp (clearState) → inputText with id → tapOn → assertVisible.'),
+      bundlePath: z.string().optional().describe('Where to write the bundle .zip for execute_test_run. Omit to get the YAML only. ' + serverFsOutputParam()),
+      confirmSelectorsVerified: z
+        .boolean()
+        .optional()
+        .describe(
+          'Set true ONLY if every id/text in the steps was captured from the real app outside a still-open session (rdb/UIAutomator ' +
+          'dump, open_mobile_studio, a since-closed inspection session, or authoritative app source). Never for guessed IDs.'
+        ),
+      outputFormat: outputFormatParam,
+    },
+    async (args) => {
+      const liveAndroid = listActiveSessions().some((s) => s.platform === 'android');
+      if (!liveAndroid && args.confirmSelectorsVerified !== true) {
+        const blocked = {
+          status: 'blocked',
+          reason: 'no_verified_selectors',
+          requiredAction: 'start_inspection_session',
+          message: 'No Maestro flow generated: there is no live Android inspection session and the selectors are not confirmed as captured from the real app.',
+          howToProceed: [
+            'PREFERRED: start_inspection_session(platform: "android"), capture the real resource-ids with get_element_tree, then re-call while it is open.',
+            'ALTERNATIVE: if you already captured them elsewhere (rdb/UIAutomator dump, open_mobile_studio, authoritative source), re-call with confirmSelectorsVerified: true.',
+          ],
+        };
+        return { content: [{ type: 'text', text: args.outputFormat === 'human' ? `⛔ ${blocked.message}\n- ${blocked.howToProceed.join('\n- ')}` : JSON.stringify(blocked, null, 2) }], isError: true };
+      }
+
+      const spec: MaestroFlowSpec = { appId: args.appId, name: args.flowName, tags: args.tags, steps: args.steps };
+      const errors = validateMaestroFlow(spec);
+      if (errors.length) return { content: [{ type: 'text', text: `Error: the flow is not valid:\n- ${errors.join('\n- ')}` }], isError: true };
+
+      const yaml = buildMaestroFlowYaml(spec);
+      const fabricated = detectFabricationIssues(yaml).filter((i) => i.severity === 'high');
+      if (fabricated.length) {
+        return {
+          content: [{ type: 'text', text: `Error: the steps contain placeholders, not real selectors — no flow generated:\n- ${fabricated.map((i) => `${i.label}: ${i.detail}`).join('\n- ')}` }],
+          isError: true,
+        };
+      }
+
+      const file = flowFileName(args.flowName);
+      const warnings = bareIdWarnings(spec);
+      let written: string | null = null;
+      if (args.bundlePath) {
+        if (!/\.zip$/i.test(args.bundlePath)) return { content: [{ type: 'text', text: 'Error: bundlePath must end in .zip.' }], isError: true };
+        const pathErr = validateOutputPath(args.bundlePath);
+        if (pathErr) return { content: [{ type: 'text', text: `Error: ${pathErr}` }], isError: true };
+        try {
+          const zip = new AdmZip();
+          zip.addFile(`flows/${file}`, Buffer.from(yaml, 'utf8'));
+          zip.writeZip(args.bundlePath);
+          written = args.bundlePath;
+        } catch (e) {
+          return { content: [{ type: 'text', text: `Error: could not write the bundle: ${(e as Error).message}` }], isError: true };
+        }
+      }
+
+      const next = written
+        ? `execute_test_run(executionType: "MAESTRO", testsPath: "${written}", cloudAppId: <id from list_applications for ${args.appId}>, deviceQueries: ["@os='android'"])`
+        : 'pass bundlePath to write a runnable bundle, or zip it yourself as flows/' + file;
+      const human = [
+        `🎼 Maestro flow flows/${file} (${args.steps.length} step${args.steps.length === 1 ? '' : 's'})${written ? ` — bundle written to ${written}` : ''}`,
+        ...(warnings.length ? ['', '⚠️ ' + warnings.join('\n⚠️ ')] : []),
+        '',
+        '```yaml',
+        yaml.trimEnd(),
+        '```',
+        '',
+        `Next: ${next}`,
+      ].join('\n');
+      return respond(args.outputFormat, { flowFile: `flows/${file}`, yaml, bundlePath: written, warnings, nextStep: next }, human);
     }
   );
 }

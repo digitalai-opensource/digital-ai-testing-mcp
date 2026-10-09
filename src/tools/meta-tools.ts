@@ -119,7 +119,7 @@ export const REGISTERED_TOOLS = [
   // Usage reports (v2, Cloud Admin only)
   'download_usage_report', 'get_usage_report_download_command', 'summarize_usage_report',
   // Test runs — Espresso / XCUITest / Maestro executed by the platform
-  'execute_test_run', 'get_test_run_status', 'cancel_test_run', 'get_test_run_command',
+  'execute_test_run', 'get_test_run_status', 'cancel_test_run', 'get_test_run_command', 'generate_maestro_flow',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
