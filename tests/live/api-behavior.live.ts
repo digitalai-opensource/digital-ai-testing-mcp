@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { resolveAgentSource, loadAgentBytes, sha256Hex } from '../../src/api/test-orchestrator.js';
 import { getGroupedTests, getTestByUuid } from '../../src/api/reporting.js';
 import { getAllTestViews, getTestViewSummary } from '../../src/api/test-views.js';
+import { getMaxQueuedTests, getMaxAutomationMemory, getWebhookCleanup } from '../../src/api/projects.js';
+import { getMyAccountInfo } from '../../src/api/users.js';
 import {
   getTestById,
   listTests,
@@ -119,6 +121,18 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     const byUuid = await getTestByUuid(t.uuid);
     assert.equal(byUuid.test_id, t.test_id);
     assert.equal(byUuid.uuid, t.uuid);
+  });
+
+  // FINDING 10 (2026-10-09): v1 project setting GETTERS wrap the value in a one-key object of strings, and setters take
+  // QUERY params (a JSON body 400s — never probe writes here). If a getter starts returning a bare value, revisit
+  // settingValue() in src/api/projects.ts.
+  it('v1 project setting getters return typed values via the one-key string wrapper', async () => {
+    const me = await getMyAccountInfo();
+    const id = me.project.id;
+    assert.equal(typeof await getMaxQueuedTests(id), 'number');
+    const mem = await getMaxAutomationMemory(id);
+    assert.ok(mem != null && mem >= 256 && mem <= 1024, `automation memory out of range: ${mem}`);
+    assert.equal(typeof await getWebhookCleanup(id), 'boolean');
   });
 
   it('applications filter is honored server-side (fake bundle returns none)', async () => {

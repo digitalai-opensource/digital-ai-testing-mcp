@@ -97,10 +97,34 @@ export async function setProjectTokens(
   }
 }
 
+// ─── v1 per-setting endpoints ─────────────────────────────────────────────────
+// Verified live 2026-10-09 (DAIMCP POC, no-op writes): every v1 project SETTER reads its value from the QUERY STRING —
+// a JSON body is rejected with 400 "Required <type> parameter '<name>' is not present". The GETTERS wrap the value in a
+// one-key object of STRINGS ({ webCleanupMode: "false" }, { maxQueuedTests: "50" }), not the bare value. Before this
+// fix every update_project_settings / set_telephony_status write 400'd, get_project_settings 404'd on the misspelled
+// web-hook-cleanup path, and the getters returned objects typed as numbers.
+
+function settingValue(data: unknown, key: string): string | undefined {
+  if (data != null && typeof data === 'object') {
+    const v = (data as Record<string, unknown>)[key];
+    return v == null ? undefined : String(v);
+  }
+  return data == null ? undefined : String(data);
+}
+const asBool = (v: string | undefined): boolean => v === 'true';
+const asNum = (v: string | undefined): number | null => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
+
+async function getSetting(id: number, path: string, key: string): Promise<string | undefined> {
+  const res = await apiGet<ApiResponse<unknown>>(`/api/v1/projects/${id}/${path}`);
+  return settingValue(res.data, key);
+}
+async function postSetting(id: number, path: string, params: Record<string, unknown>): Promise<void> {
+  await apiPost(`/api/v1/projects/${id}/${path}`, undefined, params);
+}
+
 export async function getWebCleanup(id: number): Promise<boolean> {
   try {
-    const res = await apiGet<ApiResponse<boolean>>(`/api/v1/projects/${id}/web-cleanup`);
-    return res.data;
+    return asBool(await getSetting(id, 'web-cleanup', 'webCleanupMode'));
   } catch (e) {
     throw new Error(`getWebCleanup failed: ${(e as Error).message}`);
   }
@@ -108,16 +132,16 @@ export async function getWebCleanup(id: number): Promise<boolean> {
 
 export async function setWebCleanup(id: number, enable: boolean): Promise<void> {
   try {
-    await apiPost(`/api/v1/projects/${id}/web-cleanup`, { enable });
+    await postSetting(id, 'web-cleanup', { enable });
   } catch (e) {
     throw new Error(`setWebCleanup failed: ${(e as Error).message}`);
   }
 }
 
+// Path is webhook-cleanup — the previous web-hook-cleanup 404s.
 export async function getWebhookCleanup(id: number): Promise<boolean> {
   try {
-    const res = await apiGet<ApiResponse<boolean>>(`/api/v1/projects/${id}/web-hook-cleanup`);
-    return res.data;
+    return asBool(await getSetting(id, 'webhook-cleanup', 'webHookCleanupMode'));
   } catch (e) {
     throw new Error(`getWebhookCleanup failed: ${(e as Error).message}`);
   }
@@ -125,33 +149,35 @@ export async function getWebhookCleanup(id: number): Promise<boolean> {
 
 export async function setWebhookCleanup(id: number, enable: boolean): Promise<void> {
   try {
-    await apiPost(`/api/v1/projects/${id}/web-hook-cleanup`, { enable });
+    await postSetting(id, 'webhook-cleanup', { enable });
   } catch (e) {
     throw new Error(`setWebhookCleanup failed: ${(e as Error).message}`);
   }
 }
 
-export async function getMaxReservations(id: number): Promise<number> {
+/**
+ * The v1 GET does NOT return the limit — it returns { maxReservationsMode: "true"|"false" } (whether a limit is
+ * enforced). The numeric limit is maxReservations on GET /api/v2/projects/{id} (get_project_admin_settings).
+ */
+export async function getMaxReservationsEnforced(id: number): Promise<boolean> {
   try {
-    const res = await apiGet<ApiResponse<number>>(`/api/v1/projects/${id}/max-reservations`);
-    return res.data;
+    return asBool(await getSetting(id, 'max-reservations', 'maxReservationsMode'));
   } catch (e) {
-    throw new Error(`getMaxReservations failed: ${(e as Error).message}`);
+    throw new Error(`getMaxReservationsEnforced failed: ${(e as Error).message}`);
   }
 }
 
 export async function setMaxReservations(id: number, max: number): Promise<void> {
   try {
-    await apiPost(`/api/v1/projects/${id}/max-reservations`, { maxReservations: max });
+    await postSetting(id, 'max-reservations', { maxReservations: max });
   } catch (e) {
     throw new Error(`setMaxReservations failed: ${(e as Error).message}`);
   }
 }
 
-export async function getMaxQueuedTests(id: number): Promise<number> {
+export async function getMaxQueuedTests(id: number): Promise<number | null> {
   try {
-    const res = await apiGet<ApiResponse<number>>(`/api/v1/projects/${id}/max-queued-tests`);
-    return res.data;
+    return asNum(await getSetting(id, 'max-queued-tests', 'maxQueuedTests'));
   } catch (e) {
     throw new Error(`getMaxQueuedTests failed: ${(e as Error).message}`);
   }
@@ -159,9 +185,29 @@ export async function getMaxQueuedTests(id: number): Promise<number> {
 
 export async function setMaxQueuedTests(id: number, max: number): Promise<void> {
   try {
-    await apiPost(`/api/v1/projects/${id}/max-queued-tests`, { maxQueuedTests: max });
+    await postSetting(id, 'max-queued-tests', { maxQueuedTests: max });
   } catch (e) {
     throw new Error(`setMaxQueuedTests failed: ${(e as Error).message}`);
+  }
+}
+
+/** Valid range enforced by the server (400 "maxAutomationMemory must be between 256 and 1024"). */
+export const AUTOMATION_MEMORY_RANGE_MB = { min: 256, max: 1024 } as const;
+
+/** Max memory (MB) for the project's Appium Grid / Appium Server processes — platform 26.7. Same value as v2 maxGridMemory. */
+export async function getMaxAutomationMemory(id: number): Promise<number | null> {
+  try {
+    return asNum(await getSetting(id, 'max-automation-memory', 'maxAutomationMemory'));
+  } catch (e) {
+    throw new Error(`getMaxAutomationMemory failed: ${(e as Error).message}`);
+  }
+}
+
+export async function setMaxAutomationMemory(id: number, megabytes: number): Promise<void> {
+  try {
+    await postSetting(id, 'max-automation-memory', { maxAutomationMemory: megabytes });
+  } catch (e) {
+    throw new Error(`setMaxAutomationMemory failed: ${(e as Error).message}`);
   }
 }
 
@@ -218,18 +264,16 @@ export async function setTelephonyStatus(
   allowSMS: boolean
 ): Promise<void> {
   try {
-    await apiPost(`/api/v1/projects/${id}/allow-telephony`, { allowCalls, allowSMS });
+    await postSetting(id, 'allow-telephony', { allowCalls, allowSMS });
   } catch (e) {
     throw new Error(`setTelephonyStatus failed: ${(e as Error).message}`);
   }
 }
 
-export async function getMaxConcurrentBrowserSessions(id: number): Promise<number> {
+/** -1 = unlimited. The parameter/key is maxSeleniumSessions (the old body field "max" was never read). */
+export async function getMaxConcurrentBrowserSessions(id: number): Promise<number | null> {
   try {
-    const res = await apiGet<ApiResponse<number>>(
-      `/api/v1/projects/${id}/max-concurrent-browser`
-    );
-    return res.data;
+    return asNum(await getSetting(id, 'max-concurrent-browser', 'maxSeleniumSessions'));
   } catch (e) {
     throw new Error(`getMaxConcurrentBrowserSessions failed: ${(e as Error).message}`);
   }
@@ -240,7 +284,7 @@ export async function setMaxConcurrentBrowserSessions(
   max: number
 ): Promise<void> {
   try {
-    await apiPost(`/api/v1/projects/${id}/max-concurrent-browser`, { max });
+    await postSetting(id, 'max-concurrent-browser', { maxSeleniumSessions: max });
   } catch (e) {
     throw new Error(`setMaxConcurrentBrowserSessions failed: ${(e as Error).message}`);
   }

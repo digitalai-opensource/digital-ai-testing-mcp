@@ -145,9 +145,9 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `remove_user_from_project` | Remove a user from a project | — | Cloud Admin |
 | `get_project_tokens` | Get token configuration | — | Cloud/Project Admin |
 | `set_project_tokens` | Update token mode | — | Cloud Admin |
-| `get_project_settings` | Basic project settings | — | Cloud/Project Admin |
+| `get_project_settings` | Cleanup flags, queued-test / browser limits, automation memory, notes | — | Cloud/Project Admin |
 | `get_project_admin_settings` | Full project configuration via v2 API — 35+ fields in one call: per-type license limits, cleanup flags, reservation policies, feature flags, user/app counts | — | Cloud Admin / Project Admin |
-| `update_project_settings` | Update cleanup, concurrency, and limit settings | — | Cloud Admin |
+| `update_project_settings` | Update cleanup, concurrency and limit settings, and the automation process memory (`maxAutomationMemoryMB`, 256–1024) | — | Cloud Admin |
 | `set_telephony_status` | Enable/disable calls and SMS | — | Cloud Admin |
 | `get_project_notes` | Get project notes | — | Any |
 | `set_project_notes` | Set project notes | — | Cloud/Project Admin |

@@ -13,10 +13,13 @@ import {
   setWebCleanup,
   getWebhookCleanup,
   setWebhookCleanup,
-  getMaxReservations,
+  getMaxReservationsEnforced,
   setMaxReservations,
   getMaxQueuedTests,
   setMaxQueuedTests,
+  getMaxAutomationMemory,
+  setMaxAutomationMemory,
+  AUTOMATION_MEMORY_RANGE_MB,
   getProjectNotes,
   setProjectNotes,
   getProjectDevices,
@@ -367,20 +370,22 @@ export function registerProjectTools(server: McpServer): void {
 
   server.tool(
     'get_project_settings',
-    'Gets the configuration settings for a project, including cleanup, limits, and telephony options.',
+    'Gets the configuration settings for a project: cleanup, limits (queued tests, concurrent browsers, automation memory) and notes. ' +
+    'For the numeric reservation limits and the full 35+ field config use get_project_admin_settings.',
     {
       projectId: z.number().describe('The numeric project ID.'),
       outputFormat: outputFormatParam,
     },
     async ({ projectId, outputFormat }) => {
       try {
-        const [webCleanup, webhookCleanup, maxRes, maxQueued, maxBrowser, notes] =
+        const [webCleanup, webhookCleanup, reservationLimitEnforced, maxQueued, maxBrowser, automationMemory, notes] =
           await Promise.all([
             getWebCleanup(projectId),
             getWebhookCleanup(projectId),
-            getMaxReservations(projectId),
+            getMaxReservationsEnforced(projectId),
             getMaxQueuedTests(projectId),
             getMaxConcurrentBrowserSessions(projectId),
+            getMaxAutomationMemory(projectId),
             getProjectNotes(projectId),
           ]);
 
@@ -388,18 +393,20 @@ export function registerProjectTools(server: McpServer): void {
           projectId,
           webCleanup,
           webhookCleanup,
-          maxReservations: maxRes,
+          reservationLimitEnforced,
           maxQueuedTests: maxQueued,
           maxConcurrentBrowserSessions: maxBrowser,
+          maxAutomationMemoryMB: automationMemory,
           notes,
         };
         const humanText = [
           `⚙️  Settings for project ${projectId}:`,
           `Web Cleanup: ${webCleanup}`,
           `Webhook Cleanup: ${webhookCleanup}`,
-          `Max Reservations: ${maxRes}`,
-          `Max Queued Tests: ${maxQueued}`,
-          `Max Concurrent Browsers: ${maxBrowser}`,
+          `Reservation limit enforced: ${reservationLimitEnforced} (numeric limits: get_project_admin_settings)`,
+          `Max Queued Tests: ${maxQueued ?? 'unknown'}`,
+          `Max Concurrent Browsers: ${maxBrowser === -1 ? 'unlimited' : maxBrowser ?? 'unknown'}`,
+          `Max Automation Memory: ${automationMemory != null ? `${automationMemory} MB` : 'unknown'}`,
           `Notes: ${notes ?? 'none'}`,
         ].join('\n');
 
@@ -412,14 +419,25 @@ export function registerProjectTools(server: McpServer): void {
 
   server.tool(
     'update_project_settings',
-    'Updates project configuration such as cleanup behavior and concurrency limits. Cloud Admin only.',
+    'Updates project configuration such as cleanup behavior, concurrency limits and the automation process memory. Cloud Admin only. ' +
+    'Settings are applied one at a time; if one fails, the ones listed before it in the response were already applied.',
     {
       projectId: z.number().describe('The numeric project ID.'),
       webCleanup: z.boolean().optional().describe('Enable/disable web cleanup after sessions.'),
       webhookCleanup: z.boolean().optional().describe('Enable/disable webhook cleanup.'),
-      maxReservations: z.number().optional().describe('Maximum concurrent device reservations.'),
-      maxQueuedTests: z.number().optional().describe('Maximum queued tests.'),
-      maxConcurrentBrowserSessions: z.number().optional().describe('Maximum concurrent browser sessions.'),
+      maxReservations: z.number().int().optional().describe('Maximum concurrent device reservations.'),
+      maxQueuedTests: z.number().int().optional().describe('Maximum queued tests.'),
+      maxConcurrentBrowserSessions: z.number().int().optional().describe('Maximum concurrent browser sessions (-1 = unlimited).'),
+      maxAutomationMemoryMB: z
+        .number()
+        .int()
+        .min(AUTOMATION_MEMORY_RANGE_MB.min)
+        .max(AUTOMATION_MEMORY_RANGE_MB.max)
+        .optional()
+        .describe(
+          `Max memory in MB for the project's Appium Grid / Appium Server processes (${AUTOMATION_MEMORY_RANGE_MB.min}–${AUTOMATION_MEMORY_RANGE_MB.max}; ` +
+          'platform recommends 512). Raise it when sessions fail under memory pressure on large apps or long suites.'
+        ),
     },
     async ({
       projectId,
@@ -428,9 +446,10 @@ export function registerProjectTools(server: McpServer): void {
       maxReservations,
       maxQueuedTests,
       maxConcurrentBrowserSessions,
+      maxAutomationMemoryMB,
     }) => {
+      const updates: string[] = [];
       try {
-        const updates: string[] = [];
 
         if (webCleanup !== undefined) {
           await setWebCleanup(projectId, webCleanup);
@@ -452,6 +471,11 @@ export function registerProjectTools(server: McpServer): void {
           await setMaxConcurrentBrowserSessions(projectId, maxConcurrentBrowserSessions);
           updates.push(`Max Concurrent Browsers: ${maxConcurrentBrowserSessions}`);
         }
+        if (maxAutomationMemoryMB !== undefined) {
+          await setMaxAutomationMemory(projectId, maxAutomationMemoryMB);
+          const readBack = await getMaxAutomationMemory(projectId);
+          updates.push(`Max Automation Memory: ${maxAutomationMemoryMB} MB${readBack === maxAutomationMemoryMB ? ' (verified)' : ` (read back ${readBack} MB)`}`);
+        }
 
         if (updates.length === 0) {
           return {
@@ -468,7 +492,8 @@ export function registerProjectTools(server: McpServer): void {
           ],
         };
       } catch (e) {
-        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+        const applied = updates.length > 0 ? `\nAlready applied before the failure:\n${updates.map((u) => `  • ${u}`).join('\n')}` : '';
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}${applied}` }], isError: true };
       }
     }
   );
