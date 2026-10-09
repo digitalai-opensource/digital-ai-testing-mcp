@@ -1,6 +1,6 @@
 {
   "name": "digital-ai-testing-mcp",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "MCP server for Digital.ai Testing — device farm management, app lifecycle, and test automation",
   "type": "module",
   "main": "dist/index.js",
@@ -60,7 +60,9 @@
     "test:automotive": "vitest run tests/automotive.test.ts",
     "test:test-runs": "vitest run tests/test-runs.test.ts",
     "test:rca": "vitest run tests/rca.test.ts",
-    "test:toolsets": "vitest run tests/toolsets.test.ts"
+    "test:toolsets": "vitest run tests/toolsets.test.ts",
+    "test:fidelity-score": "vitest run tests/fidelity-score.test.ts",
+    "test:fidelity": "npm run build && tsx tests/fidelity/run.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

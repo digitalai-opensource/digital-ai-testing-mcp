@@ -127,7 +127,7 @@ const modules: Array<[string, RegisterFn]> = [
 ];
 const toolsetSelection = parseToolsetSelection(process.env.MCP_TOOLSETS);
 if (toolsetSelection.unknown.length > 0) {
-  console.error(`[${name}] ⚠️  MCP_TOOLSETS: unknown toolset(s) ignored: ${toolsetSelection.unknown.join(', ')} (valid: ${Object.keys(TOOLSETS).join(', ')}, all)`);
+  console.error(`[${name}] ⚠️  MCP_TOOLSETS: unknown toolset(s) ignored: ${toolsetSelection.unknown.join(', ')} (valid: ${Object.keys(TOOLSETS).join(', ')}, core, all)`);
 }
 const controller = registerWithToolsets(server, captureRegistrations(modules), toolsetSelection);
 if (!toolsetSelection.all) {
