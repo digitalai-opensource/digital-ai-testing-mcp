@@ -54,7 +54,10 @@ const START_DATE_DESC = 'Inclusive start date, "YYYY-MM-DD". Interpreted as UTC 
 const END_DATE_DESC = 'Inclusive end date, "YYYY-MM-DD". Interpreted as UTC 23:59:59.999 — NOT your local timezone.';
 const PROJECT_ID_DESC = 'Numeric project ID to scope to a single project. Omit or 0 for all projects. Not supported by "License Usage".';
 const USER_ID_DESC = 'Numeric user ID to scope to a single user. Omit or 0 for all users. Not supported by "License Usage", "Devices Usage", or "Browser Usage".';
-const CONFIRM_LARGE_DESC = `Set true to proceed with an unfiltered export spanning more than ${MAX_UNSCOPED_RANGE_DAYS} days despite the size guard.`;
+const CONFIRM_LARGE_DESC =
+  `Proceed with an unfiltered export spanning more than ${MAX_UNSCOPED_RANGE_DAYS} days despite the size guard. ` +
+  'Set true ONLY when the user has explicitly agreed to a large export (up front, or after you told them it may be very ' +
+  'large) — never on your own initiative. Otherwise offer to narrow by project/user or shorten the range.';
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;

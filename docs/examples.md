@@ -485,7 +485,7 @@ Before generating boilerplate, always find an available device first so the corr
 
 **Capacity planning & chargeback (→ Device Reservations):**
 - "How many device-hours did the 'iOS Regression' project consume last month? Export it as a CSV."
-- "Pull device-reservation hours for every project for Q2 2026, broken down by project" *(a 3-month unfiltered pull crosses the size guard — expect the agent to either narrow by project or confirm the large export)*
+- "Pull device-reservation hours for every project for Q2 2026, broken down by project" *(a 3-month unfiltered pull crosses the size guard — expect the agent to offer to narrow by project or ask you before confirming the large export; it must not confirm on its own)*
 - "Export this week's device reservations for the Default project so I can include it in the capacity review"
 
 **Idle / underused device audits (→ Devices Usage):**
