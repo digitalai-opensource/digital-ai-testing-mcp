@@ -15,5 +15,6 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 COPY resources/boilerplate ./resources/boilerplate
+COPY resources/test-orchestrator ./resources/test-orchestrator
 USER node
 CMD ["node", "dist/index.js"]

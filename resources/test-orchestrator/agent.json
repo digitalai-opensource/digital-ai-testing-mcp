@@ -1,0 +1,19 @@
+{
+  "name": "Digital.ai Test Orchestrator (Smart Agent)",
+  "version": "1.0-SNAPSHOT",
+  "sha256": "b3128d8956b3f5bd2259cc8c0474020466327c96858de737391636766905ba95",
+  "size": 11801724,
+  "source": {
+    "description": "Default download location, fetched on demand by install_test_orchestrator_agent: the Digital.ai sample repository, pinned to an immutable commit and verified by SHA-256. To move to a permanent production location, update downloadUrl + sha256 here, or set TEST_ORCHESTRATOR_JAR_URL + TEST_ORCHESTRATOR_JAR_SHA256 at runtime.",
+    "repository": "https://github.com/raheekhandigitalai/Digital.ai-Testing-Test-Orchestrator",
+    "commit": "3bb383499de771cf8b53e604d52652391ea0b066",
+    "path": "lib/smart-agent-1.0-SNAPSHOT.jar",
+    "downloadUrl": "https://raw.githubusercontent.com/raheekhandigitalai/Digital.ai-Testing-Test-Orchestrator/3bb383499de771cf8b53e604d52652391ea0b066/lib/smart-agent-1.0-SNAPSHOT.jar"
+  },
+  "requirements": {
+    "java": "17 or 21 (Java 25 support is in progress upstream)",
+    "frameworks": "JUnit 5 (Jupiter) or TestNG 7+",
+    "appiumJavaClient": "8, 9 or 10",
+    "projectMode": "Appium Server (OSS) projects only"
+  }
+}

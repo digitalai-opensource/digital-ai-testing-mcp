@@ -79,7 +79,7 @@ const REGISTERED_TOOLS = [
   // Workflows — General project lifecycle
   'setup_project', 'close_project_resources', 'teardown_project',
   // Boilerplate
-  'get_test_boilerplate', 'get_web_test_boilerplate', 'validate_test_script',
+  'get_test_boilerplate', 'get_web_test_boilerplate', 'validate_test_script', 'install_test_orchestrator_agent',
   // Agents (v2, Cloud Admin only)
   'list_agents', 'get_agent_devices',
   // Regions (v2, Cloud Admin only)
@@ -180,7 +180,7 @@ export function registerMetaTools(server: McpServer): void {
         '  Meta               — get_server_info, check_connectivity, check_workflow_readiness, list_environments, switch_environment (5 tools)',
         '  Workflows — POC    — create_poc, close_poc, delete_poc (3 tools, Cloud Admin only)',
         '  Workflows — Project— setup_project, close_project_resources, teardown_project (3 tools, Cloud Admin only)',
-        '  Boilerplate        — get_test_boilerplate, validate_test_script (2 tools)',
+        '  Boilerplate        — get_test_boilerplate (Test Orchestrator by default for Java on Appium Server), validate_test_script, install_test_orchestrator_agent (3 tools)',
         '  Agents             — list_agents, get_agent_devices (2 tools, Cloud Admin only)',
         '  Regions            — list_regions, get_region_topology (2 tools, Cloud Admin only)',
         '  NV Servers         — list_nv_servers, get_nv_server (2 tools, Cloud Admin only)',

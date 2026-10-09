@@ -8,7 +8,30 @@ import { getApplicationInfo } from '../api/applications.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
 import { listActiveSessions } from '../api/webdriver.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
-import { staleBuildRemedy } from '../utils/locality.js';
+import { staleBuildRemedy, serverFsInstallNotice, serverFsProjectDirParam } from '../utils/locality.js';
+import { isLocalFilesystem } from '../utils/deployment-mode.js';
+import { validateOutputPath } from '../utils/path-guard.js';
+import {
+  AGENT_PROJECT_PATH,
+  CONFIG_TEMPLATE_PATH,
+  GITIGNORE_ADVICE,
+  JDK_TRUST_NOTE,
+  LIB_GITIGNORE,
+  LIB_GITIGNORE_PATH,
+  ORCHESTRATOR_GITIGNORE,
+  ORCHESTRATOR_GITIGNORE_PATH,
+  addOrchestrationToGradle,
+  addOrchestrationToMaven,
+  buildConfigTemplate,
+  decideOrchestration,
+  resolveMaxRetryAttempts,
+  type OrchestrationInfo,
+} from '../utils/test-orchestrator.js';
+import {
+  buildAgentDownloadCommands,
+  installAgentIntoProject,
+  resolveAgentSource,
+} from '../api/test-orchestrator.js';
 
 type Platform = 'android' | 'ios';
 type Language = 'java-junit5' | 'java-testng' | 'nodejs' | 'python';
@@ -745,9 +768,31 @@ export function registerBoilerplateTools(server: McpServer): void {
           'Setting this WITHOUT real captured selectors produces a placeholder scaffold with invalid <…> selectors that ' +
           'fails at runtime, and violates the tool contract. When in doubt, do NOT set it — start_inspection_session instead.'
         ),
+      orchestration: z
+        .enum(['auto', 'on', 'off'])
+        .optional()
+        .default('auto')
+        .describe(
+          'Digital.ai Test Orchestrator (a JVM agent: automatic retries of failed tests, Reporter status sync, test ' +
+          'selection, fail-fast, Build/Run IDs — test code unchanged). "auto" (default): ON for Java (java-junit5 / ' +
+          'java-testng) on an Appium Server project, OFF otherwise (Appium Grid, Python and NodeJS are not supported). ' +
+          '"off": the classic non-orchestrated boilerplate — use when the user explicitly asks for it. "on": require it ' +
+          '(an unsupported combination returns the classic output with an explanation). Orchestrated projects attach ' +
+          'the agent only when lib/smart-agent.jar is present — install it with install_test_orchestrator_agent.'
+        ),
+      orchestrationMaxRetries: z
+        .number()
+        .int()
+        .min(0)
+        .max(5)
+        .optional()
+        .describe(
+          'Orchestrated projects only: run.maxRetryAttempts in the agent config. Default 2 — or 0 when the test body is ' +
+          'a placeholder (fails by design) or includePerformanceTransactions is set (retries would skew samples).'
+        ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, confirmSelectorsVerified, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
       // ── Inspection gate (v42) ────────────────────────────────────────────────
       // Advisory guards (warning text, a requiresVerifiedSelectors flag, an in-code
       // fail() guard) all lost to task-completion momentum: the agent stripped the
@@ -806,13 +851,16 @@ export function registerBoilerplateTools(server: McpServer): void {
       }
 
       // Auto-detect server mode via my-account-info — works for all user roles with Bearer Token.
-      let isAppiumOss = false;
+      // undefined = lookup failed. Templates fall back to Grid (the conservative choice), but the orchestration
+      // decision must not then claim the project IS Grid — it reports that the mode could not be determined.
+      let detectedAppiumOss: boolean | undefined;
       try {
         const me = await getMyAccountInfo();
-        isAppiumOss = me.project.isAppiumOss ?? false;
+        detectedAppiumOss = me.project.isAppiumOss ?? false;
       } catch {
-        // leave as false — don't fail boilerplate generation on lookup error
+        // don't fail boilerplate generation on lookup error
       }
+      const isAppiumOss = detectedAppiumOss ?? false;
 
       // Resolve app capabilities from appId if provided.
       let resolvedPackageName = packageName;
@@ -899,6 +947,69 @@ export function registerBoilerplateTools(server: McpServer): void {
           return { ...f, content: gridHeader(f.filename) + content };
         });
 
+        // ── Test Orchestrator (default ON for Java on Appium Server) ─────────────
+        const decision = decideOrchestration({ mode: orchestration, language, isAppiumOss: detectedAppiumOss });
+        let orchestrationInfo: OrchestrationInfo = { enabled: false, mode: orchestration, reason: decision.reason };
+        if (decision.enabled) {
+          const retries = resolveMaxRetryAttempts({
+            requested: orchestrationMaxRetries,
+            placeholderBody: clearTestBody,
+            performanceTransactions: includePerformanceTransactions === true,
+          });
+          const prefix = projectType === 'android-gradle-submodule' ? 'e2e-tests/' : '';
+          for (const f of resolved) {
+            if (f.diskName.startsWith('gradle')) f.content = addOrchestrationToGradle(f.content);
+            else if (f.diskName.startsWith('maven')) f.content = addOrchestrationToMaven(f.content);
+          }
+          // No root .gitignore is emitted (it would overwrite the user's). The two files that matter — the rendered
+          // key-bearing config and the agent JAR — are ignored by .gitignore files inside directories we own.
+          resolved.push(
+            {
+              filename: `${prefix}${CONFIG_TEMPLATE_PATH}`,
+              diskName: '(generated)',
+              lang: 'yaml',
+              content: buildConfigTemplate({ instanceUrl: rawBaseUrl, maxRetryAttempts: retries.value }),
+            },
+            { filename: `${prefix}${ORCHESTRATOR_GITIGNORE_PATH}`, diskName: '(generated)', lang: 'gitignore', content: ORCHESTRATOR_GITIGNORE },
+            { filename: `${prefix}${LIB_GITIGNORE_PATH}`, diskName: '(generated)', lang: 'gitignore', content: LIB_GITIGNORE },
+          );
+          // The agent manifest is only needed for a display string here — a missing/corrupt manifest must never sink
+          // the boilerplate itself (install_test_orchestrator_agent reports the real error when it is actually needed).
+          let agentSource = 'unknown — agent manifest unreadable; install_test_orchestrator_agent will report the cause';
+          try {
+            const src = resolveAgentSource();
+            agentSource = src.label;
+          } catch {
+            // degrade to the label above
+          }
+          orchestrationInfo = {
+            enabled: true,
+            mode: orchestration,
+            reason: decision.reason,
+            maxRetryAttempts: retries.value,
+            ...(retries.note && { maxRetryAttemptsNote: retries.note }),
+            agent: {
+              projectPath: `${prefix}${AGENT_PROJECT_PATH}`,
+              installedByThisTool: false,
+              howToInstall:
+                'Call install_test_orchestrator_agent with this project\'s directory' +
+                (prefix ? ' (the e2e-tests directory, not the Android root)' : '') +
+                ` — it places the agent at ${prefix}${AGENT_PROJECT_PATH}. Until it is present the build runs WITHOUT orchestration (and says so).`,
+              source: agentSource,
+            },
+            activation:
+              'The agent attaches — and the Java 17 compile level applies — only when the JAR is present AND the DIGITAL_AI_ACCESS_KEY ' +
+              'environment variable is set (the agent config requires the key; it is rendered from the env var at build time into ' +
+              'orchestrator/rendered/, which is git-ignored, never into a tracked file). Otherwise the project builds and runs exactly like the classic boilerplate.',
+            runCommands: { gradle: 'gradle test', maven: 'mvn test' },
+            buildId: 'Set BUILD_ID (CI usually does) to group a build\'s results in Reporter; defaults to "local".',
+            requirements: 'When attached: Java 17 or 21 JDK; JUnit 5 / TestNG 7+; Appium java-client 8–10 (this boilerplate uses 8.6.0).',
+            jdkTrustNote: JDK_TRUST_NOTE,
+            gitignore: GITIGNORE_ADVICE,
+            logs: 'smart-agent/<run-id>/smartagent-main.log — add smart-agent/ to your .gitignore.',
+          };
+        }
+
         const structured = {
           platform,
           language,
@@ -921,6 +1032,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           testName,
           projectType: projectType ?? 'standalone-gradle',
           files: resolved.map(f => ({ filename: f.filename, content: f.content })),
+          orchestration: orchestrationInfo,
           setupNote: setupNote(language, isAppiumOss, projectType),
           appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
           parallelNote: language === 'python'
@@ -958,6 +1070,20 @@ export function registerBoilerplateTools(server: McpServer): void {
           `> ⚠️ **Security:** These files contain a live credential — move the access key to an environment variable (\`DIGITAL_AI_ACCESS_KEY\`) before committing to source control.`,
           '',
         ];
+        if (orchestrationInfo.enabled && orchestrationInfo.agent) {
+          lines.push(
+            `> 🔁 **Test Orchestrator: ON** — retries failed tests up to ${orchestrationInfo.maxRetryAttempts}×, syncs real pass/fail to Reporter, ` +
+            `groups runs by Build ID. Install the agent with \`install_test_orchestrator_agent\` (→ \`${orchestrationInfo.agent.projectPath}\`) and ` +
+            'set `DIGITAL_AI_ACCESS_KEY`; until both are in place the project builds and runs exactly like the classic boilerplate (Gradle prints why). ' +
+            'Pass `orchestration: "off"` for the classic boilerplate.' + (orchestrationInfo.maxRetryAttemptsNote ? ` ${orchestrationInfo.maxRetryAttemptsNote}` : ''),
+            '> **Java/TLS:** when attached, the agent needs Java 17/21 — use a current update. Older builds (e.g. 21.0.2) lack the cloud\'s root CA ' +
+              '("SSL.com TLS RSA Root CA 2022"), so the agent\'s Reporter status sync fails silently.',
+            `> **.gitignore:** ${GITIGNORE_ADVICE}`,
+            '',
+          );
+        } else if (decision.requestedButNotApplied) {
+          lines.push(`> ⚠️ **Test Orchestrator requested but not applied:** ${decision.reason} Generated the classic boilerplate instead.`, '');
+        }
         if (clearTestBody) {
           lines.push(
             '> ⛔ **NOT A FINISHED TEST.** The test body is a placeholder with a deliberate fail-guard and ' +
@@ -994,6 +1120,99 @@ export function registerBoilerplateTools(server: McpServer): void {
           }],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ── install_test_orchestrator_agent ──────────────────────────────────────────
+  // The agent JAR is binary (~12 MB) and cannot travel inside get_test_boilerplate's text response. Under the
+  // npm/local install the server can write it straight into the user's project; under Docker/remote it cannot
+  // reach the user's filesystem, so it returns a checksum-verifying download command instead. Mode-dependent
+  // wording comes from the shared locality builders (evaluated once, at registration).
+  const localFs = isLocalFilesystem();
+  server.tool(
+    'install_test_orchestrator_agent',
+    'Install the Digital.ai Test Orchestrator agent (smart-agent.jar) into a test project generated by ' +
+    'get_test_boilerplate with orchestration enabled — it belongs at <projectDir>/lib/smart-agent.jar, where the ' +
+    'generated Gradle/Maven wiring looks for it (for android-gradle-submodule that is the e2e-tests directory, NOT the ' +
+    'Android root). The JAR is not shipped with this server: it is downloaded on demand and always verified against a ' +
+    'pinned SHA-256 before it is used — by default from the Digital.ai sample repository at a fixed commit, or from ' +
+    'TEST_ORCHESTRATOR_JAR_URL + TEST_ORCHESTRATOR_JAR_SHA256 when configured. If the download fails, the response says ' +
+    'where to get the file and how to verify it; the generated project keeps working without it. ' + serverFsInstallNotice(),
+    {
+      projectDir: z.string().optional().describe(serverFsProjectDirParam()),
+      outputFormat: outputFormatParam,
+    },
+    async ({ projectDir, outputFormat }) => {
+      let source;
+      try {
+        source = resolveAgentSource();
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: cannot resolve the Test Orchestrator agent: ${(e as Error).message} ${staleBuildRemedy()}` }], isError: true };
+      }
+
+      if (!localFs) {
+        const cmds = buildAgentDownloadCommands(source);
+        const structured = {
+          installed: false,
+          reason: 'MCP server runs in Docker/remote — it cannot write to your filesystem.',
+          source: source.kind,
+          downloadUrl: source.downloadUrl,
+          sha256: source.sha256,
+          commands: cmds,
+          target: AGENT_PROJECT_PATH,
+          sourceLabel: source.label,
+          ...(source.homepage && { homepage: source.homepage }),
+          runFrom: 'the directory that must receive lib/smart-agent.jar: the generated test project root — for an android-gradle-submodule project, the e2e-tests directory, not the Android root.',
+        };
+        const human = [
+          'Run ONE of these from the directory that must receive lib/smart-agent.jar — the generated test project root',
+          '(for an android-gradle-submodule project: the e2e-tests directory, NOT the Android root):',
+          '',
+          'bash / Git Bash / macOS:',
+          '```sh',
+          cmds.bash,
+          '```',
+          'PowerShell:',
+          '```powershell',
+          cmds.powershell,
+          '```',
+          `Both verify SHA-256 ${source.sha256} and delete the file on a mismatch, so an unverified JAR is never left where the build would attach it.`,
+          `Source: ${source.label}${source.homepage ? ` — ${source.homepage}` : ''}. Without it the project still builds and runs, just without orchestration.`,
+        ].join('\n');
+        return respond(outputFormat, structured, human);
+      }
+
+      if (!projectDir) {
+        return { content: [{ type: 'text' as const, text: 'Error: projectDir is required — pass the absolute path of the generated project root (it must already exist).' }], isError: true };
+      }
+      const pathError = validateOutputPath(projectDir);
+      if (pathError) return { content: [{ type: 'text' as const, text: `Error: ${pathError}` }], isError: true };
+
+      try {
+        const result = await installAgentIntoProject(projectDir, source);
+        const warning = result.buildFileFound
+          ? undefined
+          : `⚠️ No build.gradle / build.gradle.kts / pom.xml found in ${projectDir}. The agent was written, but the generated wiring only looks for lib/smart-agent.jar in the project root (for android-gradle-submodule: the e2e-tests directory). Check the path.`;
+        const structured = {
+          installed: true,
+          path: result.path,
+          bytes: result.bytes,
+          sha256: result.sha256,
+          replacedExisting: result.replaced,
+          buildFileFound: result.buildFileFound,
+          ...(warning && { warning }),
+          source: { kind: source.kind, label: source.label, url: source.downloadUrl },
+          nextStep: 'Set DIGITAL_AI_ACCESS_KEY in the environment, then run gradle test / mvn test — the agent attaches automatically.',
+        };
+        const human =
+          `✅ Test Orchestrator agent ${result.replaced ? 'updated' : 'installed'}: ${result.path} (${(result.bytes / 1048576).toFixed(1)} MB, sha256 ${result.sha256}).\n` +
+          `Source: ${source.label} (SHA-256 verified).\n` +
+          (warning ? warning + '\n' : '') +
+          'Next: set DIGITAL_AI_ACCESS_KEY, then run `gradle test` or `mvn test`.';
+        return respond(outputFormat, structured, human);
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error installing the Test Orchestrator agent: ${(e as Error).message}` }], isError: true };
       }
     }
   );

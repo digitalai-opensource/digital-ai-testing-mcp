@@ -1,5 +1,6 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
+import { resolveAgentSource, loadAgentBytes, sha256Hex } from '../../src/api/test-orchestrator.js';
 import {
   getTestById,
   listTests,
@@ -89,4 +90,15 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     assert.ok(Array.isArray(all), 'unfiltered applications should be an array');
     assert.equal(filtered.length, 0, 'server ignored bundleIdentifier filter — it returned apps that do not match');
   });
+});
+
+// The Test Orchestrator agent is NOT shipped with the package — install_test_orchestrator_agent downloads it on
+// demand from the location pinned in resources/test-orchestrator/agent.json. If this fails, the pinned file moved or
+// changed upstream: update downloadUrl + sha256 in agent.json (never relax the checksum).
+describe('Test Orchestrator pinned download location', () => {
+  it('serves exactly the pinned file (size + SHA-256)', async () => {
+    const source = resolveAgentSource({});
+    const bytes = await loadAgentBytes(source);
+    assert.equal(sha256Hex(bytes), source.sha256);
+  }, 120000);
 });
