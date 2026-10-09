@@ -65,7 +65,7 @@ export const REGISTERED_TOOLS = [
   'find_latest_test_for_name', 'get_grouped_test_reports',
   'get_project_test_summary', 'get_failure_rate_by_app_version',
   'get_distinct_test_key_values', 'delete_test_reports',
-  'delete_test_reports_before_date', 'delete_test_reports_by_name', 'download_test_attachments',
+  'delete_test_reports_before_date', 'delete_test_reports_by_name', 'download_test_attachments', 'download_test_video',
   'get_test_attachments_download_command', 'get_test_log', 'summarize_test_failures',
   'list_test_attachments', 'list_active_test_executions', 'share_test_report', 'get_root_cause_analysis',
   // Test Views

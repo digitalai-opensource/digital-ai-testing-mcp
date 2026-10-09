@@ -14,6 +14,8 @@ import {
   getDistinctKeyValues,
   deleteTests,
   downloadTestAttachments,
+  downloadTestVideo,
+  getTestVideoInfo,
   extractAttachmentLog,
   summarizeTestFailures,
 } from '../api/reporting.js';
@@ -785,6 +787,59 @@ export function registerReportingTools(server: McpServer): void {
     }
   );
 
+  // ─── download_test_video ───────────────────────────────────────────────────
+
+  server.tool(
+    'download_test_video',
+    'Download only the session video (.mp4) of a test execution — no ZIP, no logs — or just one byte range of it. ' +
+    'infoOnly: true returns the size without downloading. Byte ranges let you fetch a large recording in pieces, resume ' +
+    'a cut-off download, or grab the start/end of a long session. Use download_test_attachments when you also need the logs.' +
+    serverFsDownloadNotice(),
+    {
+      report: z.string().describe('Report UUID (preferred — numeric ids collide across projects), numeric test id, or the report URL (e.g. .../reporter/video-report/<uuid>).'),
+      localPath: z.string().optional().describe('Where to write the .mp4 (required unless infoOnly). ' + serverFsOutputParam()),
+      infoOnly: z.boolean().optional().describe('Return the video size and type without downloading it.'),
+      startByte: z.number().int().min(0).optional().describe('First byte of a partial download (0-based). With endByte for a fixed range; alone for "from here to the end" (e.g. resuming).'),
+      endByte: z.number().int().min(0).optional().describe('Last byte of a partial download, inclusive. Needs startByte.'),
+      lastBytes: z.number().int().min(1).optional().describe('Download only the final N bytes. Do not combine with startByte/endByte.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ report, localPath, infoOnly, startByte, endByte, lastBytes, outputFormat }) => {
+      const ref = parseReportRef(report);
+      if (!ref) return { content: [{ type: 'text', text: `Error: "${report}" is not a report UUID, numeric test id or report URL.` }], isError: true };
+      const fail = (msg: string) => ({ content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true });
+      if (lastBytes != null && (startByte != null || endByte != null)) return fail('use either lastBytes or startByte/endByte, not both.');
+      if (endByte != null && startByte == null) return fail('endByte needs startByte.');
+      if (startByte != null && endByte != null && endByte < startByte) return fail('endByte must not be before startByte.');
+      const range =
+        lastBytes != null ? `bytes=-${lastBytes}` : startByte != null ? `bytes=${startByte}-${endByte ?? ''}` : undefined;
+      const idNote = ref.kind === 'testId' ? ' Numeric ids are only unique per project — prefer the UUID.' : '';
+      try {
+        if (infoOnly) {
+          const info = await getTestVideoInfo(ref);
+          const mb = info.totalBytes != null ? `${(info.totalBytes / (1024 * 1024)).toFixed(1)} MB` : 'unknown size';
+          return respond(outputFormat, { ...info, rangeRequests: true }, `🎬 Video: ${mb} (${info.totalBytes ?? '?'} bytes, ${info.contentType ?? 'unknown type'}). Byte ranges are supported.${idNote}`);
+        }
+        if (!localPath) return fail('localPath is required unless infoOnly is true.');
+        const pathErr = validateOutputPath(localPath);
+        if (pathErr) return fail(pathErr);
+        const r = await downloadTestVideo(ref, localPath, range);
+        const what = r.partial ? `bytes ${r.contentRange?.replace(/^bytes\s*/, '') ?? range}` : 'full video';
+        return respond(
+          outputFormat,
+          { ...r, localPath },
+          `✅ ${what} (${r.bytesWritten} bytes${r.totalBytes != null ? ` of ${r.totalBytes}` : ''}) written to: ${localPath}` +
+            (r.partial ? '\nA partial file is a fragment, not a playable video on its own unless it starts at byte 0 and the player tolerates truncation.' : '') +
+            idNote
+        );
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (/\[416\]/.test(msg)) return fail(`the requested range is outside the video. Call with infoOnly: true to get its size. (${msg})`);
+        return fail(msg);
+      }
+    }
+  );
+
   // ─── get_test_attachments_download_command ─────────────────────────────────
 
   server.tool(
@@ -795,16 +850,22 @@ export function registerReportingTools(server: McpServer): void {
     'WARNING: The generated command embeds the active access key in plaintext. Instruct the user to run it immediately and not save or share the output.',
     {
       uuid: z.string().describe('Test execution UUID (uuid field from get_test_report or list_test_reports).'),
-      localPath: z.string().optional().default('test-attachments.zip').describe('Path on the user\'s local machine to save the ZIP. Default: "test-attachments.zip" in the current directory.'),
+      localPath: z.string().optional().describe('Path on the user\'s local machine to save the file. Default: "test-attachments.zip" (or "test-video.mp4" for artifact "video") in the current directory.'),
+      artifact: z
+        .enum(['zip', 'video'])
+        .optional()
+        .default('zip')
+        .describe('"zip" (default): the full attachment ZIP (video + logs). "video": only the session .mp4 — smaller, no unzip.'),
       localPlatform: z.enum(['windows', 'macos', 'linux']).describe('Platform of the machine that will run the command. ' + localPlatformParamNotice()),
       outputFormat: outputFormatParam,
     },
-    async ({ uuid, localPath, localPlatform, outputFormat }) => {
+    async ({ uuid, localPath, artifact, localPlatform, outputFormat }) => {
+      const video = artifact === 'video';
       const result = buildDownloadCommand({
-        path: `/reporter/api/reports/${uuid}/attachments`,
-        localPath: localPath ?? 'test-attachments.zip',
+        path: `/reporter/api/reports/${uuid}/${video ? 'video' : 'attachments'}`,
+        localPath: localPath ?? (video ? 'test-video.mp4' : 'test-attachments.zip'),
         localPlatform,
-        notes: ['The downloaded file is a ZIP — unzip it to access the .mp4 video and the appium/device/ws logs.'],
+        notes: [video ? 'The downloaded file is the session video (.mp4).' : 'The downloaded file is a ZIP — unzip it to access the .mp4 video and the appium/device/ws logs.'],
       });
       return respond(outputFormat, commandPayload(result), result.humanText);
     }
