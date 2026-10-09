@@ -55,7 +55,8 @@
     "test:test-orchestrator": "vitest run tests/test-orchestrator.test.ts",
     "test:boilerplate-orchestration": "vitest run tests/boilerplate-orchestration.test.ts",
     "test:test-status": "vitest run tests/test-status.test.ts",
-    "test:report-ref": "vitest run tests/report-ref.test.ts"
+    "test:report-ref": "vitest run tests/report-ref.test.ts",
+    "test:project-settings": "vitest run tests/project-settings.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
