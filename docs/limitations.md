@@ -2,7 +2,9 @@
 
 ## 1. Appium Test Execution
 
-There is no REST API to trigger Appium test execution directly. Tests are launched from Appium clients (Appium Desktop, IDE plugins, CI scripts). This MCP server can manage devices, apps, and reservations that support test runs — but cannot initiate an Appium session itself.
+There is no REST API to trigger Appium (or Selenium) test execution directly. Those tests are launched from Appium clients (IDE plugins, CI scripts) — this MCP server manages the devices, apps and reservations they use and can open its own inspection sessions, but does not run a user's Appium suite.
+
+**Espresso, XCUITest and Maestro suites are different:** the platform runs them itself through the Test Run API — see `execute_test_run`, `get_test_run_status`, `cancel_test_run` and `get_test_run_command`. Maestro is Android-only and its bundle must be a ZIP containing a `flows/` directory.
 
 ## 2. Remote Debug Session Initiation
 

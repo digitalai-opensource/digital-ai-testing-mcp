@@ -1,7 +1,8 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { resolveAgentSource, loadAgentBytes, sha256Hex } from '../../src/api/test-orchestrator.js';
-import { getGroupedTests, getTestByUuid } from '../../src/api/reporting.js';
+import { getGroupedTests, getTestByUuid, getRootCauseAnalysis } from '../../src/api/reporting.js';
+import { getTestRunStatus } from '../../src/api/test-runs.js';
 import { getAllTestViews, getTestViewSummary } from '../../src/api/test-views.js';
 import { getMaxQueuedTests, getMaxAutomationMemory, getWebhookCleanup } from '../../src/api/projects.js';
 import { getMyAccountInfo } from '../../src/api/users.js';
@@ -133,6 +134,14 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     const mem = await getMaxAutomationMemory(id);
     assert.ok(mem != null && mem >= 256 && mem <= 1024, `automation memory out of range: ${mem}`);
     assert.equal(typeof await getWebhookCleanup(id), 'boolean');
+  });
+
+  // FINDING 11 (2026-10-09): the Test Run status endpoint exists and answers an unknown id with a 404 domain error;
+  // RCA info is readable. Read-only — never submits or cancels a run here.
+  it('test-run status endpoint answers an unknown id with a 404; rca/info is readable', async () => {
+    await assert.rejects(() => getTestRunStatus('1'), /404|does not exist/);
+    const rca = await getRootCauseAnalysis((await listTests({ limit: 1, page: 1 })).data[0].uuid);
+    assert.ok(['string'].includes(typeof rca.status));
   });
 
   it('applications filter is honored server-side (fake bundle returns none)', async () => {

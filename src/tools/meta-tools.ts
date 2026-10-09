@@ -11,7 +11,7 @@ import { staleBuildRemedy } from '../utils/locality.js';
 
 // Canonical list of every tool registered by this server.
 // Update this when adding or removing tools so get_server_info stays accurate.
-const REGISTERED_TOOLS = [
+export const REGISTERED_TOOLS = [
   // Users
   'list_users', 'create_user', 'delete_user', 'get_my_account_info',
   'assign_user_to_projects', 'unassign_user_from_projects',
@@ -67,7 +67,7 @@ const REGISTERED_TOOLS = [
   'get_distinct_test_key_values', 'delete_test_reports',
   'delete_test_reports_before_date', 'delete_test_reports_by_name', 'download_test_attachments',
   'get_test_attachments_download_command', 'get_test_log', 'summarize_test_failures',
-  'list_test_attachments', 'list_active_test_executions',
+  'list_test_attachments', 'list_active_test_executions', 'share_test_report', 'get_root_cause_analysis',
   // Test Views
   'list_test_views', 'search_test_views', 'get_test_view', 'get_test_view_summary',
   'create_test_view', 'update_test_view', 'delete_test_view',
@@ -108,7 +108,7 @@ const REGISTERED_TOOLS = [
   'swipe_screen', 'launch_app', 'press_back',
   'long_press', 'double_tap', 'drag_and_drop', 'pinch_zoom', 'scroll_to_element',
   'press_key', 'hide_keyboard', 'app_control', 'device_control',
-  'list_inspection_sessions', 'cleanup_inspection_sessions', 'mock_authentication',
+  'list_inspection_sessions', 'cleanup_inspection_sessions', 'mock_authentication', 'automotive_control',
   // Inspection sessions — web (Selenium Grid, browser inspection)
   'start_browser_inspection_session', 'stop_browser_inspection_session',
   'navigate_to', 'get_page_dom', 'browser_action', 'find_web_elements',
@@ -118,6 +118,8 @@ const REGISTERED_TOOLS = [
   'detect_performance_outliers', 'performance_transaction_control',
   // Usage reports (v2, Cloud Admin only)
   'download_usage_report', 'get_usage_report_download_command', 'summarize_usage_report',
+  // Test runs — Espresso / XCUITest / Maestro executed by the platform
+  'execute_test_run', 'get_test_run_status', 'cancel_test_run', 'get_test_run_command',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
