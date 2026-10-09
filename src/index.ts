@@ -80,7 +80,9 @@ APPLICATIONS: applicationName filter param is silently ignored — use the nameC
 RESERVATIONS: project= causes 400; deviceUid= causes 400 — use projectId= and deviceId= instead.
 DATES: Reservation and provisioning-profile dates are MM/DD/YYYY HH:mm:ss (not ISO 8601) — use the tool's dedicated date parser, not new Date().
 SLOW TOOLS (avoid in loops): get_environment_summary, get_transaction_performance_summary, get_performance_trend, get_daily_execution_trend, find_latest_test_for_name (under project keys).
-PROJECT CONTEXT: each project-level key (Project Admin or Project User, prefixed aut_1_...) is scoped to exactly one project — there is no API call to change project within the same key. "Switch projects", "change project context", "use a different project", or "access project X" all mean switch_environment to the profile holding that project's key. Use list_environments to show available profiles.`;
+ACCESS LEVEL: never infer privilege from key format. A Cloud Admin may hold either a long eyJ... key or a short aut_1_... key. The real level (Cloud Admin / Project Admin / Project User) is detected from the API — read it from get_server_info or list_environments before telling the user what they can or cannot do.
+
+PROJECT CONTEXT: each Project Admin / Project User key is scoped to exactly one project — there is no API call to change project within the same key. "Switch projects", "change project context", "use a different project", or "access project X" all mean switch_environment to the profile holding that project's key. Use list_environments to show available profiles.`;
 
 const server = new McpServer({ name, version }, { instructions: SERVER_INSTRUCTIONS });
 

@@ -1,4 +1,4 @@
-import { getActiveAccessKey, getActiveUrl, getActiveKeyType } from '../api/client.js';
+import { getActiveAccessKey, getActiveUrl, getActiveAuthScheme } from '../api/client.js';
 
 // Mirror of buildUploadCommand for the DOWNLOAD direction. The MCP server runs
 // in Docker/remote, so a file it writes lands on the server's filesystem, not
@@ -28,14 +28,15 @@ export interface DownloadCommandResult {
 export function buildDownloadCommand(spec: DownloadCommandSpec): DownloadCommandResult {
   const accessKey = getActiveAccessKey();
   const baseUrl = getActiveUrl();
-  const isJwt = getActiveKeyType() === 'jwt';
+  // Header scheme only (how the credential is presented) — NOT a privilege check.
+  const bearerOnly = getActiveAuthScheme() === 'bearer';
   const isWindows = spec.localPlatform === 'windows';
   const endpoint = `${baseUrl}${spec.path}`;
 
   // curl — works on macOS, Linux, Git Bash, and WSL. -L follows the redirect
   // some download endpoints issue to blob storage.
   const curlLines: string[] = ['curl -L \\'];
-  if (isJwt) {
+  if (bearerOnly) {
     curlLines.push(`  -H "Authorization: Bearer ${accessKey}" \\`);
   } else {
     curlLines.push(`  -H "X-API-KEY: ${accessKey}" \\`);
@@ -48,7 +49,7 @@ export function buildDownloadCommand(spec: DownloadCommandSpec): DownloadCommand
   // PowerShell (Invoke-WebRequest) — Windows native, follows redirects, -OutFile
   // streams the binary to disk.
   const psLines: string[] = ['$headers = @{'];
-  if (isJwt) {
+  if (bearerOnly) {
     psLines.push(`    "Authorization" = "Bearer ${accessKey}"`);
   } else {
     psLines.push(`    "X-API-KEY"     = "${accessKey}"`);

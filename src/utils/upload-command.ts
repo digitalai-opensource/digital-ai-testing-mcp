@@ -1,4 +1,4 @@
-import { getActiveAccessKey, getActiveUrl, getActiveKeyType } from '../api/client.js';
+import { getActiveAccessKey, getActiveUrl, getActiveAuthScheme } from '../api/client.js';
 
 // Shared builder for "run this on your own machine" multipart-upload commands.
 // The MCP server typically runs in Docker, so it cannot read a file from the
@@ -29,13 +29,14 @@ export interface UploadCommandResult {
 export function buildUploadCommand(spec: UploadCommandSpec): UploadCommandResult {
   const accessKey = getActiveAccessKey();
   const baseUrl = getActiveUrl();
-  const isJwt = getActiveKeyType() === 'jwt';
+  // Header scheme only (how the credential is presented) — NOT a privilege check.
+  const bearerOnly = getActiveAuthScheme() === 'bearer';
   const isWindows = spec.localPlatform === 'windows';
   const endpoint = `${baseUrl}${spec.path}`;
 
   // curl — works on macOS, Linux, Git Bash, and WSL
   const curlLines: string[] = ['curl -X POST \\'];
-  if (isJwt) {
+  if (bearerOnly) {
     curlLines.push(`  -H "Authorization: Bearer ${accessKey}" \\`);
   } else {
     curlLines.push(`  -H "X-API-KEY: ${accessKey}" \\`);
@@ -50,7 +51,7 @@ export function buildUploadCommand(spec: UploadCommandSpec): UploadCommandResult
 
   // PowerShell (Invoke-RestMethod) — Windows native
   const psLines: string[] = ['$headers = @{'];
-  if (isJwt) {
+  if (bearerOnly) {
     psLines.push(`    "Authorization" = "Bearer ${accessKey}"`);
   } else {
     psLines.push(`    "X-API-KEY"     = "${accessKey}"`);

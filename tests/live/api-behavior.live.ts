@@ -71,6 +71,18 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
   // FINDING 3 (Cat-1 cleared): /api/v1/applications filters server-side. A bundle
   // that cannot exist must return zero apps; if it returns the full list, the
   // server is ignoring the filter and our filter params are decorative.
+  // FINDING 6: server-side start_time sort is honored for EVERY role (validated 2026-10-08 for Cloud Admin,
+  // ProjectAdmin and User keys — results identical to a full scan). Older notes said project roles were
+  // CSRF-blocked; listTests now attempts sort for all roles and only falls back if the platform refuses.
+  // sortApplied:false here means the platform started refusing sort for this credential — the fallback
+  // still keeps results correct, but revisit the fast path.
+  it('server-side start_time sort is applied and returns newest first', async () => {
+    const res = await listTests({ limit: 10, page: 1, sort: [{ property: 'start_time', descending: true }] });
+    assert.equal(res.sortApplied, true, 'platform refused sort for this credential — listTests fell back to unsorted');
+    const ts = res.data.map((r) => r.start_time);
+    assert.ok(ts.every((t, i) => i === 0 || ts[i - 1] >= t), 'results are not newest-first');
+  });
+
   it('applications filter is honored server-side (fake bundle returns none)', async () => {
     const all = await getApplications();
     const filtered = await getApplications({ bundleIdentifier: 'com.nonexistent.zzz999.audit' });

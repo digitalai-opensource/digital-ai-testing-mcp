@@ -258,7 +258,7 @@ Before generating boilerplate, always find an available device first so the corr
 - "Login, tap Transfer, pick account 43x, set $50.00, tap Transfer Now — make that a test" *(step-level detail → autonomous, no collaboration needed)*
 - "I want a test for app X" *(vague → the agent starts the interactive experience, or asks which mode you want)*
 - "What inspection sessions are still open? Stop them all."
-- "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin — reporter delete is CSRF-blocked for project-level keys)*
+- "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin, or a Project Admin whose project has `allowUsersDeleteTests` enabled — see [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting))*
 
 ---
 

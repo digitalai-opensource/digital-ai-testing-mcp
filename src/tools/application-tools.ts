@@ -25,7 +25,9 @@ import { buildDownloadCommand } from '../utils/download-command.js';
 import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
 import { formatApplicationList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
-import { getActiveAccessKey, getActiveUrl, getActiveKeyType } from '../api/client.js';
+import { getActiveAccessKey, getActiveUrl, getActiveAuthScheme } from '../api/client.js';
+import { peekActiveAccessInfo } from '../api/access-level.js';
+import { isKnownNotCloudAdmin } from '../utils/access-level.js';
 
 // v43 Fix C — structured (not prose) test-creation guidance, attached to the entry-point
 // tools an agent calls first when building a test. The doc's argument: agents treat a
@@ -366,7 +368,8 @@ export function registerApplicationTools(server: McpServer): void {
     }) => {
       const accessKey = getActiveAccessKey();
       const baseUrl = getActiveUrl();
-      const isJwt = getActiveKeyType() === 'jwt';
+      // Header scheme only (how the credential is presented) — NOT a privilege check.
+      const bearerOnly = getActiveAuthScheme() === 'bearer';
       const isWindows = localPlatform === 'windows';
       const endpoint = `${baseUrl}/api/v1/applications/new`;
 
@@ -390,7 +393,7 @@ export function registerApplicationTools(server: McpServer): void {
       // curl — works on macOS, Linux, Git Bash, and WSL
       const curlFilePath = localFilePath.replace(/\\/g, '/');
       const curlLines: string[] = ['curl -X POST \\'];
-      if (isJwt) {
+      if (bearerOnly) {
         curlLines.push(`  -H "Authorization: Bearer ${accessKey}" \\`);
       } else {
         curlLines.push(`  -H "X-API-KEY: ${accessKey}" \\`);
@@ -404,7 +407,7 @@ export function registerApplicationTools(server: McpServer): void {
       // PowerShell (Invoke-RestMethod) — Windows native
       const psLines: string[] = [];
       psLines.push('$headers = @{');
-      if (isJwt) {
+      if (bearerOnly) {
         psLines.push(`    "Authorization" = "Bearer ${accessKey}"`);
       } else {
         psLines.push(`    "X-API-KEY"     = "${accessKey}"`);
@@ -427,8 +430,11 @@ export function registerApplicationTools(server: McpServer): void {
       lines.push('   Run immediately — do not save, share, or commit this output.');
       lines.push('');
 
-      if (!isJwt && project) {
-        lines.push('⚠️  NOTE: The "project" field requires Cloud Admin access. The active key is a project-level key —');
+      // Privilege claim — from the API-derived level, not the key format. CACHE ONLY: this is a command
+      // generator the user reaches for when the server may be unreachable, so it must never block on a probe.
+      const knownLevel = peekActiveAccessInfo();
+      if (project && knownLevel && isKnownNotCloudAdmin(knownLevel.level)) {
+        lines.push('⚠️  NOTE: The "project" field requires Cloud Admin access. The active credential is project-level —');
         lines.push('   the platform will ignore "project" and upload to your default project.');
         lines.push('   To target a specific project: switch_environment("<admin-profile>") → re-run → switch back.');
         lines.push('');

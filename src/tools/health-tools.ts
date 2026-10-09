@@ -390,7 +390,7 @@ export function registerHealthTools(server: McpServer): void {
         const [info, devices, sessions] = await Promise.all([
           getLicenseInfo(),
           getAllDevices(),
-          getActiveSessions().catch(() => []),   // Sessions endpoint is JWT-only; soft-fail
+          getActiveSessions().catch(() => []),   // Sessions endpoint is Cloud Admin only; soft-fail
         ]);
 
         // Device utilization

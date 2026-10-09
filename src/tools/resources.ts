@@ -76,8 +76,8 @@ export function registerResources(server: McpServer): void {
     { description: 'The 20 most recent failed test executions across all projects.' },
     async (uri) => {
       try {
-        // listTestsSortedDesc guarantees newest-first for both key types — project
-        // keys CSRF-block sort, so a plain sorted listTests call would silently
+        // listTestsSortedDesc guarantees newest-first for every role — if sort is refused, a plain sorted
+        // listTests call would silently
         // return arbitrary failures instead of the most recent.
         const result = await listTestsSortedDesc({
           limit: 20,
