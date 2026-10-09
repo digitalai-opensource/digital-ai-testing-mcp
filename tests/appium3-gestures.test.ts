@@ -17,17 +17,21 @@ import type { InspectionSession } from '../src/types/digital-ai.js';
 
 let mode: 'actions-ok' | 'actions-unknown' = 'actions-ok';
 const hits: string[] = [];
+const bodies: string[] = [];
 let server: http.Server;
 let client: Client;
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
-    req.on('data', () => {});
+    let body = '';
+    req.on('data', (c) => { body += c; });
     req.on('end', () => {
+      bodies.push(body);
       const url = req.url ?? '';
       hits.push(url.replace(/^\/wd\/hub\/session\/[^/]+/, ''));
       res.setHeader('Content-Type', 'application/json');
       if (url.endsWith('/window/rect')) return void res.end(JSON.stringify({ value: { width: 1080, height: 2280, x: 0, y: 0 } }));
+      if (url.endsWith('/elements')) return void res.end('{"value":[]}');
       if (url.endsWith('/actions')) {
         if (mode === 'actions-ok') return void res.end('{"value":null}');
         res.statusCode = 404;
@@ -50,7 +54,7 @@ beforeAll(async () => {
   await Promise.all([mcp.connect(b), client.connect(a)]);
 });
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
-beforeEach(() => { hits.length = 0; });
+beforeEach(() => { hits.length = 0; bodies.length = 0; });
 
 const session = (handle: string): InspectionSession => ({
   handle, gridSessionId: `sid-${handle}`, reportTestId: 0, reportUrl: '', cloudViewLink: null, deviceUDID: 'X', deviceName: 'Galaxy S10',
@@ -86,5 +90,16 @@ describe('W3C gestures on Appium 3', () => {
       assert.match(text, /W3C \/actions failed: .*actions disabled on this agent/, `${tool}: primary error first`);
       assert.match(text, /does not exist on Appium 3/, `${tool}: explains the removed route`);
     }
+  });
+});
+
+describe('iOS predicate locator', () => {
+  it('find_elements passes "-ios predicate string" through to the session unchanged', async () => {
+    registerSession({ ...session('A3000003'), platform: 'ios', deviceOs: 'iOS' });
+    const predicate = "type == 'XCUIElementTypeButton' AND label == 'Login'";
+    const { text } = await call('find_elements', { handle: 'A3000003', strategy: '-ios predicate string', selector: predicate });
+    assert.match(text, /No elements found/);
+    const sent = bodies.map((b) => { try { return JSON.parse(b); } catch { return {}; } }).find((b) => b.using);
+    assert.deepEqual(sent, { using: '-ios predicate string', value: predicate });
   });
 });
