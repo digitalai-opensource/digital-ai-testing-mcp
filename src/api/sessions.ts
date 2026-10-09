@@ -1,7 +1,7 @@
 import { apiGet } from './client.js';
 import type { ActiveSession } from '../types/digital-ai.js';
 
-// v2 API — Cloud Admin (JWT) only. Project API keys receive 401.
+// v2 API — Cloud Admin only. Project-level roles are refused (401/403).
 
 export async function getActiveSessions(): Promise<ActiveSession[]> {
   try {

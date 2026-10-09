@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
-import { resetClient, getActiveProfileName, getActiveUrl, getActiveKeyType } from '../api/client.js';
+import { resetClient, getActiveProfileName, getActiveUrl } from '../api/client.js';
+import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
+import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
 import { listProfiles, getProfileCredentials, profileCount } from '../utils/profile-loader.js';
 import { computeWorkflowReadiness, WORKFLOW_DEPS } from '../utils/tool-registry.js';
@@ -139,14 +141,14 @@ export function registerMetaTools(server: McpServer): void {
       let projectLine = 'Project:          (unknown)';
       try {
         const me = await getMyAccountInfo();
+        primeAccessInfoFromAccount(me); // one request serves both the project line and the access level below
         const mode = me.project.isAppiumOss ? 'Appium Server (OSS)' : 'Appium Grid';
         projectLine = `Project:          ${me.project.name} (ID: ${me.project.id}) — ${mode} — Role: ${me.role}`;
       } catch {
         // non-fatal — server info still useful without project details
       }
 
-      const keyType = getActiveKeyType();
-      const keyLabel = keyType === 'jwt' ? 'Cloud Admin — full access' : 'project-level key (Project Admin or Project User) — scoped access (some Cloud Admin tools return 403)';
+      const keyLabel = describeLevel(await getAccessInfo());
       const envLine = envCount > 1
         ? `Active profile:   "${activeProfile}" — ${keyLabel} (${envCount} profiles — use list_environments / switch_environment)`
         : `Active profile:   "${activeProfile}" — ${keyLabel}`;
@@ -323,17 +325,22 @@ export function registerMetaTools(server: McpServer): void {
   server.tool(
     'list_environments',
     'List all named connection profiles configured in the environment. ' +
-    'Each profile typically corresponds to either a specific project (project-level key — Project Admin or Project User, aut_1_...) or full platform access (Cloud Admin). ' +
-    'Shows profile name, target URL, and auth type for each. API keys are never included in the response. ' +
+    'Each profile typically corresponds to either a specific project (Project Admin or Project User) or full platform access (Cloud Admin). ' +
+    'Shows profile name, target URL, and the access level DETECTED FROM THE API for each (role + accessLevel) — key format is not a privilege indicator: a Cloud Admin may hold either a long eyJ... key or a short aut_1_... key. API keys are never included in the response. ' +
     'Use this when the user asks which projects or environments are available. ' +
     'Use switch_environment to activate a different profile — that is how you change which project you are working with.',
     {},
-    () => {
-      const profiles = listProfiles();
+    async () => {
       const active = getActiveProfileName();
+      const profiles = await Promise.all(
+        listProfiles().map(async (p) => {
+          const info = await resolveProfileAccess(p.name);
+          return { ...p, accessLevel: info.level, role: info.role ?? null };
+        })
+      );
       const lines = profiles.map(p => {
         const marker = p.name === active ? ' ← active' : '';
-        return `  ${p.name}${marker}: ${p.url} (${p.keyType})`;
+        return `  ${p.name}${marker}: ${p.url} (${describeLevel({ level: p.accessLevel, role: p.role ?? undefined, source: 'role' })})`;
       });
       const structured = {
         activeProfile: active,
@@ -355,13 +362,13 @@ export function registerMetaTools(server: McpServer): void {
   server.tool(
     'switch_environment',
     'Switch the active API connection to a different named profile. ' +
-    'Each profile holds a distinct set of credentials — typically either a project-level key (Project Admin or Project User, scoped to one project) or a Cloud Admin key (full platform access). ' +
+    'Each profile holds a distinct set of credentials — typically either a project-scoped key (Project Admin or Project User) or a Cloud Admin key (full platform access); the level is detected from the API, not from the key format. ' +
     'TRIGGER PHRASES: "switch projects", "change project", "change project context", "use a different project", "access project X", "work on project X" — all of these mean the user wants to switch to the profile that holds the target project\'s key. ' +
     '"Switch to cloud admin", "switch to admin", "switch to full access" — these mean the user wants the Cloud Admin profile. ' +
-    'Project-level keys are single-project scoped: there is no API call to change project within a key — the only way to work with a different project is to switch to a profile that holds that project\'s credentials. ' +
+    'Project-scoped credentials are single-project scoped: there is no API call to change project within a key — the only way to work with a different project is to switch to a profile that holds that project\'s credentials. ' +
     'Use list_environments first to show the user available profiles so they can pick the right one. ' +
     'All subsequent tool calls use the new profile\'s URL and credentials immediately — no restart required. ' +
-    'Accepts either the exact profile name OR role-based aliases: "cloud admin" / "admin" / "full access" resolve to the first Cloud Admin profile; "project" resolves to the only project-level profile (or lists options if multiple exist).',
+    'Accepts either the exact profile name OR role-based aliases: "cloud admin" / "admin" / "full access" resolve to the Cloud Admin profile; "project" resolves to the only project-scoped profile (or lists options if multiple exist).',
     {
       profileName: z
         .string()
@@ -370,15 +377,17 @@ export function registerMetaTools(server: McpServer): void {
     async ({ profileName }) => {
       const profiles = listProfiles();
       let resolvedName = profileName;
+      // Access levels resolved lazily — only needed for alias resolution / disambiguation.
+      const levelsOf = () => Promise.all(profiles.map(async (p) => ({ ...p, info: await resolveProfileAccess(p.name) })));
 
       // Role-based fuzzy resolution — only when the exact name is not found.
       if (!getProfileCredentials(profileName)) {
         const lower = profileName.toLowerCase().trim();
-        const isAdminAlias = ['cloud admin', 'cloudadmin', 'admin', 'full access', 'cloud', 'jwt'].includes(lower);
+        const isAdminAlias = ['cloud admin', 'cloudadmin', 'admin', 'full access', 'cloud'].includes(lower);
         const isProjectAlias = ['project', 'project key', 'project-level', 'project admin', 'project user'].includes(lower);
 
         if (isAdminAlias) {
-          const adminProfiles = profiles.filter(p => p.keyType === 'jwt');
+          const adminProfiles = (await levelsOf()).filter(p => p.info.level === 'cloud-admin');
           if (adminProfiles.length === 1) {
             resolvedName = adminProfiles[0].name;
           } else if (adminProfiles.length > 1) {
@@ -388,11 +397,11 @@ export function registerMetaTools(server: McpServer): void {
             };
           } else {
             return {
-              content: [{ type: 'text' as const, text: `No Cloud Admin profiles configured. Add a Cloud Admin key to your .env:\n  DAI_PROFILE_ADMIN_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_ADMIN_KEY=eyJ...your-cloud-admin-key...` }],
+              content: [{ type: 'text' as const, text: `No Cloud Admin profile detected. Add a Cloud Admin key to your .env (either key format works — access is detected from the API):\n  DAI_PROFILE_ADMIN_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_ADMIN_KEY=<your-cloud-admin-key>` }],
             };
           }
         } else if (isProjectAlias) {
-          const projectProfiles = profiles.filter(p => p.keyType === 'api-key');
+          const projectProfiles = (await levelsOf()).filter(p => isKnownNotCloudAdmin(p.info.level));
           if (projectProfiles.length === 1) {
             resolvedName = projectProfiles[0].name;
           } else if (projectProfiles.length > 1) {
@@ -402,17 +411,14 @@ export function registerMetaTools(server: McpServer): void {
             };
           } else {
             return {
-              content: [{ type: 'text' as const, text: `No project-level profiles configured. Add a project key to your .env:\n  DAI_PROFILE_PROJECT_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_PROJECT_KEY=aut_1_...your-project-key...` }],
+              content: [{ type: 'text' as const, text: `No project-scoped profiles detected. Add a project key to your .env:\n  DAI_PROFILE_PROJECT_URL=https://your-tenant.experitest.com/\n  DAI_PROFILE_PROJECT_KEY=<your-project-key>` }],
             };
           }
         } else {
           // Unrecognized name — return helpful disambiguation without isError
-          const available = profiles.map(p => {
-            const type = p.keyType === 'jwt' ? 'Cloud Admin' : 'project-level';
-            return `"${p.name}" (${type})`;
-          }).join(', ');
+          const available = (await levelsOf()).map(p => `"${p.name}" (${describeLevel(p.info)})`).join(', ');
           return {
-            content: [{ type: 'text' as const, text: `Profile "${profileName}" not found. Available profiles: ${available}.\n\nYou can also use aliases: "cloud admin" → Cloud Admin profile; "project" → project-level profile.` }],
+            content: [{ type: 'text' as const, text: `Profile "${profileName}" not found. Available profiles: ${available}.\n\nYou can also use aliases: "cloud admin" → Cloud Admin profile; "project" → project-scoped profile.` }],
           };
         }
       }
@@ -436,12 +442,14 @@ export function registerMetaTools(server: McpServer): void {
       let verifyLine = '';
       try {
         const me = await getMyAccountInfo();
+        primeAccessInfoFromAccount(me); // avoids a second my-account-info probe for the access line below
         verifyLine = `Connected as: ${me.username} — Project: ${me.project.name} (${me.project.isAppiumOss ? 'Appium Server' : 'Appium Grid'})`;
       } catch {
         verifyLine = '⚠️  Connection established but account verification failed — check that the key is valid for this environment.';
       }
 
       const activeProfile = profiles.find(p => p.name === resolvedName.toLowerCase());
+      const accessLine = describeLevel(await getAccessInfo());
 
       return {
         content: [{
@@ -449,7 +457,7 @@ export function registerMetaTools(server: McpServer): void {
           text: [
             `✅ Switched from "${previousProfile}" to "${resolvedName.toLowerCase()}"${resolvedName.toLowerCase() !== profileName.toLowerCase() ? ` (resolved from "${profileName}")` : ''}`,
             `   URL: ${activeProfile?.url ?? creds.url}`,
-            `   Auth: ${activeProfile?.keyType ?? 'unknown'}`,
+            `   Access: ${accessLine}`,
             `   ${verifyLine}`,
           ].join('\n'),
         }],

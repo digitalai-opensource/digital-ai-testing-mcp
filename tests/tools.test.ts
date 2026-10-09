@@ -3,14 +3,14 @@
  *
  * Exercises the REGISTERED tool handlers through an in-memory MCP transport —
  * the layer the live API tests never touch. Covers the invariants found broken
- * in code review: destructive guards, JWT gates, and upload path validation.
+ * in code review: destructive guards, Cloud Admin gates, and upload path validation.
  *
  * No live API access: the client is pointed at an unreachable host, and every
  * asserted path returns BEFORE any HTTP call. If a guard regresses to fire
  * after an API call, the test fails with a network error instead of guard text
  * — which is exactly the regression signal we want.
  */
-import { describe, it, beforeAll, afterEach } from 'vitest';
+import { describe, it, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import dotenv from 'dotenv';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -27,15 +27,31 @@ import { registerBoilerplateTools } from '../src/tools/boilerplate-tools.js';
 import { registerWebInspectionTools } from '../src/tools/web-inspection-tools.js';
 import { registerInspectionTools } from '../src/tools/inspection-tools.js';
 import { registerUsageReportTools } from '../src/tools/usage-report-tools.js';
-import { resetClient, getActiveKeyType, getActiveAccessKey, getActiveUrl } from '../src/api/client.js';
+import { resetClient, getActiveAuthScheme, getActiveAccessKey, getActiveUrl } from '../src/api/client.js';
+import { setAccessLevelOverrideForTests, type AccessLevel } from '../src/utils/access-level.js';
 import { validateInputPath, validateOutputPath } from '../src/utils/path-guard.js';
 
 dotenv.config();
+
+// The delete gate reads the project's allowUsersDeleteTests via the reporter-projects API. Handlers run
+// against an unreachable host, so that response is mocked and set per test.
+const reporterProjects = vi.hoisted(() => ({ value: [] as Array<{ name: string; allowUsersDeleteTests: boolean }> }));
+vi.mock('../src/api/reporter-projects.js', () => ({ getReporterProjects: async () => reporterProjects.value }));
 
 // Unreachable on purpose — any HTTP attempt fails fast instead of touching live data.
 const FAKE_URL = 'https://unreachable.invalid';
 const FAKE_PROJECT_KEY = 'aut_1_fake_harness_key';
 const FAKE_JWT_KEY = 'eyJfakeharnessjwt';
+
+// Access level is derived from the API, never from key format, so the harness sets it explicitly.
+// Cloud Admin deliberately uses the SHORT key format — a Cloud Admin can hold either, and using the
+// short one throughout proves no gate secretly depends on the 'eyJ' prefix.
+function actAs(level: AccessLevel | null, key: string = FAKE_PROJECT_KEY, name = `harness-${level ?? 'unknown'}`): void {
+  resetClient(FAKE_URL, key, name);
+  setAccessLevelOverrideForTests(level);
+}
+
+afterAll(() => setAccessLevelOverrideForTests(null));
 
 interface ToolResult {
   content: Array<{ type: string; text?: string }>;
@@ -72,7 +88,7 @@ beforeAll(async () => {
 
 describe('Destructive guards fire before any API call, without isError', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   const CASES: Array<{ tool: string; args: Record<string, unknown> }> = [
@@ -98,9 +114,10 @@ describe('Destructive guards fire before any API call, without isError', () => {
   }
 });
 
-describe('Reporter delete tools gate on Cloud Admin JWT before guard or API', () => {
+describe('Reporter delete tools refuse a project role whose project has allowUsersDeleteTests=false', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
+    actAs('project-user');
+    reporterProjects.value = [{ name: 'POC', allowUsersDeleteTests: false }];
   });
 
   const DELETE_TOOLS: Array<{ tool: string; args: Record<string, unknown> }> = [
@@ -110,10 +127,11 @@ describe('Reporter delete tools gate on Cloud Admin JWT before guard or API', ()
   ];
 
   for (const { tool, args } of DELETE_TOOLS) {
-    it(`${tool} with a project-level key returns the Cloud Admin gate message`, async () => {
+    it(`${tool} returns guidance naming allowUsersDeleteTests and Cloud Admin`, async () => {
       const res = await callTool(tool, args);
       const text = textOf(res);
-      assert.match(text, /Cloud Admin access required/, `${tool}: got: ${text.slice(0, 200)}`);
+      assert.match(text, /allowUsersDeleteTests/, `${tool}: got: ${text.slice(0, 200)}`);
+      assert.match(text, /Cloud Admin/);
       assert.match(text, /switch_environment/);
       assert.equal(res.isError, true);
     });
@@ -122,7 +140,7 @@ describe('Reporter delete tools gate on Cloud Admin JWT before guard or API', ()
 
 describe('delete_test_reports preview behavior', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('with ≤50 IDs and no confirmDeletion: attempts preview fetch, blocks with isError when IDs cannot be resolved', async () => {
@@ -146,7 +164,7 @@ describe('delete_test_reports preview behavior', () => {
 
 describe('Performance comparison tools work for all access levels (no JWT gate)', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
+    actAs('project-user');
   });
 
   // These tools previously required Cloud Admin JWT but live testing confirmed they work
@@ -158,7 +176,7 @@ describe('Performance comparison tools work for all access levels (no JWT gate)'
   ];
 
   for (const { tool, args } of PERF_TOOLS) {
-    it(`${tool} with a project-level key does NOT return a JWT-gate error`, async () => {
+    it(`${tool} with a project-level role does NOT return a Cloud Admin gate error`, async () => {
       const res = await callTool(tool, args);
       const text = textOf(res);
       // Should not hit the old JWT gate — the tool proceeds (hits unreachable host or returns empty data)
@@ -170,7 +188,7 @@ describe('Performance comparison tools work for all access levels (no JWT gate)'
 
 describe('get_test_boilerplate inspection gate (v42) blocks before emitting any code', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   // No inspection session exists in the harness, so a real-app target must block.
@@ -203,7 +221,7 @@ describe('get_test_boilerplate inspection gate (v42) blocks before emitting any 
 
 describe('validate_test_script (v43) flags fabricated/placeholder tests', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('fails a scaffold with placeholder selectors and the fail-guard', async () => {
@@ -256,7 +274,7 @@ describe('validate_test_script (v43) flags fabricated/placeholder tests', () => 
 
 describe('Upload tools reject unsafe input paths before reading any file', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('upload_repository_file refuses to read a .env file', async () => {
@@ -299,7 +317,7 @@ describe('Upload tools reject unsafe input paths before reading any file', () =>
 
 describe('Upload-command tools emit a runnable command without any API call', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
+    actAs('project-user');
   });
 
   it('get_repository_upload_command returns a curl command for the files endpoint', async () => {
@@ -340,7 +358,7 @@ describe('Upload-command tools emit a runnable command without any API call', ()
 
 describe('Download-command tools emit a runnable command without any API call', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
+    actAs('project-user');
   });
 
   it('get_test_attachments_download_command returns a curl GET for the attachments ZIP', async () => {
@@ -387,7 +405,7 @@ describe('Download-command tools emit a runnable command without any API call', 
 
 describe('Usage-report size guard fires before any API call', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('download_usage_report: unfiltered 90-day License Usage triggers the guard, not an error', async () => {
@@ -453,7 +471,7 @@ describe('Usage-report size guard fires before any API call', () => {
 
 describe('Usage-report parameter validation blocks before any API call or guard', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('rejects projectId for "License Usage"', async () => {
@@ -505,7 +523,7 @@ describe('Usage-report parameter validation blocks before any API call or guard'
 
 describe('get_usage_report_download_command respects validation and the size guard', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('emits a curl command for a project-scoped request (no guard, no API call)', async () => {
@@ -555,7 +573,7 @@ describe('get_usage_report_download_command respects validation and the size gua
 
 describe('summarize_usage_report validates and guards before fetching, never writes a file', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('rejects an unsupported filter before any fetch', async () => {
@@ -627,21 +645,71 @@ describe('path-guard unit behavior', () => {
 });
 
 describe('Active-profile credential accessors follow resetClient', () => {
-  it('getActiveKeyType and getActiveAccessKey reflect the switched profile, not env', () => {
+  it('getActiveAuthScheme and getActiveAccessKey reflect the switched profile, not env', () => {
     resetClient(FAKE_URL, FAKE_PROJECT_KEY, 'harness-project');
-    assert.equal(getActiveKeyType(), 'api-key');
+    assert.equal(getActiveAuthScheme(), 'bearer+x-api-key');
     assert.equal(getActiveAccessKey(), FAKE_PROJECT_KEY);
     assert.equal(getActiveUrl(), FAKE_URL);
 
     resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
-    assert.equal(getActiveKeyType(), 'jwt');
+    assert.equal(getActiveAuthScheme(), 'bearer');
     assert.equal(getActiveAccessKey(), FAKE_JWT_KEY);
+  });
+});
+
+describe('Cloud Admin gating is independent of key format', () => {
+  const DELETE_ARGS = { ids: [1], confirmDeletion: true };
+  const GATE = /allowUsersDeleteTests/;
+
+  afterEach(() => {
+    reporterProjects.value = [{ name: 'POC', allowUsersDeleteTests: false }];
+  });
+
+  it('a Cloud Admin holding a SHORT aut_1_ key is NOT blocked by the delete gate', async () => {
+    actAs('cloud-admin', FAKE_PROJECT_KEY);
+    const text = textOf(await callTool('delete_test_reports', DELETE_ARGS));
+    assert.doesNotMatch(text, GATE, `short-key Cloud Admin was gated even with the flag false: ${text.slice(0, 200)}`);
+  });
+
+  it('a Project User holding a JWT-format key IS still blocked (format grants nothing)', async () => {
+    actAs('project-user', FAKE_JWT_KEY);
+    const res = await callTool('delete_test_reports', DELETE_ARGS);
+    assert.match(textOf(res), GATE);
+    assert.equal(res.isError, true);
+  });
+
+  it('an undeterminable level fails OPEN — the API decides, not a guess from the key', async () => {
+    actAs('unknown', FAKE_PROJECT_KEY);
+    const text = textOf(await callTool('delete_test_reports', DELETE_ARGS));
+    assert.doesNotMatch(text, GATE, `unknown level was gated: ${text.slice(0, 200)}`);
+  });
+
+  it('a Project Admin whose project has allowUsersDeleteTests=true is NOT refused up front', async () => {
+    actAs('project-admin');
+    reporterProjects.value = [{ name: 'POC', allowUsersDeleteTests: true }];
+    const text = textOf(await callTool('delete_test_reports', DELETE_ARGS));
+    assert.doesNotMatch(text, GATE, `flag=true was gated: ${text.slice(0, 200)}`);
+  });
+
+  it('a Project User who cannot read the flag (empty list) proceeds — the platform decides', async () => {
+    actAs('project-user');
+    reporterProjects.value = [];
+    const text = textOf(await callTool('delete_test_reports', DELETE_ARGS));
+    assert.doesNotMatch(text, GATE, `unreadable flag was gated: ${text.slice(0, 200)}`);
+  });
+
+  it('selects the named project when several are visible', async () => {
+    actAs('project-admin');
+    reporterProjects.value = [{ name: 'Other', allowUsersDeleteTests: true }, { name: 'POC', allowUsersDeleteTests: false }];
+    const res = await callTool('delete_test_reports', { ...DELETE_ARGS, projectName: 'POC' });
+    assert.match(textOf(res), /project "POC"/);
+    assert.equal(res.isError, true);
   });
 });
 
 describe('get_web_test_boilerplate inspection gate blocks before emitting any code', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('blocks when url is provided and no live browser session exists', async () => {
@@ -683,7 +751,7 @@ describe('get_web_test_boilerplate inspection gate blocks before emitting any co
 
 describe('start_browser_inspection_session without browser returns a prompt, not an error', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('returns the "call list_available_browsers" message when no browser is specified', async () => {
@@ -698,7 +766,7 @@ describe('start_browser_inspection_session without browser returns a prompt, not
 
 describe('validate_test_script flags web CSS placeholder selectors', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   it('flags a script with #YOUR_SELECTOR placeholder', async () => {
@@ -721,7 +789,7 @@ describe('validate_test_script flags web CSS placeholder selectors', () => {
 
 describe('Web inspection tools return isError on unknown handle (no HTTP call needed)', () => {
   beforeAll(() => {
-    resetClient(FAKE_URL, FAKE_JWT_KEY, 'harness-jwt');
+    actAs('cloud-admin');
   });
 
   const UNKNOWN = 'DEADBEEF';

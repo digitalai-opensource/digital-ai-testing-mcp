@@ -75,7 +75,7 @@ function buildSide(
 
 // Build the transaction pool the compute layer will resolve sides against.
 //
-// listTransactions() is PROJECT-SCOPED to the active JWT's reporter context, so
+// listTransactions() is PROJECT-SCOPED to the active credential's reporter context, so
 // transactions created under a different project's reporter instance are absent
 // from it. getTransaction(id) is a direct GET that works across scopes. So:
 //   - explicit IDs are always resolved directly (cross-scope, and bounded by the

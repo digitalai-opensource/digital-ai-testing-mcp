@@ -5,7 +5,10 @@
  * Named profiles follow the pattern:
  *
  *   DAI_PROFILE_{NAME}_URL=https://tenant.experitest.com/
- *   DAI_PROFILE_{NAME}_KEY=eyJ... or aut_1_...
+ *   DAI_PROFILE_{NAME}_KEY=<access key>
+ *
+ * Key format is NOT a privilege indicator (a Cloud Admin may hold either an eyJ... JWT or a short
+ * aut_1_... key). A profile's access level is resolved from the API — see src/api/access-level.ts.
  *
  * Profile names are case-insensitive and normalised to lowercase internally.
  * Examples:
@@ -22,7 +25,6 @@
 export interface EnvironmentProfile {
   name: string;
   url: string;
-  keyType: 'jwt' | 'api-key';
 }
 
 interface FullProfile extends EnvironmentProfile {
@@ -40,7 +42,6 @@ function loadProfiles(): Record<string, FullProfile> {
       name: 'default',
       url: defaultUrl.replace(/\/$/, ''),
       key: defaultKey,
-      keyType: defaultKey.startsWith('eyJ') ? 'jwt' : 'api-key',
     };
   }
 
@@ -57,7 +58,6 @@ function loadProfiles(): Record<string, FullProfile> {
       name: profileName,
       url: value.replace(/\/$/, ''),
       key: apiKey,
-      keyType: apiKey.startsWith('eyJ') ? 'jwt' : 'api-key',
     };
   }
 
@@ -76,7 +76,7 @@ function getProfiles(): Record<string, FullProfile> {
 
 /** All configured profiles without their keys — safe to surface in tool responses. */
 export function listProfiles(): EnvironmentProfile[] {
-  return Object.values(getProfiles()).map(({ name, url, keyType }) => ({ name, url, keyType }));
+  return Object.values(getProfiles()).map(({ name, url }) => ({ name, url }));
 }
 
 /** Retrieve a profile's full credentials by name (case-insensitive). */

@@ -14,7 +14,7 @@ import {
   summarizeTestFailures,
 } from '../api/reporting.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
-import { getActiveKeyType } from '../api/client.js';
+import { checkDeleteAllowed, serverSortAvailable } from '../api/access-level.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
@@ -234,9 +234,8 @@ export function registerReportingTools(server: McpServer): void {
 
         if (startDate || endDate) {
           // Client-side date filtering — server-side start_time filter is CSRF-blocked for all key types.
-          // JWT keys: fetch sorted descending so we can stop as soon as we pass the startDate cutoff.
-          // Project keys: sort is CSRF-blocked, so fetch unsorted and scan all pages (slower).
-          const isSortedFetch = getActiveKeyType() === 'jwt';
+          // Fetch sorted descending so we can stop as soon as we pass the startDate cutoff. If the platform
+          // refuses sort for this credential the response says so (sortApplied=false) and we scan every page.
           const startTs = startDate ? new Date(startDate).getTime() : 0;
           const endTs = endDate ? new Date(endDate).getTime() : Date.now();
           // When a total is requested, keep scanning past targetLimit to count
@@ -251,12 +250,13 @@ export function registerReportingTools(server: McpServer): void {
           let done = false;
 
           while (!done && (wantTotal || matched.length < targetLimit)) {
+            const wantSort = serverSortAvailable();
             const batch = await listTests(
               {
                 limit: 500,
                 page: fetchPage,
                 returnTotalCount: false,
-                ...(isSortedFetch && { sort: [{ property: 'start_time', descending: true }] }),
+                ...(wantSort && { sort: [{ property: 'start_time', descending: true }] }),
                 ...(searchValue && { searchValue }),
                 ...(filter && { filter }),
                 ...(keys && { keys }),
@@ -264,9 +264,19 @@ export function registerReportingTools(server: McpServer): void {
               projectId,
               projectName
             );
+            if (wantSort && batch.sortApplied === false && fetchPage > 1) {
+              // Sort refused partway through a sorted scan: unsorted page N is not a continuation of sorted
+              // pages 1..N-1. Restart from page 1 — the refusal is remembered, so the rescan is unsorted throughout.
+              matched.length = 0;
+              matchedCount = 0;
+              scanned = 0;
+              fetchPage = 1;
+              continue;
+            }
             const records = batch.data ?? [];
             if (records.length === 0) break;
             scanned += records.length;
+            const isSortedFetch = batch.sortApplied === true;
 
             for (const r of records) {
               const t = new Date(r.start_time).getTime();
@@ -312,10 +322,16 @@ export function registerReportingTools(server: McpServer): void {
         const result = await listTests(request, projectId, projectName);
         const reports = result.data ?? [];
         const countLine = result.count !== undefined ? `Total matching: ${result.count}\n\n` : '';
+        // A requested sort the platform refused must never be presented as sorted output.
+        const sortRefused = !!sort && result.sortApplied === false;
+        const sortWarning = sortRefused
+          ? 'The platform refused server-side sort for this credential — these results are in platform order, NOT the order requested. ' +
+            'For newest-first results use find_latest_test_for_name / list_active_test_executions, or pass startDate/endDate (scanned and ordered client-side).'
+          : undefined;
         return respond(
           outputFormat,
-          { reports, total: result.count },
-          countLine + formatTestReportList(reports)
+          { reports, total: result.count, ...(sortRefused && { sortApplied: false, warning: sortWarning }) },
+          (sortWarning ? `⚠️  ${sortWarning}\n\n` : '') + countLine + formatTestReportList(reports)
         );
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
@@ -467,8 +483,9 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the delete to a specific reporter instance.'),
     },
     async ({ ids, confirmDeletion, projectId, projectName }) => {
-      if (getActiveKeyType() !== 'jwt') {
-        return { content: [{ type: 'text', text: 'Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). Use switch_environment() to switch to a Cloud Admin profile.' }], isError: true };
+      const denied = await checkDeleteAllowed(projectName);
+      if (denied) {
+        return { content: [{ type: 'text', text: denied }], isError: true };
       }
 
       if (confirmDeletion !== true) {
@@ -554,8 +571,9 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the search. Required when the target project has its own reporter instance separate from the default scope.'),
     },
     async ({ name, nameContains, confirmDeletion, maxPreviewResults, projectId, projectName }) => {
-      if (getActiveKeyType() !== 'jwt') {
-        return { content: [{ type: 'text', text: 'Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). Use switch_environment() to switch to a Cloud Admin profile.' }], isError: true };
+      const denied = await checkDeleteAllowed(projectName);
+      if (denied) {
+        return { content: [{ type: 'text', text: denied }], isError: true };
       }
       try {
         if (!name && !nameContains) {
@@ -782,8 +800,8 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ name, projectId, projectName, outputFormat }) => {
       try {
-        // listTestsSortedDesc guarantees newest-first for both key types — project
-        // keys CSRF-block sort, so a plain sorted listTests call would silently
+        // listTestsSortedDesc guarantees newest-first for every role — if sort is refused, a plain sorted
+        // listTests call would silently
         // return an arbitrary record instead of the latest.
         const result = await listTestsSortedDesc(
           { limit: 1, page: 1, searchValue: name },
@@ -906,8 +924,9 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Scope to this project name.'),
     },
     async ({ beforeDate, confirmDeletion, projectId, projectName }) => {
-      if (getActiveKeyType() !== 'jwt') {
-        return { content: [{ type: 'text', text: 'Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). Use switch_environment() to switch to a Cloud Admin profile.' }], isError: true };
+      const denied = await checkDeleteAllowed(projectName);
+      if (denied) {
+        return { content: [{ type: 'text', text: denied }], isError: true };
       }
       try {
         // The reporter API does not support start_time filter via API key (CSRF restriction).
@@ -1259,24 +1278,40 @@ export function registerReportingTools(server: McpServer): void {
         const cutoffTs = Date.now() - lookbackDays * 86400000;
         const records: Array<{ status: string; start_time: string }> = [];
         let fetchPage = 1;
+        let scanned = 0;
+        let scanCapped = false;
         let done = false;
 
         while (!done && records.length < maxRecords) {
+          const wantSort = serverSortAvailable();
           const batch = await listTests(
             { limit: 500, page: fetchPage, returnTotalCount: false,
-              sort: [{ property: 'start_time', descending: true }] },
+              ...(wantSort && { sort: [{ property: 'start_time', descending: true }] }) },
             projectId, projectName
           );
+          if (wantSort && batch.sortApplied === false && fetchPage > 1) {
+            // Sort refused partway through: unsorted page N is not a continuation of sorted pages 1..N-1.
+            records.length = 0;
+            scanned = 0;
+            fetchPage = 1;
+            continue;
+          }
           const rows = batch.data ?? [];
           if (rows.length === 0) break;
+          scanned += rows.length;
+          const isSorted = batch.sortApplied === true;
 
           for (const r of rows) {
             const ts = new Date(r.start_time).getTime();
-            if (ts < cutoffTs) { done = true; break; }
+            // Early-exit is only valid on server-sorted data; otherwise skip out-of-window rows and keep scanning.
+            if (ts < cutoffTs) { if (isSorted) { done = true; break; } continue; }
             records.push({ status: r.status, start_time: r.start_time });
             if (records.length >= maxRecords) { done = true; break; }
           }
           if (rows.length < 500) done = true;
+          // Unsorted fallback has no early-exit: maxRecords bounds the rows FETCHED (as documented), and the
+          // caller is told the window may be incomplete.
+          if (!done && !isSorted && scanned >= maxRecords) { scanCapped = true; done = true; }
           fetchPage++;
         }
 
@@ -1314,6 +1349,8 @@ export function registerReportingTools(server: McpServer): void {
           lookbackDays,
           recordsScanned: records.length,
           cappedAt: records.length >= maxRecords ? maxRecords : null,
+          // true when the platform refused sort and the unsorted scan hit maxRecords before covering the window
+          scanCapped,
           buckets: sorted.map(([date, b]) => ({
             date,
             total: b.total,
@@ -1335,6 +1372,8 @@ export function registerReportingTools(server: McpServer): void {
         ];
         if (records.length >= maxRecords) {
           lines.push(`\n  ⚠️  Capped at ${maxRecords} records — increase maxRecords or reduce lookbackDays for a complete picture.`);
+        } else if (scanCapped) {
+          lines.push(`\n  ⚠️  Incomplete: the platform refused server-side sort for this credential, so records were scanned unsorted and the scan stopped at maxRecords (${maxRecords}) before the full ${lookbackDays}-day window was covered. Increase maxRecords for a complete picture.`);
         }
         return respond(outputFormat, structured, lines.join('\n'));
       } catch (e) {

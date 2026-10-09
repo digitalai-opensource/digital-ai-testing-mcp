@@ -9,7 +9,7 @@ import type {
 } from '../types/digital-ai.js';
 
 // v2 endpoint returns an array with richer fields than the v1 id→name dict.
-// Cloud Admin (JWT) only — project keys receive 403.
+// Cloud Admin only — project-level roles receive 403.
 export async function getDeviceGroupsV2(): Promise<DeviceGroupV2[]> {
   try {
     const res = await apiGet<DeviceGroupV2[]>('/api/v2/device-groups');

@@ -1,7 +1,8 @@
 import axios, { AxiosInstance } from 'axios';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { getMyAccountInfo } from './users.js';
-import { getActiveKeyType, getActiveUrl, getActiveAccessKey } from './client.js';
+import { getActiveUrl, getActiveAccessKey } from './client.js';
+import { checkDeleteAllowed } from './access-level.js';
 import { registerSession, requireSession, listActiveSessions } from './webdriver.js';
 
 function gridBase(): string {
@@ -86,7 +87,8 @@ export async function createBrowserInspectionSession(
 
   const rawId = sessionCaps['digitalai:reportTestId'];
   const reportTestId = rawId ? parseInt(String(rawId), 10) : 0;
-  const canDeleteReport = getActiveKeyType() === 'jwt';
+  // Derived from the API (access level + the project's allowUsersDeleteTests), not the key format; fail open when undetermined.
+  const canDeleteReport = (await checkDeleteAllowed(projectName)) === null;
 
   const handle = crypto.randomUUID().slice(0, 8).toUpperCase();
   const session: InspectionSession = {

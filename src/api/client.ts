@@ -1,20 +1,18 @@
 import axios, { type AxiosInstance } from 'axios';
 import FormData from 'form-data';
-import { listProfiles } from '../utils/profile-loader.js';
+import { listProfiles, getProfileCredentials } from '../utils/profile-loader.js';
+import { authHeadersFor, authSchemeFor, peekAccessInfo, describeLevel, type AuthScheme } from '../utils/access-level.js';
 
 export { formatDeviceTimestamp } from '../utils/timestamp.js';
 
 function buildClient(baseURL: string, accessKey: string): AxiosInstance {
-  // JWT tokens (Cloud Admin) start with 'eyJ' and authenticate via Bearer only.
-  // Project/user API keys ('aut_1_...') need X-API-KEY for CSRF exemption on
-  // reporter mutation endpoints, and Bearer for standard endpoints.
-  const isJwt = accessKey.startsWith('eyJ');
-  _activeKeyType = isJwt ? 'jwt' : 'api-key';
+  // Key format decides ONLY the header scheme (JWTs: Bearer; 'aut_1_...' keys: X-API-KEY + Bearer,
+  // for CSRF exemption on reporter mutations). It says nothing about privilege — a Cloud Admin can
+  // hold either format. Role is resolved from the API: see src/utils/access-level.ts.
+  _activeAuthScheme = authSchemeFor(accessKey);
   _activeKey = accessKey;
 
-  const authHeaders = isJwt
-    ? { Authorization: `Bearer ${accessKey}` }
-    : { 'X-API-KEY': accessKey, Authorization: `Bearer ${accessKey}` };
+  const authHeaders = authHeadersFor(accessKey);
 
   const client = axios.create({
     baseURL: baseURL.replace(/\/$/, ''),
@@ -40,10 +38,11 @@ function buildClient(baseURL: string, accessKey: string): AxiosInstance {
         error.message ??
         'Unknown error';
 
-      // Enrich 403 responses with auth guidance and environment-switching hints.
-      const msg = status === 403
-        ? build403Hint()
-        : rawMsg;
+      // Enrich 403 responses with auth guidance and environment-switching hints — APPENDED to the
+      // platform's own message, never replacing it (e.g. "You have no permission to delete tests" is
+      // the actual diagnosis and must survive).
+      const hint = status === 403 ? build403Hint() : undefined;
+      const msg = hint ? `${rawMsg} — ${hint}` : rawMsg;
 
       throw new Error(`Digital.ai API Error [${status}]: ${msg}`);
     }
@@ -60,33 +59,44 @@ let _client: AxiosInstance | undefined;
 let _activeProfileName = 'default';
 let _activeUrl = '';
 let _activeKey = '';
-let _activeKeyType: 'jwt' | 'api-key' = 'api-key';
+let _activeAuthScheme: AuthScheme = 'bearer+x-api-key';
 
-/** Build a human-readable auth guidance message for 403 responses. */
-function build403Hint(): string {
-  const profiles = listProfiles();
-  const current = profiles.find(p => p.name === _activeProfileName);
-  const currentLabel = current
-    ? `"${current.name}" (${current.keyType === 'jwt' ? 'Cloud Admin' : 'project-level key (Project Admin or Project User) — limited access'})`
+/**
+ * Build auth guidance for a 403. Returns undefined when the active credential is already known to be
+ * Cloud Admin — the 403 then has some other cause, and a "switch to Cloud Admin" hint would mislead.
+ * Reads only the access-level CACHE (never the network): this runs inside an axios error interceptor.
+ */
+function build403Hint(): string | undefined {
+  const info = peekAccessInfo(_activeUrl, _activeKey);
+  if (info?.level === 'cloud-admin') return undefined;
+
+  const current = info
+    ? `"${_activeProfileName}" (${describeLevel(info)})`
     : `"${_activeProfileName}"`;
 
+  // Name a Cloud Admin profile only when one is already KNOWN to be (cache lookup, no network).
+  const adminProfiles = listProfiles()
+    .filter(p => p.name !== _activeProfileName)
+    .filter(p => {
+      const c = getProfileCredentials(p.name);
+      return c !== undefined && peekAccessInfo(c.url, c.key)?.level === 'cloud-admin';
+    })
+    .map(p => p.name);
+
   const lines = [
-    `This endpoint requires Cloud Admin access.`,
-    `Current connection: ${currentLabel}.`,
+    `This may require Cloud Admin access.`,
+    `Current connection: ${current}.`,
   ];
-
-  if (_activeKeyType === 'api-key') {
-    const jwtProfiles = profiles.filter(p => p.keyType === 'jwt' && p.name !== _activeProfileName);
-    if (jwtProfiles.length === 1) {
-      lines.push(`💡 Switch to your Cloud Admin profile: switch_environment("${jwtProfiles[0].name}")`);
-    } else if (jwtProfiles.length > 1) {
-      const names = jwtProfiles.map(p => `"${p.name}"`).join(', ');
-      lines.push(`💡 Switch to a Cloud Admin profile — available: ${names}. Call switch_environment("<name>").`);
-    } else {
-      lines.push(`💡 No Cloud Admin profiles configured. Add a Cloud Admin key (the long eyJ... string from the portal) to your .env and restart: DAI_PROFILE_ADMIN_URL=... / DAI_PROFILE_ADMIN_KEY=eyJ...`);
-    }
+  if (adminProfiles.length === 1) {
+    lines.push(`💡 Switch to your Cloud Admin profile: switch_environment("${adminProfiles[0]}")`);
+  } else if (adminProfiles.length > 1) {
+    lines.push(`💡 Switch to a Cloud Admin profile — available: ${adminProfiles.map(n => `"${n}"`).join(', ')}. Call switch_environment("<name>").`);
+  } else {
+    lines.push(
+      `💡 Call list_environments to see each profile's detected access level, then switch_environment to a Cloud Admin profile. ` +
+        `If none is configured, add a Cloud Admin key to your .env and restart: DAI_PROFILE_ADMIN_URL=... / DAI_PROFILE_ADMIN_KEY=...`
+    );
   }
-
   return lines.join(' ');
 }
 
@@ -120,16 +130,15 @@ export function getActiveProfileName(): string {
   return _activeProfileName;
 }
 
-/** Returns the auth type of the currently active connection. */
-export function getActiveKeyType(): 'jwt' | 'api-key' {
-  // The Axios client is lazy-initialised — before the first API call,
-  // _activeKeyType still holds its default. Derive from env in that window so
-  // pre-flight auth gates (delete tools, canDeleteReport) don't misclassify
-  // a JWT profile as a project key on the first tool call of a session.
-  if (!_client) {
-    return (process.env.DIGITAL_AI_ACCESS_KEY ?? '').startsWith('eyJ') ? 'jwt' : 'api-key';
-  }
-  return _activeKeyType;
+/**
+ * Returns how the active credential is PRESENTED (header scheme). Use this only to build auth
+ * headers (e.g. generated curl commands). It is NOT a privilege check — for that, use
+ * getAccessInfo() / checkDeleteAllowed() from './access-level.js', which ask the API.
+ */
+export function getActiveAuthScheme(): AuthScheme {
+  // Lazy client: before the first API call _activeAuthScheme holds its default, so derive from the
+  // credential directly (getActiveAccessKey falls back to env in that window).
+  return _client ? _activeAuthScheme : authSchemeFor(getActiveAccessKey());
 }
 
 /** Returns the base URL of the currently active connection. */

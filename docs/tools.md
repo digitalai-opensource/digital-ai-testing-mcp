@@ -3,7 +3,7 @@
 Complete per-tool reference for the Digital.ai Testing MCP Server — all 191 tools, 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
-- **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (the long eyJ... key); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
+- **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (access level is detected from the API — either key format works); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
 - **Filters / Sort** — server-side parameters accepted by list tools. See [List Filters & Sorting](../README.md#list-filters--sorting).
 - Destructive tools require `confirmDeletion: true` — see [Safety Guards](../README.md#safety-guards).
 - **"Writes to the MCP server's filesystem" / "use when the server is Docker/remote" / volume-mount notes** apply to the Docker deployment path (Options B/C). If the server is installed via the [npm package](../README.md#option-a--install-via-npm-recommended) (Option A) and run directly on your own machine, its filesystem *is* your filesystem — these caveats and the `*_upload_command`/`*_download_command` workarounds don't apply; use the direct `upload_*`/`download_*` tools with local paths. See [limitations.md #15](limitations.md#15-local-file-io-runs-on-the-mcp-servers-filesystem-not-yours).
@@ -216,9 +216,11 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `download_test_attachments` | Download test attachments as a ZIP file (writes to the MCP server's filesystem) | Any |
 | `get_test_attachments_download_command` | Generate a curl/PowerShell command to download the attachment ZIP (session video .mp4 + logs) to the user's local machine — use when the server is Docker/remote | Any |
 | `get_test_log` | Retrieve log content (Appium/device/ws) from a test directly as text — no file download; ideal for diagnosing failures | Any |
-| `delete_test_reports` | Permanently delete test records by ID list | Cloud Admin |
-| `delete_test_reports_before_date` | Delete all test records started before a given date | Cloud Admin |
-| `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin |
+| `delete_test_reports` | Permanently delete test records by ID list | Cloud Admin † |
+| `delete_test_reports_before_date` | Delete all test records started before a given date | Cloud Admin † |
+| `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin † |
+
+> † Cloud Admin can always delete. A Project Admin can delete only when the project's `allowUsersDeleteTests` setting is enabled (off by default); otherwise the tool stops with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 ### Test Views
 
@@ -373,7 +375,9 @@ Network checks are especially important before NV-dependent tests (`startPerform
 | `app_control` | App lifecycle: `terminate`, `clear_data` (reset to first launch), `query_state`, `deep_link` (jump straight to a screen). Grid limits: query_state is foreground-only, deep_link best-effort. | No |
 | `device_control` | Device-level actions: orientation get/set, clipboard get/set, geolocation set/reset, alert accept/dismiss, file push/pull. Grid limits: alerts and reset_geolocation are Appium Server only. | No |
 | `list_inspection_sessions` | List all active inspection sessions in the current server process. | No |
-| `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions (scoped to the project each session was created under). Requires `confirmDeletion: true`. | Cloud Admin (reporter delete is CSRF-blocked for project-level keys) |
+| `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions (scoped to the project each session was created under). Requires `confirmDeletion: true`. | Cloud Admin † |
+
+> † Cloud Admin can always delete. A Project Admin can delete only when the project's `allowUsersDeleteTests` setting is enabled (off by default); otherwise the tool stops with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 **Typical workflow:**
 

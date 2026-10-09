@@ -1,6 +1,7 @@
 import { writeFile } from 'fs/promises';
 import AdmZip from 'adm-zip';
-import { apiGet, apiPost, apiDownload, getActiveKeyType } from './client.js';
+import { apiGet, apiPost, apiDownload } from './client.js';
+import { serverSortAvailable, markActiveServerSortRefused } from './access-level.js';
 import type {
   TestReport,
   TestListRequest,
@@ -16,13 +17,14 @@ import type {
 // the object directly with camelCase fields — normalised to TestReport before returning.
 
 // Properties that route through CSRF-protected middleware and fail regardless of auth type.
-// Confirmed blocked on both JWT (Cloud Admin) and X-API-KEY (project user) tokens.
+// Confirmed blocked for every credential type and role.
 // Note: test_id was previously listed here but live testing confirmed it works fine.
 const CSRF_BLOCKED_FILTER_PROPS = new Set(['start_time', 'create_time', 'uuid']);
 
-// ALL sort fields are CSRF-blocked for project API keys (non-JWT).
-// Cloud Admin JWT bypasses CSRF via Bearer mechanism; project keys do not.
-// sort is silently stripped for project keys — callers must not rely on sorted order.
+// Server-side sort is ATTEMPTED for every role (validated live 2026-10-08: ProjectAdmin and User keys get
+// results identical to a full scan; earlier notes said project roles were CSRF-blocked). If the platform
+// refuses it, listTests retries without sort, remembers the refusal for that credential, and reports
+// `sortApplied: false`. Callers that early-exit on sorted order MUST check `sortApplied`.
 
 // Shape returned by GET /reporter/api/tests/{id} — camelCase, different from list shape
 interface RawSingleTest {
@@ -157,26 +159,39 @@ export async function listTests(
       finalRequest = { ...request, filter: sanitizeReporterFilter(request.filter) };
     }
 
-    // Sort params are CSRF-blocked for project-level keys — silently strip so callers don't fail.
-    // Date-range pagination in reporting-tools.ts must not rely on sorted order for project keys.
-    if (getActiveKeyType() !== 'jwt' && finalRequest.sort && finalRequest.sort.length > 0) {
+    const wantsSort = !!(finalRequest.sort && finalRequest.sort.length > 0);
+    // A credential the platform already refused sort for skips straight to the unsorted request.
+    if (wantsSort && !serverSortAvailable()) {
       finalRequest = { ...finalRequest, sort: undefined };
     }
 
     // projectId (numeric) is CSRF-blocked on all reporter endpoints — only projectName works.
     const params: Record<string, unknown> = {};
     if (projectName) params['projectName'] = projectName;
-    return await apiPost<TestListResponse>('/reporter/api/tests/list', finalRequest, params);
+    const post = (body: TestListRequest) => apiPost<TestListResponse>('/reporter/api/tests/list', body, params);
+
+    try {
+      const res = await post(finalRequest);
+      return wantsSort ? { ...res, sortApplied: finalRequest.sort !== undefined } : res;
+    } catch (e) {
+      // Sort refused (401/403)? Retry without it. Only REMEMBER the refusal if the unsorted retry succeeds —
+      // if it fails too, this was a genuine auth/network problem and the original error stands.
+      if (finalRequest.sort !== undefined && /\[(401|403)\]/.test((e as Error).message)) {
+        const res = await post({ ...finalRequest, sort: undefined });
+        markActiveServerSortRefused();
+        return { ...res, sortApplied: false };
+      }
+      throw e;
+    }
   } catch (e) {
     throw new Error(`listTests failed: ${(e as Error).message}`);
   }
 }
 
-// Fetch tests reliably sorted by start_time descending regardless of key type.
-// JWT: single sorted call (fast path). Project keys: sort is CSRF-blocked and
-// silently stripped by listTests, so an unsorted first page is NOT the most
-// recent — scan all pages (up to maxScan records), sort client-side, and trim
-// to the requested limit. Callers that need "latest"/"most recent" semantics
+// Fetch tests reliably sorted by start_time descending regardless of role.
+// Fast path: one server-sorted call. If the platform refuses sort for this credential, an unsorted
+// first page is NOT the most recent — scan all pages (up to maxScan records), sort client-side, and
+// trim to the requested limit. Callers that need "latest"/"most recent" semantics
 // must use this instead of passing sort to listTests directly.
 export async function listTestsSortedDesc(
   request: TestListRequest,
@@ -184,12 +199,14 @@ export async function listTestsSortedDesc(
   projectName?: string,
   maxScan = 5000
 ): Promise<TestListResponse & { scanCapped?: boolean }> {
-  if (getActiveKeyType() === 'jwt') {
-    return listTests(
+  if (serverSortAvailable()) {
+    const sorted = await listTests(
       { ...request, sort: [{ property: 'start_time', descending: true }] },
       projectId,
       projectName
     );
+    if (sorted.sortApplied) return sorted;
+    // Refused just now (and remembered) — fall through to the client-side scan.
   }
   const limit = request.limit ?? 50;
   const all: TestReport[] = [];
@@ -263,9 +280,8 @@ export async function summarizeTestFailures(opts: {
     if (opts.nameFilter) filter.push({ property: 'name', operator: 'contains', value: opts.nameFilter });
 
     // Same window-scan strategy as list_test_reports: start_time filtering is
-    // CSRF-blocked, so fetch (sorted desc for JWT to allow early-exit) and filter
-    // the date window client-side.
-    const isSorted = getActiveKeyType() === 'jwt';
+    // CSRF-blocked, so fetch (server-sorted desc when the platform allows it, to enable early-exit)
+    // and filter the date window client-side.
     const startTs = opts.startDate ? new Date(opts.startDate).getTime() : 0;
     const endTs = opts.endDate ? new Date(opts.endDate).getTime() : Date.now();
 
@@ -276,20 +292,30 @@ export async function summarizeTestFailures(opts: {
     const maxScan = 5000;
 
     while (!done && collected.length < maxReports) {
+      const wantSort = serverSortAvailable();
       const batch = await listTests(
         {
           limit: 500,
           page,
           returnTotalCount: false,
           filter,
-          ...(isSorted && { sort: [{ property: 'start_time', descending: true }] }),
+          ...(wantSort && { sort: [{ property: 'start_time', descending: true }] }),
         },
         opts.projectId,
         opts.projectName
       );
+      if (wantSort && batch.sortApplied === false && page > 1) {
+        // Sort was refused partway through a sorted scan. Unsorted page N is NOT a continuation of sorted
+        // pages 1..N-1 — restart from page 1 (the refusal is now remembered, so the rescan is unsorted throughout).
+        collected.length = 0;
+        scanned = 0;
+        page = 1;
+        continue;
+      }
       const recs = batch.data ?? [];
       if (recs.length === 0) break;
       scanned += recs.length;
+      const isSorted = batch.sortApplied === true; // early-exit only when the server really sorted
       for (const r of recs) {
         const t = new Date(r.start_time).getTime();
         if (isSorted && t < startTs) { done = true; break; }

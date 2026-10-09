@@ -18,7 +18,7 @@ The Digital.ai reporter API routes certain filter properties through CSRF-protec
 
 Confirmed working filter properties: `status`, `name` (with `contains`), `has_attachment`, `success` (boolean), `test_id`, `project_id`, `device.os` (case-sensitive), `duration`, `attachment_count`, `attachments_size`, `status_code`.
 
-**Sort** works for Cloud Admin only — ALL sort fields are CSRF-blocked for project-level keys (Project Admin and Project User). Tools that need newest-first results (`find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`) compensate automatically under a project-level key by scanning all records and sorting client-side — correct results, but slower on large report sets.
+**Sort** (`start_time` and other fields) is attempted for every role. If the platform refuses it for a credential, the server automatically retries without it and tools that need newest-first results (`find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`) fall back to scanning up to 5,000 records and sorting client-side — correct results, but slower on large report sets.
 
 ## 5. Region Management
 
@@ -82,3 +82,11 @@ This is a deployment characteristic, not a fixable bug — the server and the ca
 - **Inline text for logs.** `get_test_log` returns Appium/device/ws log content directly in the tool response — no file, no command — which covers the most common diagnostic need without touching a filesystem at all.
 
 When running the server with a shared/volume-mounted directory (e.g. bare-metal or a mounted Docker volume), the direct `download_*`/`upload_*` tools work normally against that shared path.
+
+## 16. Deleting Test Reports Depends on a Per-Project Setting
+
+Cloud Admins can delete test reports in any project. Project Admins and Project Users can only do so when the project's **`allowUsersDeleteTests`** setting is enabled; the platform otherwise answers `403 "You have no permission to delete tests"`. The setting is managed by a Cloud Admin and is **off by default**.
+
+The report-deletion tools (`delete_test_reports`, `delete_test_reports_before_date`, `delete_test_reports_by_name`, `cleanup_inspection_sessions`, `cleanup_browser_inspection_sessions`) check this before doing any work. When a Project Admin's project has the setting off, the tool stops with a message naming the project and asking you to have a Cloud Admin enable `allowUsersDeleteTests` (or to switch to a Cloud Admin profile). A Project User cannot read the setting, so the request goes to the platform, which returns its own 403 if deletes are disabled.
+
+Which role you hold is detected from the API, not from the format of your access key — see [Access Keys](../README.md#access-keys).

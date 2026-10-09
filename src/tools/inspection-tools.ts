@@ -40,7 +40,8 @@ import {
 } from '../api/webdriver.js';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { getActiveKeyType, getActiveUrl } from '../api/client.js';
+import { getActiveUrl } from '../api/client.js';
+import { checkDeleteAllowed } from '../api/access-level.js';
 import { resolveDevice } from '../utils/device-resolver.js';
 import { getAllDevices } from '../api/devices.js';
 import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
@@ -424,10 +425,10 @@ export function registerInspectionTools(server: McpServer): void {
 
         if (!session.canDeleteReport) {
           structured.authWarning =
-            'Project-level key detected (Project Admin or Project User). The reporter delete endpoint (POST /reporter/api/tests/delete) ' +
-            'is CSRF-blocked for project-level keys — inspection session reports will NOT be automatically ' +
-            'deleted. Delete them manually from the Digital.ai reporter UI, or switch to a Cloud Admin ' +
-            'profile before using inspection sessions: switch_environment("default").';
+            'Report cleanup unavailable: the active credential is a project-level role and this project\'s allowUsersDeleteTests ' +
+            'setting is off, so the platform refuses reporter deletes (403 "You have no permission to delete tests"). Inspection ' +
+            'session reports will NOT be automatically deleted. Ask a Cloud Admin to enable allowUsersDeleteTests for the project, ' +
+            'delete them from the Digital.ai reporter UI, or switch to a Cloud Admin profile before using inspection sessions.';
         }
 
         return {
@@ -486,9 +487,9 @@ export function registerInspectionTools(server: McpServer): void {
         } else if (!canDeleteReport && reportTestId > 0) {
           text =
             `✅ Session ${args.handle} stopped. Device released.\n\n` +
-            `⚠️  Report NOT deleted (test_id=${reportTestId}): the reporter delete endpoint is CSRF-blocked ` +
-            `for project-level keys (Project Admin and Project User). Delete it manually from the Digital.ai reporter UI, or switch to a ` +
-            `Cloud Admin profile before running inspection sessions: switch_environment("default").`;
+            `⚠️  Report NOT deleted (test_id=${reportTestId}): the active credential is a project-level role and this project's ` +
+            `allowUsersDeleteTests setting is off, so the platform refuses reporter deletes. Ask a Cloud Admin to enable it, delete the ` +
+            `report from the Digital.ai reporter UI, or switch to a Cloud Admin profile before running inspection sessions.`;
         } else {
           text = `✅ Session ${args.handle} stopped. Device released.`;
         }
@@ -1323,14 +1324,13 @@ export function registerInspectionTools(server: McpServer): void {
         };
       }
 
-      if (getActiveKeyType() !== 'jwt') {
+      const denied = await checkDeleteAllowed();
+      if (denied) {
         return {
           content: [{
             type: 'text' as const,
             text:
-              `Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys (Project Admin and Project User). ` +
-              `The ${pending.length} tracked report ID(s) are preserved — use switch_environment() to switch to a ` +
-              `Cloud Admin profile, then re-run cleanup_inspection_sessions.`,
+              denied + ` The ${pending.length} tracked report ID(s) are preserved — switch to a Cloud Admin profile, then re-run cleanup_inspection_sessions.`,
           }],
           isError: true,
         };

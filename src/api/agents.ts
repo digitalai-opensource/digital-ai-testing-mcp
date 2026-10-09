@@ -1,7 +1,7 @@
 import { apiGet } from './client.js';
 import type { Agent } from '../types/digital-ai.js';
 
-// v2 API — Cloud Admin (JWT) only. Project API keys receive 403 Forbidden.
+// v2 API — Cloud Admin only. Project-level roles receive 403 Forbidden.
 
 export async function getAgents(): Promise<Agent[]> {
   try {

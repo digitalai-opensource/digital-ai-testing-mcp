@@ -455,6 +455,11 @@ export interface TestGroupRequest {
 export interface TestListResponse {
   count?: number;
   data: TestReport[];
+  /**
+   * Set only when the request asked for a sort: true if the server applied it, false if it was refused/stripped
+   * (data is then in platform order). Early-exit scans MUST key off this, never off an assumption.
+   */
+  sortApplied?: boolean;
 }
 
 // ─── Test Views ──────────────────────────────────────────────────────────────
@@ -671,7 +676,7 @@ export interface LicenseInfo {
   browsers: number;
 }
 
-// ─── Transactions (Performance reporting — reporter API, JWT only) ─────────────
+// ─── Transactions (Performance reporting — reporter API, all roles) ─────────────
 // Transactions are performance-instrumented segments of a test session.
 // Developers mark start/end points; the platform records CPU, memory, battery,
 // and network metrics for each interval. Linked to a test run via testId.
@@ -813,7 +818,8 @@ export interface InspectionSession {
   startedAt: number;        // Unix ms timestamp
   lastUsedAt: number;       // Unix ms of the most recent command — idle-timeout awareness
   lastIdleMs?: number;      // Idle gap measured at the start of the current command
-  // true when session was started with Cloud Admin credentials — enables automatic report cleanup
+  // true unless the credential is a project-level role whose project has allowUsersDeleteTests=false
+  // (resolved from the API at session start) — enables automatic report cleanup
   canDeleteReport: boolean;
   // Protocol of the allocating agent: JWP (Appium 1.x) uses touch/perform and
   // /appium/device/* routes; W3C (Appium 2/3) uses /actions and mobile: execute commands.

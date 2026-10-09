@@ -91,13 +91,15 @@ Then ask: *"Show me the overall health of the device farm."*
 
 Your Digital.ai access key determines what the MCP server can do on your behalf. There are three access levels.
 
-| Access level | Key format | Access |
-|---|---|---|
-| **Cloud Admin** | `eyJ…` (long base-64 string) | All tools: device management, user provisioning, project administration, infrastructure, performance data |
-| **Project Admin** | `aut_1_…` | Scoped to one project. Can manage device tags, view project admin settings, list users. v2 API tools (agents, regions, license data) return 403. |
-| **Project User** | `aut_1_…` | Scoped to one project. Read/test operations only. Cannot manage tags, access admin settings, or delete reports. |
+| Access level | Access |
+|---|---|
+| **Cloud Admin** | All tools: device management, user provisioning, project administration, infrastructure, performance data |
+| **Project Admin** | Scoped to one project. Can manage device tags, view project admin settings, list users. v2 API tools (agents, regions, license data) return 403. |
+| **Project User** | Scoped to one project. Read/test operations only. Cannot manage tags, access admin settings, or delete reports. |
 
-When a Cloud Admin tool is called with a project-level key, the MCP returns a plain-language error explaining what happened — and, if a Cloud Admin profile is configured, a ready-to-use `switch_environment(...)` command.
+> **The key format does not tell you the access level.** Older keys are long `eyJ…` tokens; since Digital.ai 24.11 newly generated keys use a shorter `aut_1_…` token, and that applies to Cloud Admins too. The MCP server therefore detects your access level from the API (`GET /api/v1/users/my-account-info` → `Admin` / `ProjectAdmin` / `User`) and never from the key's prefix. `get_server_info` and `list_environments` show what was detected for each profile.
+
+When a Cloud Admin tool is called with a project-level role, the MCP returns a plain-language error explaining what happened — and, if a Cloud Admin profile is known, a ready-to-use `switch_environment(...)` command.
 
 ### Finding your key
 
@@ -112,16 +114,16 @@ The key shown is tied to the **project currently selected in the portal**. If yo
 Configure named profiles in `.env` to switch contexts at runtime without editing files:
 
 ```
-# Default connection (typically Cloud Admin credentials)
+# Default connection (typically Cloud Admin credentials — either key format works)
 DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com
-DIGITAL_AI_ACCESS_KEY=eyJ...your-cloud-admin-key...
+DIGITAL_AI_ACCESS_KEY=...your-cloud-admin-key...
 
 # Project-scoped profiles
 DAI_PROFILE_QA_URL=https://your-tenant.experitest.com
-DAI_PROFILE_QA_KEY=aut_1_...your-qa-key...
+DAI_PROFILE_QA_KEY=...your-qa-key...
 
 DAI_PROFILE_STAGING_URL=https://your-tenant.experitest.com
-DAI_PROFILE_STAGING_KEY=aut_1_...your-staging-key...
+DAI_PROFILE_STAGING_KEY=...your-staging-key...
 ```
 
 Then ask your AI:
@@ -781,6 +783,8 @@ Use filters to narrow results rather than raising `maxResults`. When results are
 
 All list tools accept `sortOrder: "asc" | "desc"` (default: `"asc"`).
 
+`list_test_reports` sorting is performed by the platform for every access level. If the platform ever refuses it for a credential, the server transparently falls back to a client-side scan (up to 5,000 records) so "newest first" results stay correct, just slower on large report sets.
+
 ### Test Reporting Schema
 
 Report fields use **snake_case** to match the API response:
@@ -899,7 +903,7 @@ The first call describes exactly what will be deleted. The second call — with 
 
 Two further guards run before any request leaves the server:
 
-- **Auth pre-flight:** report-deletion tools (`delete_test_reports*`, `cleanup_inspection_sessions`) check the active key type first and return a clear "switch to a Cloud Admin profile" message instead of an opaque CSRF 401 when called with a project-level key.
+- **Auth pre-flight:** report-deletion tools (`delete_test_reports*`, `cleanup_inspection_sessions`) check the API-detected access level first. A project-level role is refused up front only when its project's `allowUsersDeleteTests` setting is false, with a message telling you to have a Cloud Admin enable it (or switch to a Cloud Admin profile) instead of an opaque 403.
 - **Upload path validation:** tools that read local files for upload refuse relative paths, path traversal, and credential-file names (`.env*`, SSH private keys) — a misdirected request cannot publish secrets to the cloud repository.
 
 ---

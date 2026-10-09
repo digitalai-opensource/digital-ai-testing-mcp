@@ -2,14 +2,15 @@ import axios, { AxiosInstance } from 'axios';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { deleteTests } from './reporting.js';
 import { getMyAccountInfo } from './users.js';
-import { getActiveKeyType, getActiveUrl, getActiveAccessKey } from './client.js';
+import { getActiveUrl, getActiveAccessKey } from './client.js';
+import { checkDeleteAllowed } from './access-level.js';
 
 // In-process session registry — cleared on MCP server restart
 const sessionRegistry = new Map<string, InspectionSession>();
 // All report IDs created this process lifetime, mapped to the project name they
 // were created under — for orphan cleanup. Sessions started under a non-default
 // profile create reports in that project's reporter instance; deleting them
-// later (e.g. after switching back to the admin JWT) MUST scope by projectName
+// later (e.g. after switching back to the admin key) MUST scope by projectName
 // or the same numeric test_id in the default reporter scope gets deleted instead.
 const allReports = new Map<number, string | undefined>();
 
@@ -43,7 +44,7 @@ export async function createInspectionSession(
   opts: InspectionSessionOptions
 ): Promise<InspectionSession> {
   // getActiveAccessKey (not process.env) — the session must be created with the
-  // active profile's credential so it matches canDeleteReport's key-type check.
+  // active profile's credential so canDeleteReport is derived from the same credential.
   const accessKey = getActiveAccessKey();
   if (!accessKey) throw new Error('DIGITAL_AI_ACCESS_KEY not configured');
 
@@ -134,9 +135,10 @@ export async function createInspectionSession(
     );
   }
 
-  // POST /reporter/api/tests/delete is CSRF-blocked for project-level keys (Project Admin and Project User).
-  // Only Cloud Admin credentials (JWT Bearer token) bypass the CSRF check on reporter mutation endpoints.
-  const canDeleteReport = getActiveKeyType() === 'jwt';
+  // Reporter deletes need Cloud Admin, or a project role on a project with allowUsersDeleteTests=true.
+  // Level and flag come from the API (not the key format); if either can't be determined we try anyway
+  // (a failed delete below is non-fatal and the report stays tracked for cleanup).
+  const canDeleteReport = (await checkDeleteAllowed(projectName)) === null;
 
   const handle = crypto.randomUUID().slice(0, 8).toUpperCase();
   // Field names differ: JWP Grid uses dot-notation (device.name, device.os),

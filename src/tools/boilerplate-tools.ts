@@ -782,7 +782,7 @@ export function registerBoilerplateTools(server: McpServer): void {
 
       // Active-profile accessors (not process.env) — generated boilerplate must
       // embed the active profile's credential, not the default profile's. With
-      // env vars, switching to a project profile still embedded the admin JWT.
+      // env vars, switching to a project profile still embedded the admin credential.
       const accessKey = getActiveAccessKey();
       const rawBaseUrl = getActiveUrl();
 

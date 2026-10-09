@@ -16,7 +16,7 @@ import {
   browserNavigate,
 } from '../api/browser-inspection.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { getActiveKeyType } from '../api/client.js';
+import { checkDeleteAllowed } from '../api/access-level.js';
 
 function browserSessionSummary(s: ReturnType<typeof requireSession>): string {
   const age = Math.round((Date.now() - s.startedAt) / 1000);
@@ -150,7 +150,7 @@ export function registerWebInspectionTools(server: McpServer): void {
           );
         } else if (!canDeleteReport) {
           lines.push(
-            `Note: Report (ID: ${reportTestId}) was kept — project-level keys cannot delete reporter records.`,
+            `Note: Report (ID: ${reportTestId}) was kept — this project's allowUsersDeleteTests setting is off, so a project-level role cannot delete reporter records (a Cloud Admin can enable it).`,
             `Report URL: ${reportUrl}`
           );
         }
@@ -444,7 +444,7 @@ export function registerWebInspectionTools(server: McpServer): void {
     'Delete all test reports created by browser inspection sessions during this MCP server process. ' +
     'Includes reports from browser sessions that were closed without calling stop_browser_inspection_session. ' +
     'stop_browser_inspection_session deletes its own report automatically; this tool handles orphans. ' +
-    'Cloud Admin access required (reporter delete is CSRF-blocked for project-level keys). ' +
+    'Cloud Admin, or a project-level role whose project has allowUsersDeleteTests enabled (access level is detected from the API). ' +
     'Requires confirmDeletion: true.',
     {
       confirmDeletion: z
@@ -464,14 +464,13 @@ export function registerWebInspectionTools(server: McpServer): void {
         };
       }
 
-      if (getActiveKeyType() !== 'jwt') {
+      const denied = await checkDeleteAllowed();
+      if (denied) {
         return {
           content: [{
             type: 'text' as const,
             text:
-              `Error: Cloud Admin access required. The reporter delete endpoint is CSRF-blocked for project-level keys. ` +
-              `The ${pending.length} tracked report ID(s) are preserved — use switch_environment() to switch to a ` +
-              `Cloud Admin profile, then re-run cleanup_browser_inspection_sessions.`,
+              denied + ` The ${pending.length} tracked report ID(s) are preserved — switch to a Cloud Admin profile, then re-run cleanup_browser_inspection_sessions.`,
           }],
           isError: true,
         };

@@ -9,8 +9,9 @@ import {
   getLicenseInfo,
 } from './helpers/test-client.js';
 
-// v2 API and reporter endpoints — these require Cloud Admin JWT.
-// If the test environment uses a project API key these will throw; that is expected
+// v2 API and reporter endpoints — these require Cloud Admin access (either key format: a Cloud Admin
+// may hold an eyJ... key or a short aut_1_... key). If the test environment holds a project-level role
+// these will throw; that is expected
 // and the tests are designed to handle it gracefully.
 
 async function tryOrSkip<T>(fn: () => Promise<T>, label: string): Promise<T | null> {
@@ -19,7 +20,7 @@ async function tryOrSkip<T>(fn: () => Promise<T>, label: string): Promise<T | nu
   } catch (e) {
     const msg = (e as Error).message ?? '';
     if (msg.includes('[403]') || msg.includes('[401]') || msg.includes('Forbidden') || msg.includes('Unauthorized')) {
-      console.warn(`  SKIP: ${label} — requires Cloud Admin JWT (got auth error)`);
+      console.warn(`  SKIP: ${label} — requires Cloud Admin access (got auth error)`);
       return null;
     }
     throw e;
@@ -103,7 +104,7 @@ describe('NV Servers API (v2 — Cloud Admin only)', () => {
   });
 });
 
-describe('Active Sessions API (v2 — Cloud Admin JWT only)', () => {
+describe('Active Sessions API (v2 — Cloud Admin only)', () => {
   it('GET /api/v2/sessions — returns array', async () => {
     const sessions = await tryOrSkip(() => getActiveSessions(), 'getActiveSessions');
     if (sessions === null) return;
@@ -121,7 +122,7 @@ describe('Active Sessions API (v2 — Cloud Admin JWT only)', () => {
   });
 });
 
-describe('Reporter Projects Storage API (Cloud Admin JWT only)', () => {
+describe('Reporter Projects Storage API (Cloud Admin only)', () => {
   it('GET /reporter/api/projects — returns array', async () => {
     const projects = await tryOrSkip(() => getReporterProjects(), 'getReporterProjects');
     if (projects === null) return;
