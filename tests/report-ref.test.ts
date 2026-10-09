@@ -16,6 +16,8 @@ import { clearAccessInfoCache } from '../src/utils/access-level.js';
 import { registerReportingTools } from '../src/tools/reporting-tools.js';
 
 const U = '44882dbd-7cbd-4f82-96a1-9e12fcbead5f';
+const SHARING_OFF = '11111111-1111-1111-1111-111111111111'; // report whose project has sharing disabled
+const NO_SHARE = '22222222-2222-2222-2222-222222222222';    // flag says enabled, but the share call 400s
 
 describe('parseReportRef (pure)', () => {
   const cases: Array<[string | number, ReturnType<typeof parseReportRef>]> = [
@@ -50,8 +52,13 @@ beforeAll(async () => {
     const url = req.url ?? '';
     seen.push(`${req.method} ${url}`);
     res.setHeader('Content-Type', 'application/json');
+    const share = url.match(/^\/reporter\/api\/reports\/([0-9a-f-]{36})\/share$/);
+    if (share && req.method === 'POST') {
+      if (share[1] === NO_SHARE) { res.statusCode = 400; return void res.end('{"detail":"sharing disabled"}'); }
+      return void res.end(JSON.stringify({ testReportShare: 'TOKEN123', expires: '2026-10-23T17:29:37.374Z' }));
+    }
     const byUuid = url.match(/^\/reporter\/api\/reports\/([0-9a-f-]{36})$/);
-    if (byUuid) return void res.end(JSON.stringify(RAW(742849, byUuid[1])));
+    if (byUuid) return void res.end(JSON.stringify({ ...RAW(742849, byUuid[1]), sharingEnabled: byUuid[1] !== SHARING_OFF }));
     const byId = url.match(/^\/reporter\/api\/tests\/(\d+)$/);
     if (byId) return void res.end(JSON.stringify(RAW(Number(byId[1]), '00000000-0000-0000-0000-000000000000')));
     res.statusCode = 404;
@@ -72,7 +79,9 @@ async function call(name: string, args: Record<string, unknown>) {
   seen.length = 0;
   const res = (await client.callTool({ name, arguments: { ...args, outputFormat: 'json' } })) as { content: Array<{ text?: string }>; isError?: boolean };
   const text = res.content.map((c) => c.text ?? '').join('');
-  return { res, text, json: res.isError ? undefined : JSON.parse(text) };
+  let json: any;
+  try { json = res.isError ? undefined : JSON.parse(text); } catch { json = undefined; } // previews are plain text
+  return { res, text, json };
 }
 
 describe('get_test_report — UUID first', () => {
@@ -109,5 +118,39 @@ describe('get_test_report — UUID first', () => {
     assert.equal(res.isError, true);
     assert.match(text, /get_test_report\(uuid:/);
     assert.doesNotMatch(text, /no API endpoint/i);
+  });
+});
+
+describe('share_test_report — public link behind an explicit confirmation', () => {
+  it('without confirmPublicShare: previews what would be exposed and shares NOTHING (not an error)', async () => {
+    const { res, text } = await call('share_test_report', { uuid: U });
+    assert.notEqual(res.isError, true);
+    assert.match(text, /nothing has been shared/i);
+    assert.match(text, /without logging in/);
+    assert.deepEqual(seen, [`GET /reporter/api/reports/${U}`], 'must not POST /share without confirmation');
+  });
+
+  it('with confirmPublicShare: true returns the public URL and expiry', async () => {
+    const { res, json } = await call('share_test_report', { reportUrl: `https://h/reporter/video-report/${U}`, confirmPublicShare: true });
+    assert.notEqual(res.isError, true);
+    assert.deepEqual(seen, [`GET /reporter/api/reports/${U}`, `POST /reporter/api/reports/${U}/share`]);
+    assert.match(json.publicUrl, /\/reporter\/html-report\/public\/TOKEN123$/);
+    assert.equal(json.expires, '2026-10-23T17:29:37.374Z');
+  });
+
+  it('refuses numeric ids (sharing needs the UUID) without any request', async () => {
+    const { res } = await call('share_test_report', { reportUrl: 'https://h/reporter/html-report/index.html?test_id=5', confirmPublicShare: true });
+    assert.equal(res.isError, true);
+    assert.deepEqual(seen, []);
+  });
+
+  it('sharing disabled → error before any POST; a 400 from /share explains the setting', async () => {
+    const off = await call('share_test_report', { uuid: SHARING_OFF, confirmPublicShare: true });
+    assert.equal(off.res.isError, true);
+    assert.match(off.text, /disabled/);
+    assert.ok(!seen.some((r) => r.startsWith('POST')));
+    const bad = await call('share_test_report', { uuid: NO_SHARE, confirmPublicShare: true });
+    assert.equal(bad.res.isError, true);
+    assert.match(bad.text, /sharing is disabled/);
   });
 });
