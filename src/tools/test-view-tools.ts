@@ -10,7 +10,7 @@ import {
   deleteTestView,
 } from '../api/test-views.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import {
   formatTestViewList,
   formatTestViewSummary,
@@ -48,7 +48,7 @@ export function registerTestViewTools(server: McpServer): void {
           })),
         };
         const humanText = appendTruncationNotice(formatTestViewList(paged.items), paged);
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -111,7 +111,7 @@ export function registerTestViewTools(server: McpServer): void {
         };
         const countLine = `Total: ${result.count}\n\n`;
         const humanText = appendTruncationNotice(countLine + formatTestViewList(paged.items), paged);
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getAgents, getAgentDevices } from '../api/agents.js';
 import { formatAgentList, formatDeviceList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import type { Device } from '../types/digital-ai.js';
 
 export function registerAgentTools(server: McpServer): void {
@@ -57,7 +57,7 @@ export function registerAgentTools(server: McpServer): void {
         };
         const header = `Found ${paged.total} agent(s):\n\n`;
         const humanText = appendTruncationNotice(header + formatAgentList(paged.items), paged);
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

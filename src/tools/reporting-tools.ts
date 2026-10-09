@@ -31,6 +31,7 @@ import {
   formatProjectTestSummary,
 } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { commandPayload } from '../utils/command-payload.js';
 import { parseReportRef } from '../utils/report-ref.js';
 import { countsFromPivotRow, tallyStatuses, passRate, statusOutcome, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
 
@@ -798,7 +799,7 @@ export function registerReportingTools(server: McpServer): void {
         localPlatform,
         notes: ['The downloaded file is a ZIP — unzip it to access the .mp4 video and the appium/device/ws logs.'],
       });
-      return respond(outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
+      return respond(outputFormat, commandPayload(result), result.humanText);
     }
   );
 
@@ -1416,7 +1417,9 @@ export function registerReportingTools(server: McpServer): void {
             // Early-exit is only valid on server-sorted data; otherwise skip out-of-window rows and keep scanning.
             if (ts < cutoffTs) { if (isSorted) { done = true; break; } continue; }
             records.push({ status: r.status, start_time: r.start_time });
-            if (records.length >= maxRecords) { done = true; break; }
+            // The record cap ended the scan before the cutoff was reached: older days in the window were never read.
+            // (UAT 2026-10-09: a 14-day trend stopped at 5,000 records on day 6 and reported scanCapped: false.)
+            if (records.length >= maxRecords) { scanCapped = true; done = true; break; }
           }
           if (rows.length < 500) done = true;
           // Unsorted fallback has no early-exit: maxRecords bounds the rows FETCHED (as documented), and the
@@ -1454,13 +1457,17 @@ export function registerReportingTools(server: McpServer): void {
         }
 
         const sorted = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b));
+        // Earliest record actually read — when the scan was capped, days before this are missing, not empty.
+        const coveredFrom = records.reduce((min, r) => (r.start_time < min ? r.start_time : min), records[0].start_time);
         const structured = {
           bucketBy,
           lookbackDays,
           recordsScanned: records.length,
           cappedAt: records.length >= maxRecords ? maxRecords : null,
-          // true when the platform refused sort and the unsorted scan hit maxRecords before covering the window
+          // true whenever maxRecords ended the scan before the lookback window was fully covered
           scanCapped,
+          windowComplete: !scanCapped,
+          coveredFrom: scanCapped ? coveredFrom : new Date(cutoffTs).toISOString(),
           buckets: sorted.map(([date, b]) => ({
             date,
             total: b.total,
@@ -1483,10 +1490,12 @@ export function registerReportingTools(server: McpServer): void {
           }),
           `\n  Passed includes Healed. Pass% = (Passed+Healed)/(Passed+Healed+Failed+Error).`,
         ];
-        if (records.length >= maxRecords) {
-          lines.push(`\n  ⚠️  Capped at ${maxRecords} records — increase maxRecords or reduce lookbackDays for a complete picture.`);
-        } else if (scanCapped) {
-          lines.push(`\n  ⚠️  Incomplete: the platform refused server-side sort for this credential, so records were scanned unsorted and the scan stopped at maxRecords (${maxRecords}) before the full ${lookbackDays}-day window was covered. Increase maxRecords for a complete picture.`);
+        if (scanCapped) {
+          lines.push(
+            `\n  ⚠️  INCOMPLETE WINDOW: the scan stopped at maxRecords (${maxRecords}) and only covers ${coveredFrom.slice(0, 10)} onward — ` +
+            `days before that are MISSING from this trend, not days with zero executions. ` +
+            `Increase maxRecords (max 25,000) or reduce lookbackDays for the full ${lookbackDays}-day window.`
+          );
         }
         return respond(outputFormat, structured, lines.join('\n'));
       } catch (e) {

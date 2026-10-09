@@ -32,7 +32,7 @@ import {
 } from '../api/projects.js';
 import { getDeviceGroups } from '../api/device-groups.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatProjectList, formatDeviceList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
@@ -83,7 +83,7 @@ export function registerProjectTools(server: McpServer): void {
           `Found ${paged.total} project(s):\n\n${formatProjectList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -257,7 +257,7 @@ export function registerProjectTools(server: McpServer): void {
           `Users in project ${label} (${paged.total} total):\n${lines.join('\n')}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -595,7 +595,7 @@ export function registerProjectTools(server: McpServer): void {
           `Devices for project ${projectId} (${paged.total} total):\n\n${formatDeviceList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

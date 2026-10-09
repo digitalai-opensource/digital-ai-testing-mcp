@@ -11,7 +11,7 @@ import {
   getUserTags,
 } from '../api/users.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatUserList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
@@ -115,7 +115,7 @@ export function registerUserTools(server: McpServer): void {
           `${summary}${formatUserList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

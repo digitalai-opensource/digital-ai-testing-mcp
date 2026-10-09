@@ -9,7 +9,7 @@ import { getDeviceReservations, reserveDevice } from '../api/devices.js';
 import { formatDeviceTimestamp } from '../api/client.js';
 import { resolveDevice, formatResolvedDevice } from '../utils/device-resolver.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatDeviceReservationList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
@@ -70,7 +70,7 @@ export function registerReservationTools(server: McpServer): void {
           `Found ${paged.total} reservation(s):\n\n${formatDeviceReservationList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

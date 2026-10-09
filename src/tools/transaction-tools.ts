@@ -5,7 +5,7 @@ import {
   formatTransactionList,
   formatTransaction,
 } from '../utils/response-formatter.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import type { Transaction } from '../types/digital-ai.js';
 
@@ -126,7 +126,7 @@ export function registerTransactionTools(server: McpServer): void {
           `Found ${paged.total} transaction(s):\n\n${formatTransactionList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

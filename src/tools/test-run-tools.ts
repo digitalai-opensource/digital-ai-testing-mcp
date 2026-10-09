@@ -18,6 +18,7 @@ import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { buildUploadCommand } from '../utils/upload-command.js';
 import { serverFsUploadNotice, serverFsInputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { commandPayload } from '../utils/command-payload.js';
 
 const MAESTRO_BUNDLE_NOTE =
   'Maestro bundle = a .zip with a flows/ directory of .yaml flows (the platform rejects a bundle without flows/); ' +
@@ -209,7 +210,7 @@ export function registerTestRunTools(server: McpServer): void {
         localPlatform: args.localPlatform,
         notes: ['The response contains "Test Run Id" — pass it to get_test_run_status to follow the run.'],
       });
-      return respond(args.outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
+      return respond(args.outputFormat, commandPayload(result), result.humanText);
     }
   );
 }

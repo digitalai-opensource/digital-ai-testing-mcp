@@ -7,6 +7,7 @@ import { serverFsDownloadNotice, serverFsOutputParam, localPlatformParamNotice }
 import { getDeploymentMode } from '../utils/deployment-mode.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { commandPayload } from '../utils/command-payload.js';
 
 const REPORT_TYPE_ENUM = z.enum([
   'Device Reservations',
@@ -135,7 +136,7 @@ export function registerUsageReportTools(server: McpServer): void {
       });
       return respond(
         outputFormat,
-        { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand },
+        commandPayload(result),
         result.humanText
       );
     }

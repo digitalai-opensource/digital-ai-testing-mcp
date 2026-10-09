@@ -13,7 +13,7 @@ import {
   assignDeviceGroupToProject,
 } from '../api/device-groups.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatDeviceList, formatProjectList, formatDeviceGroupV2List } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
@@ -53,7 +53,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
             `Device Groups (${paged.total} total):\n` + formatDeviceGroupV2List(paged.items as Parameters<typeof formatDeviceGroupV2List>[0]),
             paged
           );
-          return respond(outputFormat, structured, humanText);
+          return respond(outputFormat, withPaging(structured, paged), humanText);
         }
 
         // v1 fallback
@@ -68,7 +68,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
           `Device Groups (${paged.total} total):\n${lines || '  (none)'}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -158,7 +158,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
           `Devices in group ${groupId} (${paged.total} total):\n\n${formatDeviceList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         const msg = (e as Error).message;
         if (msg.includes('[400]') && msg.toLowerCase().includes('not found')) {
@@ -192,7 +192,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
           `Projects with access to group ${groupId} (${paged.total} total):\n${formatProjectList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

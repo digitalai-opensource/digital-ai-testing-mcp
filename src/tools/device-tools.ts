@@ -22,10 +22,11 @@ import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatDeviceList, formatDeviceHealthSummary } from '../utils/response-formatter.js';
 import { resolveDevice, formatResolvedDevice } from '../utils/device-resolver.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { commandPayload } from '../utils/command-payload.js';
 import { getActiveUrl } from '../api/client.js';
 
 // Region affinity by cloud hostname — used as the preferRegions default so callers
@@ -156,7 +157,7 @@ export function registerDeviceTools(server: McpServer): void {
           ? `Found ${paged.total} device(s) matching [${filterDesc}]:\n\n`
           : `Found ${paged.total} device(s):\n\n`;
         const humanText = appendTruncationNotice(header + formatDeviceList(paged.items), paged);
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -464,7 +465,7 @@ export function registerDeviceTools(server: McpServer): void {
           localPath: localPath ?? 'app-container.zip',
           localPlatform,
         });
-        return respond(outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
+        return respond(outputFormat, commandPayload(result), result.humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -642,7 +643,7 @@ export function registerDeviceTools(server: McpServer): void {
 
         const humanSummary = formatDeviceHealthSummary(paged.items, offlineThresholdMinutes);
         const humanText = appendTruncationNotice(humanSummary, paged);
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
