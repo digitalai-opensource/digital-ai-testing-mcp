@@ -10,6 +10,11 @@ export interface SummarizeOptions {
   groupBy: string;
   sumColumn?: string;
   topN?: number;
+  /**
+   * Split comma-separated cells into one bucket per value. Defaults to true for a tag column (the 26.2 "User Tag"
+   * cell holds e.g. "fiserv-poc, jpmcpoc, okta-poc") and false otherwise.
+   */
+  splitValues?: boolean;
 }
 
 export interface GroupResult {
@@ -24,6 +29,8 @@ export interface SummaryResult {
   groups: GroupResult[];
   truncated: boolean;
   availableColumns: string[];
+  /** True when multi-value cells were split — a row then counts (and sums) once in EACH of its values. */
+  valuesSplit?: boolean;
 }
 
 const DEFAULT_TOP_N = 50;
@@ -49,19 +56,21 @@ export function summarizeRows(parsed: ParsedCsv, opts: SummarizeOptions): Summar
     }
   }
 
+  const splitValues = opts.splitValues ?? /\btags?\b/i.test(headers[groupIdx]);
   const buckets = new Map<string, { count: number; sum: number }>();
   let countedRows = 0;
   for (const row of rows) {
     if (row.every((cell) => cell === '')) continue; // skip fully-blank rows (trailing-newline artifacts)
     countedRows++;
-    const key = row[groupIdx] ?? '';
-    const entry = buckets.get(key) ?? { count: 0, sum: 0 };
-    entry.count += 1;
-    if (sumIdx !== -1) {
-      const n = Number(row[sumIdx]);
+    const cell = row[groupIdx] ?? '';
+    const parts = splitValues ? cell.split(',').map((v) => v.trim()).filter(Boolean) : [cell];
+    const n = sumIdx !== -1 ? Number(row[sumIdx]) : NaN;
+    for (const key of parts.length ? parts : ['']) {
+      const entry = buckets.get(key) ?? { count: 0, sum: 0 };
+      entry.count += 1;
       if (!Number.isNaN(n)) entry.sum += n;
+      buckets.set(key, entry);
     }
-    buckets.set(key, entry);
   }
 
   const sorted: GroupResult[] = [...buckets.entries()]
@@ -77,5 +86,20 @@ export function summarizeRows(parsed: ParsedCsv, opts: SummarizeOptions): Summar
     groups: sorted.slice(0, topN),
     truncated,
     availableColumns: headers,
+    ...(splitValues ? { valuesSplit: true } : {}),
   };
+}
+
+/**
+ * Picks the section of a multi-section report that has the requested columns (first match wins). Errors list every
+ * section's columns so the caller can retry with a real name.
+ */
+export function pickSection(sections: ParsedCsv[], opts: SummarizeOptions): ParsedCsv {
+  if (sections.length === 0) return { headers: [], rows: [] };
+  const wanted = [opts.groupBy, ...(opts.sumColumn !== undefined ? [opts.sumColumn] : [])];
+  const match = sections.find((sec) => wanted.every((name) => findColumnIndex(sec.headers, name) !== -1));
+  if (match) return match;
+  if (sections.length === 1) return sections[0]; // summarizeRows reports the missing column
+  const listing = sections.map((sec, i) => `section ${i + 1}: ${sec.headers.join(', ')}`).join('; ');
+  throw new Error(`No single section of this report has ${wanted.map((w) => `"${w}"`).join(' and ')}. Available columns — ${listing}`);
 }

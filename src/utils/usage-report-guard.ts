@@ -124,3 +124,21 @@ export function checkUsageReportSizeGuard(params: UsageReportParams): string | n
     `No download was attempted.`
   );
 }
+
+/** Platform 25.9+ keeps usage data for 2 years; older rows are purged rather than returned. */
+export const USAGE_RETENTION_DAYS = 730;
+
+/**
+ * Non-blocking note when the range starts before the retention window — the export still succeeds but silently omits
+ * the purged period, which reads as "no usage" unless the caller is told. Returns null when the range is inside it.
+ */
+export function usageReportRetentionNote(startDate: string, now: number = Date.now()): string | null {
+  const startMs = usageReportUtcMs(startDate, 'start');
+  const cutoffMs = now - USAGE_RETENTION_DAYS * 86_400_000;
+  if (Number.isNaN(startMs) || startMs >= cutoffMs) return null;
+  const cutoff = new Date(cutoffMs).toISOString().slice(0, 10);
+  return (
+    `Note: usage data is retained for 2 years (platform 25.9+). Data before about ${cutoff} has been purged, so the ` +
+    `${startDate} to ${cutoff} portion of this range will be empty or partial — that is not evidence of no usage.`
+  );
+}

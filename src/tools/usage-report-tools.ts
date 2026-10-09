@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { downloadUsageReport, summarizeUsageReport, buildUsageReportPath } from '../api/usage-reports.js';
-import { validateUsageReportParams, checkUsageReportSizeGuard, MAX_UNSCOPED_RANGE_DAYS } from '../utils/usage-report-guard.js';
+import { validateUsageReportParams, checkUsageReportSizeGuard, usageReportRetentionNote, MAX_UNSCOPED_RANGE_DAYS } from '../utils/usage-report-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { serverFsDownloadNotice, serverFsOutputParam, localPlatformParamNotice } from '../utils/locality.js';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
@@ -22,24 +22,33 @@ const REPORT_TYPE_ENUM = z.enum([
 // NARROWEST report that has the field you need; "License Usage" is the largest and slowest (~27 MB
 // for one unfiltered month, measured live) and should be a last resort, not a default.
 const REPORT_TYPE_DESCRIPTION =
-  'Which platform usage-report CSV to fetch:\n' +
-  '- "Device Reservations": columns Project, Start Date, End Date, Total Reservation Time (hours)[, Tokens]. ' +
-  'One row per project. Use for capacity planning / chargeback-by-project ("how many device-hours did project X use").\n' +
-  '- "Users Usage": SAME columns/shape as Device Reservations. Without a userId it returns IDENTICAL project-aggregate ' +
-  'rows to Device Reservations (confirmed live) — redundant; call Device Reservations instead in that case. Only ' +
-  'meaningful with a specific non-zero userId, which narrows to that one user\'s reservation-hours per project.\n' +
+  'Which platform usage-report CSV to fetch. Device Reservations and Users Usage are MULTI-SECTION CSVs: a per-project ' +
+  'summary table, a blank line, then a second table with its own header (summarize_usage_report picks the section that ' +
+  'has your groupBy column).\n' +
+  '- "Device Reservations": section 1 = Project, Start Date, End Date, Total Reservation Time (hours), Tokens — one row ' +
+  'per project. Section 2 = one row per reservation: Reservation Start/End Timestamp/Date/Hour, Reservation Duration, ' +
+  'Reservation Host, Reservation Notes, Release Reason, Device ID/Name/UDID/OS/OS Version/Model/Manufacturer, User ID, ' +
+  'Username, first/last name, email, Project, Tokens. Use for chargeback-by-project, or per-device / per-user ' +
+  'reservation audits. Section 2 lists every reservation, so it is large.\n' +
+  '- "Users Usage": section 1 = the same per-project summary as Device Reservations. Section 2 = one row per user per ' +
+  'project: User ID, Username, first/last name, email, Project, Total Duration (in hours), Tokens, User Tag (26.2+; one ' +
+  'cell can hold several comma-separated tags). Use for reservation-hours per user or per user tag ' +
+  '(summarize_usage_report groupBy "User Tag" — a user with several tags counts in each). A non-zero userId narrows it ' +
+  'to one user.\n' +
   '- "Devices Usage": columns Device ID, Device name, OS, OS Version, Project, Total duration (hours). One row per ' +
   'device. Use for per-device utilization / idle-device audits, NOT per-user or per-session questions.\n' +
   '- "Browser Usage": columns session start/end timestamp+time, duration, session host, browser platform/name/version, ' +
   'username, email, project, execution type. One row per Selenium/browser session. Use for browser-version ' +
   'distribution and web-session audit trails, NOT mobile device usage.\n' +
   '- "Users Statistics": columns time logged, user, project, clicks, swipe distance, keys sent, installs, screens ' +
-  'sent, screen time min/max/avg (ms), user tag. Per-INTERACTION-EVENT telemetry from interactive/manual sessions — ' +
+  'sent, screen time min/max/avg (ms), User Tag. Per-INTERACTION-EVENT telemetry from interactive/manual sessions — ' +
   'NOT reservation-time totals and NOT automated test results. Use for manual-session engagement/activity analysis only.\n' +
   '- "License Usage": columns full per-session detail (timestamps, user, project, session/license type, device, ' +
   'product). No project/user filter exists — always platform-wide. The largest, slowest report; use only when a ' +
   'coarser report above does not have the field you need (license-seat exhaustion, per-product consumption, full ' +
-  'session-level compliance audit).';
+  'session-level compliance audit).\n' +
+  'Retention: usage data is kept for 2 years (platform 25.9+). A range starting earlier comes back empty or partial for ' +
+  'the purged period, and the result says so.';
 
 const START_DATE_DESC = 'Inclusive start date, "YYYY-MM-DD". Interpreted as UTC 00:00:00.000 — NOT your local timezone.';
 const END_DATE_DESC = 'Inclusive end date, "YYYY-MM-DD". Interpreted as UTC 23:59:59.999 — NOT your local timezone.';
@@ -86,7 +95,12 @@ export function registerUsageReportTools(server: McpServer): void {
       try {
         const { bytes } = await downloadUsageReport(reportType, { startDate, endDate, projectId, userId }, localPath);
         return {
-          content: [{ type: 'text', text: `✅ "${reportType}" report (${formatBytes(bytes)}) downloaded to: ${localPath}` }],
+          content: [{
+            type: 'text',
+            text: [`✅ "${reportType}" report (${formatBytes(bytes)}) downloaded to: ${localPath}`, usageReportRetentionNote(startDate)]
+              .filter(Boolean)
+              .join('\n\n'),
+          }],
         };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
@@ -132,7 +146,10 @@ export function registerUsageReportTools(server: McpServer): void {
         path,
         localPath,
         localPlatform,
-        notes: [`Report: "${reportType}" (${startDate} to ${endDate}, inclusive UTC calendar days)`],
+        notes: [
+          `Report: "${reportType}" (${startDate} to ${endDate}, inclusive UTC calendar days)`,
+          ...[usageReportRetentionNote(startDate)].filter((n): n is string => n !== null),
+        ],
       });
       return respond(
         outputFormat,
@@ -151,7 +168,9 @@ export function registerUsageReportTools(server: McpServer): void {
       'tool never writes one. Same reportType/date/filter/size-guard rules as download_usage_report.\n\n' +
       'groupBy must name an actual column in that report\'s CSV — if it doesn\'t match, the error lists the real ' +
       'column names so you can retry correctly. Common groupBy values: "Username" (License Usage, Browser Usage), ' +
-      '"User" (Users Statistics), "Project" (Device Reservations, Users Usage, Devices Usage).',
+      '"User" (Users Statistics), "Project" (Device Reservations, Users Usage, Devices Usage), "Username" or ' +
+      '"User Tag" (Users Usage per-user section), "Device Name" or "Release Reason" (Device Reservations ' +
+      'per-reservation section).',
     {
       reportType: REPORT_TYPE_ENUM.describe(REPORT_TYPE_DESCRIPTION),
       startDate: z.string().describe(START_DATE_DESC),
@@ -180,8 +199,13 @@ export function registerUsageReportTools(server: McpServer): void {
           '',
           ...summary.groups.map((g) => `- ${g.value || '(blank)'}: ${g.count}${g.sum !== undefined ? ` (sum: ${g.sum})` : ''}`),
         ];
+        if (summary.valuesSplit) {
+          lines.push('', `Multi-value cells were split: a row with several values counts in each group, so group counts can add up to more than ${summary.totalRows}.`);
+        }
         if (summary.truncated) lines.push('', `⚠️ Truncated to top ${summary.groups.length} of ${summary.totalGroups} groups. Narrow the date range or filters to see the rest.`);
-        return respond(outputFormat, summary, lines.join('\n'));
+        const retention = usageReportRetentionNote(startDate);
+        if (retention) lines.push('', retention);
+        return respond(outputFormat, retention ? { ...summary, retentionWarning: retention } : summary, lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

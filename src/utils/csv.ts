@@ -8,7 +8,7 @@ export interface ParsedCsv {
   rows: string[][];
 }
 
-export function parseCsv(text: string): ParsedCsv {
+function tokenizeCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -79,6 +79,32 @@ export function parseCsv(text: string): ParsedCsv {
     }
   }
 
-  const [headers, ...dataRows] = rows;
+  return rows;
+}
+
+export function parseCsv(text: string): ParsedCsv {
+  const [headers, ...dataRows] = tokenizeCsv(text);
   return { headers: headers ?? [], rows: dataRows };
+}
+
+const isBlankRow = (row: string[]) => row.every((cell) => cell === '');
+
+/**
+ * Some usage reports are MULTI-SECTION (confirmed live 2026-10-09): a per-project summary table, a blank line, then
+ * a second table with its own header — per-reservation detail in Device Reservations, per-user rows (with the 26.2
+ * "User Tag" column) in Users Usage. Each blank-line-separated block is returned with its own header.
+ */
+export function parseCsvSections(text: string): ParsedCsv[] {
+  const sections: ParsedCsv[] = [];
+  let current: string[][] = [];
+  const flush = () => {
+    if (current.length > 0) sections.push({ headers: current[0], rows: current.slice(1) });
+    current = [];
+  };
+  for (const row of tokenizeCsv(text)) {
+    if (isBlankRow(row)) flush();
+    else current.push(row);
+  }
+  flush();
+  return sections;
 }
