@@ -350,7 +350,8 @@ export function registerInspectionTools(server: McpServer): void {
         .describe(
           'Start the session with Android Auto (Android) / CarPlay (iOS) projection on, at this head-unit resolution. ' +
           'CarPlay supports 800x480 only. Projection then stays on for the whole session — automotive_control start/stop are refused; ' +
-          'omit this and use automotive_control start instead to toggle projection mid-session.'
+          'omit this and use automotive_control start instead to toggle projection mid-session. Appium Server projects only — ' +
+          'an Appium Grid session accepts the capability but every projection command fails (verified).'
         ),
       instrumentCluster: z
         .enum(INSTRUMENT_CLUSTER_CONTENT)
@@ -577,7 +578,8 @@ export function registerInspectionTools(server: McpServer): void {
     'mid-session start is not supported on every device (a Galaxy S10 / Android 12 rejects it but projects fine via the capability). ' +
     'The phone side may need Android Auto setup completed by the device admin before apps appear on the head unit. ' +
     'Not for Android Automotive OS emulators — there the head unit IS the device; use the normal inspection tools. ' +
-    'Verified on Appium Server Android phones (start/stop/screenshot/tap); CarPlay-only actions follow the platform docs.',
+    'Verified on Appium Server Android phones (start/stop/screenshot/tap); CarPlay-only actions follow the platform docs. ' +
+    'NOT supported on Appium Grid projects (verified: the Grid runs these commands as JavaScript and every one fails).',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z.enum(['start', 'stop', 'screenshot', 'tap', 'dump']).describe('What to do.'),
