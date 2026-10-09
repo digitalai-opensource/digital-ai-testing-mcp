@@ -59,7 +59,8 @@
     "test:project-settings": "vitest run tests/project-settings.test.ts",
     "test:automotive": "vitest run tests/automotive.test.ts",
     "test:test-runs": "vitest run tests/test-runs.test.ts",
-    "test:rca": "vitest run tests/rca.test.ts"
+    "test:rca": "vitest run tests/rca.test.ts",
+    "test:toolsets": "vitest run tests/toolsets.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

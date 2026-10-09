@@ -227,8 +227,28 @@ docker build -t digital-ai-testing-mcp:latest .
 | `MCP_DEPLOYMENT_MODE` | Optional | `docker` | `docker` (default) or `local` — set to `local` when running via the npm package ([Option A](#option-a--install-via-npm-recommended)) so tool descriptions and upload/download behavior reflect that the server's filesystem is your own machine, not a container's |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
+| `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`). See [Toolsets](#toolsets-reducing-context-size) |
 
 Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure named profiles for multi-project or multi-environment use. See [Access Keys](#access-keys) and `.env.example` for examples.
+
+### Toolsets (reducing context size)
+
+All 200 tool definitions add up to roughly 68K tokens of context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 25K tokens) or `MCP_TOOLSETS=inspection,authoring` (about 32K).
+
+Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so the detailed usage guidance is always seen before the tool runs. The AI can also load toolsets up front with `enable_toolset`. Leave `MCP_TOOLSETS` unset (the default) to load everything in full, exactly as before.
+
+| Toolset | Covers |
+|---|---|
+| `devices` | Devices, device groups, reservations, health, agents, regions |
+| `apps` | Application repository, file repository, provisioning profiles |
+| `reporting` | Test reports, analytics, root-cause analysis, test views, coverage |
+| `performance` | Performance transactions and comparisons, NV servers |
+| `inspection` | Live device and browser inspection, Android Auto / CarPlay, remote debug |
+| `authoring` | Test boilerplate, Espresso / XCUITest / Maestro test runs |
+| `browsers` | Browser listing and Selenium sessions |
+| `admin` | Users, projects, backups, usage reports, POC and project workflows |
+
+Always loaded in full: environment and connection tools (`get_server_info`, `switch_environment`, …), `enable_toolset`, and `validate_test_script`.
 
 ---
 
