@@ -35,7 +35,7 @@ const runParams = {
     .describe('fastFeedback (default): spread the tests across up to maxDevices devices matching ONE deviceQuery. coverage: run every test on one device per deviceQuery.'),
   cloudAppId: z.number().int().optional().describe('Numeric application id from list_applications (NOT the app name — a name is rejected). One app source is required.'),
   appUrl: z.string().optional().describe('URL of the application under test. One app source is required.'),
-  testsUrl: z.string().optional().describe('ESPRESSO/XCUITEST only: URL of the test package (.zip). One test source is required.'),
+  testsUrl: z.string().optional().describe('ESPRESSO/XCUITEST only: URL of the test package (Espresso: the androidTest .apk). One test source is required.'),
   cloudTestAppId: z.number().int().optional().describe('ESPRESSO/XCUITEST only: numeric id of the test package in the file repository.'),
   deviceQueries: z
     .array(z.string())
@@ -53,6 +53,14 @@ const runParams = {
   provisioningProfileUuid: z.string().optional().describe('XCUITEST: provisioning profile UUID used to sign the app and test app.'),
   useTestOrchestrator: z.boolean().optional().describe('ESPRESSO: run in Android Test Orchestrator mode.'),
   clearPackageData: z.boolean().optional().describe('ESPRESSO with useTestOrchestrator: clear app data after each test.'),
+  useUIAutomator: z
+    .boolean()
+    .optional()
+    .describe(
+      'ESPRESSO: set true when the test package uses UiAutomator (androidx.test.uiautomator) — without it those tests fail ' +
+      'with "UiAutomationService ... already registered" (verified live). UiAutomator is also how to drive preinstalled ' +
+      'apps (Settings, Messages): Espresso can only instrument an app signed with the same key as the test APK.'
+    ),
 };
 
 type RunArgs = z.infer<z.ZodObject<typeof runParams>>;
@@ -80,6 +88,7 @@ function toRequest(a: RunArgs, files: { appPath?: string; testsPath?: string }):
     provisioningProfileUuid: a.provisioningProfileUuid,
     useTestOrchestrator: a.useTestOrchestrator,
     clearPackageData: a.clearPackageData,
+    useUIAutomator: a.useUIAutomator,
   };
 }
 
@@ -110,7 +119,7 @@ export function registerTestRunTools(server: McpServer): void {
       testsPath: z
         .string()
         .optional()
-        .describe('Local test bundle: the Maestro flow .zip (REQUIRED for MAESTRO), or the Espresso/XCUITest test package .zip. ' + serverFsInputParam()),
+        .describe('Local test bundle: the Maestro flow .zip (REQUIRED for MAESTRO), the Espresso androidTest .apk (e.g. app-debug-androidTest.apk), or the XCUITest test runner package. ' + serverFsInputParam()),
       outputFormat: outputFormatParam,
     },
     async (args) => {

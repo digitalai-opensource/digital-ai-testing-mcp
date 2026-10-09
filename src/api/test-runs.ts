@@ -10,8 +10,15 @@
  *  - GET /api/v1/test-run/{id}/status → { data: { "Test Run State": Starting|Running|Finished, "Number of ... tests": "<n>" } }.
  *    Counts are strings and can briefly read "-1" mid-run. Unknown id → 404 "Test Run with id : N does not exist".
  *  - Each test lands in the Reporter with test.run.id=<id> and test.framework (e.g. Maestro).
- * Espresso / XCUITest fields (testApp / testAppUrl / cloudTestApp, includeTests, useTestOrchestrator, …) follow the
- * platform's "Manage Test Run with the API" reference; they were not exercised live (no test package on the dev tenant).
+ * Espresso verified live 2026-10-09 (runs 27971409 / 27971410: a minimal app + androidTest APK built with Gradle):
+ *  - `app` = app APK, `testApp` = androidTest APK — a plain .apk is accepted, not only a .zip.
+ *  - Each @Test is its own Reporter record named <fullClassName>.<method>; fastFeedback can spread one run over devices.
+ *  - Uploaded APKs do NOT land in the application repository.
+ *  - A UiAutomator test FAILS without useUIAutomator=true ("UiAutomationService ... already registered" — the device
+ *    agent already holds UiAutomation) and passes with it. UiAutomator is also the only way to drive preinstalled apps:
+ *    Espresso can only instrument an app signed with the same key as the test APK.
+ * XCUITest fields (provisioningProfileUuid, …) follow the "Manage Test Run with the API" reference and are not yet
+ * exercised live (needs a Mac to build the test runner).
  */
 import { createReadStream, existsSync, statSync } from 'fs';
 import FormData from 'form-data';
@@ -71,8 +78,9 @@ export interface TestRunStatus {
 }
 
 /**
- * Multipart field names for the test bundle. The FILE field is `tests` for Maestro (verified live) and `testApp` for
- * Espresso/XCUITest (reference); the URL / cloud-id variants are the reference's testAppUrl / cloudTestApp for all.
+ * Multipart field names for the test bundle. The FILE field is `tests` for Maestro and `testApp` for Espresso (both
+ * verified live; XCUITest assumed the same as Espresso); the URL / cloud-id variants are the reference's testAppUrl /
+ * cloudTestApp for all.
  */
 export function testsFieldName(t: TestRunExecutionType): { file: string; url: string; cloud: string } {
   return { file: t === 'MAESTRO' ? 'tests' : 'testApp', url: 'testAppUrl', cloud: 'cloudTestApp' };
