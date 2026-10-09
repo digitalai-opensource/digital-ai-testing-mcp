@@ -100,6 +100,13 @@ beforeAll(async () => {
         const body = JSON.parse(raw || '{}');
         // Mirror the live server: pivotBy status with no groupBy → one aggregate row.
         if (body.pivotBy?.includes('status') && !body.groupBy) return void res.end(JSON.stringify({ count: null, data: [PIVOT_ROW] }));
+        if (body.groupBy?.[0] === 'device.pool.actual') {
+          return void res.end(JSON.stringify({ count: 3, data: [
+            { 'device.pool.actual': null, passedCount: 500, _count_: 500 },
+            { 'device.pool.actual': 'dedicated', passedCount: 90, failedCount: 5, errorCount: 5, _count_: 100 },
+            { 'device.pool.actual': 'shared', passedCount: 3, errorCount: 1, _count_: 4 },
+          ] }));
+        }
         return void res.end(JSON.stringify({ count: null, data: [] }));
       }
       if (url.startsWith('/reporter/api/tests/list')) {
@@ -149,6 +156,14 @@ describe('get_project_test_summary — all statuses', () => {
     assert.match(s.passRateBasis, /Error/);
     assert.deepEqual(s.topFailures, ['loginTest (1x)']);
     assert.deepEqual(s.topErrors, ['checkoutTest (2x)']);
+  });
+
+  it('breaks results down by device pool (shared vs dedicated), leaving out unrecorded (null) rows', async () => {
+    const s = await callJson('get_project_test_summary', {});
+    assert.deepEqual(s.byDevicePool, [
+      { pool: 'dedicated', total: 100, failed: 5, error: 5, passRate: 90 },
+      { pool: 'shared', total: 4, failed: 0, error: 1, passRate: 75 },
+    ]);
   });
 
   it('human output shows the Error line', async () => {

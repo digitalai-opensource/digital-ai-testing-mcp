@@ -406,6 +406,8 @@ export interface TestReport {
   errorCategory?: string;
   errorClassification?: string;
   errorDetail?: string;
+  /** device.pool.actual (platform 26.7+): "shared" or "dedicated" — mobile automation tests only. */
+  devicePool?: string;
   /** Set when fetched by UUID (/reporter/api/reports/{uuid}). */
   projectName?: string;
   /** Whether public share links are enabled for this report's project (UUID fetch only). */
