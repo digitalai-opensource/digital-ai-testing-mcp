@@ -839,7 +839,8 @@ export function registerBoilerplateTools(server: McpServer): void {
           'Escape hatch for the inspection gate. When you target a real app, this tool refuses to emit code unless a ' +
           'live inspection session exists — UNLESS you set this to true. Set it ONLY if you have ALREADY captured REAL ' +
           'element IDs for this app from a source other than a still-open session: an rdb/UIAutomator dump, ' +
-          'open_mobile_studio, get_automation_properties, or authoritative app source in the workspace. ' +
+          'open_mobile_studio (including selectors recorded with its iOS Test Recorder), get_automation_properties, ' +
+          'or authoritative app source in the workspace. ' +
           'Setting this WITHOUT real captured selectors produces a placeholder scaffold with invalid <…> selectors that ' +
           'fails at runtime, and violates the tool contract. When in doubt, do NOT set it — start_inspection_session instead.'
         ),

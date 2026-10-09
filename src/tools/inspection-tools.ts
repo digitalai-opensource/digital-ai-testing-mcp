@@ -51,6 +51,11 @@ import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
 import { readFileSync, writeFileSync } from 'fs';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
 
+// '-ios predicate string' is XCUITest's NSPredicate locator (e.g. "type == 'XCUIElementTypeButton' AND label == 'Login'")
+// — faster and less brittle than xpath on iOS, and the form the Mobile Studio iOS Test Recorder emits. iOS only.
+const LOCATOR_STRATEGIES = ['xpath', 'id', 'accessibility id', 'class name', '-ios predicate string'] as const;
+type LocatorStrategy = (typeof LOCATOR_STRATEGIES)[number];
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 // Returns an error result if the session is a browser (web) session — used to
@@ -229,7 +234,7 @@ function formatElementTable(
     if (interesting.length === 0) {
       lines.push('  (no elements with name, label, or value found on this screen)');
     }
-    lines.push('', "Locate iOS elements with: strategy 'accessibility id' or 'name' (matches name), or xpath like //*[@label='...'] or //XCUIElementTypeButton.");
+    lines.push('', "Locate iOS elements with: strategy 'accessibility id' (matches name), '-ios predicate string' like \"label == '...'\", or xpath like //*[@label='...'] or //XCUIElementTypeButton.");
     return lines.join('\n');
   }
 
@@ -665,13 +670,14 @@ export function registerInspectionTools(server: McpServer): void {
     'Find elements on the current screen using a locator strategy and return their IDs and attributes. ' +
     'The returned elementId values are used with tap_element, type_into_element, and clear_element. ' +
     'Strategies: "xpath" (most flexible), "id" (resource-id, fastest), "accessibility id" (content-desc), ' +
-    '"class name" (by widget type, often returns many).',
+    '"class name" (by widget type, often returns many), "-ios predicate string" (iOS only — NSPredicate such as ' +
+    '"type == \'XCUIElementTypeButton\' AND label == \'Login\'"; faster and steadier than xpath on iOS).',
     {
       handle: z
         .string()
         .describe("Session handle from start_inspection_session."),
       strategy: z
-        .enum(['xpath', 'id', 'accessibility id', 'class name'])
+        .enum(LOCATOR_STRATEGIES)
         .describe(
           "Locator strategy. 'id' matches resource-id (e.g. 'com.example:id/login'). " +
           "'accessibility id' matches content-desc. " +
@@ -740,7 +746,7 @@ export function registerInspectionTools(server: McpServer): void {
   const resolveTargetElement = async (args: {
     handle: string;
     elementId?: string;
-    strategy?: 'xpath' | 'id' | 'accessibility id' | 'class name';
+    strategy?: LocatorStrategy;
     selector?: string;
   }): Promise<{ elementId: string } | { error: string }> => {
     if (args.elementId) return { elementId: args.elementId };
@@ -761,7 +767,7 @@ export function registerInspectionTools(server: McpServer): void {
       .optional()
       .describe('Element ID from a previous find_elements call. Provide this OR strategy+selector.'),
     strategy: z
-      .enum(['xpath', 'id', 'accessibility id', 'class name'])
+      .enum(LOCATOR_STRATEGIES)
       .optional()
       .describe('Locator strategy for direct one-call targeting (the find happens internally — no separate find_elements round trip needed).'),
     selector: z
@@ -1132,7 +1138,7 @@ export function registerInspectionTools(server: McpServer): void {
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       strategy: z
-        .enum(['xpath', 'id', 'accessibility id', 'class name'])
+        .enum(LOCATOR_STRATEGIES)
         .describe('Locator strategy (same as find_elements).'),
       selector: z.string().describe('The locator value to search for while scrolling.'),
       direction: z
