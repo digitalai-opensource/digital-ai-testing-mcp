@@ -241,3 +241,18 @@ export async function apiDownload(path: string): Promise<Buffer> {
   const res = await withRetry(() => getClient().get<Buffer>(path, { responseType: 'arraybuffer' }));
   return Buffer.from(res.data);
 }
+
+/** GET with an optional HTTP Range header ("bytes=0-1023", "bytes=-100", "bytes=1000-"). Read-only, so retried. */
+export async function apiDownloadRange(
+  path: string,
+  range?: string
+): Promise<{ data: Buffer; status: number; contentType?: string; contentRange?: string }> {
+  const res = await withRetry(() =>
+    getClient().get<Buffer>(path, { responseType: 'arraybuffer', ...(range ? { headers: { Range: range } } : {}), maxContentLength: Infinity })
+  );
+  const header = (name: string) => {
+    const v = res.headers[name];
+    return v == null ? undefined : String(v);
+  };
+  return { data: Buffer.from(res.data), status: res.status, contentType: header('content-type'), contentRange: header('content-range') };
+}

@@ -1,6 +1,7 @@
 import { writeFile } from 'fs/promises';
 import AdmZip from 'adm-zip';
-import { apiGet, apiPost, apiDownload, getActiveUrl } from './client.js';
+import { apiGet, apiPost, apiDownload, apiDownloadRange, getActiveUrl } from './client.js';
+import type { ReportRef } from '../utils/report-ref.js';
 import { serverSortAvailable, markActiveServerSortRefused } from './access-level.js';
 import type {
   TestReport,
@@ -615,6 +616,62 @@ export async function extractAttachmentLog(
     return { filename: entry.entryName, content, totalLines: content.split('\n').length };
   } catch (e) {
     throw new Error(`extractAttachmentLog failed: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Session video, without the rest of the attachment ZIP. Verified live 2026-10-09: GET /reporter/api/reports/{uuid}/video
+ * and /reporter/api/tests/{id}/video both serve video/mp4 with Accept-Ranges: bytes — "bytes=0-0" → 206 with
+ * Content-Range "bytes 0-0/<total>", suffix ("bytes=-100") and open ("bytes=1000-") ranges work, an out-of-bounds
+ * range → 416, an unknown UUID → 404. The report's `videos` field is NOT a reliable "has video" signal (null on a
+ * report whose video endpoint served 627 KB), so ask the endpoint. Prefer the UUID: numeric ids collide across projects.
+ */
+export function testVideoPath(ref: ReportRef): string {
+  return ref.kind === 'uuid' ? `/reporter/api/reports/${ref.uuid}/video` : `/reporter/api/tests/${ref.testId}/video`;
+}
+
+export interface TestVideoInfo {
+  totalBytes: number | null;
+  contentType: string | null;
+}
+
+/** Total size and type from a one-byte range request — no full download. */
+export async function getTestVideoInfo(ref: ReportRef): Promise<TestVideoInfo> {
+  try {
+    const res = await apiDownloadRange(testVideoPath(ref), 'bytes=0-0');
+    const total = res.contentRange?.match(/\/(\d+)\s*$/)?.[1];
+    return { totalBytes: total ? Number(total) : res.status === 200 ? res.data.length : null, contentType: res.contentType ?? null };
+  } catch (e) {
+    throw new Error(`getTestVideoInfo failed: ${(e as Error).message}`);
+  }
+}
+
+export interface TestVideoDownload {
+  bytesWritten: number;
+  totalBytes: number | null;
+  partial: boolean;
+  contentRange: string | null;
+  contentType: string | null;
+}
+
+/** Download the whole video, or one byte range of it ("bytes=0-1048575", "bytes=-100", "bytes=1000-"). */
+export async function downloadTestVideo(ref: ReportRef, localPath: string, range?: string): Promise<TestVideoDownload> {
+  try {
+    const res = await apiDownloadRange(testVideoPath(ref), range);
+    if (res.contentType && !/^video\//i.test(res.contentType)) {
+      throw new Error(`expected a video but got ${res.contentType} — this report may have no recording`);
+    }
+    await writeFile(localPath, res.data);
+    const total = res.contentRange?.match(/\/(\d+)\s*$/)?.[1];
+    return {
+      bytesWritten: res.data.length,
+      totalBytes: total ? Number(total) : res.status === 200 ? res.data.length : null,
+      partial: res.status === 206,
+      contentRange: res.contentRange ?? null,
+      contentType: res.contentType ?? null,
+    };
+  } catch (e) {
+    throw new Error(`downloadTestVideo failed: ${(e as Error).message}`);
   }
 }
 
