@@ -37,6 +37,9 @@ import {
   listActiveSessions,
   getPendingReportIds,
   deleteAllTrackedReports,
+  automotiveControl,
+  AUTOMOTIVE_RESOLUTIONS,
+  INSTRUMENT_CLUSTER_CONTENT,
 } from '../api/webdriver.js';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -279,6 +282,10 @@ export function registerInspectionTools(server: McpServer): void {
     'start_inspection_session(device=<id>) → launch_app → get_element_tree/find_elements → interact → stop_inspection_session.\n\n' +
     'iOS NOTES: elements located by name/label/value (not resource-id); ' +
     'press_back performs left-edge swipe; clipboard and clear_data unavailable on Grid iOS.\n\n' +
+    'AUTOMOTIVE: for Android Auto (Android phones) / CarPlay (iPhones) projection testing either pass automotiveProjection ' +
+    '(projection runs for the whole session) or start a normal session and use automotive_control start/stop. ' +
+    "For an Android Automotive OS emulator (the head unit IS the device — no projection) use deviceQuery \"@os='android' and @emulator='true' and @model='automotive_1024p_landscape'\" — " +
+    "@emulator='true' is REQUIRED (the model alone times out) — and drive it with the normal inspection tools.\n\n" +
     'KNOWN LIMITATIONS: app/appPackage/appActivity params may return HTTP 500 — start a generic session and use launch_app instead. ' +
     'Use the device param (not hand-written deviceQuery) to target a specific device reliably.\n\n' +
     'Always call stop_inspection_session when done — open sessions consume a reserved device and create a reporter record. ' +
@@ -337,8 +344,26 @@ export function registerInspectionTools(server: McpServer): void {
         .string()
         .optional()
         .describe("Name shown in the Digital.ai reporter for this inspection session. Default: '[MCP Inspection]'."),
+      automotiveProjection: z
+        .enum(AUTOMOTIVE_RESOLUTIONS)
+        .optional()
+        .describe(
+          'Start the session with Android Auto (Android) / CarPlay (iOS) projection on, at this head-unit resolution. ' +
+          'CarPlay supports 800x480 only. Projection then stays on for the whole session — automotive_control start/stop are refused; ' +
+          'omit this and use automotive_control start instead to toggle projection mid-session.'
+        ),
+      instrumentCluster: z
+        .enum(INSTRUMENT_CLUSTER_CONTENT)
+        .optional()
+        .describe('iOS CarPlay only, with automotiveProjection: content for the instrument cluster display.'),
     },
     async (args) => {
+      if (args.instrumentCluster && (args.platform !== 'ios' || !args.automotiveProjection)) {
+        return { content: [{ type: 'text' as const, text: 'Error: instrumentCluster is CarPlay-only — it needs platform "ios" and automotiveProjection.' }], isError: true };
+      }
+      if (args.platform === 'ios' && args.automotiveProjection && args.automotiveProjection !== '800x480') {
+        return { content: [{ type: 'text' as const, text: 'Error: CarPlay supports automotiveProjection "800x480" only.' }], isError: true };
+      }
       try {
         // Device pinning: resolve to the serial and use an exact @serialNumber query
         // (confirmed live — routes to the requested device). Fail fast when the
@@ -378,6 +403,8 @@ export function registerInspectionTools(server: McpServer): void {
           appActivity: args.appActivity,
           noReset: args.noReset ?? true,
           testName: args.testName,
+          automotiveProjection: args.automotiveProjection,
+          instrumentCluster: args.instrumentCluster,
         });
 
         // Resolve the numeric platform device ID from the UDID so the user-facing
@@ -410,6 +437,7 @@ export function registerInspectionTools(server: McpServer): void {
             udid: session.deviceUDID,
           },
           appPackage: session.appPackage,
+          ...(args.automotiveProjection ? { automotiveProjection: args.automotiveProjection } : {}),
           viewUrl,
           cloudViewLink: session.cloudViewLink,
           reportUrl: session.reportUrl,
@@ -533,6 +561,56 @@ export function registerInspectionTools(server: McpServer): void {
           content: [{ type: 'text' as const, text: `Error capturing screenshot: ${(e as Error).message}` }],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ── automotive_control ────────────────────────────────────────────────────
+  server.tool(
+    'automotive_control',
+    'Android Auto / CarPlay projection in an inspection session: the phone\'s apps rendered on a car head unit. ' +
+    'Actions: "start" (turn projection on at a resolution, ~20 s), "stop", "screenshot" (returns the head-unit image; ' +
+    'display "cluster" = CarPlay instrument cluster), "tap" (x, y in head-unit coordinates, e.g. 0–800 × 0–480), ' +
+    '"dump" (CarPlay element dump — iOS only, the platform does not implement it for Android). ' +
+    'Projection does not stop normal control: tap_element / take_inspection_screenshot keep working on the phone itself. ' +
+    'Sessions started with automotiveProjection keep projection on for their whole lifetime (start/stop are refused) — PREFER that: ' +
+    'mid-session start is not supported on every device (a Galaxy S10 / Android 12 rejects it but projects fine via the capability). ' +
+    'The phone side may need Android Auto setup completed by the device admin before apps appear on the head unit. ' +
+    'Not for Android Automotive OS emulators — there the head unit IS the device; use the normal inspection tools. ' +
+    'Verified on Appium Server Android phones (start/stop/screenshot/tap); CarPlay-only actions follow the platform docs.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      action: z.enum(['start', 'stop', 'screenshot', 'tap', 'dump']).describe('What to do.'),
+      resolution: z
+        .enum(AUTOMOTIVE_RESOLUTIONS)
+        .optional()
+        .describe('start only. Head-unit resolution, default 800x480. Android Auto supports all three; CarPlay 800x480 only.'),
+      clusterContent: z
+        .enum(INSTRUMENT_CLUSTER_CONTENT)
+        .optional()
+        .describe('start only, CarPlay (iOS) only: instrument cluster content.'),
+      x: z.number().int().min(0).optional().describe('tap only: x in head-unit coordinates.'),
+      y: z.number().int().min(0).optional().describe('tap only: y in head-unit coordinates.'),
+      display: z
+        .enum(['main', 'cluster'])
+        .optional()
+        .describe('screenshot only: "main" (default) or "cluster" (CarPlay instrument cluster).'),
+    },
+    async (args) => {
+      try {
+        const out = await automotiveControl(args.handle, args.action, {
+          resolution: args.resolution,
+          clusterContent: args.clusterContent,
+          x: args.x,
+          y: args.y,
+          display: args.display,
+        });
+        const content: Array<{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string }> = [];
+        if (out.image) content.push({ type: 'image' as const, data: out.image.data, mimeType: out.image.mimeType });
+        content.push({ type: 'text' as const, text: out.dump ? `${out.message}\n\n${out.dump}` : out.message });
+        return { content };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }], isError: true };
       }
     }
   );

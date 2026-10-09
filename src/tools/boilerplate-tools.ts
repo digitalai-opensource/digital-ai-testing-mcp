@@ -6,7 +6,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { getApplicationInfo } from '../api/applications.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
-import { listActiveSessions } from '../api/webdriver.js';
+import { listActiveSessions, AUTOMOTIVE_RESOLUTIONS, type AutomotiveResolution } from '../api/webdriver.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import { staleBuildRemedy, serverFsInstallNotice, serverFsProjectDirParam } from '../utils/locality.js';
 import { isLocalFilesystem } from '../utils/deployment-mode.js';
@@ -265,6 +265,38 @@ function appendAxeScan(language: Language, indent: string, apiKey: string): stri
   ].join('\n');
 }
 
+// Android Auto / CarPlay head-unit check, appended after the test steps when automotiveProjection is set. The capability
+// (injected separately) keeps projection on for the whole session — verified live as the reliable route (a Galaxy S10
+// rejects mid-session digitalai:automotive.start but projects fine with the capability). No selectors are involved:
+// it captures the head unit and leaves the tap as a commented template, so nothing fabricated is presented as a step.
+function appendAutomotiveCheck(language: Language, indent: string): string {
+  if (language === 'java-junit5' || language === 'java-testng') {
+    return [
+      `${indent}// Android Auto / CarPlay head unit (digitalai:automotiveProjection is on for this whole session).`,
+      `${indent}// getScreenshot returns a base64 PNG of the projected display; tap takes head-unit coordinates.`,
+      `${indent}String headUnitPng = (String) driver.executeScript("digitalai:automotive.getScreenshot");`,
+      `${indent}System.out.println("Head unit screenshot: " + headUnitPng.length() + " base64 chars");`,
+      `${indent}// driver.executeScript("digitalai:automotive.tap", x, y);  // coordinates within the projection resolution`,
+    ].join('\n');
+  }
+  if (language === 'python') {
+    return [
+      `${indent}# Android Auto / CarPlay head unit (digitalai:automotiveProjection is on for this whole session).`,
+      `${indent}# getScreenshot returns a base64 PNG of the projected display; tap takes head-unit coordinates.`,
+      `${indent}head_unit_png = self.driver.execute_script("digitalai:automotive.getScreenshot")`,
+      `${indent}print(f"Head unit screenshot: {len(head_unit_png)} base64 chars")`,
+      `${indent}# self.driver.execute_script("digitalai:automotive.tap", x, y)  # coordinates within the projection resolution`,
+    ].join('\n');
+  }
+  return [
+    `${indent}// Android Auto / CarPlay head unit (digitalai:automotiveProjection is on for this whole session).`,
+    `${indent}// getScreenshot returns a base64 PNG of the projected display; tap takes head-unit coordinates.`,
+    `${indent}const headUnitPng = await browser.execute('digitalai:automotive.getScreenshot');`,
+    `${indent}console.log(\`Head unit screenshot: \${headUnitPng.length} base64 chars\`);`,
+    `${indent}// await browser.execute('digitalai:automotive.tap', x, y);  // coordinates within the projection resolution`,
+  ].join('\n');
+}
+
 // The cleared-body placeholder is a deliberate ANTI-fabrication guard (v38).
 // Three properties matter: (1) a loud banner so the scaffold is never mistaken
 // for a finished test; (2) an EXECUTABLE fail/raise as the first statement so a
@@ -361,8 +393,8 @@ function readBoilerplateFile(platform: Platform, language: Language, diskName: s
   // Normalize to LF: the marker/injection patterns (DEMO_STEP_PATTERN etc.) match "\n" only. Git stores the templates
   // with LF, but a Windows checkout with core.autocrlf materializes some as CRLF — and then, for those files, the
   // custom-app placeholder never replaced the ExperiBank demo steps (the anti-fabrication guard silently did nothing)
-  // and includeAxeScan / includePerformanceTransactions were no-ops. Affects local runs and any Docker image built
-  // from a Windows working tree.
+  // and includeAxeScan / includePerformanceTransactions / automotiveProjection were no-ops. Affects local runs and any
+  // Docker image built from a Windows working tree.
   return readFileSync(join(dir, diskName), 'utf-8').replace(/\r\n/g, '\n');
 }
 
@@ -385,6 +417,8 @@ function substitute(
     axeScan?: boolean;
     axeApiKey?: string;
     isAppiumOss?: boolean;
+    /** Appium Server only — the caller drops it for Grid projects. */
+    automotiveProjection?: AutomotiveResolution;
   }
 ): string {
   let result = content;
@@ -399,15 +433,21 @@ function substitute(
       if (vars.axeScan) {
         placeholder += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
       }
+      if (vars.automotiveProjection) {
+        placeholder += '\n' + appendAutomotiveCheck(language, indent);
+      }
       if (vars.performanceTransactions) {
         placeholder = wrapWithPerformanceTransaction(language, indent, placeholder);
       }
       result = result.replace(DEMO_STEP_PATTERN, placeholder);
-    } else if (vars.performanceTransactions || vars.axeScan) {
+    } else if (vars.performanceTransactions || vars.axeScan || vars.automotiveProjection) {
       result = result.replace(DEMO_INNER_PATTERN, (inner) => {
         let content = inner;
         if (vars.axeScan) {
           content += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
+        }
+        if (vars.automotiveProjection) {
+          content += '\n' + appendAutomotiveCheck(language, indent);
         }
         return vars.performanceTransactions
           ? wrapWithPerformanceTransaction(language, indent, content)
@@ -483,6 +523,26 @@ function substitute(
         /('digitalai:deviceQuery': [^\n]+)/,
         (match) =>
           `${match}\n        'appium:automationName': '${automationName}',\n        'appiumVersion': '2.16.2',`
+      );
+    }
+  }
+
+  if (vars.automotiveProjection) {
+    const res = vars.automotiveProjection;
+    if (language === 'java-junit5' || language === 'java-testng') {
+      result = result.replace(
+        /\n( +)(driver = new (?:Android|iOS)Driver)/,
+        (_m, sp, line) => `\n${sp}options.setCapability("digitalai:automotiveProjection", "${res}");\n${sp}${line}`
+      );
+    } else if (language === 'python') {
+      result = result.replace(
+        /\n( +)(self\.driver = webdriver\.Remote\()/,
+        (_m, sp, line) => `\n${sp}options.set_capability('digitalai:automotiveProjection', '${res}')\n${sp}${line}`
+      );
+    } else if (language === 'nodejs') {
+      result = result.replace(
+        /('digitalai:deviceQuery': [^\n]+)/,
+        (match) => `${match}\n        'digitalai:automotiveProjection': '${res}',`
       );
     }
   }
@@ -762,6 +822,15 @@ export function registerBoilerplateTools(server: McpServer): void {
           'Scan results appear in the Axe DevTools Mobile dashboard. ' +
           'Can be combined with includePerformanceTransactions — the scan runs inside the performance transaction boundary.'
         ),
+      automotiveProjection: z
+        .enum(AUTOMOTIVE_RESOLUTIONS)
+        .optional()
+        .describe(
+          'Android Auto (Android) / CarPlay (iOS) projection test: sets digitalai:automotiveProjection to this head-unit resolution ' +
+          '(projection stays on for the whole session) and appends a head-unit screenshot step plus a commented tap template ' +
+          'after the test steps. CarPlay supports 800x480 only. Appium Server projects only — on Appium Grid the classic ' +
+          'boilerplate is returned with a note. Build head-unit steps from automotive_control screenshots in an inspection session.'
+        ),
       confirmSelectorsVerified: z
         .boolean()
         .optional()
@@ -797,7 +866,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
       // ── Inspection gate (v42) ────────────────────────────────────────────────
       // Advisory guards (warning text, a requiresVerifiedSelectors flag, an in-code
       // fail() guard) all lost to task-completion momentum: the agent stripped the
@@ -867,6 +936,17 @@ export function registerBoilerplateTools(server: McpServer): void {
       }
       const isAppiumOss = detectedAppiumOss ?? false;
 
+      // Automotive projection is verified on Appium Server only; Grid sessions run a different execute layer.
+      let automotive: { resolution: AutomotiveResolution; applied: boolean; note: string } | undefined;
+      if (automotiveProjection) {
+        if (platform === 'ios' && automotiveProjection !== '800x480') {
+          return { content: [{ type: 'text', text: 'Error: CarPlay supports automotiveProjection "800x480" only.' }], isError: true };
+        }
+        automotive = isAppiumOss
+          ? { resolution: automotiveProjection, applied: true, note: `digitalai:automotiveProjection=${automotiveProjection} set; the test captures the ${platform === 'ios' ? 'CarPlay' : 'Android Auto'} head unit after its steps. Use automotive_control in an inspection session to explore the head unit and pick tap coordinates.` }
+          : { resolution: automotiveProjection, applied: false, note: detectedAppiumOss === undefined ? 'the project mode could not be determined, and projection is only supported here for Appium Server projects.' : 'this project runs on Appium Grid; projection is only supported here for Appium Server projects.' };
+      }
+
       // Resolve app capabilities from appId if provided.
       let resolvedPackageName = packageName;
       let resolvedMainActivity = mainActivity;
@@ -914,6 +994,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         axeScan: includeAxeScan,
         axeApiKey: process.env.AXE_DEVTOOLS_API_KEY,
         isAppiumOss,
+        automotiveProjection: automotive?.applied ? automotive.resolution : undefined,
       };
 
       const files = getFilesForVariant(platform, language, isAppiumOss, projectType);
@@ -1038,6 +1119,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           projectType: projectType ?? 'standalone-gradle',
           files: resolved.map(f => ({ filename: f.filename, content: f.content })),
           orchestration: orchestrationInfo,
+          ...(automotive ? { automotive } : {}),
           setupNote: setupNote(language, isAppiumOss, projectType),
           appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
           parallelNote: language === 'python'
@@ -1088,6 +1170,11 @@ export function registerBoilerplateTools(server: McpServer): void {
           );
         } else if (decision.requestedButNotApplied) {
           lines.push(`> ⚠️ **Test Orchestrator requested but not applied:** ${decision.reason} Generated the classic boilerplate instead.`, '');
+        }
+        if (automotive) {
+          lines.push(automotive.applied
+            ? `> 🚗 **Automotive projection: ON** — ${automotive.note}`
+            : `> ⚠️ **Automotive projection requested but not applied:** ${automotive.note} Generated the classic boilerplate instead.`, '');
         }
         if (clearTestBody) {
           lines.push(
