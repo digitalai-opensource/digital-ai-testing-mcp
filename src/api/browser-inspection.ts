@@ -1,3 +1,4 @@
+import { canonicalBrowserName } from '../utils/browser-name.js';
 import axios, { AxiosInstance } from 'axios';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { getMyAccountInfo } from './users.js';
@@ -49,7 +50,8 @@ export async function createBrowserInspectionSession(
     // Non-fatal
   }
 
-  const browserName = opts.browserName.toLowerCase();
+  // Case-sensitive on the grid: lowercasing turned MicrosoftEdge into a rejected "microsoftedge" (verified live).
+  const browserName = canonicalBrowserName(opts.browserName) ?? opts.browserName;
   const reportName = opts.reportName ?? `[MCP Browser Inspection] ${opts.browserName}`;
 
   // Browsers are pure W3C — send both desiredCapabilities (legacy compat) and

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { canonicalBrowserName } from '../utils/browser-name.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   getAllBrowsers,
@@ -58,7 +59,7 @@ export function registerBrowserTools(server: McpServer): void {
       browserName: z
         .string()
         .optional()
-        .describe("Browser name, e.g. 'chrome', 'firefox', 'MicrosoftEdge', 'safari'."),
+        .describe("Browser name, exactly as list_available_browsers returns it (case-sensitive): 'chrome', 'firefox', 'MicrosoftEdge', 'safari', 'opera'."),
       browserVersion: z
         .string()
         .optional()
@@ -70,7 +71,7 @@ export function registerBrowserTools(server: McpServer): void {
     },
     async ({ browserName, browserVersion, os }) => {
       try {
-        const result = await startWebControlSession({ browserName, browserVersion, os });
+        const result = await startWebControlSession({ browserName: canonicalBrowserName(browserName) ?? browserName, browserVersion, os });
         return {
           content: [
             {
@@ -112,7 +113,7 @@ export function registerBrowserTools(server: McpServer): void {
         const result = await startWebControlWithTemplate({
           testName,
           testSteps,
-          browserName,
+          browserName: canonicalBrowserName(browserName),
           browserVersion,
           osName,
         });

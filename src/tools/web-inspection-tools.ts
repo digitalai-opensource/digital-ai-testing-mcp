@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { canonicalBrowserName } from '../utils/browser-name.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   quitInspectionSession,
@@ -50,7 +51,7 @@ export function registerWebInspectionTools(server: McpServer): void {
         .string()
         .optional()
         .describe(
-          "Browser to open for this inspection session (e.g. 'chrome', 'firefox', 'MicrosoftEdge', 'safari'). " +
+          "Browser to open for this inspection session: 'chrome', 'firefox', 'MicrosoftEdge', 'safari' or 'opera' (case-sensitive — 'microsoftedge' is rejected). " +
           "If omitted, call list_available_browsers and ask the user to choose. " +
           "This is the session browser for element discovery — the generated test is browser-neutral."
         ),
@@ -82,7 +83,7 @@ export function registerWebInspectionTools(server: McpServer): void {
       }
       try {
         const session = await createBrowserInspectionSession({
-          browserName: args.inspectionBrowser,
+          browserName: canonicalBrowserName(args.inspectionBrowser) ?? args.inspectionBrowser,
           os: args.os,
           reportName: args.reportName,
         });
