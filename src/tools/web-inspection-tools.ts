@@ -208,9 +208,9 @@ export function registerWebInspectionTools(server: McpServer): void {
     'Extract the interactive elements from the current browser page, including React/Angular/Vue components ' +
     'that render via Shadow DOM. Returns element tags, IDs, names, data-testid attributes, aria-labels, ' +
     'roles, text, and hrefs — the attributes needed to build CSS/XPath selectors for Selenium tests.\n\n' +
-    'Shadow DOM detection is automatic: if any shadow roots are detected, a recursive walker extracts ' +
-    'nested elements up to 3 levels deep. Set shadowMode to "always" to force the full walker, or ' +
-    '"never" to use only the standard rendered HTML (for non-SPA pages).\n\n' +
+    'By default the interactive elements are extracted on every page; when shadow roots are detected the walker also ' +
+    'descends into them (up to 3 levels deep) and hasShadowDom is true. Set shadowMode to "never" to get only the ' +
+    'rendered HTML instead (fastest).\n\n' +
     'Use find_web_elements to locate and verify specific elements before adding them to the test script.',
     {
       handle: z.string().describe('Session handle from start_browser_inspection_session.'),
@@ -219,15 +219,19 @@ export function registerWebInspectionTools(server: McpServer): void {
         .optional()
         .default('auto')
         .describe(
-          '"auto" (default): uses shadow DOM walker only when shadow roots are detected. ' +
-          '"always": forces the full recursive shadow DOM extraction. ' +
-          '"never": returns only the standard rendered HTML (fastest; use for simple non-SPA pages).'
+          '"auto" (default) and "always": extract the interactive elements, descending into shadow roots when present. ' +
+          '"never": return only the rendered HTML (no element list; fastest).'
         ),
       includeRawHtml: z
         .boolean()
         .optional()
         .default(false)
-        .describe('Include the full rendered HTML in the response. Default false (structured elements only).'),
+        .describe('Also include the full rendered HTML. Default false (structured elements only).'),
+      outputFormat: z
+        .enum(['human', 'json'])
+        .optional()
+        .default('human')
+        .describe('"human" (default): readable element list. "json": { url, title, hasShadowDom, elements, rawHtml? } for tool chaining.'),
     },
     async (args) => {
       try {
@@ -246,6 +250,19 @@ export function registerWebInspectionTools(server: McpServer): void {
           (args.shadowMode ?? 'auto') as 'auto' | 'always' | 'never',
           args.includeRawHtml ?? false
         );
+        if (args.outputFormat === 'json') {
+          const rawHtml = result.rawHtml && result.rawHtml.length > 50_000 ? `${result.rawHtml.slice(0, 50_000)}…` : result.rawHtml;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                url: result.url, title: result.title, hasShadowDom: result.hasShadowDom,
+                elementCount: result.elements?.length ?? 0, elements: result.elements ?? [],
+                ...(rawHtml ? { rawHtml, rawHtmlLength: result.rawHtml!.length } : {}),
+              }),
+            }],
+          };
+        }
 
         const lines: string[] = [
           `URL:          ${result.url}`,
@@ -272,17 +289,16 @@ export function registerWebInspectionTools(server: McpServer): void {
               : '';
             lines.push(`  ${attrs.join(' ')}>${shadowMarker}`);
           }
-        } else if (result.rawHtml) {
-          lines.push(`DOM extracted as raw HTML (${result.rawHtml.length} chars). ` +
-            `Parse for CSS selectors or call find_web_elements to locate specific elements.`);
-          if (args.includeRawHtml) {
-            lines.push(``, `--- RAW HTML ---`, result.rawHtml.slice(0, 50_000));
-            if (result.rawHtml.length > 50_000) {
-              lines.push(`... (truncated, ${result.rawHtml.length} total chars)`);
-            }
+        } else if (!result.rawHtml) {
+          lines.push('No interactive elements found. The page may still be loading — try take_inspection_screenshot to check.');
+        }
+        // Raw HTML is printed whenever it was requested or is the only content (shadowMode "never") — never just
+        // announced by length with nothing to read.
+        if (result.rawHtml) {
+          lines.push(``, `--- RAW HTML (${result.rawHtml.length} chars) ---`, result.rawHtml.slice(0, 50_000));
+          if (result.rawHtml.length > 50_000) {
+            lines.push(`... (truncated, ${result.rawHtml.length} total chars)`);
           }
-        } else {
-          lines.push('No elements found. The page may still be loading — try take_inspection_screenshot to check.');
         }
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };

@@ -22,9 +22,10 @@ import { validateOutputPath, validateInputPath } from '../utils/path-guard.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatApplicationList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { commandPayload, PLAINTEXT_KEY_WARNING } from '../utils/command-payload.js';
 import { getActiveAccessKey, getActiveUrl, getActiveAuthScheme } from '../api/client.js';
 import { peekActiveAccessInfo } from '../api/access-level.js';
 import { isKnownNotCloudAdmin } from '../utils/access-level.js';
@@ -148,7 +149,7 @@ export function registerApplicationTools(server: McpServer): void {
           `Found ${paged.total} application(s):\n\n${formatApplicationList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -458,7 +459,7 @@ export function registerApplicationTools(server: McpServer): void {
         lines.push('```');
       }
 
-      return respond(outputFormat, { endpoint, curlCommand, psCommand: isWindows ? psCommand : null }, lines.join('\n'));
+      return respond(outputFormat, { endpoint, curlCommand, psCommand: isWindows ? psCommand : null, credentialWarning: PLAINTEXT_KEY_WARNING }, lines.join('\n'));
     }
   );
 
@@ -870,7 +871,7 @@ export function registerApplicationTools(server: McpServer): void {
     },
     async ({ applicationId, localPath, localPlatform, outputFormat }) => {
       const result = buildDownloadCommand({ path: `/api/v1/applications/${applicationId}/language-file`, localPath: localPath ?? 'language-files.zip', localPlatform });
-      return respond(outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
+      return respond(outputFormat, commandPayload(result), result.humanText);
     }
   );
 

@@ -5,7 +5,7 @@ import {
   startWebControlSession,
   startWebControlWithTemplate,
 } from '../api/browsers.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatBrowserList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
@@ -25,7 +25,12 @@ export function registerBrowserTools(server: McpServer): void {
       try {
         const browsers = await getAllBrowsers();
         const paged = applyMaxResults(browsers, maxResults);
+        // total/returned/truncated: without them a list cut at maxResults looked complete (UAT 2026-10-09 — exactly 50
+        // rows, no Edge or Windows Chrome, no sign of truncation).
         const structured = {
+          total: paged.total,
+          returned: paged.returned,
+          truncated: paged.truncated,
           browsers: paged.items.map(b => ({
             browserName: b.browserName,
             browserVersion: b.browserVersion,
@@ -39,7 +44,7 @@ export function registerBrowserTools(server: McpServer): void {
           `Available browsers (${paged.total} total):\n\n${formatBrowserList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

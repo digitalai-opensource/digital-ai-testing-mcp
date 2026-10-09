@@ -7,7 +7,7 @@ import { getAllProvisioningProfiles } from '../api/provisioning-profiles.js';
 import { getActiveSessions } from '../api/sessions.js';
 import { getReporterProjects } from '../api/reporter-projects.js';
 import { getLicenseInfo } from '../api/license.js';
-import { applyMaxResults } from '../utils/pagination.js';
+import { applyMaxResults, withPaging } from '../utils/pagination.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
 export function registerHealthTools(server: McpServer): void {
@@ -69,7 +69,7 @@ export function registerHealthTools(server: McpServer): void {
           .filter((l) => l !== undefined)
           .join('\n');
 
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, pagedDevices), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -343,7 +343,7 @@ export function registerHealthTools(server: McpServer): void {
             for (const a of s.suggestedActions) lines.push(`    • ${a}`);
           }
         }
-        return respond(outputFormat, structured, lines.join('\n'));
+        return respond(outputFormat, withPaging(structured, paged), lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

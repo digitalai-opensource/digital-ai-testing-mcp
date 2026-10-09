@@ -20,9 +20,10 @@ import {
 } from '../utils/locality.js';
 import { buildUploadCommand } from '../utils/upload-command.js';
 import { buildDownloadCommand } from '../utils/download-command.js';
-import { applyMaxResults, appendTruncationNotice } from '../utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging } from '../utils/pagination.js';
 import { formatRepositoryFileList } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { commandPayload } from '../utils/command-payload.js';
 
 export function registerRepositoryTools(server: McpServer): void {
   server.tool(
@@ -58,7 +59,7 @@ export function registerRepositoryTools(server: McpServer): void {
           `Found ${paged.total} file(s):\n\n${formatRepositoryFileList(paged.items)}`,
           paged
         );
-        return respond(outputFormat, structured, humanText);
+        return respond(outputFormat, withPaging(structured, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -166,7 +167,7 @@ export function registerRepositoryTools(server: McpServer): void {
         fields,
         localPlatform,
       });
-      return respond(outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
+      return respond(outputFormat, commandPayload(result), result.humanText);
     }
   );
 
@@ -204,7 +205,7 @@ export function registerRepositoryTools(server: McpServer): void {
     },
     async ({ fileId, localPath, localPlatform, outputFormat }) => {
       const result = buildDownloadCommand({ path: `/api/v1/files/${fileId}/download`, localPath, localPlatform });
-      return respond(outputFormat, { endpoint: result.endpoint, curlCommand: result.curlCommand, psCommand: result.psCommand }, result.humanText);
+      return respond(outputFormat, commandPayload(result), result.humanText);
     }
   );
 

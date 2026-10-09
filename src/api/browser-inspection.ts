@@ -262,12 +262,13 @@ export async function getPageDom(
     throw new Error(`get_page_dom detection phase failed: ${describeError(e)}`);
   }
 
-  const useShadow =
-    shadowMode === 'always' ||
-    (shadowMode === 'auto' && metaResult.hasShadowDom);
+  // The walker extracts interactive elements whether or not shadow roots exist, so "auto" always uses it — the tool
+  // promises structured elements by default. (UAT 2026-10-09: on a standard page "auto" returned only a raw-HTML
+  // length, no elements and no HTML.) "never" remains the fast raw-HTML path.
+  const useWalker = shadowMode !== 'never';
 
-  // Phase 2a: shadow expansion (runs recursive JS walker)
-  if (useShadow) {
+  // Phase 2a: element extraction (recursive JS walker — descends into shadow roots when present)
+  if (useWalker) {
     try {
       const shadowRes = await client.post(
         `/session/${sid}/execute/sync`,
@@ -275,6 +276,7 @@ export async function getPageDom(
         { timeout: 30_000 }
       );
       const full: PageDomResult = JSON.parse(String(shadowRes.data.value));
+      full.hasShadowDom = metaResult.hasShadowDom; // detection result, not "the walker ran"
       if (includeRawHtml) {
         const sourceRes = await client.get(`/session/${sid}/source`, { timeout: 20_000 });
         full.rawHtml = String(sourceRes.data.value ?? '');
@@ -283,24 +285,20 @@ export async function getPageDom(
       session.currentUrl = full.url;
       return full;
     } catch (e) {
-      throw new Error(`get_page_dom shadow extraction failed: ${describeError(e)}`);
+      throw new Error(`get_page_dom element extraction failed: ${describeError(e)}`);
     }
   }
 
-  // Phase 2b: standard rendered DOM (GET /source returns the live rendered DOM in Selenium)
+  // Phase 2b: shadowMode "never" — standard rendered DOM only (GET /source returns the live rendered DOM in Selenium)
   try {
     const sourceRes = await client.get(`/session/${sid}/source`, { timeout: 20_000 });
-    const rawHtml = String(sourceRes.data.value ?? '');
     session.currentUrl = metaResult.url;
-    const result: PageDomResult = {
+    return {
       url: metaResult.url,
       title: metaResult.title,
       hasShadowDom: metaResult.hasShadowDom,
+      rawHtml: String(sourceRes.data.value ?? ''),
     };
-    if (includeRawHtml || shadowMode === 'never') result.rawHtml = rawHtml;
-    // For non-shadow path, return rawHtml for the AI to parse; elements are optional
-    if (!includeRawHtml) result.rawHtml = rawHtml; // always include for standard path
-    return result;
   } catch (e) {
     throw new Error(`get_page_dom DOM extraction failed: ${describeError(e)}`);
   }

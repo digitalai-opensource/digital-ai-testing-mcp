@@ -6,7 +6,7 @@
  *  - a refusal must never leave an early-exit scan believing unsorted data is sorted (silent data loss);
  *  - a genuine auth failure must not be mistaken for "sort refused".
  */
-import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -199,5 +199,51 @@ describe('early-exit scans never lose data when sort is refused', () => {
     const out = await summarizeTestFailures({ startDate, endDate, groupBy: 'name' });
     assert.equal(out.totalFailures, expectedInWindow, 'an early-exit on unsorted data would have dropped records');
     assert.equal(totalOf(out.buckets), expectedInWindow);
+  });
+});
+
+describe('get_daily_execution_trend — a capped scan is never reported as a complete window', () => {
+  // Regression (UAT 2026-10-09): with server sort applied, hitting maxRecords before the lookback cutoff returned
+  // scanCapped: false — a 14-day trend silently showed only the newest 6 days.
+  async function trend(args: Record<string, unknown>) {
+    const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const { registerReportingTools } = await import('../src/tools/reporting-tools.js');
+    const server = new McpServer({ name: 's', version: '0' });
+    registerReportingTools(server);
+    const client = new Client({ name: 'c', version: '0' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(b), client.connect(a)]);
+    const res = (await client.callTool({ name: 'get_daily_execution_trend', arguments: { ...args, outputFormat: 'json' } })) as { content: Array<{ text?: string }> };
+    return JSON.parse(res.content[0].text!);
+  }
+
+  it('sorted scan stopped by maxRecords → scanCapped, windowComplete false, coveredFrom = oldest record read', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(BASE + HOUR)); // "now" = just after the newest record
+    try {
+      // 1200 hourly records ≈ 50 days; a 60-day window with maxRecords 500 cannot be covered.
+      const out = await trend({ lookbackDays: 60, maxRecords: 500 });
+      assert.equal(out.scanCapped, true);
+      assert.equal(out.windowComplete, false);
+      assert.equal(out.recordsScanned, 500);
+      assert.equal(out.coveredFrom, newestFirst[499].start_time);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a scan that reaches the end of the data is complete', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(BASE + HOUR));
+    try {
+      const out = await trend({ lookbackDays: 60, maxRecords: 5000 });
+      assert.equal(out.scanCapped, false);
+      assert.equal(out.windowComplete, true);
+      assert.equal(out.recordsScanned, N);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
