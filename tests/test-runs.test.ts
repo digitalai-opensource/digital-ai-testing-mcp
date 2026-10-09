@@ -189,6 +189,18 @@ describe('get_test_run_command', () => {
     assert.match(endpoint, /execute-test-run-async\?deviceQueries=%40os%3D%27android%27/);
     assert.deepEqual(hits, [], 'a command generator never calls the API');
   });
+
+  it('Espresso: sends the androidTest APK as testApp and passes useUIAutomator through', async () => {
+    const { res, text } = await call('get_test_run_command', {
+      executionType: 'ESPRESSO', appPath: 'C:\\work\\app-debug.apk', testsPath: 'C:\\work\\app-debug-androidTest.apk',
+      deviceQueries: [Q], useUIAutomator: true, localPlatform: 'linux', outputFormat: 'json',
+    });
+    assert.notEqual(res.isError, true, text);
+    const { curlCommand } = JSON.parse(text);
+    assert.match(curlCommand, /-F "app=@C:\/work\/app-debug\.apk"/);
+    assert.match(curlCommand, /-F "testApp=@C:\/work\/app-debug-androidTest\.apk"/);
+    assert.match(curlCommand, /-F "useUIAutomator=true"/);
+  });
 });
 
 describe('REGISTERED_TOOLS stays in sync with the tool modules', () => {

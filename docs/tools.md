@@ -233,7 +233,7 @@ The platform schedules, runs and reports these suites itself — no local driver
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `execute_test_run` | Start a run (async): app by `cloudAppId` / `appUrl` / `appPath`, tests by `testsPath` (Maestro: required ZIP with `flows/`) / `testsUrl` / `cloudTestAppId`, device queries, `maxDevices`, `retry`, `runTags` | Any |
+| `execute_test_run` | Start a run (async): app by `cloudAppId` / `appUrl` / `appPath`, tests by `testsPath` (Maestro: required ZIP with `flows/`; Espresso: the androidTest `.apk`) / `testsUrl` / `cloudTestAppId`, device queries, `maxDevices`, `retry`, `runTags`. Espresso suites that use UiAutomator need `useUIAutomator: true` | Any |
 | `get_test_run_status` | State (Starting / Running / Finished / Cancelled) and pass/fail/skip counts; `waitSeconds` (≤ 50) polls until finished | Any |
 | `cancel_test_run` | Cancel the remaining tests of a run. Requires `confirmDeletion: true` | Any |
 | `get_test_run_command` | curl / PowerShell command that starts the run from the user's machine (for Docker installs) | Any |
