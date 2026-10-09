@@ -10,7 +10,7 @@ public class LocaliOSTest {
 
     private IOSDriver driver;
 
-    @BeforeTest
+    @BeforeMethod
     public void setUp() throws MalformedURLException {
         XCUITestOptions options = new XCUITestOptions();
         options.setCapability("digitalai:testName", "[Enter Test Name here]");
@@ -38,7 +38,7 @@ public class LocaliOSTest {
         // [END_DEMO_STEPS]
     }
 
-    @AfterTest
+    @AfterMethod
     public void tearDown() {
         if (driver == null) return;
         try {

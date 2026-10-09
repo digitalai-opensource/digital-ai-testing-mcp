@@ -1,7 +1,7 @@
 apply plugin: 'java'
 
 // Standalone use only — remove if this module is part of a larger Gradle project
-// repositories { mavenCentral() }
+repositories { mavenCentral() }
 
 test {
     useTestNG()

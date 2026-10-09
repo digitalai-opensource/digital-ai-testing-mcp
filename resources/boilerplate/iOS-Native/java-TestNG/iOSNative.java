@@ -16,7 +16,7 @@ public class LocaliOSTest {
     DesiredCapabilities dc = new DesiredCapabilities();
     private String accessKey = "[Enter Your Access key here]";
 
-    @BeforeTest
+    @BeforeMethod
     public void setUp() throws MalformedURLException {
         dc.setCapability("digitalai:testName", "[Enter Test Name here]");
         dc.setCapability("digitalai:accessKey", accessKey);
@@ -45,7 +45,7 @@ public class LocaliOSTest {
         // [END_DEMO_STEPS]
     }
 
-    @AfterTest
+    @AfterMethod
     public void tearDown() {
         if (driver == null) return;
         try {
