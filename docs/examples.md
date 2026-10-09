@@ -132,6 +132,8 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "What are the per-type license limits for the Default project — how many Grid, Manual, and Development licenses are configured?"
 - "Does project 2 auto-delete old app builds? How many days does it retain them?"
 - "How many users and applications are in the Default project?"
+- "Show the cleanup, queue and memory settings for project 5"
+- "Raise the automation process memory for project 5 to 768 MB — sessions are failing on our large app" *(256–1024 MB; Cloud Admin)*
 
 ---
 
@@ -191,6 +193,7 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "I'm getting 403 errors — which profile has Cloud Admin access?"
 - "Connect to the QA project key so I can run tests without full admin access"
 - "What access level am I currently connected with — Cloud Admin, Project Admin, or Project User?"
+- "Load the performance tools" *(only relevant when the server runs with `MCP_TOOLSETS` — tools outside the loaded toolsets also load themselves on first use)*
 
 ---
 
@@ -262,6 +265,19 @@ Before generating boilerplate, always find an available device first so the corr
 
 ---
 
+## Android Auto / CarPlay
+
+*Projection testing: the phone's apps rendered on a car head unit. Supported on Appium Server projects; Appium Grid does not support projection.*
+
+- "Show me what our ExperiBank app looks like on Android Auto" *(an inspection session with projection on, then a head-unit screenshot)*
+- "Start an inspection session with Android Auto projection at 1280x720 and screenshot the head unit"
+- "Tap the Exit button on the head unit and show me the result" *(taps use head-unit coordinates)*
+- "Turn projection on for the current session, take a head-unit screenshot, then turn it off" *(mid-session start works on recent Pixels; if a device rejects it, start a new session with projection instead)*
+- "Generate a JUnit5 test that runs with Android Auto projection and captures the head unit"
+- "Open an Android Automotive OS emulator and show me its screen" *(the head unit IS the device — no projection; the agent queries `@emulator='true'` with the automotive model)*
+
+---
+
 ## Web Browser Inspection (AI-Driven Browser Test Building)
 
 *The agent drives a real cloud browser over a live WebDriver session — navigates pages, extracts DOM elements, interacts with the UI — then turns what it learned into a Selenium test script. No local Selenium or browser driver needed.*
@@ -312,6 +328,20 @@ Before generating boilerplate, always find an available device first so the corr
 
 ---
 
+## Test Runs (Espresso, XCUITest, Maestro)
+
+*The platform runs these suites itself — no local driver. Results land in the Reporter tagged with the run ID.*
+
+- "Run my Maestro flows from C:/flows/bundle.zip against the ExperiBank Android app on one phone" *(the ZIP must contain a `flows/` folder; Maestro is Android-only)*
+- "Run our Espresso test APK against app 456 on three Android phones in US2 and retry failures once"
+- "Run the XCUITest suite at https://ci.internal/tests.zip on every iPhone model we have — one device per model" *(coverage mode: one device per device query)*
+- "What's the status of test run 27971406? Wait for it to finish"
+- "Cancel test run 27971406" *(asks for confirmation first)*
+- "I'm running the MCP in Docker — give me the command to start the Maestro run from my laptop" *(get_test_run_command)*
+- "The Maestro run finished — show me the failing flows and their videos"
+
+---
+
 ## Regression Workflows & Release Sign-Off
 
 - "Did all tests in the QA project pass today? I need a go/no-go for the release."
@@ -331,7 +361,7 @@ Before generating boilerplate, always find an available device first so the corr
 
 - "Show me the last 20 failed tests sorted by most recent"
 - "Did the last run of 'Login Flow' pass or fail?"
-- "Get the full report for test ID 377918, including step detail"
+- "Get the full report for test ID 377918" *(step-level detail is only available for sessions started through the MCP — `get_test_by_report_id` with the report_api_id)*
 - "Show me the report for the session I just ended — report_api_id is abc-123"
 - "List all tests that ran today for the QA project"
 - "How many tests passed vs failed this week?"
@@ -348,6 +378,9 @@ Before generating boilerplate, always find an available device first so the corr
 - "Clean up all probe/debug test reports from last week — names contain '[MCP'"
 - "Get a test summary for the QA project — what are the most commonly failing tests?"
 - "What tests are running right now?"
+- "Here's a report link — https://<tenant>/reporter/video-report/<uuid> — what failed?" *(report URLs and UUIDs work directly; UUIDs are unique across projects, numeric test IDs are not)*
+- "How many tests ended in Error versus Failed this month?" *(Error = the test ended abnormally — crash, infrastructure, session ended early)*
+- "Give me a link to the latest health_check report that I can send to a stakeholder who has no Digital.ai account — show me what would be exposed first" *(share_test_report previews first; a public link opens the report, its data and video without login for 14 days and can only be revoked by deleting the report)*
 
 ---
 
@@ -365,6 +398,8 @@ Before generating boilerplate, always find an available device first so the corr
 - "Get the device logcat for the failed Login test"
 - "I'm running the MCP in Docker — give me a command to download test 69's session video to my Mac"
 - "Pull the attachment ZIP (video + logs) for the failed run onto my local machine"
+- "Has the platform's AI analysed why the Checkout test failed? Show me its hypothesis and evidence" *(get_root_cause_analysis — read-only; analyses are started from the video report, Appium Server tests only)*
+- "Which reports already have a completed root-cause analysis?" *(list_test_reports filtered on rca.status = COMPLETED)*
 
 ---
 
@@ -413,7 +448,7 @@ Before generating boilerplate, always find an available device first so the corr
 - "Show me how our app's Speed Index has changed week by week over the last 3 months"
 - "Show a monthly performance trend for the ExperiBank app — CPU, memory, and duration"
 - "Which transactions are consuming the most upload/download bandwidth?"
-- "Our Speed Index target is 2 seconds. Flag any device models where app version 10553 exceeds that on iOS."
+- "Our Speed Index target is 2,000 (lower is better). Flag any device models where app version 10553 exceeds that on iOS." *(Speed Index is a composite score, not a duration — don't express targets in seconds)*
 - "Did the latest release introduce a CPU regression? Compare version 10553 vs 10554 on Android."
 - "Check if any transaction in the latest release takes more than 5 seconds — we need this for release sign-off."
 
