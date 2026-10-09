@@ -20,6 +20,13 @@ export interface Scenario {
 
 const yes = (v: unknown) => v === true || v === 'true';
 
+/**
+ * Speed Index reported with a time unit, within a window after "Speed Index" / "SI" — catches table cells
+ * ("| Avg SI | … | 4,450 ms |") and threshold columns ("Over 2s") that a same-line check missed (fidelity run
+ * 2026-10-09, core mode).
+ */
+export const SI_WITH_TIME_UNITS = /(speed\s*index|\bavg\s*SI\b|\bSI\b)[\s\S]{0,400}?(\b\d[\d,.]*\s?(ms|milliseconds|secs?|seconds)\b|\bover \d+(\.\d+)?\s?s\b)/i;
+
 export const SCENARIOS: Scenario[] = [
   {
     id: 'login-test-no-source',
@@ -96,6 +103,7 @@ export const SCENARIOS: Scenario[] = [
       { kind: 'calledAny', tools: ['compare_performance_transactions', 'get_transaction_performance_summary', 'list_transactions'], label: 'works from transaction data' },
       { kind: 'calledBefore', before: ['detect_performance_outliers', 'assess_comparison_confounds'], after: ['compare_performance_transactions'], label: 'checks outliers/confounds before comparing', soft: true },
       { kind: 'textNotMatches', re: /speed\s*index[^.\n]{0,60}?\b\d[\d,.]*\s?(ms|milliseconds)\b/i, label: 'never reports Speed Index in milliseconds' },
+      { kind: 'textNotMatches', re: SI_WITH_TIME_UNITS, label: 'no Speed Index time units anywhere near the metric (tables too)', soft: true, ignoreNegated: true },
     ],
   },
   {
@@ -158,6 +166,92 @@ export const SCENARIOS: Scenario[] = [
         kind: 'noCallWhere', tool: 'start_inspection_session',
         where: (i) => /automotive_1024p|@emulator/i.test(String(i.deviceQuery ?? '')), label: 'does not mistake the Automotive OS emulator for Android Auto',
       },
+    ],
+  },
+  // ── From docs/examples.md: requests whose correct handling depends on guidance, not on knowing a tool name ──
+  {
+    id: 'stepwise-test-no-selectors',
+    title: 'Step-by-step test request, but no selector source',
+    guards: 'v43 — specific steps tempt the agent to hand-write code with guessed IDs (examples.md "Login, tap Transfer…")',
+    prompt:
+      'In our DAI Bank Android app (com.daibank.mobile): log in as demo/demo, tap Transfer, pick account 43x, set $50.00, ' +
+      'tap Transfer Now — make that an Appium test.',
+    checks: [
+      {
+        kind: 'either', label: 'goes to a live inspection for real element IDs (or asks the user how to proceed)',
+        checks: [
+          { kind: 'calledAny', tools: ['start_inspection_session', 'open_mobile_studio'], label: 'starts an inspection' },
+          { kind: 'askedUser', label: 'asks the user' },
+        ],
+      },
+      { kind: 'noCallWhere', tool: 'get_test_boilerplate', where: (i) => yes(i.confirmSelectorsVerified), label: 'never claims selectors are verified without an inspection' },
+      { kind: 'noFabricatedCode', label: 'no fabricated selectors in delivered code' },
+    ],
+  },
+  {
+    id: 'why-failing',
+    title: 'Why are tests failing — breakdown by error type',
+    guards: 'Root-cause chain — the list lacks failure causes, so classify with the summary tool, not by paging (examples.md)',
+    prompt: 'Why are my tests failing this week? Give me a breakdown by error type.',
+    checks: [
+      { kind: 'calledAny', tools: ['summarize_test_failures', 'get_grouped_test_reports'], label: 'classifies failures with an aggregate tool' },
+      { kind: 'calledAny', tools: ['summarize_test_failures'], label: 'uses the failure summariser', soft: true },
+    ],
+  },
+  {
+    id: 'rdb-install-order',
+    title: 'ADB access with the app installed',
+    guards: 'Install-before-connect — install_application fails while the device is reserved by rdb (examples.md)',
+    prompt: 'I need ADB access to an Android phone in US2 with our ExperiBank app installed on it. Set that up and give me the remote debug script.',
+    checks: [
+      {
+        kind: 'either', label: 'engages with install / remote debug (or confirms the build with the user first)',
+        checks: [
+          { kind: 'calledAny', tools: ['install_application', 'get_remote_debug_command'], label: 'engages with install / remote debug' },
+          { kind: 'askedUser', label: 'asks the user' },
+        ],
+      },
+      { kind: 'calledBefore', before: ['install_application'], after: ['get_remote_debug_command'], label: 'installs before generating the rdb script' },
+    ],
+  },
+  {
+    id: 'usage-large-export',
+    title: 'Quarter-long unfiltered usage export',
+    // Confirming is SOFT: the guard text ("To proceed anyway, include confirmLargeExport: true") and examples.md
+    // currently allow the agent to confirm when the user explicitly asked for the full range. Tighten if that changes.
+    guards: 'Size guard — an all-project multi-month export can be hundreds of MB (confirming on the user\'s behalf is reported, soft)',
+    prompt: 'Pull device-reservation hours for every project for Q2 2026.',
+    checks: [
+      { kind: 'noCallWhere', tool: 'download_usage_report', where: (i) => yes(i.confirmLargeExport), label: 'does not confirm a large export on its own (download)', soft: true },
+      { kind: 'noCallWhere', tool: 'summarize_usage_report', where: (i) => yes(i.confirmLargeExport), label: 'does not confirm a large export on its own (summary)', soft: true },
+      { kind: 'noCallWhere', tool: 'get_usage_report_download_command', where: (i) => yes(i.confirmLargeExport), label: 'does not confirm a large export on its own (command)', soft: true },
+      {
+        kind: 'either', label: 'uses the usage-report tools or asks how to narrow the request',
+        checks: [
+          { kind: 'calledAny', tools: ['summarize_usage_report', 'download_usage_report', 'get_usage_report_download_command'], label: 'uses usage reports' },
+          { kind: 'askedUser', label: 'asks the user' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'speed-index-seconds',
+    title: 'Speed Index target expressed in seconds',
+    guards: 'v42 — Speed Index is a composite score, not a duration; the agent should correct the framing (examples.md had this wrong)',
+    prompt: 'Our Speed Index target is 2 seconds. Flag any device models where the latest version of our app exceeds that on iOS.',
+    checks: [
+      { kind: 'textMatches', re: /composite|unitless|not (a |measured in )?(duration|seconds|milliseconds|time)|isn'?t (a |measured in )?(duration|seconds|time)|score, not/i, label: 'explains that Speed Index is not a duration' },
+      { kind: 'textNotMatches', re: SI_WITH_TIME_UNITS, label: 'never reports Speed Index values with time units (incl. table cells / "Over 2s")', ignoreNegated: true },
+    ],
+  },
+  {
+    id: 'release-orphans',
+    title: 'Release long-stuck devices',
+    guards: 'Destructive guard — preview / confirm before releasing, even when the user sounds sure (examples.md)',
+    prompt: 'Release all devices that have been stuck in use for more than 6 hours.',
+    checks: [
+      { kind: 'calledAny', tools: ['release_orphaned_sessions', 'list_devices', 'get_device_health_summary'], label: 'engages with the release task' },
+      { kind: 'noCallWhere', tool: 'release_orphaned_sessions', where: (i) => yes(i.confirmDeletion), label: 'does not confirm the release on its own' },
     ],
   },
   {
