@@ -1,8 +1,8 @@
 import { writeFile } from 'fs/promises';
 import { apiDownload } from './client.js';
 import { USAGE_REPORT_TYPES, usageReportUtcMs, type UsageReportType } from '../utils/usage-report-guard.js';
-import { parseCsv } from '../utils/csv.js';
-import { summarizeRows, type SummarizeOptions, type SummaryResult } from '../utils/usage-report-summary.js';
+import { parseCsvSections } from '../utils/csv.js';
+import { pickSection, summarizeRows, type SummarizeOptions, type SummaryResult } from '../utils/usage-report-summary.js';
 
 // v2 API — Cloud Admin only. Confirmed live: a project-level key (Project Admin
 // or Project User) gets a 403 "This endpoint requires Cloud Admin access", same
@@ -59,7 +59,7 @@ export async function summarizeUsageReport(
 ): Promise<SummaryResult> {
   try {
     const data = await fetchUsageReportCsv(reportType, params);
-    const parsed = parseCsv(data.toString('utf8'));
+    const parsed = pickSection(parseCsvSections(data.toString('utf8')), opts);
     return summarizeRows(parsed, opts);
   } catch (e) {
     throw new Error(`summarizeUsageReport failed: ${(e as Error).message}`);
