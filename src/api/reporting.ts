@@ -1,6 +1,6 @@
 import { writeFile } from 'fs/promises';
 import AdmZip from 'adm-zip';
-import { apiGet, apiPost, apiDownload } from './client.js';
+import { apiGet, apiPost, apiDownload, getActiveUrl } from './client.js';
 import { serverSortAvailable, markActiveServerSortRefused } from './access-level.js';
 import type {
   TestReport,
@@ -105,6 +105,42 @@ export async function getTestByUuid(uuid: string): Promise<TestReport> {
     return normalizeSingleTest(raw);
   } catch (e) {
     throw new Error(`getTestByUuid failed: ${(e as Error).message}`);
+  }
+}
+
+export interface ReportShare {
+  /** Public link — opens the report (page, data, video) with NO authentication. */
+  publicUrl: string;
+  token: string;
+  /** ISO timestamp — exactly 14 days after the share was first created. */
+  expires: string;
+}
+
+/**
+ * Create (or return the existing) public share link for a report — POST /reporter/api/reports/{uuid}/share
+ * (platform 26.5; endpoint found in the reporter UI bundle, verified live 2026-10-09):
+ *  - the response is { testReportShare: <token>, expires: <ISO> }; the link is <base>/reporter/html-report/public/<token>
+ *  - re-sharing is idempotent — the same token and expiry come back, so the 14-day window is NOT extended
+ *  - unauthenticated readers get the report page, its JSON (/reporter/api/public/reports/<token>, incl. keyValuePairs)
+ *    and its video
+ *  - there is no revoke endpoint: deleting the report makes the link 404
+ *  - 400 = sharing disabled for the project (reporter project setting reportSharingEnabled)
+ */
+export async function shareTestReport(uuid: string): Promise<ReportShare> {
+  try {
+    const res = await apiPost<{ testReportShare: string; expires: string }>(`/reporter/api/reports/${encodeURIComponent(uuid)}/share`);
+    if (!res?.testReportShare) throw new Error('the platform returned no share token');
+    return {
+      publicUrl: `${getActiveUrl().replace(/\/+$/, '')}/reporter/html-report/public/${res.testReportShare}`,
+      token: res.testReportShare,
+      expires: res.expires,
+    };
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/\[400\]/.test(msg)) {
+      throw new Error(`shareTestReport failed: public sharing is disabled for this report's project — a project admin must enable report sharing in the Reporter project settings. (${msg})`);
+    }
+    throw new Error(`shareTestReport failed: ${msg}`);
   }
 }
 

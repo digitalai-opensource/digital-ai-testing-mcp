@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   getTestById,
   getTestByUuid,
+  shareTestReport,
   getTestByReportApiId,
   listTests,
   listTestsSortedDesc,
@@ -67,6 +68,74 @@ export function registerReportingTools(server: McpServer): void {
       try {
         const report = ref.kind === 'uuid' ? await getTestByUuid(ref.uuid) : await getTestById(ref.testId);
         return respond(outputFormat, report, formatTestReport(report));
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ─── share_test_report ─────────────────────────────────────────────────────
+
+  server.tool(
+    'share_test_report',
+    'Create a PUBLIC link to a test report that anyone can open WITHOUT logging in — the report page, its data (including ' +
+    'key-value pairs/capabilities) and its video. Links expire 14 days after first creation; sharing the same report again ' +
+    'returns the same link and does NOT extend it. There is no revoke: the only way to disable a link early is to delete the ' +
+    'report (delete_test_reports). Requires confirmPublicShare: true — without it, this returns a preview of what would be ' +
+    'exposed and shares nothing. Only share when the user explicitly asked for a public/shareable link. ' +
+    'Fails if public sharing is disabled for the report\'s project.',
+    {
+      uuid: z.string().optional().describe('Test execution UUID (uuid field from list_test_reports / get_test_report).'),
+      reportUrl: z.string().optional().describe('The report URL (e.g. .../reporter/video-report/<uuid>). Must contain the UUID.'),
+      confirmPublicShare: z
+        .boolean()
+        .optional()
+        .describe('Must be true to create the public link. Omit to preview what would be shared.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ uuid, reportUrl, confirmPublicShare, outputFormat }) => {
+      if ((uuid ? 1 : 0) + (reportUrl ? 1 : 0) !== 1) {
+        return { content: [{ type: 'text', text: 'Provide exactly one of uuid or reportUrl.' }], isError: true };
+      }
+      const ref = parseReportRef(uuid ?? reportUrl);
+      if (ref?.kind !== 'uuid') {
+        return {
+          content: [{ type: 'text', text: 'Sharing needs the report UUID (numeric test IDs are not accepted). Get it from list_test_reports or get_test_report (uuid field), or pass the .../video-report/<uuid> URL.' }],
+          isError: true,
+        };
+      }
+      try {
+        // Fetch first: confirms the report exists and is visible to this credential, and shows what would be exposed.
+        const report = await getTestByUuid(ref.uuid);
+        const what = `"${report.name}" (${report.status}, ${report.start_time}${report.projectName ? `, project ${report.projectName}` : ''})`;
+        if (report.sharingEnabled === false) {
+          return {
+            content: [{ type: 'text', text: `Public sharing is disabled for ${what}'s project. A project admin must enable report sharing in the Reporter project settings first.` }],
+            isError: true,
+          };
+        }
+        if (confirmPublicShare !== true) {
+          return {
+            content: [{
+              type: 'text',
+              text:
+                `⚠️  Preview — nothing has been shared.\n\n` +
+                `This would create a PUBLIC link to ${what}. Anyone with the link can, without logging in:\n` +
+                `  • open the report page and its video\n` +
+                `  • read the report data, including all key-value pairs / capabilities\n` +
+                `The link lasts 14 days and cannot be revoked except by deleting the report.\n\n` +
+                `To proceed, call share_test_report again with confirmPublicShare: true.`,
+            }],
+          };
+        }
+        const share = await shareTestReport(ref.uuid);
+        const structured = { uuid: ref.uuid, testId: report.test_id, name: report.name, publicUrl: share.publicUrl, expires: share.expires };
+        const human =
+          `🔗 Public link for ${what}:\n${share.publicUrl}\n\n` +
+          `Expires: ${share.expires} (14 days after it was first shared — re-sharing does not extend it).\n` +
+          `Anyone with this link can view the report, its data and its video without logging in. ` +
+          `To disable it early, delete the report (delete_test_reports).`;
+        return respond(outputFormat, structured, human);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
