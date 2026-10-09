@@ -747,6 +747,17 @@ describe('get_web_test_boilerplate inspection gate blocks before emitting any co
     assert.match(text, /RemoteWebDriver|MutableCapabilities/);
     assert.notEqual(res.isError, true);
   });
+
+  // The grid matches browserName case-sensitively — "microsoftedge" is rejected (verified live 2026-10-09).
+  it('keeps the grid\'s exact browser names (MicrosoftEdge, opera) in every language', async () => {
+    for (const [input, expected] of [['MicrosoftEdge', 'MicrosoftEdge'], ['edge', 'MicrosoftEdge'], ['Opera', 'opera']]) {
+      for (const language of ['java-junit5', 'python', 'nodejs']) {
+        const text = textOf(await callTool('get_web_test_boilerplate', { language, targetBrowser: input }));
+        assert.match(text, new RegExp(`["']${expected}["']`), `${language} / ${input}`);
+        assert.doesNotMatch(text, /["']microsoftedge["']/, `${language} / ${input}`);
+      }
+    }
+  });
 });
 
 describe('start_browser_inspection_session without browser returns a prompt, not an error', () => {

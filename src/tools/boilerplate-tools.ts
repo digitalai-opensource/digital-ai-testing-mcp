@@ -1,3 +1,4 @@
+import { canonicalBrowserName } from '../utils/browser-name.js';
 import { z } from 'zod';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -1391,7 +1392,8 @@ export function registerBoilerplateTools(server: McpServer): void {
         .string()
         .optional()
         .describe(
-          'Generate browser-specific setup code for this browser (e.g. "chrome", "firefox", "MicrosoftEdge", "safari"). ' +
+          'Generate browser-specific setup code for this browser: "chrome", "firefox", "MicrosoftEdge", "safari" or "opera" ' +
+          '(names as list_available_browsers returns them; "edge" is accepted for MicrosoftEdge). ' +
           'If omitted (default), generates browser-neutral code using a BROWSER environment variable.'
         ),
       shadowDomSupport: z
@@ -1417,7 +1419,10 @@ export function registerBoilerplateTools(server: McpServer): void {
       const language = args.language;
       const testName = args.testName ?? 'WebTest';
       const targetUrl = args.url ?? '';
-      const targetBrowser = args.targetBrowser?.toLowerCase();
+      // The grid matches browserName case-sensitively: "microsoftedge" → 400 "No browser found matching the desired
+      // capabilities" (verified live 2026-10-09), so a plain toLowerCase() broke Edge. Map to the names
+      // list_available_browsers returns; anything else passes through unchanged.
+      const targetBrowser = canonicalBrowserName(args.targetBrowser);
       const shadowDomSupport = args.shadowDomSupport ?? 'auto';
 
       // Gate: if a real URL is specified, require a live browser session or explicit selector confirmation.
@@ -1564,7 +1569,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         if (!browser) {
           return [
             `        // BROWSER-NEUTRAL: reads browser name from BROWSER env var at runtime.`,
-            `        // Change BROWSER=chrome / firefox / MicrosoftEdge / safari without touching this file.`,
+            `        // Change BROWSER=chrome / firefox / MicrosoftEdge / safari / opera without touching this file.`,
             `        String browserName = System.getenv().getOrDefault("BROWSER", "chrome");`,
             `        MutableCapabilities caps = new MutableCapabilities();`,
             `        caps.setCapability("browserName", browserName);`,
