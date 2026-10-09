@@ -120,7 +120,9 @@ export function checkUsageReportSizeGuard(params: UsageReportParams): string | n
     `(measured live: an unfiltered month of License Usage was ~27 MB; an unfiltered week of Device Reservations ` +
     `was ~6.4 MB). A multi-month or full-year unfiltered export can run into the hundreds of MB and take minutes.\n\n` +
     `${narrowingAdvice}\n\n` +
-    `To proceed anyway, include confirmLargeExport: true in your request.\n\n` +
+    `Ask the user before going further: offer to narrow the request, or tell them the export may be very large and ` +
+    `slow and ask whether to proceed. Set confirmLargeExport: true ONLY after the user explicitly agrees to the large ` +
+    `export — never decide it on their behalf.\n\n` +
     `No download was attempted.`
   );
 }

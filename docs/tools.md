@@ -501,7 +501,7 @@ Three tools for platform usage-report CSVs — Cloud Admin only (confirmed live:
 
 **Dates are whole UTC calendar days** — `startDate`/`endDate` are `"YYYY-MM-DD"` strings interpreted as `00:00:00.000 UTC` to `23:59:59.999 UTC`, regardless of the caller's or server's local timezone. This was a real footgun found during live testing: computing the same boundary in Pacific Time instead of UTC silently dropped the first 7-8 hours of each day's data.
 
-**Size guard:** an unfiltered request spanning more than 31 days is blocked with a message (not an error) instructing you to add a `projectId`/`userId` filter, shorten the range, or pass `confirmLargeExport: true`. Measured live: one unfiltered month of `License Usage` was ~27 MB; one unfiltered week of `Device Reservations` was ~6.4 MB — a multi-month or full-year unfiltered pull can run into the hundreds of MB and take minutes. `License Usage` has no filter to narrow by, so its guard fires on date range alone.
+**Size guard:** an unfiltered request spanning more than 31 days is blocked with a message (not an error) instructing you to add a `projectId`/`userId` filter, shorten the range, or — only after the user explicitly agrees to a large export — pass `confirmLargeExport: true`. The agent must not confirm on the user's behalf. Measured live: one unfiltered month of `License Usage` was ~27 MB; one unfiltered week of `Device Reservations` was ~6.4 MB — a multi-month or full-year unfiltered pull can run into the hundreds of MB and take minutes. `License Usage` has no filter to narrow by, so its guard fires on date range alone.
 
 **`projectId: 0` / `userId: 0` mean "All"** — same as omitting the parameter — and do NOT satisfy the size guard's narrowing requirement.
 
