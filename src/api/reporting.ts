@@ -108,6 +108,104 @@ export async function getTestByUuid(uuid: string): Promise<TestReport> {
   }
 }
 
+// ─── AI Root Cause Analysis (platform 26.8+, premium) ────────────────────────
+// Endpoints from the reporter UI bundle, verified live 2026-10-09:
+//  - GET  /reporter/api/rca/info                  → { enabled, pollIntervalSec, jobTimeoutMins }
+//  - GET  /reporter/api/reports/{uuid}/rca/status → { attemptCount, lastStatus, lastRcaId }
+//  - POST /reporter/api/reports/{uuid}/rca/trigger (not wrapped: on the dev tenant every eligible trigger since 2026-10-06
+//    fails upstream with 500 rca/submission-failed, and each failure burns one of only 3 attempts per test)
+//  - results live in the report's keyValuePairs: rca.status (e.g. COMPLETED), rca.description (the hypothesis),
+//    rca.evidence (JSON [{source, time, log, findings}]), rca.id
+// Trigger refusals (403 problem types): framework-not-supported (only Appium Server / "Appium OSS" tests),
+// already-completed, max-attempts-exceeded (3 failed attempts), service-not-available (RCA not enabled for the project).
+
+export const RCA_MAX_ATTEMPTS = 3;
+
+export interface RcaEvidence { source?: string; time?: string; log?: string; findings?: string }
+
+export interface RootCauseAnalysis {
+  uuid: string;
+  testId: number;
+  name: string;
+  testStatus: string;
+  framework: string | null;
+  projectName: string | null;
+  serviceEnabled: boolean | null;
+  /** Normalized lower-case: completed | queued | running | failed | timeout | submission_failed | none. */
+  status: string;
+  attemptCount: number | null;
+  attemptsRemaining: number | null;
+  rcaId: string | null;
+  hypothesis: string | null;
+  evidence: RcaEvidence[];
+  /** The reporter's (non-RCA) AI error classification, when present. */
+  classification: { errorCategory?: string; errorClassification?: string; cause?: string };
+  /** Why a trigger would be refused, when that can be told from the record. */
+  ineligibleReason: string | null;
+}
+
+/** Pure: assemble the analysis view from a raw report + the two RCA endpoints. Unit-tested with live-shaped fixtures. */
+export function buildRootCauseAnalysis(
+  raw: { uuid: string; id: number; name: string; status: string; projectName?: string; keyValuePairs?: Record<string, unknown> },
+  rcaStatus: { attemptCount?: number; lastStatus?: string | null; lastRcaId?: string | null } | null,
+  info: { enabled?: boolean } | null
+): RootCauseAnalysis {
+  const kv = raw.keyValuePairs ?? {};
+  const s = (k: string) => (kv[k] == null || kv[k] === '' ? undefined : String(kv[k]));
+  let evidence: RcaEvidence[] = [];
+  const ev = s('rca.evidence');
+  if (ev) {
+    try { const parsed = JSON.parse(ev); if (Array.isArray(parsed)) evidence = parsed as RcaEvidence[]; } catch { evidence = [{ findings: ev }]; }
+  }
+  const status = (s('rca.status') ?? rcaStatus?.lastStatus ?? 'none').toLowerCase();
+  const attempts = typeof rcaStatus?.attemptCount === 'number' ? rcaStatus.attemptCount : null;
+  const framework = s('test.framework') ?? null;
+  let ineligibleReason: string | null = null;
+  if (status === 'completed') ineligibleReason = 'An analysis already completed for this report (re-running is not allowed).';
+  else if (raw.status === 'Passed' || raw.status === 'Healed') ineligibleReason = 'The test passed — there is nothing to analyse.';
+  else if (framework && !/appium/i.test(framework)) ineligibleReason = `RCA only supports Appium Server (Appium OSS) tests; this report's framework is ${framework}.`;
+  else if (attempts != null && attempts >= RCA_MAX_ATTEMPTS && status !== 'queued' && status !== 'running') {
+    ineligibleReason = `All ${RCA_MAX_ATTEMPTS} attempts are used — a cloud administrator must reset them.`;
+  } else if (info?.enabled === false) ineligibleReason = 'RCA is not enabled on this cloud.';
+  return {
+    uuid: raw.uuid,
+    testId: raw.id,
+    name: raw.name,
+    testStatus: raw.status,
+    framework,
+    projectName: raw.projectName ?? null,
+    serviceEnabled: typeof info?.enabled === 'boolean' ? info.enabled : null,
+    status,
+    attemptCount: attempts,
+    attemptsRemaining: attempts == null ? null : Math.max(0, RCA_MAX_ATTEMPTS - attempts),
+    rcaId: s('rca.id') ?? rcaStatus?.lastRcaId ?? null,
+    hypothesis: s('rca.description') ?? null,
+    evidence,
+    classification: {
+      ...(s('errorCategory') ? { errorCategory: s('errorCategory') } : {}),
+      ...(s('errorClassification') ? { errorClassification: s('errorClassification') } : {}),
+      ...(s('cause') ? { cause: s('cause') } : {}),
+    },
+    ineligibleReason,
+  };
+}
+
+export async function getRootCauseAnalysis(uuid: string): Promise<RootCauseAnalysis> {
+  try {
+    const raw = await apiGet<{ uuid: string; id: number; name: string; status: string; projectName?: string; keyValuePairs?: Record<string, unknown> }>(
+      `/reporter/api/reports/${encodeURIComponent(uuid)}`
+    );
+    // Status and info are best-effort: a report is still worth showing when the RCA service endpoints are unavailable.
+    const [rcaStatus, info] = await Promise.all([
+      apiGet<{ attemptCount?: number; lastStatus?: string | null; lastRcaId?: string | null }>(`/reporter/api/reports/${encodeURIComponent(uuid)}/rca/status`).catch(() => null),
+      apiGet<{ enabled?: boolean }>('/reporter/api/rca/info').catch(() => null),
+    ]);
+    return buildRootCauseAnalysis(raw, rcaStatus, info);
+  } catch (e) {
+    throw new Error(`getRootCauseAnalysis failed: ${(e as Error).message}`);
+  }
+}
+
 export interface ReportShare {
   /** Public link — opens the report (page, data, video) with NO authentication. */
   publicUrl: string;

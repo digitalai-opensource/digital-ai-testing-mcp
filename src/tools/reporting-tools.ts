@@ -5,6 +5,8 @@ import {
   getTestById,
   getTestByUuid,
   shareTestReport,
+  getRootCauseAnalysis,
+  RCA_MAX_ATTEMPTS,
   getTestByReportApiId,
   listTests,
   listTestsSortedDesc,
@@ -136,6 +138,63 @@ export function registerReportingTools(server: McpServer): void {
           `Anyone with this link can view the report, its data and its video without logging in. ` +
           `To disable it early, delete the report (delete_test_reports).`;
         return respond(outputFormat, structured, human);
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ─── get_root_cause_analysis ───────────────────────────────────────────────
+
+  server.tool(
+    'get_root_cause_analysis',
+    'Read the platform\'s AI Root Cause Analysis for a failed test report: the hypothesis, the supporting evidence ' +
+    '(log lines with source, time and findings), the analysis status and attempts used, plus the reporter\'s own error ' +
+    'classification (errorCategory / errorClassification / cause). Read-only — it never starts an analysis. ' +
+    'Analyses are started from the video report in the Reporter UI; they cover Appium Server tests only and allow ' +
+    '3 failed attempts per test. ineligibleReason explains when an analysis cannot be run. ' +
+    'To find analysed reports: list_test_reports with filter rca.status = COMPLETED.',
+    {
+      uuid: z.string().optional().describe('Test execution UUID. Preferred.'),
+      reportUrl: z.string().optional().describe('Report URL (e.g. .../reporter/video-report/<uuid>).'),
+      testId: z.number().int().optional().describe('Numeric test id — unique only within a project; prefer uuid.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ uuid, reportUrl, testId, outputFormat }) => {
+      if ([uuid, reportUrl, testId].filter((v) => v != null && v !== '').length !== 1) {
+        return { content: [{ type: 'text', text: 'Provide exactly one of uuid, reportUrl or testId.' }], isError: true };
+      }
+      try {
+        const ref = parseReportRef(uuid ?? reportUrl ?? testId);
+        if (!ref) return { content: [{ type: 'text', text: `Could not find a report UUID or test id in: ${uuid ?? reportUrl}.` }], isError: true };
+        const resolvedUuid = ref.kind === 'uuid' ? ref.uuid : (await getTestById(ref.testId)).uuid;
+        const a = await getRootCauseAnalysis(resolvedUuid);
+        const lines = [
+          `🔎 Root Cause Analysis — "${a.name}" (${a.testStatus}${a.framework ? `, ${a.framework}` : ''}${a.projectName ? `, project ${a.projectName}` : ''})`,
+          `   Status: ${a.status}` +
+            (a.attemptCount != null ? ` · attempts used ${a.attemptCount}/${RCA_MAX_ATTEMPTS}` : '') +
+            (a.serviceEnabled === false ? ' · RCA disabled on this cloud' : ''),
+        ];
+        if (a.hypothesis) lines.push('', `   Hypothesis: ${a.hypothesis}`);
+        if (a.evidence.length) {
+          lines.push('', '   Evidence:');
+          for (const e of a.evidence) {
+            lines.push(`     • ${[e.source, e.time].filter(Boolean).join(' @ ')}`);
+            if (e.log) lines.push(`       log: ${e.log}`);
+            if (e.findings) lines.push(`       → ${e.findings}`);
+          }
+        }
+        if (!a.hypothesis && a.status !== 'completed') {
+          lines.push('', a.status === 'none'
+            ? '   No analysis has been run for this report.'
+            : `   No result: the last analysis attempt ended "${a.status}".`);
+        }
+        const c = a.classification;
+        if (c.errorCategory || c.errorClassification || c.cause) {
+          lines.push('', `   Reporter classification: ${[c.errorCategory, c.errorClassification].filter(Boolean).join(' / ')}${c.cause ? ` — ${c.cause}` : ''}`);
+        }
+        if (a.ineligibleReason) lines.push('', `   ℹ️  ${a.ineligibleReason}`);
+        return respond(outputFormat, a, lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
