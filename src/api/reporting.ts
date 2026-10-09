@@ -38,6 +38,8 @@ interface RawSingleTest {
   count?: number;        // total sub-tests in a merged report (1 for a plain test)
   failedCount?: number;  // failed sub-tests in a merged report
   keyValuePairs?: Record<string, string | null | undefined>;
+  projectName?: string;     // present on /reporter/api/reports/{uuid}
+  sharingEnabled?: boolean; // public share links allowed for this report's project
   testAttachments?: Array<{
     id: number;
     filePath: string;
@@ -78,6 +80,8 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
     errorCategory: raw.keyValuePairs?.errorCategory ?? undefined,
     errorClassification: raw.keyValuePairs?.errorClassification ?? undefined,
     errorDetail: raw.keyValuePairs?.['error.object'] ?? undefined,
+    ...(raw.projectName ? { projectName: raw.projectName } : {}),
+    ...(raw.sharingEnabled != null ? { sharingEnabled: raw.sharingEnabled } : {}),
     testAttachments: attachments.map((a) => ({
       filePath: a.filenameToOpen ?? a.filePath,
       type: a.type,
@@ -92,9 +96,20 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
   };
 }
 
-// Retrieve a single test report by its numeric test_id.
-// The UUID-based endpoint (/api/reports/{uuid}) does not exist in this API surface;
-// this is the correct path for API-key authenticated single-record retrieval.
+// Retrieve a single test report by its UUID — GET /reporter/api/reports/{uuid} (verified live 2026-10-09 for Cloud
+// Admin, ProjectAdmin and User keys). PREFER this over getTestById: UUIDs are global, while numeric test_ids collide
+// across reporter scopes (see src/utils/report-ref.ts). A report in a project the key cannot see → 403.
+export async function getTestByUuid(uuid: string): Promise<TestReport> {
+  try {
+    const raw = await apiGet<RawSingleTest>(`/reporter/api/reports/${encodeURIComponent(uuid)}`);
+    return normalizeSingleTest(raw);
+  } catch (e) {
+    throw new Error(`getTestByUuid failed: ${(e as Error).message}`);
+  }
+}
+
+// Retrieve a single test report by its numeric test_id. The id is resolved in the CREDENTIAL'S reporter scope — the
+// same number can be a different test in another project. Use getTestByUuid when the UUID is known.
 export async function getTestById(testId: number): Promise<TestReport> {
   try {
     const raw = await apiGet<RawSingleTest>(`/reporter/api/tests/${testId}`);

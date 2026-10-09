@@ -202,7 +202,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | Tool | What it does | Admin Required? |
 |---|---|---|
 | `list_test_reports` | Search, filter, sort, and paginate test reports. See [Test Reporting Schema](../README.md#test-reporting-schema) for supported filters. | Any |
-| `get_test_report` | Full test execution report by numeric test ID or reporter URL | Any |
+| `get_test_report` | Full test execution report by UUID (preferred), numeric test ID, or report URL | Any |
 | `get_test_by_report_id` | Report by `report_api_id` (returned when starting a session) | Any |
 | `find_latest_test_for_name` | Most recent run record for a test by name | Any |
 | `get_grouped_test_reports` | Pass/fail counts grouped by field (use `groupBy`, e.g. `["device.os"]`). Supports `pivotBy` for per-status columns. | Any |
@@ -214,7 +214,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `get_failure_rate_by_app_version` | Pass/fail breakdown grouped by app version | Any |
 | `get_distinct_test_key_values` | Discover all distinct values recorded for a report metadata key | Any |
 | `list_active_test_executions` | Currently-running test executions (Incomplete status with null duration) | Any |
-| `list_test_attachments` | Attachment metadata for a test by numeric ID | Any |
+| `list_test_attachments` | Attachment metadata for a test by UUID or numeric ID | Any |
 | `download_test_attachments` | Download test attachments as a ZIP file (writes to the MCP server's filesystem) | Any |
 | `get_test_attachments_download_command` | Generate a curl/PowerShell command to download the attachment ZIP (session video .mp4 + logs) to the user's local machine — use when the server is Docker/remote | Any |
 | `get_test_log` | Retrieve log content (Appium/device/ws) from a test directly as text — no file download; ideal for diagnosing failures | Any |
