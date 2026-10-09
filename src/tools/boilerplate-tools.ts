@@ -604,9 +604,10 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
         '  test/specs/<TestFile>.js\n\n' +
         'Then run:\n' +
         '  npm install && npm run wdio\n\n' +
-        'IMPORTANT: Do NOT run npm init wdio — it installs wdio v9 which is rejected by\n' +
-        '  the Digital.ai Appium Grid ("Cant run Appium Grid with Appium client 8+").\n' +
-        '  The package.json above pins wdio to v7.40.0, which is the last compatible version.'
+        'IMPORTANT: Do NOT run npm init wdio — it installs wdio v9, which this project\'s Appium Grid rejects\n' +
+        '  ("Cant run Appium Grid with Appium client 8+"). The Grid requires the legacy desiredCapabilities in the\n' +
+        '  session request; wdio v8+ sends W3C capabilities only. The package.json above pins wdio v7.40.0, the last\n' +
+        '  release that still sends them (verified live: v9 refused, v7.40 runs). Appium Server projects use wdio v9.'
       );
     case 'python':
       return isAppiumOss
