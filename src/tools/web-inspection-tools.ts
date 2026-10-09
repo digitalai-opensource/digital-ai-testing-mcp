@@ -392,7 +392,7 @@ export function registerWebInspectionTools(server: McpServer): void {
             isError: true,
           };
         }
-        const elements = await findElements(args.handle, args.strategy, args.selector);
+        const elements = await findElements(args.handle, args.strategy, args.selector, { maxEnriched: 20 });
 
         if (elements.length === 0) {
           return {
@@ -409,10 +409,12 @@ export function registerWebInspectionTools(server: McpServer): void {
           `Found ${elements.length} element${elements.length !== 1 ? 's' : ''} (${args.strategy} = "${args.selector}"):`,
         ];
         for (const el of elements) {
-          const attrs = Object.entries(el)
-            .filter(([k]) => k !== 'elementId' && k !== 'ELEMENT')
-            .map(([k, v]) => `${k}="${v}"`)
-            .join(' ');
+          const attrs = el.enriched === false
+            ? '(attributes not fetched — beyond the first 20 matches; narrow the selector to see them)'
+            : Object.entries(el)
+              .filter(([k]) => k !== 'elementId' && k !== 'ELEMENT' && k !== 'enriched')
+              .map(([k, v]) => `${k}="${v}"`)
+              .join(' ');
           lines.push(`  ID: ${el.elementId}  ${attrs}`);
         }
         lines.push(``, `Pass the element ID to tap_element, type_into_element, or clear_element.`);

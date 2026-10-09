@@ -52,7 +52,9 @@ import { readFileSync, writeFileSync } from 'fs';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
 
 // '-ios predicate string' is XCUITest's NSPredicate locator (e.g. "type == 'XCUIElementTypeButton' AND label == 'Login'")
-// — faster and less brittle than xpath on iOS, and the form the Mobile Studio iOS Test Recorder emits. iOS only.
+// — faster and less brittle than xpath on iOS, and the form the Mobile Studio iOS Test Recorder emits. iOS on Appium
+// Server only: the Appium Grid rejects it ("Locator Strategy '-ios predicate string' is not supported for this
+// session", verified live 2026-10-09 on an iPhone 13 Pro Max) — use xpath or accessibility id there.
 const LOCATOR_STRATEGIES = ['xpath', 'id', 'accessibility id', 'class name', '-ios predicate string'] as const;
 type LocatorStrategy = (typeof LOCATOR_STRATEGIES)[number];
 
@@ -234,7 +236,7 @@ function formatElementTable(
     if (interesting.length === 0) {
       lines.push('  (no elements with name, label, or value found on this screen)');
     }
-    lines.push('', "Locate iOS elements with: strategy 'accessibility id' (matches name), '-ios predicate string' like \"label == '...'\", or xpath like //*[@label='...'] or //XCUIElementTypeButton.");
+    lines.push('', "Locate iOS elements with: strategy 'accessibility id' (matches name), xpath like //*[@label='...'] or //XCUIElementTypeButton, or on Appium Server projects '-ios predicate string' like \"label == '...'\".");
     return lines.join('\n');
   }
 
@@ -670,8 +672,10 @@ export function registerInspectionTools(server: McpServer): void {
     'Find elements on the current screen using a locator strategy and return their IDs and attributes. ' +
     'The returned elementId values are used with tap_element, type_into_element, and clear_element. ' +
     'Strategies: "xpath" (most flexible), "id" (resource-id, fastest), "accessibility id" (content-desc), ' +
-    '"class name" (by widget type, often returns many), "-ios predicate string" (iOS only — NSPredicate such as ' +
-    '"type == \'XCUIElementTypeButton\' AND label == \'Login\'"; faster and steadier than xpath on iOS).',
+    '"class name" (by widget type, often returns many), "-ios predicate string" (iOS on Appium Server projects only — ' +
+    'NSPredicate such as "type == \'XCUIElementTypeButton\' AND label == \'Login\'"; faster and steadier than xpath; ' +
+    'the Appium Grid rejects it, so use xpath or accessibility id there). Attributes are fetched for the first ' +
+    'maxResults matches (default 20); the rest are listed by elementId — narrow the selector rather than raising it.',
     {
       handle: z
         .string()
@@ -686,10 +690,20 @@ export function registerInspectionTools(server: McpServer): void {
       selector: z
         .string()
         .describe("The locator value. Examples: 'com.example:id/login', '//android.widget.Button[@text=\"Submit\"]'."),
+      maxResults: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(
+          'Fetch attributes for at most this many matches (default 20). Every match is still returned by elementId; ' +
+          'each detailed element costs ~8 requests, so prefer a narrower selector over a large value.'
+        ),
     },
     async (args) => {
       try {
-        const elements = await findElements(args.handle, args.strategy, args.selector);
+        const elements = await findElements(args.handle, args.strategy, args.selector, { maxEnriched: args.maxResults ?? 20 });
 
         if (elements.length === 0) {
           return {
@@ -706,8 +720,10 @@ export function registerInspectionTools(server: McpServer): void {
           `Found ${elements.length} element${elements.length !== 1 ? 's' : ''} matching ${args.strategy}: "${args.selector}"\n`,
         ];
 
-        for (let i = 0; i < elements.length; i++) {
-          const e = elements[i];
+        const detailed = elements.filter((e) => e.enriched !== false);
+        const idsOnly = elements.length - detailed.length;
+        for (let i = 0; i < detailed.length; i++) {
+          const e = detailed[i];
           lines.push(`Element ${i + 1}:`);
           lines.push(`  elementId:    ${e.elementId}`);
           if (e.className) lines.push(`  type:         ${shortClass(e.className)}`);
@@ -723,6 +739,17 @@ export function registerInspectionTools(server: McpServer): void {
           lines.push('');
         }
 
+        if (idsOnly > 0) {
+          lines.push(
+            `Attributes shown for ${detailed.length} of ${elements.length} (cap ${args.maxResults ?? 20} or the time budget). ` +
+              `Remaining elementIds, in order (still usable with tap_element etc.):`,
+            ...elements.slice(detailed.length).map((e, i) => `  ${detailed.length + i + 1}. ${e.elementId}`),
+            '',
+            'Narrow the selector to see their attributes (e.g. a predicate/xpath on label or text), or raise maxResults.',
+            ''
+          );
+        }
+
         if (elements.length === 1) {
           const e = elements[0];
           lines.push(
@@ -735,7 +762,15 @@ export function registerInspectionTools(server: McpServer): void {
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (e) {
         return {
-          content: [{ type: 'text' as const, text: `Error finding elements: ${(e as Error).message}` }],
+          content: [{
+            type: 'text' as const,
+            text:
+              `Error finding elements: ${(e as Error).message}` +
+              (args.strategy === '-ios predicate string' && /not supported/i.test((e as Error).message)
+                ? '\n\nThis session is on the Appium Grid, which does not support iOS predicates. Use xpath (e.g. ' +
+                  '//XCUIElementTypeButton[@label=\'Login\']) or accessibility id instead.'
+                : ''),
+          }],
           isError: true,
         };
       }

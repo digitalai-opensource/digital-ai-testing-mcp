@@ -292,12 +292,28 @@ export interface WdElement {
   name: string | null;
   label: string | null;
   value: string | null;
+  /** false when the match is beyond the attribute cap/time budget — only elementId is set. */
+  enriched?: boolean;
 }
 
+export interface FindElementsOptions {
+  /** Fetch attributes for at most this many matches (default 20); the rest come back as IDs only. */
+  maxEnriched?: number;
+  /** Stop fetching attributes after this long (default 35 s) so the call stays under MCP client timeouts (~60 s). */
+  budgetMs?: number;
+}
+
+/**
+ * Attribute enrichment costs 7–8 requests per element. Done one element at a time with no cap, 48 iOS home-screen
+ * icons took 80–160 s (measured live 2026-10-09) — past the ~60 s MCP client timeout. So: a cap, a time budget, and
+ * bounded parallelism (iOS kept low — hammering WebDriverAgent has crashed sessions before). Elements beyond the cap
+ * or budget are still returned, with `enriched: false` and null attributes.
+ */
 export async function findElements(
   handle: string,
   using: string,
-  value: string
+  value: string,
+  opts: FindElementsOptions = {}
 ): Promise<WdElement[]> {
   const session = requireSession(handle);
   const client = makeClient();
@@ -315,13 +331,16 @@ export async function findElements(
   }
 
   const rawList: Record<string, string>[] = res.data.value ?? [];
-  const elements: WdElement[] = [];
+  const ids = rawList
+    .map((raw) => raw['ELEMENT'] ?? raw['element-6066-11e4-a52e-4f735466cecf'])
+    .filter((id): id is string => Boolean(id));
 
-  for (const raw of rawList) {
-    const elementId =
-      raw['ELEMENT'] ?? raw['element-6066-11e4-a52e-4f735466cecf'];
-    if (!elementId) continue;
+  const bare = (elementId: string): WdElement => ({
+    elementId, className: null, resourceId: null, contentDesc: null, text: null, bounds: null,
+    clickable: null, enabled: null, name: null, label: null, value: null, enriched: false,
+  });
 
+  const enrich = async (elementId: string): Promise<WdElement> => {
     if (session.platform === 'ios') {
       // iOS attribute model: name/label/value/type. XCUITest rejects Android
       // names (class, text, bounds) outright; the Grid exposes `class` instead
@@ -345,7 +364,7 @@ export async function findElements(
         // Non-fatal — element is still usable without geometry
       }
 
-      elements.push({
+      return {
         elementId,
         className: type ?? cls,
         resourceId: null,
@@ -357,8 +376,8 @@ export async function findElements(
         name,
         label,
         value: val,
-      });
-      continue;
+        enriched: true,
+      };
     }
 
     // Android: Appium 1.x JWP uses XML-matching hyphenated attribute names
@@ -373,7 +392,7 @@ export async function findElements(
         getAttr(client, sid, elementId, 'enabled'),
       ]).then((rs) => rs.map((r) => (r.status === 'fulfilled' ? r.value : null)));
 
-    elements.push({
+    return {
       elementId,
       className,
       resourceId,
@@ -385,9 +404,22 @@ export async function findElements(
       name: null,
       label: null,
       value: null,
-    });
-  }
+      enriched: true,
+    };
+  };
 
+  const maxEnriched = Math.max(0, opts.maxEnriched ?? 20);
+  const deadline = Date.now() + (opts.budgetMs ?? 35_000);
+  const concurrency = session.platform === 'ios' ? 2 : 4;
+  const elements = ids.map(bare);
+  let next = 0;
+  const worker = async () => {
+    while (next < Math.min(ids.length, maxEnriched) && Date.now() < deadline) {
+      const i = next++;
+      elements[i] = await enrich(ids[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
   return elements;
 }
 
@@ -1212,7 +1244,7 @@ export async function scrollToElement(
   let swipesUsed = 0;
   let lastSource = '';
   for (let i = 0; i <= maxSwipes; i++) {
-    const found = await findElements(handle, using, value);
+    const found = await findElements(handle, using, value, { maxEnriched: 1 });
     if (found.length > 0) return { found: true, element: found[0], swipesUsed, reachedEnd: false };
     if (i === maxSwipes) break;
 
