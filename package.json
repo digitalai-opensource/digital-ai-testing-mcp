@@ -44,6 +44,7 @@
     "test:reporting": "vitest run tests/reporting.test.ts",
     "test:video": "vitest run tests/test-video.test.ts",
     "test:maestro": "vitest run tests/maestro-flow.test.ts",
+    "test:find-elements": "vitest run tests/find-elements.test.ts",
     "test:test-views": "vitest run tests/test-views.test.ts",
     "test:transactions": "vitest run tests/transactions.test.ts",
     "test:analytics": "vitest run tests/analytics.test.ts",
