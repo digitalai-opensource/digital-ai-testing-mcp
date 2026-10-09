@@ -2,6 +2,7 @@ import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import { listTests, getGroupedTests, getDistinctKeyValues, bucketFailures } from './helpers/test-client.js';
 import type { TestReport } from '../src/types/digital-ai.js';
+import { TEST_STATUSES } from '../src/utils/test-status.js';
 
 function fakeReport(id: number, name: string, fields: Partial<TestReport>): TestReport {
   return { test_id: id, name, ...fields } as unknown as TestReport;
@@ -19,7 +20,8 @@ describe('Reporting API', () => {
     for (const r of result.data.slice(0, 5)) {
       assert.ok(typeof r.uuid === 'string', 'uuid should be a string');
       assert.ok(typeof r.name === 'string', 'name should be a string');
-      assert.ok(['Passed', 'Failed', 'Incomplete'].includes(r.status), `Unexpected status: ${r.status}`);
+      // Six statuses, not three — Error is common since 26.9 (crash/infrastructure aborts). See src/utils/test-status.ts.
+      assert.ok((TEST_STATUSES as readonly string[]).includes(r.status), `Unexpected status: ${r.status}`);
       // duration is `number | null` (see TestReport): invalid/errored/in-progress reports may have none,
       // but a finished Passed/Failed run must carry one.
       assert.ok(r.duration == null || typeof r.duration === 'number', `duration should be a number or null/missing, got ${typeof r.duration}`);

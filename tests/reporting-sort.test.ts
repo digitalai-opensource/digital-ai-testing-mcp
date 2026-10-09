@@ -150,6 +150,16 @@ describe('listTestsSortedDesc', () => {
     // not simply platform order's first page
     assert.notDeepEqual(res.data.map((r) => r.test_id), platformOrder.slice(0, 10).map((r) => r.test_id));
   });
+
+  it('sort refused + scan capped: `count` is the SERVER total when asked for, never the capped scan length', async () => {
+    // Regression: get_project_test_summary printed exactly "failed: 5000" (the scan cap) for 29k real failures.
+    mode = 'refuse-sort';
+    const asked = await listTestsSortedDesc({ limit: 10, page: 1, returnTotalCount: true }, undefined, undefined, 500);
+    assert.equal(asked.scanCapped, true);
+    assert.equal(asked.count, N);
+    const notAsked = await listTestsSortedDesc({ limit: 10, page: 1 }, undefined, undefined, 500);
+    assert.equal(notAsked.count, 500, 'without returnTotalCount, count stays the scanned length');
+  });
 });
 
 describe('early-exit scans never lose data when sort is refused', () => {

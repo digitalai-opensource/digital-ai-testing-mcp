@@ -16,6 +16,7 @@ import {
   formatTestViewSummary,
 } from '../utils/response-formatter.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { countsFromPivotRow, passRate, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
 
 export function registerTestViewTools(server: McpServer): void {
   // ─── list_test_views ───────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ export function registerTestViewTools(server: McpServer): void {
 
   server.tool(
     'get_test_view_summary',
-    'Get aggregated pass/fail/incomplete/skipped counts for a test view. Optionally filter by key-value pairs to narrow the scope (e.g. only Android results).',
+    'Get aggregated status counts for a test view — Passed, Failed, Error, Incomplete, Skipped, Healed — with the view\'s own saved filter applied. Optionally filter further by key-value pairs (e.g. only Android results). Pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error).',
     {
       id: z.number().int().describe('The numeric test view group ID.'),
       filter: z
@@ -170,14 +171,13 @@ export function registerTestViewTools(server: McpServer): void {
     async ({ id, filter, outputFormat }) => {
       try {
         const summary = await getTestViewSummary(id, filter);
-        const total = summary._count_;
+        const counts = countsFromPivotRow(summary as unknown as Record<string, unknown>);
+        const unknown = unknownStatusCount(counts);
         const structured = {
-          total,
-          passed: summary.passedCount,
-          failed: summary.failedCount,
-          incomplete: summary.incompleteCount,
-          skipped: summary.skippedCount,
-          passRate: total > 0 ? parseFloat(((summary.passedCount / total) * 100).toFixed(1)) : 0,
+          ...counts,
+          ...(unknown > 0 ? { otherStatus: unknown } : {}),
+          passRate: passRate(counts),
+          passRateBasis: PASS_RATE_BASIS,
         };
         return respond(outputFormat, structured, formatTestViewSummary(summary));
       } catch (e) {

@@ -389,7 +389,8 @@ export interface TestReport {
   uuid: string;
   test_id: number;
   name: string;
-  status: 'Passed' | 'Failed' | 'Incomplete';
+  /** Six statuses (see src/utils/test-status.ts) — Error and Healed were missing here before 2026-10-09. */
+  status: 'Passed' | 'Failed' | 'Error' | 'Incomplete' | 'Skipped' | 'Healed';
   status_code: number;
   success: boolean;
   start_time: string;
@@ -495,6 +496,8 @@ export interface TestViewSummary {
   failedCount: number;
   incompleteCount: number;
   skippedCount: number;
+  errorCount?: number;
+  healedCount?: number;
   _count_: number;
 }
 

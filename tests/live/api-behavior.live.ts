@@ -1,6 +1,8 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { resolveAgentSource, loadAgentBytes, sha256Hex } from '../../src/api/test-orchestrator.js';
+import { getGroupedTests } from '../../src/api/reporting.js';
+import { getAllTestViews, getTestViewSummary } from '../../src/api/test-views.js';
 import {
   getTestById,
   listTests,
@@ -82,6 +84,30 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     assert.equal(res.sortApplied, true, 'platform refused sort for this credential — listTests fell back to unsorted');
     const ts = res.data.map((r) => r.start_time);
     assert.ok(ts.every((t, i) => i === 0 || ts[i - 1] >= t), 'results are not newest-first');
+  });
+
+  // FINDING 7 (2026-10-09): the reporter has SIX statuses. A grouped call with pivotBy ["status"] and NO groupBy
+  // returns one aggregate row carrying all of them — get_project_test_summary relies on that. If a NEW column appears,
+  // add it to src/utils/test-status.ts (countsFromPivotRow already keeps it in `total` via _count_).
+  it('grouped pivotBy status returns one row with all six status columns', async () => {
+    const res = await getGroupedTests({ pivotBy: ['status'] }) as { data?: Array<Record<string, unknown>> };
+    const row = res.data?.[0];
+    assert.ok(row, 'no aggregate row — get_project_test_summary would report zeros');
+    for (const k of ['passedCount', 'failedCount', 'errorCount', 'incompleteCount', 'skippedCount', 'healedCount', '_count_']) {
+      assert.ok(k in row!, `pivot row missing ${k}`);
+    }
+    const known = ['passedCount', 'failedCount', 'errorCount', 'incompleteCount', 'skippedCount', 'healedCount']
+      .reduce((n, k) => n + Number(row![k]), 0);
+    assert.equal(known, Number(row!['_count_']), 'a status column exists that test-status.ts does not know');
+  });
+
+  // FINDING 8 (2026-10-09): the test-view summary path is /{id}/summary. `{id}:summary` is parsed as the id → 400.
+  it('test view summary is served at /testView/{id}/summary', async () => {
+    const views = await getAllTestViews();
+    if (views.length === 0) return; // nothing to probe on this tenant
+    const s = await getTestViewSummary(views[0].id);
+    assert.equal(typeof s._count_, 'number');
+    assert.equal(typeof s.errorCount, 'number', 'view summary stopped returning errorCount');
   });
 
   it('applications filter is honored server-side (fake bundle returns none)', async () => {
