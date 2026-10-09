@@ -944,7 +944,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         }
         automotive = isAppiumOss
           ? { resolution: automotiveProjection, applied: true, note: `digitalai:automotiveProjection=${automotiveProjection} set; the test captures the ${platform === 'ios' ? 'CarPlay' : 'Android Auto'} head unit after its steps. Use automotive_control in an inspection session to explore the head unit and pick tap coordinates.` }
-          : { resolution: automotiveProjection, applied: false, note: detectedAppiumOss === undefined ? 'the project mode could not be determined, and projection is only supported here for Appium Server projects.' : 'this project runs on Appium Grid; projection is only supported here for Appium Server projects.' };
+          : { resolution: automotiveProjection, applied: false, note: detectedAppiumOss === undefined ? 'the project mode could not be determined, and projection is only supported here for Appium Server projects.' : 'this project runs on Appium Grid, which does not support projection commands (verified: the Grid execute layer runs digitalai:automotive.* as JavaScript and every command fails).' };
       }
 
       // Resolve app capabilities from appId if provided.

@@ -665,7 +665,15 @@ export async function launchApp(
         errors.push(`${desc}: ${detail}`);
       }
     }
-    throw new Error(`All launch mechanisms failed:\n  ${errors.join('\n  ')}`);
+    // On Appium Grid an app that is not installed on the allocated device fails with an opaque "javascript error …
+    // status='false'" (verified live 2026-10-09: the same launch succeeded once the app was installed via the session's
+    // app capability) — so name the most likely cause instead of leaving the caller with the raw message.
+    throw new Error(
+      `All launch mechanisms failed:\n  ${errors.join('\n  ')}\n` +
+      'Most common cause: the app is not installed on THIS device. Install it first (install_application on this device ' +
+      'before the session, or start the session with app="cloud:<package>/<activity>"), and pass the exact activity from ' +
+      'get_application_info.mainActivity.'
+    );
   };
 
   if (session.platform === 'ios') {
@@ -881,6 +889,14 @@ function automotiveError(e: unknown, handle: string): string {
       `automotiveProjection instead (verified: a Galaxy S10 / Android 12 fails this command but projects fine with the ` +
       `capability; Pixel 7/8 support both). An Android Automotive OS emulator is not a projection target at all — drive it ` +
       `with the normal inspection tools.`
+    );
+  }
+  if (/hybridRunJavascript/i.test(detail)) {
+    // Verified live 2026-10-09 on an Appium Grid project: the Grid execute layer treats digitalai:automotive.* as page
+    // JavaScript, so every automotive command fails — with or without the automotiveProjection capability.
+    return (
+      'Appium Grid does not support Android Auto / CarPlay projection commands (the Grid execute layer runs them as ' +
+      'JavaScript). Use a project on Appium Server — projection is verified there.'
     );
   }
   if (/automotive|projection|DHU|cluster|GetDump/i.test(detail)) return detail;

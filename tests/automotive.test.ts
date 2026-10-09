@@ -48,6 +48,11 @@ beforeAll(async () => {
         const message = script === 'digitalai:automotive.start' ? 'Failed to execute start("LOW")' : 'Automotive projection is not specified';
         return void res.end(JSON.stringify({ value: { error: 'unknown error', message } }));
       }
+      // Live Appium Grid response: the execute layer runs the command as page JavaScript.
+      if ((req.url ?? '').includes('sid-GRIDJS')) {
+        res.statusCode = 500;
+        return void res.end(JSON.stringify({ value: { error: 'unknown error', message: "An unknown server-side error occurred. status='false'. Failed to complete internal method: 'hybridRunJavascript args: [, 0, result = null;" } }));
+      }
       const value = script === 'digitalai:automotive.getScreenshot' ? PNG : script === 'digitalai:automotive.getDump' ? '<dump/>' : null;
       res.end(JSON.stringify({ value }));
     });
@@ -134,6 +139,14 @@ describe('automotive_control — platform refusals are explained, not misread as
     assert.equal(r.res.isError, true);
     assert.match(r.text, /not supported on this device/);
     assert.match(r.text, /automotiveProjection/);
+  });
+
+  it('Appium Grid (commands run as JavaScript) is explained as unsupported, not as a dead session', async () => {
+    registerSession(session('GRIDJS', { sessionFormat: 'jwp' }));
+    const r = await call('automotive_control', { handle: 'GRIDJS', action: 'screenshot' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /Appium Grid does not support/);
+    assert.doesNotMatch(r.text, /terminated|no longer usable|hybridRunJavascript/);
   });
 
   it('a 404 "projection is not specified" keeps the platform message and does NOT claim the session died', async () => {
