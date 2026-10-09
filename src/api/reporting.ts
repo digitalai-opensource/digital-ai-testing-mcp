@@ -80,6 +80,8 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
     errorCategory: raw.keyValuePairs?.errorCategory ?? undefined,
     errorClassification: raw.keyValuePairs?.errorClassification ?? undefined,
     errorDetail: raw.keyValuePairs?.['error.object'] ?? undefined,
+    // Which pool the mobile automation test actually ran on (platform 26.7+): "shared" or "dedicated".
+    ...(raw.keyValuePairs?.['device.pool.actual'] ? { devicePool: String(raw.keyValuePairs['device.pool.actual']) } : {}),
     ...(raw.projectName ? { projectName: raw.projectName } : {}),
     ...(raw.sharingEnabled != null ? { sharingEnabled: raw.sharingEnabled } : {}),
     testAttachments: attachments.map((a) => ({

@@ -462,6 +462,7 @@ export function registerReportingTools(server: McpServer): void {
     'Use groupBy to specify which fields to group on — e.g. ["device.os"] returns one row per OS. ' +
     'Use pivotBy to add per-status columns (passedCount, failedCount, etc.) instead of separate rows. ' +
     'Useful for dashboards: pass/fail by OS, by test name, by environment, etc. ' +
+    'Shared vs dedicated devices: groupBy ["device.pool.actual"] with pivotBy ["status"] (platform 26.7+; null = not recorded, e.g. browser tests or older runs). ' +
     'Note: null OS values represent browser/Selenium sessions. ' +
     'When groupBy includes "device.os", the MCP normalises case variants ("ANDROID"/"IOS") to ' +
     '"Android"/"iOS" and merges their counts, so you always receive at most 3 rows: Android, iOS, null.',
@@ -975,12 +976,19 @@ export function registerReportingTools(server: McpServer): void {
             { limit: 200, page: 1, returnTotalCount: false, filter: [{ property: 'status', operator: '=', value: status }] },
             projectId, projectName
           );
-        const [grouped, failedResult, errorResult] = await Promise.all([
+        const [grouped, failedResult, errorResult, byPool] = await Promise.all([
           getGroupedTests({ pivotBy: ['status'] }, projectId, projectName) as Promise<{ data?: Array<Record<string, unknown>> }>,
           recent('Failed'),
           recent('Error'),
+          // device.pool.actual (platform 26.7+): which pool each mobile automation test actually ran on. Shared-device
+          // flakiness is a common question; one grouped call answers it. Best-effort — the summary stands without it.
+          (getGroupedTests({ groupBy: ['device.pool.actual'], pivotBy: ['status'] }, projectId, projectName) as Promise<{ data?: Array<Record<string, unknown>> }>).catch(() => null),
         ]);
         const counts = countsFromPivotRow(grouped?.data?.[0]);
+        const devicePools = (byPool?.data ?? [])
+          .filter((r) => r['device.pool.actual'] != null) // null = not recorded (non-mobile tests, or before 26.7)
+          .map((r) => { const c = countsFromPivotRow(r); return { pool: String(r['device.pool.actual']), total: c.total, failed: c.failed, error: c.error, passRate: passRate(c) }; })
+          .sort((a, b) => b.total - a.total);
 
         // Apply the date window client-side on the most recent 200 of each
         // (start_time filter via API key triggers CSRF — filter locally instead).
@@ -1015,9 +1023,13 @@ export function registerReportingTools(server: McpServer): void {
           topFailures,
           topErrors,
           window: windowLabel,
+          ...(devicePools.length ? { byDevicePool: devicePools } : {}),
         };
 
-        return respond(outputFormat, structured, formatProjectTestSummary(counts, windowLabel, topFailures, topErrors));
+        const poolLines = devicePools.length
+          ? ['', '   By device pool (mobile automation, platform 26.7+):', ...devicePools.map((p) => `     ${p.pool.padEnd(10)} ${String(p.total).padStart(8)} tests · pass rate ${p.passRate == null ? 'n/a' : `${p.passRate}%`} · ${p.failed} failed · ${p.error} error`)]
+          : [];
+        return respond(outputFormat, structured, formatProjectTestSummary(counts, windowLabel, topFailures, topErrors) + poolLines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
