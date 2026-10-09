@@ -94,6 +94,31 @@ export function localPlatformParamNotice(): string {
   );
 }
 
+/**
+ * Description tail for a tool that WRITES a file into the user's project under local, but can only hand back a
+ * command to run under Docker/remote (where the server cannot reach the user's filesystem).
+ */
+export function serverFsInstallNotice(): string {
+  if (isLocal()) {
+    return 'This server runs locally via the npm package, so the file is written directly into projectDir on your own machine.';
+  }
+  return (
+    'WARNING: this server runs in Docker/remote and cannot write to your machine — it returns a command (bash and ' +
+    'PowerShell) that downloads and verifies the file; run it from the project directory.'
+  );
+}
+
+/** Use as the DESCRIBE() text of a projectDir param on such a tool. */
+export function serverFsProjectDirParam(): string {
+  if (isLocal()) {
+    return (
+      'Absolute path on your machine of the generated project root — the directory holding build.gradle / pom.xml ' +
+      '(for android-gradle-submodule, the e2e-tests directory, NOT the Android root). Must already exist. Required.'
+    );
+  }
+  return 'Ignored under Docker/remote — the server cannot reach your filesystem; run the returned command from the project directory instead.';
+}
+
 /** One-line remedy for "tools are missing / build looks stale" diagnostics. */
 export function staleBuildRemedy(): string {
   if (isLocal()) {

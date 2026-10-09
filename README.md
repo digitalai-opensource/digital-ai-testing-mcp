@@ -622,6 +622,20 @@ The server supports two test-creation modes for both mobile and web, and the age
 
 Generates a complete, pre-configured Appium test script. The Digital.ai server URL and access key are pre-filled from the active connection profile — switch profiles with `switch_environment` first to generate scripts carrying a project-scoped key instead of your admin key.
 
+#### Test Orchestrator (default for Java on Appium Server)
+
+For **Java (JUnit 5 / TestNG) on an Appium Server project**, the generated project is wired for the **Digital.ai Test Orchestrator** (the Smart Agent): failed tests are retried automatically, each attempt is reported separately, the real pass/fail is synced to Reporter, and runs are grouped by Build ID — with no change to the test code. Appium Grid, Python and NodeJS projects get the classic boilerplate. Pass `orchestration: "off"` to get the classic boilerplate for Java too.
+
+| Step | What happens |
+|---|---|
+| 1. `get_test_boilerplate` | Adds conditional agent wiring to `build.gradle` / `pom.xml`, an `orchestrator/config.template.yml` (retries default to 2; 0 for placeholder or performance tests), plus `orchestrator/.gitignore` and `lib/.gitignore` so the rendered key and the agent JAR can never be committed. No root `.gitignore` is written (it would overwrite yours). |
+| 2. `install_test_orchestrator_agent(projectDir)` | Downloads the agent on demand, verifies its SHA-256 and places it at `lib/smart-agent.jar`. Under Docker it returns a download command (bash and PowerShell) that does the same and deletes the file on a checksum mismatch. If the download fails, the response gives the URL, the checksum and the target path for a manual install. |
+| 3. Set `DIGITAL_AI_ACCESS_KEY` and run `gradle test` / `mvn test` | The agent attaches only when the JAR is present **and** the key is set; the key is rendered into the git-ignored `orchestrator/rendered/` at build time, never into a tracked file, and Java 17 is required only in that case. Otherwise the project builds and runs exactly like the classic boilerplate (Gradle prints why the agent was not attached). Set `BUILD_ID` to group a CI build's results. |
+
+Requirements: a **Java 17 or 21** JDK with a current truststore, JUnit 5 or TestNG 7+, Appium java-client 8–10. See [Limitations](docs/limitations.md#17-test-orchestrator-known-issues) for known issues.
+
+The agent JAR is **not** shipped with this server. By default it is downloaded from the [Digital.ai Test Orchestrator sample repository](https://github.com/raheekhandigitalai/Digital.ai-Testing-Test-Orchestrator), pinned to a fixed commit and verified by SHA-256 (see `resources/test-orchestrator/agent.json`). To use a different location — for example an internal mirror, or a permanent production URL once one exists — set `TEST_ORCHESTRATOR_JAR_URL` **and** `TEST_ORCHESTRATOR_JAR_SHA256` (both required; a URL without a checksum is refused).
+
 | Parameter | Values | Default |
 |---|---|---|
 | `platform` | `android` \| `ios` | _(required)_ |

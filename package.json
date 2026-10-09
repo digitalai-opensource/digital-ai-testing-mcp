@@ -9,7 +9,8 @@
   },
   "files": [
     "dist",
-    "resources/boilerplate"
+    "resources/boilerplate",
+    "resources/test-orchestrator"
   ],
   "engines": {
     "node": ">=22"
@@ -47,7 +48,12 @@
     "test:infrastructure": "vitest run tests/infrastructure.test.ts",
     "test:performance": "vitest run tests/performance.test.ts",
     "test:tools": "vitest run tests/tools.test.ts",
-    "test:usage-reports": "vitest run tests/usage-reports.test.ts"
+    "test:usage-reports": "vitest run tests/usage-reports.test.ts",
+    "test:access-level": "vitest run tests/access-level.test.ts",
+    "test:reporting-sort": "vitest run tests/reporting-sort.test.ts",
+    "test:boilerplate-templates": "vitest run tests/boilerplate-templates.test.ts",
+    "test:test-orchestrator": "vitest run tests/test-orchestrator.test.ts",
+    "test:boilerplate-orchestration": "vitest run tests/boilerplate-orchestration.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
