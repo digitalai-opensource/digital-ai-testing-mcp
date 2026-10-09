@@ -290,7 +290,8 @@ export function registerHealthTools(server: McpServer): void {
   server.tool(
     'get_reporter_project_storage',
     'Show disk storage usage per project in the reporter. Useful for identifying which projects are consuming the most test artifact storage. ' +
-    'Returns current usage (MB), quota (MB), usage percentage, and artifact counts. Cloud Admin only.',
+    'Returns current usage (MB), quota (MB), usage percentage, and artifact counts. ' +
+    'Cloud Admin sees every project; a Project Admin sees only its own project; a Project User gets an empty list (verified live 2026-10-09).',
     {
       sortBy: z
         .enum(['currentDiskStorageInMB', 'usagePct', 'dataItemsCount', 'name'])

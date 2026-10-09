@@ -24,6 +24,7 @@ import { registerTestRunTools } from '../src/tools/test-run-tools.js';
 import { registerReportingTools } from '../src/tools/reporting-tools.js';
 import { registerRepositoryTools } from '../src/tools/repository-tools.js';
 import { registerTransactionTools } from '../src/tools/transaction-tools.js';
+import { registerBoilerplateTools } from '../src/tools/boilerplate-tools.js';
 import type { InspectionSession } from '../src/types/digital-ai.js';
 
 describe('pure helpers', () => {
@@ -50,6 +51,17 @@ const TXS = [
   { id: 1, name: 'Login', deviceOs: 'IOS', startTime: '2026-09-17T00:00:00Z', duration: 1000, speedIndex: -1 },
   { id: 2, name: 'Login', deviceOs: 'iOS', startTime: '2024-11-05T00:00:00Z', duration: 1000, speedIndex: 900 },
   { id: 3, name: 'Login', deviceOs: 'ANDROID', startTime: '2026-09-01T00:00:00Z', duration: 1000, speedIndex: 800 },
+  { id: 4, name: 'Checkout', deviceOs: 'Android', startTime: '2026-09-02T00:00:00Z', duration: 1000, speedIndex: 0 },
+  { id: 5, name: 'NoSI', deviceOs: 'Android', startTime: '2026-09-03T00:00:00Z', duration: 1000, speedIndex: -1 },
+];
+const GROUPED = [
+  { 'device.os': 'ANDROID', status: 'Error', _count_: 22 }, { 'device.os': 'Android', status: 'Error', _count_: 100 },
+  { 'device.os': 'Android', status: 'Passed', _count_: 900 }, { 'device.os': 'IOS', status: 'Passed', _count_: 5 }, { 'device.os': null, status: 'Passed', _count_: 7 },
+];
+const HOUR = 3600_000;
+const INCOMPLETE = [
+  { test_id: 1, uuid: 'u1', name: 'running', status: 'Incomplete', duration: null, start_time: new Date(Date.now() - HOUR).toISOString(), project_id: 2 },
+  { test_id: 2, uuid: 'u2', name: 'abandoned', status: 'Incomplete', duration: null, start_time: new Date(Date.now() - 72 * HOUR).toISOString(), project_id: 2 },
 ];
 const ELEMENTS = [{ tag: 'a', href: 'https://www.iana.org/domains/example', text: 'More information...' }];
 
@@ -62,6 +74,8 @@ beforeAll(async () => {
       const url = req.url ?? '';
       if (url.startsWith('/api/v1/browsers')) return void res.end(JSON.stringify({ status: 'SUCCESS', data: BROWSERS }));
       if (url.startsWith('/reporter/api/transactions/list')) return void res.end(JSON.stringify({ count: null, data: TXS }));
+      if (url.startsWith('/reporter/api/tests/grouped')) return void res.end(JSON.stringify({ count: GROUPED.length, data: GROUPED }));
+      if (url.startsWith('/reporter/api/tests/list')) return void res.end(JSON.stringify({ count: INCOMPLETE.length, data: INCOMPLETE }));
       if (/\/wd\/hub\/session\/[^/]+\/execute\/sync$/.test(url)) {
         const { script } = JSON.parse(body || '{}');
         // Detection script → page meta; anything else is the element walker.
@@ -78,7 +92,7 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   resetClient(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 'aut_1_uat_fixes', 'uat');
   const mcp = new McpServer({ name: 's', version: '0' });
-  for (const register of [registerBrowserTools, registerWebInspectionTools, registerTestRunTools, registerReportingTools, registerRepositoryTools, registerTransactionTools]) register(mcp);
+  for (const register of [registerBrowserTools, registerWebInspectionTools, registerTestRunTools, registerReportingTools, registerRepositoryTools, registerTransactionTools, registerBoilerplateTools]) register(mcp);
   client = new Client({ name: 'c', version: '0' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([mcp.connect(b), client.connect(a)]);
@@ -93,7 +107,7 @@ async function call(name: string, args: Record<string, unknown>) {
 describe('#20 transactions — deviceOs casing', () => {
   it('listTransactions returns normalised deviceOs and still maps the -1 Speed Index sentinel to null', async () => {
     const txs = await listTransactions();
-    assert.deepEqual(txs.map((t) => t.deviceOs), ['iOS', 'iOS', 'Android']);
+    assert.deepEqual(txs.slice(0, 3).map((t) => t.deviceOs), ['iOS', 'iOS', 'Android']);
     assert.equal(txs[0].speedIndex, null);
   });
 
@@ -153,4 +167,35 @@ describe('#64 command generators carry the credential warning in JSON', () => {
       assert.equal(JSON.parse(text).credentialWarning, PLAINTEXT_KEY_WARNING);
     });
   }
+});
+
+describe('UAT observations', () => {
+  it('get_grouped_test_reports merges OS casings per FULL group key and reports the merged count', async () => {
+    const j = JSON.parse((await call('get_grouped_test_reports', { groupBy: ['device.os', 'status'], outputFormat: 'json' })).text);
+    const rows = j.data.map((r: Record<string, unknown>) => `${r['device.os']}/${r.status}=${r._count_}`).sort();
+    assert.deepEqual(rows, ['Android/Error=122', 'Android/Passed=900', 'iOS/Passed=5', 'null/Passed=7']);
+    assert.equal(j.count, 4);
+  });
+
+  it('list_active_test_executions ignores Incomplete records older than maxAgeHours', async () => {
+    const j = JSON.parse((await call('list_active_test_executions', { outputFormat: 'json' })).text);
+    assert.deepEqual(j.executions.map((e: { name: string }) => e.name), ['running']);
+    assert.equal(j.staleExcluded, 1);
+    const wide = JSON.parse((await call('list_active_test_executions', { maxAgeHours: 168, outputFormat: 'json' })).text);
+    assert.equal(wide.count, 2);
+  });
+
+  it('get_transaction_performance_summary sorts groups without a Speed Index strictly last', async () => {
+    const j = JSON.parse((await call('get_transaction_performance_summary', { groupBy: 'name', outputFormat: 'json' })).text);
+    const order = j.groups.map((g: { name: string; avgSpeedIndex: number | null }) => [g.name, g.avgSpeedIndex]);
+    assert.deepEqual(order.at(-1), ['NoSI', null]);
+    assert.ok(order.findIndex(([n]: [string]) => n === 'Checkout') < order.length - 1, 'a real 0 sorts before null');
+  });
+
+  it('get_web_test_boilerplate does not double the Test suffix', async () => {
+    const j = JSON.parse((await call('get_web_test_boilerplate', { language: 'java-junit5', testName: 'ExampleWebTest', outputFormat: 'json' })).text);
+    const names = j.files.map((f: { filename: string }) => f.filename);
+    assert.ok(names.some((n: string) => /ExampleWebTest.java$/.test(n)), names.join(', '));
+    assert.ok(!names.some((n: string) => /TestTest/.test(n)), names.join(', '));
+  });
 });

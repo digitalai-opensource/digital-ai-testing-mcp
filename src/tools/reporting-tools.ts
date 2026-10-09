@@ -513,19 +513,24 @@ export function registerReportingTools(server: McpServer): void {
           for (const row of result.data) {
             const rawOs = row['device.os'];
             const normOs = rawOs == null ? null : (OS_NORM[(String(rawOs)).toLowerCase()] ?? String(rawOs));
-            const key = normOs ?? '__null__';
+            // Key on EVERY group-by field (OS normalised). Keying on the OS alone collapsed multi-field groupings —
+            // ["device.os","status"] merged Passed and Failed into one row per OS.
+            const key = JSON.stringify(groupBy.map((f) => (f === 'device.os' ? normOs : row[f] ?? null)));
             if (!merged[key]) {
               merged[key] = { ...row, 'device.os': normOs };
             } else {
-              // Sum all numeric count fields
+              // Sum all numeric count fields (group-by fields are never summed)
               for (const [k, v] of Object.entries(row)) {
-                if (typeof v === 'number' && k !== 'device.os') {
+                if (typeof v === 'number' && !groupBy.includes(k)) {
                   merged[key][k] = ((merged[key][k] as number) ?? 0) + v;
                 }
               }
             }
           }
-          result = { ...result, data: Object.values(merged) };
+          const rows = Object.values(merged);
+          // `count` is the number of groups — after merging it must describe the rows actually returned (UAT 2026-10-09:
+          // count 5 with 3 rows).
+          result = { ...result, data: rows, ...(result.count != null ? { count: rows.length } : {}) };
         }
 
         return respond(outputFormat, result as object, formatGroupedTestReports(result));
@@ -1097,11 +1102,18 @@ export function registerReportingTools(server: McpServer): void {
         .optional()
         .default(50)
         .describe('Maximum number of active executions to return (default: 50).'),
+      maxAgeHours: z
+        .number()
+        .min(1)
+        .max(168)
+        .optional()
+        .default(12)
+        .describe('Ignore Incomplete records that started longer ago than this — they are abandoned or never-finalised runs, not running ones (default 12; test runs time out after 4 h by default).'),
       projectId: z.number().int().optional().describe('Scope to this project ID.'),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
-    async ({ limit, projectId, projectName, outputFormat }) => {
+    async ({ limit, maxAgeHours, projectId, projectName, outputFormat }) => {
       try {
         // Active executions are Incomplete records with null duration.
         // We fetch more than needed since not all Incomplete records are still running.
@@ -1116,13 +1128,24 @@ export function registerReportingTools(server: McpServer): void {
           projectName
         );
 
-        const active = (result.data ?? []).filter(r => r.duration === null).slice(0, limit ?? 50);
+        // Incomplete + null duration also matches runs that were abandoned or never finalised — the UAT (2026-10-09)
+        // found every "active" execution was 3+ days old. Anything older than maxAgeHours is not running now.
+        const ageCutoff = Date.now() - (maxAgeHours ?? 12) * 3600_000;
+        const unfinished = (result.data ?? []).filter(r => r.duration === null);
+        const recent = unfinished.filter(r => new Date(r.start_time).getTime() >= ageCutoff);
+        const staleExcluded = unfinished.length - recent.length;
+        const active = recent.slice(0, limit ?? 50);
+        const staleNote = staleExcluded > 0
+          ? ` ${staleExcluded} older Incomplete record(s) were ignored as stale (started more than ${maxAgeHours ?? 12} h ago — abandoned or never finalised).`
+          : '';
 
         if (active.length === 0) {
-          return respond(outputFormat, { count: 0, executions: [] }, 'No active test executions found. All Incomplete records have finished reporting.');
+          return respond(outputFormat, { count: 0, executions: [], staleExcluded, maxAgeHours: maxAgeHours ?? 12 }, `No active test executions found.${staleNote}`);
         }
 
         const structured = {
+          staleExcluded,
+          maxAgeHours: maxAgeHours ?? 12,
           count: active.length,
           executions: active.map(r => ({
             testId: r.test_id,
@@ -1147,7 +1170,7 @@ export function registerReportingTools(server: McpServer): void {
             ''
           );
         }
-        lines.push('Note: "active" is inferred from Incomplete status + null duration. A test that finished very recently may appear here until the reporter updates.');
+        lines.push(`Note: "active" is inferred from Incomplete status + null duration within the last ${maxAgeHours ?? 12} h. A test that finished very recently may appear here until the reporter updates.${staleNote}`);
         return respond(outputFormat, structured, lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

@@ -1604,10 +1604,12 @@ export function registerBoilerplateTools(server: McpServer): void {
 
       let code: string;
       let filename: string;
+      // "ExampleWebTest" must not become "ExampleWebTestTest" (UAT 2026-10-09) — add the suffix only when missing.
+      const testClass = /Test$/.test(testName) ? testName : `${testName}Test`;
 
       if (language === 'java-junit5' || language === 'java-testng') {
         const framework = language === 'java-junit5' ? 'junit5' : 'testng';
-        filename = `${testName}Test.java`;
+        filename = `${testClass}.java`;
         const isJunit5 = language === 'java-junit5';
         const beforeAnn  = isJunit5 ? '@BeforeAll' : '@BeforeClass';
         const afterAnn   = isJunit5 ? '@AfterAll' : '@AfterClass';
@@ -1634,7 +1636,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `import java.net.URL;`,
           `import java.time.Duration;`,
           ``,
-          `${lifecycle}public class ${testName}Test {`,
+          `${lifecycle}public class ${testClass} {`,
           ``,
           `    private RemoteWebDriver driver;`,
           ``,
@@ -1751,7 +1753,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `from selenium.webdriver.remote.webdriver import WebDriver`,
           ``,
           ``,
-          `class ${testName}Test(unittest.TestCase):`,
+          `class ${testClass}(unittest.TestCase):`,
           ``,
           `    ACCESS_KEY = "${accessKey}"`,
           `    GRID_URL   = "${gridUrl}"`,
