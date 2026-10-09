@@ -288,6 +288,7 @@ export function registerReportingTools(server: McpServer): void {
               '"user" (email, exact match — for "my reports" use the email from get_my_account_info), ' +
               '"has_attachment" ("Y"/"N"), ' +
               '"success" (boolean true/false), ' +
+              '"accessibility_report" (JSON boolean true/false, NOT the string "true" — that 400s; true = runs with an Axe accessibility scan), ' +
               '"test_id" (number), ' +
               '"project_id" (number), ' +
               '"device.os" ("Android"/"iOS" — case-sensitive), ' +
@@ -303,7 +304,7 @@ export function registerReportingTools(server: McpServer): void {
               'Note: "success" must use boolean value with "="; string "true" is CSRF-blocked.'
             ),
             value: z.union([z.string(), z.number(), z.boolean()]).describe(
-              'Filter value. Use boolean true/false for "success", numbers for numeric fields, strings for text fields.'
+              'Filter value. Use boolean true/false for "success" and "accessibility_report", numbers for numeric fields, strings for text fields.'
             ),
           })
         )
