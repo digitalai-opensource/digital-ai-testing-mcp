@@ -216,6 +216,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `list_active_test_executions` | Currently-running test executions (Incomplete status with null duration) | Any |
 | `list_test_attachments` | Attachment metadata for a test by UUID or numeric ID | Any |
 | `share_test_report` | Public, no-login link to a report (page, data, video); 14-day expiry, revoked only by deleting the report. Requires `confirmPublicShare: true` (otherwise previews) | Any (project must allow sharing) |
+| `get_root_cause_analysis` | Read the platform's AI Root Cause Analysis for a failed report: hypothesis, evidence log lines, status and attempts used, plus the reporter's error classification. Read-only; explains why an analysis cannot run (Appium Server tests only, 3 attempts per test) | Any |
 | `download_test_attachments` | Download test attachments as a ZIP file (writes to the MCP server's filesystem) | Any |
 | `get_test_attachments_download_command` | Generate a curl/PowerShell command to download the attachment ZIP (session video .mp4 + logs) to the user's local machine — use when the server is Docker/remote | Any |
 | `get_test_log` | Retrieve log content (Appium/device/ws) from a test directly as text — no file download; ideal for diagnosing failures | Any |
@@ -224,6 +225,17 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin † |
 
 > † Cloud Admin can always delete. A Project Admin can delete only when the project's `allowUsersDeleteTests` setting is enabled (off by default); otherwise the tool stops with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
+
+### Test Runs (Espresso / XCUITest / Maestro)
+
+The platform schedules, runs and reports these suites itself — no local driver. Results land in the Reporter tagged `test.run.id=<id>`.
+
+| Tool | What it does | Admin Required? |
+|---|---|---|
+| `execute_test_run` | Start a run (async): app by `cloudAppId` / `appUrl` / `appPath`, tests by `testsPath` (Maestro: required ZIP with `flows/`) / `testsUrl` / `cloudTestAppId`, device queries, `maxDevices`, `retry`, `runTags` | Any |
+| `get_test_run_status` | State (Starting / Running / Finished / Cancelled) and pass/fail/skip counts; `waitSeconds` (≤ 50) polls until finished | Any |
+| `cancel_test_run` | Cancel the remaining tests of a run. Requires `confirmDeletion: true` | Any |
+| `get_test_run_command` | curl / PowerShell command that starts the run from the user's machine (for Docker installs) | Any |
 
 ### Test Views
 
