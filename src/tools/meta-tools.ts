@@ -73,7 +73,7 @@ export const REGISTERED_TOOLS = [
   'create_test_view', 'update_test_view', 'delete_test_view',
   // Meta
   'get_server_info', 'check_connectivity', 'check_workflow_readiness',
-  'list_environments', 'switch_environment',
+  'list_environments', 'switch_environment', 'enable_toolset',
   // Workflows — POC lifecycle
   'create_poc', 'close_poc', 'delete_poc',
   // Workflows — General project lifecycle

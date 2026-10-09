@@ -181,6 +181,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `check_ios_readiness` | iOS device and provisioning profile readiness | Any |
 | `get_agent_status` | Agent connectivity overview | Any |
 | `get_server_info` | Server version, active profile, URL, tool count, and capability domains | Any |
+| `enable_toolset` | List toolsets and load them in full when the server runs with `MCP_TOOLSETS` (tools outside the loaded toolsets also load themselves on first call) | Any |
 | `check_connectivity` | Verify the MCP server can reach the Digital.ai API | Any |
 | `check_workflow_readiness` | Readiness report for all workflow tools — which dependency tools are present or missing. Call this first when diagnosing workflow failures. | Any |
 | `list_active_sessions` | Currently active browser/Selenium sessions | Cloud Admin |

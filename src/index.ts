@@ -32,6 +32,8 @@ import { registerPerformanceTools } from './tools/performance-tools.js';
 import { registerUsageReportTools } from './tools/usage-report-tools.js';
 import { registerTestRunTools } from './tools/test-run-tools.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
+import { makeToolsetTools } from './tools/toolset-tools.js';
+import { captureRegistrations, parseToolsetSelection, registerWithToolsets, TOOLSETS, type RegisterFn, type ToolsetController } from './utils/toolsets.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
@@ -87,35 +89,51 @@ PROJECT CONTEXT: each Project Admin / Project User key is scoped to exactly one 
 
 const server = new McpServer({ name, version }, { instructions: SERVER_INSTRUCTIONS });
 
-registerUserTools(server);
-registerDeviceTools(server);
-registerDeviceGroupTools(server);
-registerReservationTools(server);
-registerApplicationTools(server);
-registerRepositoryTools(server);
-registerBrowserTools(server);
-registerProjectTools(server);
-registerProvisioningProfileTools(server);
-registerBackupTools(server);
-registerHealthTools(server);
-registerReportingTools(server);
-registerTestViewTools(server);
-registerResources(server);
-registerPrompts(server);
-registerWorkflowTools(server);
-registerBoilerplateTools(server);
-registerAgentTools(server);
-registerRegionTools(server);
-registerNvServerTools(server);
-registerTransactionTools(server);
-registerCoverageTools(server);
-registerDebugTools(server);
-registerInspectionTools(server);
-registerWebInspectionTools(server);
-registerPerformanceTools(server);
-registerUsageReportTools(server);
-registerTestRunTools(server);
-registerMetaTools(server);
+// Capture every module first, then register through the toolset layer (src/utils/toolsets.ts). With MCP_TOOLSETS
+// unset this registers everything in full, exactly as before; with it set, tools outside the chosen toolsets become
+// self-loading placeholders — every name still exists, so no description, prompt or instruction points at a missing tool.
+let toolsetController: ToolsetController | undefined;
+const modules: Array<[string, RegisterFn]> = [
+  ['users', registerUserTools],
+  ['devices', registerDeviceTools],
+  ['device-groups', registerDeviceGroupTools],
+  ['reservations', registerReservationTools],
+  ['applications', registerApplicationTools],
+  ['repository', registerRepositoryTools],
+  ['browsers', registerBrowserTools],
+  ['projects', registerProjectTools],
+  ['provisioning-profiles', registerProvisioningProfileTools],
+  ['backup', registerBackupTools],
+  ['health', registerHealthTools],
+  ['reporting', registerReportingTools],
+  ['test-views', registerTestViewTools],
+  ['resources', registerResources],
+  ['prompts', registerPrompts],
+  ['workflows', registerWorkflowTools],
+  ['boilerplate', registerBoilerplateTools],
+  ['agents', registerAgentTools],
+  ['regions', registerRegionTools],
+  ['nv-servers', registerNvServerTools],
+  ['transactions', registerTransactionTools],
+  ['coverage', registerCoverageTools],
+  ['debug', registerDebugTools],
+  ['inspection', registerInspectionTools],
+  ['web-inspection', registerWebInspectionTools],
+  ['performance', registerPerformanceTools],
+  ['usage-reports', registerUsageReportTools],
+  ['test-runs', registerTestRunTools],
+  ['meta', registerMetaTools],
+  ['toolsets', makeToolsetTools(() => toolsetController)],
+];
+const toolsetSelection = parseToolsetSelection(process.env.MCP_TOOLSETS);
+if (toolsetSelection.unknown.length > 0) {
+  console.error(`[${name}] ⚠️  MCP_TOOLSETS: unknown toolset(s) ignored: ${toolsetSelection.unknown.join(', ')} (valid: ${Object.keys(TOOLSETS).join(', ')}, all)`);
+}
+const controller = registerWithToolsets(server, captureRegistrations(modules), toolsetSelection);
+if (!toolsetSelection.all) {
+  toolsetController = controller;
+  console.error(`[${name}] Toolsets loaded in full: ${controller.loaded().join(', ') || '(core only)'} — the rest are self-loading placeholders.`);
+}
 
 console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 7 prompts).`);
 
