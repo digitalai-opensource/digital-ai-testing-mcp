@@ -540,6 +540,42 @@ function isUnknownCommand(e: unknown): boolean {
   );
 }
 
+/**
+ * Run a gesture through the session's native mechanism, falling back to the other protocol on an unknown-command
+ * error. W3C sessions (Appium 2/3) use POST /actions; JWP sessions (the Grid) use POST /touch/perform.
+ *
+ * Appium 3 removed /touch/perform (verified live on Appium Server 3.8.0: 404). When a W3C gesture fails and the
+ * fallback 404s too, the old code surfaced only the FALLBACK's error — "touch/perform not found" — hiding why
+ * /actions failed. Both errors are now reported, the primary first. The primary error's HTTP response stays attached
+ * so sessionAwareError can still recognise a dead session (404 on every route).
+ */
+async function gestureWithFallback(
+  session: InspectionSession,
+  w3c: () => Promise<unknown>,
+  jwp: () => Promise<unknown>
+): Promise<'w3c-actions' | 'jwp-touch'> {
+  const order: Array<['w3c-actions' | 'jwp-touch', () => Promise<unknown>]> =
+    session.sessionFormat === 'w3c' ? [['w3c-actions', w3c], ['jwp-touch', jwp]] : [['jwp-touch', jwp], ['w3c-actions', w3c]];
+  try {
+    await order[0][1]();
+    return order[0][0];
+  } catch (e) {
+    if (!isUnknownCommand(e)) throw e;
+    try {
+      await order[1][1]();
+      return order[1][0];
+    } catch (e2) {
+      const note = order[1][0] === 'jwp-touch' ? ' (the legacy /touch/perform route does not exist on Appium 3)' : '';
+      const combined = new Error(
+        `${order[0][0] === 'w3c-actions' ? 'W3C /actions' : 'JWP /touch/perform'} failed: ${describeWdError(e)}; ` +
+        `fallback ${order[1][0] === 'w3c-actions' ? 'W3C /actions' : 'JWP /touch/perform'} failed: ${describeWdError(e2)}${note}`
+      ) as Error & { response?: unknown };
+      combined.response = (e as { response?: unknown }).response;
+      throw combined;
+    }
+  }
+}
+
 export async function getWindowSize(
   handle: string
 ): Promise<{ width: number; height: number }> {
@@ -613,24 +649,7 @@ export async function swipeScreen(
       { timeout: 30_000 }
     );
 
-  if (session.sessionFormat === 'w3c') {
-    try {
-      await w3c();
-      return 'w3c-actions';
-    } catch (e) {
-      if (!isUnknownCommand(e)) throw e;
-      await jwp();
-      return 'jwp-touch';
-    }
-  }
-  try {
-    await jwp();
-    return 'jwp-touch';
-  } catch (e) {
-    if (!isUnknownCommand(e)) throw e;
-    await w3c();
-    return 'w3c-actions';
-  }
+  return gestureWithFallback(session, w3c, jwp);
 }
 
 export async function launchApp(
@@ -1014,13 +1033,7 @@ export async function longPress(
       { timeout: 30_000 }
     );
 
-  const [primary, fallback] = session.sessionFormat === 'w3c' ? [w3c, jwp] : [jwp, w3c];
-  try {
-    await primary();
-  } catch (e) {
-    if (!isUnknownCommand(e)) throw e;
-    await fallback();
-  }
+  await gestureWithFallback(session, w3c, jwp);
 }
 
 export async function doubleTap(
@@ -1062,13 +1075,7 @@ export async function doubleTap(
       { timeout: 30_000 }
     );
 
-  const [primary, fallback] = session.sessionFormat === 'w3c' ? [w3c, jwp] : [jwp, w3c];
-  try {
-    await primary();
-  } catch (e) {
-    if (!isUnknownCommand(e)) throw e;
-    await fallback();
-  }
+  await gestureWithFallback(session, w3c, jwp);
 }
 
 export async function dragAndDrop(
@@ -1121,13 +1128,7 @@ export async function dragAndDrop(
       { timeout: 30_000 }
     );
 
-  const [primary, fallback] = session.sessionFormat === 'w3c' ? [w3c, jwp] : [jwp, w3c];
-  try {
-    await primary();
-  } catch (e) {
-    if (!isUnknownCommand(e)) throw e;
-    await fallback();
-  }
+  await gestureWithFallback(session, w3c, jwp);
 }
 
 export async function pinchZoom(
