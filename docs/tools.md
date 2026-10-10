@@ -1,12 +1,23 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 191 tools, 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 202 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (access level is detected from the API — either key format works); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
-- **Filters / Sort** — server-side parameters accepted by list tools. See [List Filters & Sorting](../README.md#list-filters--sorting).
+- **Filters / Sort** — parameters accepted by list tools (most are applied client-side after fetching). See [List Filters & Sorting](../README.md#list-filters--sorting).
 - Destructive tools require `confirmDeletion: true` — see [Safety Guards](../README.md#safety-guards).
 - **"Writes to the MCP server's filesystem" / "use when the server is Docker/remote" / volume-mount notes** apply to the Docker deployment path (Options B/C). If the server is installed via the [npm package](../README.md#option-a--install-via-npm-recommended) (Option A) and run directly on your own machine, its filesystem *is* your filesystem — these caveats and the `*_upload_command`/`*_download_command` workarounds don't apply; use the direct `upload_*`/`download_*` tools with local paths. See [limitations.md #15](limitations.md#15-local-file-io-runs-on-the-mcp-servers-filesystem-not-yours).
+
+**Toolsets (`MCP_TOOLSETS`)** — when the server runs with `MCP_TOOLSETS`, tools outside the selected toolsets load themselves on first call (see `enable_toolset`). Toolset → sections:
+- `devices` — Devices, Device Groups, Reservations, Health & Diagnostics, Agents, Regions
+- `apps` — Applications, Repository, Provisioning Profiles
+- `reporting` — Reporting, Test Views, Coverage Analytics
+- `performance` — Transactions & Performance, Performance Comparison, NV Servers
+- `inspection` — Mobile Inspection Sessions, Web Inspection Sessions, Remote Debug
+- `authoring` — Boilerplate Generation, Test Runs
+- `browsers` — Browsers
+- `admin` — Users, Projects, Backup, Usage Reports, Workflows
+- Always loaded: Server, Environments & Toolsets, plus `validate_test_script`
 
 ### Users
 
@@ -14,10 +25,10 @@ Complete per-tool reference for the Digital.ai Testing MCP Server — all 191 to
 |---|---|---|---|
 | `list_users` | List all user accounts | firstName, lastName, email, authenticationType, isCloudAdmin, tag; sortBy/sortOrder | Cloud Admin |
 | `create_user` | Create a new user account | — | Cloud Admin |
-| `delete_user` | Permanently delete a user account | — | Cloud Admin |
+| `delete_user` | Permanently delete a user account. Requires `confirmDeletion: true`. | — | Cloud Admin |
 | `get_my_account_info` | Show the account tied to the active API key | — | Any |
 | `assign_user_to_projects` | Grant user access to one or more projects | — | Cloud Admin |
-| `unassign_user_from_projects` | Remove user from one or more projects | — | Cloud Admin |
+| `unassign_user_from_projects` | Remove user from one or more projects. Requires `confirmDeletion: true`. | — | Cloud Admin |
 | `get_user_tags` | List tags on a user | — | Cloud Admin |
 | `set_user_tags` | Replace all tags on a user (max 10) | — | Cloud Admin |
 
@@ -27,12 +38,12 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 
 | Tool | What it does | Filters / Sort | Admin Required? |
 |---|---|---|---|
-| `list_devices` | List devices with status, OS, model, and agent | `query` (@-syntax), `region`, `model`; sortBy/sortOrder | Any |
+| `list_devices` | List devices with status, OS, model, and agent | `query` (@-syntax), `os`, `region`, `model`; sortBy/sortOrder | Any |
 | `get_device_detail` | Full device profile including groups and status history | — | Cloud Admin |
 | `edit_device` | Update device name, notes, or category | — | Cloud Admin |
 | `find_available_device` | Find the first available device matching OS, tags, or version | — | Any |
 | `release_device` | Release a reserved or stuck device. Requires `confirmDeletion: true`. | — | Any |
-| `release_orphaned_sessions` | Find and release devices stuck in "In Use" beyond a configurable time threshold | — | Any |
+| `release_orphaned_sessions` | Find and release devices stuck in "In Use" beyond a configurable time threshold. Previews without `confirmDeletion: true` (or with `dryRun: true`). | — | Any |
 | `reboot_device` | Remote reboot | — | Cloud Admin |
 | `reset_device_usb` | Reset USB connection | — | Cloud Admin |
 | `start_device_web_control` | Open a browser-based control session | — | Cloud Admin |
@@ -42,9 +53,9 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 | `get_ios_app_container_download_command` | Generate a curl/PowerShell command to download the iOS app container to the user's local machine — use when the server is Docker/remote | — | Cloud Admin |
 | `get_device_health_summary` | Device farm health overview | — | Any |
 | `get_device_tags` | List all tags on a device | — | Any |
-| `add_device_tag` | Add a tag to a device | — | Cloud/Project Admin |
-| `remove_device_tag` | Remove a specific tag | — | Cloud/Project Admin |
-| `remove_all_device_tags` | Remove all tags | — | Cloud/Project Admin |
+| `add_device_tag` | Add a tag to a device | — | Cloud Admin / Project Admin |
+| `remove_device_tag` | Remove a specific tag. Requires `confirmDeletion: true`. | — | Cloud Admin / Project Admin |
+| `remove_all_device_tags` | Remove all tags. Requires `confirmDeletion: true`. | — | Cloud Admin / Project Admin |
 | `get_device_ca_certificates` | List CA certificates on an Android device | — | Cloud Admin |
 
 **Device query syntax** (`list_devices` `query` parameter — server-side filtering):
@@ -62,7 +73,7 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 
 Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and @region='US2'`
 
-> **Fields that silently return empty results — do not use in queries:** `@manufacturer`, `@tag`, `@deviceName`, `@id`, `@udid`, `@status`, `@agentName`, `@location`, `@project`, `@group`. The API accepts these without error but returns nothing. Use the `manufacturer`, `tags`, `model`, and `region` parameters on `list_devices` and `find_available_device` instead — those filter client-side and reliably work.
+> **Fields that silently return empty results — do not use in queries:** `@manufacturer`, `@tag`, `@deviceName`, `@id`, `@udid`, `@status`, `@agentName`, `@location`, `@project`, `@group`. The API accepts these without error but returns nothing. Use the `os`, `region`, and `model` parameters on `list_devices`, or `manufacturer`, `tags`, `model`, and `preferRegions` on `find_available_device`, instead — those filter client-side and reliably work.
 
 ### Device Groups
 
@@ -73,20 +84,20 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `get_projects_in_group` | List projects with access to a group | Cloud Admin |
 | `create_device_group` | Create a new device group | Cloud Admin |
 | `edit_device_group` | Rename or toggle auto-accept | Cloud Admin |
-| `delete_device_group` | Delete a group (devices are not deleted) | Cloud Admin |
+| `delete_device_group` | Delete a group (devices are not deleted). Requires `confirmDeletion: true`. | Cloud Admin |
 | `add_devices_to_group` | Add devices to a group | Cloud Admin |
-| `remove_devices_from_group` | Remove devices from a group | Cloud Admin |
+| `remove_devices_from_group` | Remove devices from a group. Requires `confirmDeletion: true`. | Cloud Admin |
 | `assign_group_to_project` | Grant a project access to a group | Cloud Admin |
 
 ### Reservations
 
 | Tool | What it does | Filters / Sort | Admin Required? |
 |---|---|---|---|
-| `list_reservations` | List current and upcoming reservations | username, project, deviceUid; sortBy/sortOrder | Any |
-| `create_reservation` | Reserve one or more devices | — | Cloud/Project Admin |
-| `reserve_device_for_duration` | Reserve a device for N hours starting now (e.g. `0.5` = 30 min, `1.0` = 1 hour) | — | Cloud/Project Admin |
-| `delete_reservation` | Cancel a reservation | — | Cloud/Project/User |
-| `check_device_availability_window` | Check a device's reservation schedule over a time window | — | Any |
+| `list_reservations` | List current and upcoming reservations. Cloud Admins see all reservations; others see their own. | username, project (Cloud Admin only), deviceUid; sortBy/sortOrder | Any |
+| `create_reservation` | Reserve one or more devices | — | Cloud Admin / Project Admin |
+| `reserve_device_for_duration` | Reserve a device for N hours starting now (e.g. `0.5` = 30 min, `1.0` = 1 hour) | — | Cloud Admin / Project Admin |
+| `delete_reservation` | Cancel a reservation. Requires `confirmDeletion: true`. | — | Any (Cloud Admin: any reservation; Project Admin: its project's; User: own) |
+| `check_device_availability_window` | Check a device's reservation schedule over a time window | — | Cloud Admin |
 
 ### Applications
 
@@ -95,10 +106,10 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `list_applications` | List all apps in the repository | nameContains, osType, packageName, bundleIdentifier, fileType, isForSimulator; sortBy/sortOrder | Any |
 | `get_application_info` | Full app detail | — | Any |
 | `find_latest_application` | Find the newest uploaded version by name, bundle ID, or package name. Returns `appCapabilityString` (e.g. `cloud:MyApp`) ready for the Appium `app` capability. | — | Any |
-| `upload_application_file` | Upload APK/IPA/AAB from a local file path visible to the MCP container (volume-mount required). Project-level keys upload to their assigned project; use `project` to target a specific project (Cloud Admin only). | — | Any |
+| `upload_application_file` | Upload APK/IPA/AAB from a local path (under Docker the path must be inside a mounted volume). Project-level keys upload to their assigned project; use `project` to target a specific project (Cloud Admin only). | — | Any |
 | `upload_application_from_url` | Upload from a direct-download URL. Project-level keys upload to their assigned project; use `project` to target a specific project (Cloud Admin only). | — | Any |
 | `get_application_upload_command` | Generate a ready-to-run curl or PowerShell command for uploading a binary directly from the user's local machine — the MCP is not the middleman. Use when volume-mounting Docker is impractical. Embeds the active access key; instruct the user to run immediately and discard. | — | Any |
-| `delete_application` | Delete an app from the repository | — | Cloud Admin |
+| `delete_application` | Delete an app from the repository. Requires `confirmDeletion: true`. | — | Cloud Admin |
 | `update_application_plugins` | Update iOS plugin signing profiles | — | Cloud Admin |
 | `install_application` | Install an app on one or more devices. The app must be assigned to a project containing the target device — call `assign_app_to_project` first if you get a 400 error. | — | Any |
 | `uninstall_application` | Uninstall from one or more devices. Requires `confirmDeletion: true`. | — | Any |
@@ -110,7 +121,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 
 > **Upload from URL:** Must be a direct-download link accessible from the Digital.ai server's network. Redirect URLs, auth-gated URLs, and unsupported file types return a 400 with a diagnostic message.
 
-> **File uploads from Docker:** The MCP server runs inside a container. Mount the directory containing your build artifacts as a volume (e.g. `-v /host/apps:/apps`) and reference the container path (e.g. `/apps/myapp.apk`). Alternatively, use `upload_application_from_url` for artifacts already on a network-accessible URL.
+> **File uploads from Docker (Docker installs only):** The MCP server runs inside a container. Mount the directory containing your build artifacts as a volume (e.g. `-v /host/apps:/apps`) and reference the container path (e.g. `/apps/myapp.apk`). Alternatively, use `upload_application_from_url` for artifacts already on a network-accessible URL.
 
 ### Repository
 
@@ -123,14 +134,14 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `download_repository_file` | Download a file by ID (writes to the MCP server's filesystem) | Any |
 | `get_repository_file_download_command` | Generate a curl/PowerShell command to download a repository file to the user's local machine — use when the server is Docker/remote | Any |
 | `update_repository_file` | Replace file content in-place | Any |
-| `delete_repository_file` | Delete a file | Any |
+| `delete_repository_file` | Delete a file. Requires `confirmDeletion: true`. | Any |
 
 ### Browsers
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
 | `list_available_browsers` | List available browser/OS combinations | Any |
-| `start_selenium_session` | Open a Selenium browser session | Any |
+| `start_selenium_session` | Open a Selenium browser session. `browserName` as `list_available_browsers` returns it: `chrome`, `firefox`, `MicrosoftEdge`, `safari`, `opera` (case-insensitive aliases like `Chrome` / `edge` are normalised). | Any |
 | `start_manual_test_session` | Create a structured browser test | Any |
 
 ### Projects
@@ -139,19 +150,19 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 |---|---|---|---|
 | `list_projects` | List all projects | name filter; sortBy/sortOrder | Any |
 | `create_project` | Create a project | — | Cloud Admin |
-| `delete_project` | Delete a project | — | Cloud Admin |
-| `list_project_users` | List users in a project | username, role; sortBy/sortOrder | Cloud/Project Admin |
+| `delete_project` | Delete a project. Requires `confirmDeletion: true`. | — | Cloud Admin |
+| `list_project_users` | List users in a project | username, role; sortBy/sortOrder | Cloud Admin / Project Admin |
 | `assign_user_to_project` | Add a user to a project with a role | — | Cloud Admin |
-| `remove_user_from_project` | Remove a user from a project | — | Cloud Admin |
-| `get_project_tokens` | Get token configuration | — | Cloud/Project Admin |
+| `remove_user_from_project` | Remove a user from a project. Requires `confirmDeletion: true`. | — | Cloud Admin |
+| `get_project_tokens` | Get token configuration | — | Cloud Admin / Project Admin |
 | `set_project_tokens` | Update token mode | — | Cloud Admin |
-| `get_project_settings` | Cleanup flags, queued-test / browser limits, automation memory, notes | — | Cloud/Project Admin |
+| `get_project_settings` | Cleanup flags, queued-test / browser limits, automation memory, notes | — | Cloud Admin / Project Admin |
 | `get_project_admin_settings` | Full project configuration via v2 API — 35+ fields in one call: per-type license limits, cleanup flags, reservation policies, feature flags, user/app counts | — | Cloud Admin / Project Admin |
 | `update_project_settings` | Update cleanup, concurrency and limit settings, and the automation process memory (`maxAutomationMemoryMB`, 256–1024) | — | Cloud Admin |
 | `set_telephony_status` | Enable/disable calls and SMS | — | Cloud Admin |
 | `get_project_notes` | Get project notes | — | Any |
-| `set_project_notes` | Set project notes | — | Cloud/Project Admin |
-| `get_project_devices` | List devices accessible to a project | — | Cloud/Project Admin |
+| `set_project_notes` | Set project notes | — | Cloud Admin / Project Admin |
+| `get_project_devices` | List devices accessible to a project | — | Cloud Admin / Project Admin |
 | `get_automation_properties` | Get Appium/automation properties | — | Any |
 | `assign_app_to_project` | Make an app available to a project | — | Cloud Admin |
 
@@ -165,7 +176,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `get_provisioning_profile_upload_command` | Generate a curl/PowerShell command to upload P12 + mobileprovision from the user's local machine — use when the server runs in Docker/remote | Cloud Admin |
 | `download_provisioning_profile` | Download a profile (writes to the MCP server's filesystem) | Cloud Admin |
 | `get_provisioning_profile_download_command` | Generate a curl/PowerShell command to download a profile to the user's local machine — use when the server is Docker/remote | Cloud Admin |
-| `delete_provisioning_profile` | Delete a profile | Cloud Admin |
+| `delete_provisioning_profile` | Delete a profile. Requires `confirmDeletion: true`. | Cloud Admin |
 
 ### Backup
 
@@ -173,20 +184,29 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 |---|---|---|
 | `create_backup` | Trigger a live system backup | Cloud Admin |
 
+### Server, Environments & Toolsets
+
+Always loaded, even when `MCP_TOOLSETS` limits the other toolsets.
+
+| Tool | What it does | Admin Required? |
+|---|---|---|
+| `get_server_info` | Server version, active profile, URL, tool count, and capability domains | Any |
+| `check_connectivity` | Verify the MCP server can reach the Digital.ai API | Any |
+| `check_workflow_readiness` | Readiness report for all workflow tools — which dependency tools are present or missing. Call this first when diagnosing workflow failures. | Any |
+| `list_environments` | List all named connection profiles — name, URL, and the access level detected from the API (role). Marks the active profile. Credentials are never exposed. | Any |
+| `switch_environment` | Switch to a named profile instantly. Verifies the new connection and reports the connected user. All subsequent tool calls use the new credentials. | Any |
+| `enable_toolset` | List toolsets and load them in full when the server runs with `MCP_TOOLSETS` (tools outside the loaded toolsets also load themselves on first call) | Any |
+| `record_remediation_note` | **(debug mode only — `MCP_DEBUG_MODE=true`)** Records an error, unclear guidance, user correction, giving up, a better path or an improvement idea as a structured note. Written to `remediation/<session>.md` in the client project (npm install) or returned for the AI to save there (Docker); redacted | Any |
+
 ### Health & Diagnostics
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `get_environment_summary` | Full environment snapshot: devices, agents, groups | Any |
+| `get_environment_summary` | Farm snapshot: device counts by status and OS, total reservations, application repository totals | Any |
 | `check_ios_readiness` | iOS device and provisioning profile readiness | Any |
 | `get_agent_status` | Agent connectivity overview | Any |
-| `get_server_info` | Server version, active profile, URL, tool count, and capability domains | Any |
-| `enable_toolset` | List toolsets and load them in full when the server runs with `MCP_TOOLSETS` (tools outside the loaded toolsets also load themselves on first call) | Any |
-| `record_remediation_note` | **Debug mode only** (`MCP_DEBUG_MODE=true`). Records an error, unclear guidance, user correction, giving up, a better path or an improvement idea as a structured note. Written to `remediation/<session>.md` in the client project (npm install) or returned for the AI to save there (Docker); redacted | Any |
-| `check_connectivity` | Verify the MCP server can reach the Digital.ai API | Any |
-| `check_workflow_readiness` | Readiness report for all workflow tools — which dependency tools are present or missing. Call this first when diagnosing workflow failures. | Any |
 | `list_active_sessions` | Currently active browser/Selenium sessions | Cloud Admin |
-| `get_reporter_project_storage` | Per-project disk usage: current MB, quota, usage %, artifact counts. Sorted by usage descending. | Cloud Admin |
+| `get_reporter_project_storage` | Per-project disk usage: current MB, quota, usage %, artifact counts, sorted by usage descending. Cloud Admin sees every project; a Project Admin sees only its own; a Project User gets an empty list. | Any (scope varies by role) |
 | `get_license_info` | Platform license limits for devices and browser sessions | Cloud Admin |
 | `get_license_utilization` | In-use counts vs. purchased limits | Cloud Admin |
 
@@ -203,7 +223,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `list_test_reports` | Search, filter, sort, and paginate test reports. See [Test Reporting Schema](../README.md#test-reporting-schema) for supported filters. | Any |
+| `list_test_reports` | Search, filter, sort, and paginate test reports. Filters include `status` (all six statuses), `accessibility_report` (JSON boolean `true`/`false` — the string `"true"` is rejected; `true` = runs with an Axe accessibility scan), `rca.status` (e.g. `COMPLETED` for reports with a Root Cause Analysis), `user`, `device.os`; use `startDate`/`endDate` for date ranges. See [Test Reporting Schema](../README.md#test-reporting-schema). | Any |
 | `get_test_report` | Full test execution report by UUID (preferred), numeric test ID, or report URL | Any |
 | `get_test_by_report_id` | Report by `report_api_id` (returned when starting a session) | Any |
 | `find_latest_test_for_name` | Most recent run record for a test by name | Any |
@@ -211,23 +231,23 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `get_test_stability_report` | Last N runs of a named test: pass rate, sparkline trend, and consecutive streak count | Any |
 | `get_cross_platform_divergence` | Tests passing on one OS but failing on the other, with configurable minimum run count and divergence threshold | Any |
 | `get_daily_execution_trend` | Execution counts and pass rates bucketed by day or week. Stops at `lookbackDays` or `maxRecords` (default 5,000; max 25,000), whichever comes first. | Any |
-| `get_project_test_summary` | All-time counts for all six statuses (Passed, Failed, Error, Incomplete, Skipped, Healed) and the top failing/erroring tests in a time window | Any |
+| `get_project_test_summary` | All-time counts for all six statuses (Passed, Failed, Error, Incomplete, Skipped, Healed) and the top failing/erroring tests in a time window. Includes a per-device-pool breakdown (`byDevicePool`: totals, pass rate, failed, error) for mobile automation on platform 26.7+. Pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error). | Any |
 | `summarize_test_failures` | "Why are my tests failing?" — buckets failed tests by error classification/category (or name) in one call (e.g. "44 failures: 42 element_not_found"). Fetches per-test detail (N+1, capped by `maxReports`). | Any |
 | `get_failure_rate_by_app_version` | Pass/fail breakdown grouped by app version | Any |
 | `get_distinct_test_key_values` | Discover all distinct values recorded for a report metadata key | Any |
 | `list_active_test_executions` | Currently-running test executions (Incomplete status with null duration) | Any |
 | `list_test_attachments` | Attachment metadata for a test by UUID or numeric ID | Any |
-| `share_test_report` | Public, no-login link to a report (page, data, video); 14-day expiry, revoked only by deleting the report. Requires `confirmPublicShare: true` (otherwise previews) | Any (project must allow sharing) |
-| `get_root_cause_analysis` | Read the platform's AI Root Cause Analysis for a failed report: hypothesis, evidence log lines, status and attempts used, plus the reporter's error classification. Read-only; explains why an analysis cannot run (Appium Server tests only, 3 attempts per test) | Any |
+| `share_test_report` | Public, no-login link to a report (page, data, video); expires 14 days after the first share (sharing again returns the same link and does not extend it), revoked only by deleting the report. Requires `confirmPublicShare: true` (otherwise previews) | Any (project must allow sharing) |
+| `get_root_cause_analysis` | Read the platform's AI Root Cause Analysis for a failed report: hypothesis, evidence log lines, status and attempts used, plus the reporter's error classification. Read-only; explains why an analysis cannot run (Appium Server tests only, 3 failed attempts per test). Accepts `uuid` (preferred), `reportUrl` or `testId`. Find analysed reports with `list_test_reports` filter `rca.status = COMPLETED`. | Any |
 | `download_test_attachments` | Download test attachments as a ZIP file (writes to the MCP server's filesystem) | Any |
-| `download_test_video` | Download only the session video (.mp4), whole or by byte range (`startByte`/`endByte`, `lastBytes`); `infoOnly: true` returns the size without downloading. Accepts a UUID, numeric id or report URL | Any |
+| `download_test_video` | Download only the session video (.mp4), whole or by byte range (`startByte`/`endByte`, `lastBytes`); `infoOnly: true` returns the size without downloading. Accepts a UUID, numeric id or report URL. Writes to the MCP server's filesystem; requires `localPath` unless `infoOnly`. | Any |
 | `get_test_attachments_download_command` | Generate a curl/PowerShell command to download the attachment ZIP (session video .mp4 + logs), or with `artifact: "video"` only the .mp4, to the user's local machine — use when the server is Docker/remote | Any |
 | `get_test_log` | Retrieve log content (Appium/device/ws) from a test directly as text — no file download; ideal for diagnosing failures | Any |
 | `delete_test_reports` | Permanently delete test records by ID list | Cloud Admin † |
 | `delete_test_reports_before_date` | Delete all test records started before a given date | Cloud Admin † |
 | `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin † |
 
-> † Cloud Admin can always delete. A Project Admin can delete only when the project's `allowUsersDeleteTests` setting is enabled (off by default); otherwise the tool stops with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
+> † Cloud Admin can always delete. A project-level key (Project Admin or Project User) is refused up front when its project's `allowUsersDeleteTests` setting is off (the default), with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 ### Test Runs (Espresso / XCUITest / Maestro)
 
@@ -235,10 +255,10 @@ The platform schedules, runs and reports these suites itself — no local driver
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `execute_test_run` | Start a run (async): app by `cloudAppId` / `appUrl` / `appPath`, tests by `testsPath` (Maestro: required ZIP with `flows/`; Espresso: the androidTest `.apk`) / `testsUrl` / `cloudTestAppId`, device queries, `maxDevices`, `retry`, `runTags`. Espresso suites that use UiAutomator need `useUIAutomator: true` | Any |
-| `get_test_run_status` | State (Starting / Running / Finished / Cancelled) and pass/fail/skip counts; `waitSeconds` (≤ 50) polls until finished | Any |
-| `cancel_test_run` | Cancel the remaining tests of a run. Requires `confirmDeletion: true` | Any |
-| `get_test_run_command` | curl / PowerShell command that starts the run from the user's machine (for Docker installs) | Any |
+| `execute_test_run` | Start a run (async; returns `testRunId`). App by `cloudAppId` (numeric) / `appUrl` / `appPath`; tests by `testsPath` (Maestro: required .zip with `flows/`, Android only; Espresso: the androidTest .apk; XCUITest: the runner package) or, for Espresso/XCUITest only, `testsUrl` / `cloudTestAppId`. `deviceQueries` (required), `runningType` (`fastFeedback` default / `coverage`), `maxDevices`, `retry` (0–5), `runTags`. Espresso suites that use UiAutomator need `useUIAutomator: true`. | Any |
+| `get_test_run_status` | State (Starting / Running / Finished / Cancelled) and passed / failed / skipped / running / queued counts (may briefly be unknown mid-run); `waitSeconds` (≤ 50) polls until finished | Any |
+| `cancel_test_run` | Cancel the remaining tests of a run — running tests stop; not-yet-run tests are reported as skipped. Requires `confirmDeletion: true` (omit it to preview) | Any |
+| `get_test_run_command` | curl / PowerShell command that starts the run from the user's machine (for Docker installs). `localPlatform` required; embeds the access key — run once and discard. | Any |
 | `generate_maestro_flow` | Build a Maestro flow (YAML) from structured steps (launchApp, tapOn, inputText, assertVisible, scrollUntilVisible, …) and optionally write the bundle .zip for `execute_test_run`. Returns no flow without a live Android inspection session or `confirmSelectorsVerified: true`; rejects placeholder selectors | Any |
 
 ### Test Views
@@ -251,7 +271,7 @@ The platform schedules, runs and reports these suites itself — no local driver
 | `get_test_view_summary` | Counts for all six statuses for a view, with its saved filter applied | Any |
 | `create_test_view` | Create a test view group | Cloud Admin |
 | `update_test_view` | Rename or toggle dashboard visibility | Cloud Admin |
-| `delete_test_view` | Delete a test view group | Cloud Admin |
+| `delete_test_view` | Delete a test view group. Requires `confirmDeletion: true`. | Cloud Admin |
 
 ### Transactions & Performance
 
@@ -281,7 +301,7 @@ Transactions are performance-instrumented segments of a test session. Developers
 
 | Tool | What it does |
 |---|---|
-| `list_regions` | List all geographic regions (US1, UK1, SG1, DE1, AU1, CA1, US2, CH1) with status |
+| `list_regions` | List all geographic regions (e.g. US1, UK1, SG1) with status |
 | `get_region_topology` | Full infrastructure map of a region: NV servers, Selenium agents, signers, storages, reporters |
 
 ### NV Servers
@@ -295,12 +315,9 @@ Transactions are performance-instrumented segments of a test session. Developers
 
 ### Environment Management
 
-| Tool | What it does | Admin Required? |
-|---|---|---|
-| `list_environments` | List all named connection profiles — name, URL, auth type. Marks the active profile. Credentials are never exposed. | Any |
-| `switch_environment` | Switch to a named profile instantly. Verifies the new connection and reports the connected user. All subsequent tool calls use the new credentials. | Any |
+`list_environments` and `switch_environment` are listed under [Server, Environments & Toolsets](#server-environments--toolsets).
 
-> **403 guidance:** When a tool returns 403, the error message includes the current auth type and — if a Cloud Admin profile is configured — a ready-to-use `switch_environment(...)` call.
+> **403 guidance:** When a tool returns 403, the error message names the current profile and its detected access level and — if a profile already known to be Cloud Admin is configured — a ready-to-use `switch_environment(...)` call. The hint is omitted when the active key is already Cloud Admin.
 
 ### Workflows
 
@@ -319,8 +336,8 @@ Six tools cover POC and general project lifecycle management. See the [Workflow 
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `get_test_boilerplate` | Generate a complete, pre-configured Appium test script for Android or iOS. See [Boilerplate Generation](../README.md#boilerplate-generation) for full documentation. `automotiveProjection` (Appium Server projects) adds Android Auto / CarPlay projection and a head-unit screenshot step. | Any |
-| `get_web_test_boilerplate` | Generate a Selenium WebDriver test script for web browser automation. Browser-neutral by default (reads `BROWSER` env var at runtime — Chrome/Firefox/Edge/Safari without code changes). Pass `targetBrowser` for browser-specific setup (ChromeOptions etc.). Pass `shadowDomSupport: "always"` to include a `shadowQuery()` helper for Web Components. Gate: if `url` is provided, requires a live browser session or `confirmSelectorsVerified: true`. Supports `java-junit5`, `java-testng`, `python`, and `nodejs`. | Any |
+| `get_test_boilerplate` | Generate a complete, pre-configured Appium test project for Android or iOS (`java-junit5`, `java-testng`, `python`, `nodejs`). For a real app (`appId` / `packageName` / `bundleIdentifier`) it returns no code unless a live inspection session exists or `confirmSelectorsVerified: true` — set that only when real selectors were captured elsewhere (rdb/UIAutomator dump, `open_mobile_studio` including its iOS Test Recorder, or authoritative app source). Options: `region`, `includePerformanceTransactions`, `includeAxeScan` (Deque Axe DevTools scan; pins Appium Server 2.16.2 — Axe is unavailable on ≥3.3.0), `automotiveProjection` (Appium Server projects; Android Auto / CarPlay projection and a head-unit screenshot step), `orchestration` (Test Orchestrator, default on for Java on Appium Server). See [Boilerplate Generation](../README.md#boilerplate-generation). | Any |
+| `get_web_test_boilerplate` | Generate a Selenium WebDriver test script for web browser automation. Browser-neutral by default (reads `BROWSER` env var at runtime — `chrome` / `firefox` / `MicrosoftEdge` / `safari` / `opera` without code changes). Pass `targetBrowser` (same names; `edge` is accepted for `MicrosoftEdge`) for browser-specific setup (ChromeOptions etc.). Pass `shadowDomSupport: "always"` to include a `shadowQuery()` helper for Web Components. Gate: if `url` is provided, requires a live browser session or `confirmSelectorsVerified: true`. Supports `java-junit5`, `java-testng`, `python`, and `nodejs`. | Any |
 | `install_test_orchestrator_agent` | Download the Digital.ai Test Orchestrator agent on demand, verify its SHA-256, and install it into a generated project at `lib/smart-agent.jar`. Under the npm install it writes the file directly; under Docker it returns a bash/PowerShell download command that verifies the file and deletes it on a mismatch. Source: the pinned sample-repository download, or `TEST_ORCHESTRATOR_JAR_URL` + `TEST_ORCHESTRATOR_JAR_SHA256` when configured. If the download fails, the response explains how to install it manually. See [Test Orchestrator](../README.md#test-orchestrator-default-for-java-on-appium-server). | Any |
 | `validate_test_script` | Delivery backstop that scans any test script (generated or hand-written) for unreplaced `<…>` placeholder selectors, CSS placeholder selectors (`#YOUR_SELECTOR`, `.your-class`, etc.), the scaffold fail-guard, placeholder credentials, and known fabricated resource IDs. Returns `isError` with a `fail` verdict when any high-severity pattern is found — a non-functional test cannot be delivered as finished. | Any |
 
@@ -330,7 +347,7 @@ Six tools cover POC and general project lifecycle management. See the [Workflow 
 |---|---|---|
 | `get_remote_debug_command` | Generate a ready-to-run `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) script that connects a cloud device as a locally attached ADB/USB device. Install the app first — `install_application` fails while a device is reserved via rdb. Also useful for device diagnostics (ping, nslookup, dumpsys) before NV-dependent tests. **Cloud Admin recommended for reliable serial resolution** — a project-level key may produce an internal device ID that rdb rejects. | Any¹ |
 
-> ¹ Callable with any access level, but **Cloud Admin recommended** for reliable device serial resolution. If called with a project-level key and rdb fails with `"validation error / Failed to reserve device"`, switch to your Cloud Admin profile first: `switch_environment("default")` → `get_remote_debug_command` → switch back.
+> ¹ Callable with any access level, but **Cloud Admin recommended** for reliable device serial resolution. If called with a project-level key and rdb fails with `"validation error / Failed to reserve device"`, switch to your Cloud Admin profile first: `switch_environment("cloud admin")` (or the profile's name) → `get_remote_debug_command` → switch back.
 
 **rdb connects the cloud device as a locally attached ADB/USB device.** Once the tunnel is running, the device is visible to Android Studio, Xcode, Appium MCP, and command-line ADB — without any reconfiguration. This makes rdb useful for two distinct workflows:
 
@@ -370,35 +387,36 @@ Network checks are especially important before NV-dependent tests (`startPerform
 
 ### Mobile Inspection Sessions
 
-22 tools for AI-driven interactive mobile test building. An inspection session opens a live WebDriver connection to a real Android or iOS device (`platform: "ios"`), giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
+24 tools for AI-driven interactive mobile test building. An inspection session opens a live WebDriver connection to a real Android or iOS device (`platform: "ios"`), giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `start_inspection_session` | Reserve a device and open a live WebDriver session. Allocates a real Android device and returns a session handle plus `viewUrl` so the operator can watch the session live in a browser (read-only). Device allocation takes 20–90 s. | No |
-| `stop_inspection_session` | Release the device and delete the probe report from the reporter. `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | No |
-| `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Agent. Use after each interaction to verify UI state. | No |
-| `automotive_control` | Android Auto / CarPlay projection in an inspection session: `start`/`stop` projection, `screenshot` the head unit (CarPlay `cluster` display too), `tap` in head-unit coordinates, `dump` (CarPlay only). Prefer `start_inspection_session(automotiveProjection)` — mid-session start is not supported on every device. Android Automotive OS emulators are not projection targets: use `deviceQuery "@os='android' and @emulator='true' and @model='automotive_1024p_landscape'"` (`@emulator='true'` is required) and the normal inspection tools. | No |
-| `get_element_tree` | Get the full UI hierarchy as a formatted element table. Shows resource-id, content-desc, text, and clickability for all elements on screen. | No |
-| `find_elements` | Find elements by strategy (xpath, id, accessibility id, class name) and return their element IDs and attributes for use with tap/type. | No |
-| `tap_element` | Tap a UI element by its element ID. | No |
-| `type_into_element` | Type text into an input field. | No |
-| `clear_element` | Clear an input field before typing new content. | No |
-| `swipe_screen` | Swipe/scroll by direction (`up`/`down`/`left`/`right`) or explicit coordinates. Scroll lists, open the app drawer, dismiss overlays. Auto-selects W3C actions or JWP touch per agent. | No |
-| `scroll_to_element` | Scroll until an element becomes visible — swipes repeatedly, stops when found or when the screen stops changing (end of content). Returns the element ID ready for tap/type. | No |
-| `long_press` | Press-and-hold an element or coordinate — context menus, hold-to-record buttons. | No |
-| `double_tap` | Double-tap an element or coordinate — image/map zoom, double-tap actions. | No |
-| `drag_and_drop` | Hold at a start point, drag to an end point, release — reorder lists, move sliders. | No |
-| `pinch_zoom` | Two-finger zoom in/out on maps and images. **Appium Server sessions only** — the Grid rejects multi-touch. | No |
-| `press_key` | Press an Android key: ENTER (submit forms/search), HOME, APP_SWITCH, volume, or any raw keycode. | No |
-| `hide_keyboard` | Hide the on-screen keyboard if open — safer than press_back when the keyboard covers an element. | No |
-| `launch_app` | Launch an installed app by package + activity — the equivalent of tapping its icon. Get `mainActivity` from `get_application_info` first. | No |
-| `press_back` | Press the Android Back button — close dialogs, navigate back. | No |
-| `app_control` | App lifecycle: `terminate`, `clear_data` (reset to first launch), `query_state`, `deep_link` (jump straight to a screen). Grid limits: query_state is foreground-only, deep_link best-effort. | No |
-| `device_control` | Device-level actions: orientation get/set, clipboard get/set, geolocation set/reset, alert accept/dismiss, file push/pull. Grid limits: alerts and reset_geolocation are Appium Server only. | No |
-| `list_inspection_sessions` | List all active inspection sessions in the current server process. | No |
+| `start_inspection_session` | Reserve an Android or iOS (`platform: "ios"`) device and open a live WebDriver session. Pin a specific device with `device` (e.g. the one you installed the app on), or route with `deviceQuery` / `region`. Returns a session handle plus a watch-only `viewUrl` so the operator can follow the session in a browser. Device allocation takes 20–90 s. | Any |
+| `stop_inspection_session` | Release the device and delete the probe report from the reporter. `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | Any |
+| `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Agent. Use after each interaction to verify UI state. | Any |
+| `automotive_control` | Android Auto / CarPlay projection in an inspection session: `start`/`stop` projection, `screenshot` the head unit (CarPlay `cluster` display too), `tap` in head-unit coordinates, `dump` (CarPlay only). Prefer `start_inspection_session(automotiveProjection)` — mid-session start is not supported on every device. Android Automotive OS emulators are not projection targets: use `deviceQuery "@os='android' and @emulator='true' and @model='automotive_1024p_landscape'"` (`@emulator='true'` is required) and the normal inspection tools. | Any |
+| `get_element_tree` | Get the full UI hierarchy as a formatted element table. Shows resource-id, content-desc, text, and clickability for all elements on screen. | Any |
+| `find_elements` | Find elements by strategy — `xpath`, `id`, `accessibility id`, `class name`, or `-ios predicate string` (iOS on Appium Server projects only; the Appium Grid rejects it) — and return element IDs and attributes for tap/type. Attributes are fetched for the first `maxResults` matches (default 20); the rest are listed by ID only — narrow the selector rather than raising it. | Any |
+| `tap_element` | Tap a UI element by its element ID. | Any |
+| `type_into_element` | Type text into an input field. | Any |
+| `clear_element` | Clear an input field before typing new content. | Any |
+| `swipe_screen` | Swipe/scroll by direction (`up`/`down`/`left`/`right`) or explicit coordinates. Scroll lists, open the app drawer, dismiss overlays. Auto-selects W3C actions or JWP touch per agent. | Any |
+| `scroll_to_element` | Scroll until an element becomes visible — swipes repeatedly, stops when found or when the screen stops changing (end of content). Returns the element ID ready for tap/type. | Any |
+| `long_press` | Press-and-hold an element or coordinate — context menus, hold-to-record buttons. | Any |
+| `double_tap` | Double-tap an element or coordinate — image/map zoom, double-tap actions. | Any |
+| `drag_and_drop` | Hold at a start point, drag to an end point, release — reorder lists, move sliders. | Any |
+| `pinch_zoom` | Two-finger zoom in/out on maps and images. **Appium Server sessions only** — the Grid rejects multi-touch. | Any |
+| `press_key` | Press a key: ENTER (submit forms/search), HOME, APP_SWITCH, volume, or a raw Android keycode; iOS supports HOME, VOLUME_UP, VOLUME_DOWN, POWER. | Any |
+| `hide_keyboard` | Hide the on-screen keyboard if open — safer than press_back when the keyboard covers an element. | Any |
+| `launch_app` | Launch an installed app — the equivalent of tapping its icon. Android: package + activity (from `get_application_info.mainActivity`; effectively required on Grid). iOS: bundle ID. | Any |
+| `press_back` | Press the Android Back button — close dialogs, navigate back. On iOS, taps the navigation-bar back button. | Any |
+| `app_control` | App lifecycle: `terminate`, `clear_data` (reset to first launch), `query_state`, `deep_link` (jump straight to a screen). Grid limits: query_state is foreground-only, deep_link best-effort. | Any |
+| `device_control` | Device-level actions: orientation get/set, clipboard get/set, geolocation set/reset, alert accept/dismiss, file push/pull. Grid limits: alerts and reset_geolocation are Appium Server only. | Any |
+| `mock_authentication` | Pre-stage a mock biometric answer (Touch ID / Face ID / fingerprint) for the next auth dialog — `reply`: `success` / `failed` / `cancel` / `clear` (remove the mock after the test); optional `delay` ms. Call it BEFORE the action that triggers the prompt. Requires an instrumented app (uploaded with instrument=true); does not work for system apps or third-party auth libraries. | Any |
+| `list_inspection_sessions` | List all active inspection sessions in the current server process. | Any |
 | `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions (scoped to the project each session was created under). Requires `confirmDeletion: true`. | Cloud Admin † |
 
-> † Cloud Admin can always delete. A Project Admin can delete only when the project's `allowUsersDeleteTests` setting is enabled (off by default); otherwise the tool stops with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
+> † Cloud Admin can always delete. A project-level key (Project Admin or Project User) is refused up front when its project's `allowUsersDeleteTests` setting is off (the default), with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 **Typical workflow:**
 
@@ -437,20 +455,22 @@ get_test_boilerplate(...)                           → generate the test script
 
 ### Web Inspection Sessions
 
-8 tools for AI-driven interactive browser test building via the Digital.ai Selenium Grid. A browser inspection session opens a live W3C WebDriver connection to a cloud browser (Chrome, Firefox, Edge, or Safari), letting the AI agent navigate pages, extract the rendered DOM (including React/Angular/Vue Shadow DOM), verify element selectors, and generate browser-neutral Selenium test scripts.
+8 tools for AI-driven interactive browser test building via the Digital.ai Selenium Grid. A browser inspection session opens a live W3C WebDriver connection to a cloud browser (Chrome, Firefox, Microsoft Edge, Safari, or Opera), letting the AI agent navigate pages, extract the rendered DOM (including React/Angular/Vue Shadow DOM), verify element selectors, and generate browser-neutral Selenium test scripts.
 
 **No live view URL.** Unlike mobile sessions, browser sessions have no passive viewer — `take_inspection_screenshot` relays the page state to the user at each step instead.
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `start_browser_inspection_session` | Open a browser on the Digital.ai Selenium Grid. Prompts for browser choice if `inspectionBrowser` is omitted — always call `list_available_browsers` first. Returns a session handle. | Any |
+| `start_browser_inspection_session` | Open a browser on the Digital.ai Selenium Grid. Prompts for browser choice if `inspectionBrowser` is omitted — always call `list_available_browsers` first. `inspectionBrowser` takes the names `list_available_browsers` returns — `chrome`, `firefox`, `MicrosoftEdge`, `safari`, `opera` — with case-insensitive aliases such as `Chrome` / `edge` normalised. Returns a session handle. | Any |
 | `stop_browser_inspection_session` | Close the browser and delete the probe report. `keepReport: true` preserves the session video for retrieval via `download_test_attachments`. Always call when done. | Any |
 | `navigate_to` | Navigate to a URL. Waits for `document.readyState === "complete"` (up to 30 s). | Any |
 | `get_page_dom` | Extract interactive elements from the rendered DOM. Automatic shadow DOM detection: uses a recursive JS walker (depth ≤ 3) for React/Angular/Vue pages, standard DOM for others. Returns element tags, IDs, data-testid, aria-label, role, text, and shadow subtrees. | Any |
 | `browser_action` | Browser navigation: `back`, `forward`, `refresh`, or `get_current_url`. | Any |
-| `find_web_elements` | Find elements by CSS selector, XPath, id, name, or link text. CSS is the recommended strategy for web: `"#email"`, `"[data-testid='submit']"`, `"input[name='email']"`. Returns element IDs for use with `tap_element` / `type_into_element`. | Any |
+| `find_web_elements` | Find elements by CSS selector, XPath, id, name, link text, partial link text, or tag name. CSS is the recommended strategy for web: `"#email"`, `"[data-testid='submit']"`, `"input[name='email']"`. Returns element IDs for use with `tap_element` / `type_into_element`. | Any |
 | `list_browser_inspection_sessions` | List all active browser inspection sessions in the current server process. | Any |
-| `cleanup_browser_inspection_sessions` | Delete probe reports from abandoned browser sessions. Requires `confirmDeletion: true`. | Cloud Admin |
+| `cleanup_browser_inspection_sessions` | Delete probe reports from abandoned browser sessions. Requires `confirmDeletion: true`. | Cloud Admin † |
+
+> † Cloud Admin can always delete. A project-level key (Project Admin or Project User) is refused up front when its project's `allowUsersDeleteTests` setting is off (the default), with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 > **Shared tools** — these mobile-inspection tools also work for browser session handles: `take_inspection_screenshot`, `tap_element`, `type_into_element`, `clear_element`, `scroll_to_element`, `find_elements` (prefer `find_web_elements` for the CSS-oriented description).
 
@@ -493,50 +513,49 @@ Four tools for structured performance regression analysis — compare Speed Inde
 
 ### Usage Reports
 
-Three tools for platform usage-report CSVs — Cloud Admin only (confirmed live: a project-level key gets a 403). Backed by `GET /api/v2/configuration/get-CSV-reports/{projectId}/{userId}/{startMs}/{endMs}/{objectType}`.
+Three tools for platform usage-report CSVs — Cloud Admin only; other roles receive 403. Backed by `GET /api/v2/configuration/get-CSV-reports/{projectId}/{userId}/{startMs}/{endMs}/{objectType}`.
 
 | Tool | What it does |
 |---|---|
 | `download_usage_report` | Downloads the CSV to the MCP server's own filesystem. |
 | `get_usage_report_download_command` | Generates a curl/PowerShell command so the CSV downloads straight to the user's machine — the preferred path for large exports, since it doesn't proxy the download through the MCP process. |
-| `summarize_usage_report` | Fetches the CSV into memory and aggregates it by a column (e.g. session counts by username) — returns a compact JSON summary directly, **no file is written anywhere**. Use this for count/breakdown questions, and especially from a client whose filesystem is not the MCP server's own (a written file is frequently unreachable in that case; this tool has nothing for that boundary to break). `groupBy` is validated against the CSV's real header — an unmatched value errors with the actual column names, so there's no need to guess. |
+| `summarize_usage_report` | Fetches the CSV into memory and aggregates it by a column (e.g. session counts by username) — returns a compact JSON summary directly, **no file is written anywhere**. Use this for count/breakdown questions, and especially from a client whose filesystem is not the MCP server's own (a written file is frequently unreachable in that case; this tool has nothing for that boundary to break). `groupBy` is validated against the CSV's real header — an unmatched value errors with the actual column names, so there's no need to guess. Multi-section reports are handled automatically (the section containing `groupBy` is used). Optional `sumColumn` (numeric total per group) and `topN` (default 50; truncation is reported). Comma-separated tag cells (`User Tag`) are split so a row counts in each tag's group. |
 
-**Dates are whole UTC calendar days** — `startDate`/`endDate` are `"YYYY-MM-DD"` strings interpreted as `00:00:00.000 UTC` to `23:59:59.999 UTC`, regardless of the caller's or server's local timezone. This was a real footgun found during live testing: computing the same boundary in Pacific Time instead of UTC silently dropped the first 7-8 hours of each day's data.
+**Dates are whole UTC calendar days** — `startDate`/`endDate` are `"YYYY-MM-DD"` strings interpreted as `00:00:00.000 UTC` to `23:59:59.999 UTC`, regardless of the caller's or server's local timezone. Computing day boundaries in a local timezone instead of UTC shifts the window and can drop hours of data.
 
 **Size guard:** an unfiltered request spanning more than 31 days is blocked with a message (not an error) instructing you to add a `projectId`/`userId` filter, shorten the range, or — only after the user explicitly agrees to a large export — pass `confirmLargeExport: true`. The agent must not confirm on the user's behalf. Measured live: one unfiltered month of `License Usage` was ~27 MB; one unfiltered week of `Device Reservations` was ~6.4 MB — a multi-month or full-year unfiltered pull can run into the hundreds of MB and take minutes. `License Usage` has no filter to narrow by, so its guard fires on date range alone.
 
 **`projectId: 0` / `userId: 0` mean "All"** — same as omitting the parameter — and do NOT satisfy the size guard's narrowing requirement.
 
-**File isolation between the MCP server and the calling client is a real, confirmed failure mode.** `download_usage_report` writes to the MCP server's OWN filesystem — if the server runs in Docker/remote (the common case) and the client is a separate sandboxed session (e.g. a Cowork-style remote agent), the written file is frequently unreachable to the client's own file tools, even with a validated absolute path. This isn't a bug in path validation — `validateOutputPath` correctly requires a path absolute *on whatever OS the MCP process itself runs on* (a Windows-style path is genuinely non-absolute to a Linux Docker process). The fix is to avoid the file entirely: use `summarize_usage_report` when you want a count/breakdown, or `get_usage_report_download_command` when the user needs the raw CSV on their own machine.
+**If the server runs in Docker or remotely**, `download_usage_report` writes to the server's own filesystem, which your client may not be able to reach. Use `summarize_usage_report` for counts and breakdowns, or `get_usage_report_download_command` to download the raw CSV straight to your machine. With the npm install the server's filesystem is your own and this doesn't apply.
 
 #### `summarize_usage_report`'s `groupBy` works on ANY column, not just Username
 
-`groupBy`/`sumColumn` are matched case-insensitively against whatever the report's real CSV header contains — confirmed live across multiple columns and report types, not just the `Username` example used above:
+`groupBy`/`sumColumn` are matched case-insensitively against whatever the report's real CSV header contains — not just the `Username` example used above:
 
 | Report type | Other useful `groupBy` columns |
 |---|---|
-| `License Usage` | `Project`, `License type`, `Session type`, `Device Model`, `Device Manufacturer`, `Product`, `Device OS` (confirmed live: a 42,942-row week split into `Android`/`iOS`/blank) |
-| `Device Reservations` / `Users Usage` | `Project` (the only real grouping dimension — these reports already return one row per project) |
+| `License Usage` | `Project`, `License type`, `Session type`, `Device Model`, `Device Manufacturer`, `Product`, `Device OS` |
+| `Device Reservations` | `Project` (section 1); `Device Name`, `Username`, `Release Reason`, `Device OS`, `Reservation Host` (section 2 — one row per reservation; `summarize_usage_report` picks the section that has your column) |
+| `Users Usage` | `Project` (section 1); `Username`, `User Tag` (section 2 — a user with several comma-separated tags counts in each tag's group) |
 | `Devices Usage` | `Project`, `OS`, `OS Version`, `Device name` |
-| `Browser Usage` | `Browser Platform`, `Project`, `Execution Type`, `Username` (confirmed live: grouping by `Browser Name` split a day's sessions into safari/firefox/chrome/MicrosoftEdge/opera) |
-| `Users Statistics` | `Project`, `User Tag` |
+| `Browser Usage` | `Browser Name`, `Browser Platform`, `Project`, `Execution Type`, `Username` |
+| `Users Statistics` | `User`, `Project`, `User Tag` |
 
 **Caveat:** grouping by a near-unique column (`Device UDID`, `Session Start Timestamp`, any per-row ID) technically works but produces mostly-1-count buckets — not a useful summary. `groupBy` is best suited to columns with real repeated values, not identifiers. There's no hardcoded allowlist enforcing this; it's a judgment call left to the caller.
 
 #### Report types: columns, purpose, and when to reach for each
 
-Every row below reflects a real sample pulled live, not the object-type name alone — two of the six behave differently from what their name implies (see the notes column). Usage data is retained for 2 years (platform 25.9+); a range starting earlier comes back empty or partial for the purged period.
+Every row reflects a real sample pulled live. `Device Reservations` and `Users Usage` are multi-section CSVs (a per-project summary, a blank line, then a detail table with its own header). Usage data is retained for 2 years (platform 25.9+); a range starting earlier comes back empty or partial, and the result says so.
 
 | Report type | Columns (confirmed live) | What it actually answers | Use it for | Don't use it for |
-|---|---|---|---|
+|---|---|---|---|---|
 | `Device Reservations` | Two sections. **1:** `Project, Start Date, End Date, Total Reservation Time (hours), Tokens`. **2:** `Reservation Start/End Timestamp/Date/Hour, Reservation Duration, Reservation Host, Reservation Notes, Release Reason, Device ID/Name/UDID/OS/OS Version/Model/Manufacturer, User ID, Username, User's first/last name, User's email, Project, Tokens` | Section 1: device-reservation hours per project. Section 2: one row per reservation. | Chargeback-by-project; per-device, per-user or release-reason reservation audits (`summarize_usage_report` groupBy `Device Name`, `Username`, `Release Reason`) | Quick totals over long unfiltered ranges — section 2 lists every reservation (~51k rows for one unfiltered week) |
 | `Users Usage` | Two sections. **1:** same per-project summary as `Device Reservations`. **2:** `User ID, Username, User's first/last name, User's email, Project, Total Duration (in hours), Tokens, User Tag` | Reservation-hours per user per project, with the user's tags (26.2+; one cell can hold several comma-separated tags). A non-zero `userId` narrows it to one user. | Hours by user or by user tag (`summarize_usage_report` groupBy `Username` or `User Tag` — a user with several tags counts in each) | Per-reservation detail (use `Device Reservations` section 2) |
 | `Devices Usage` | `Device ID, Device name, OS, OS Version, Project, Total duration (in hours)` | Per-device utilization — one row per physical/virtual device. | "Which devices are idle/underused", per-device utilization audits, device-pool right-sizing | Per-user or per-session detail (not present here) |
 | `Browser Usage` | `Session Start Timestamp, Session Start Time, Session End Timestamp, Session End Time, Session Duration, Session Host, Browser Platform, Browser Name, Browser Version, Username, User Email, Project, Execution Type` | Per-Selenium/browser-session log — one row per session. | Browser/version distribution, session-host load, "who ran what browser session when", web-testing audit trail | Mobile device usage (use `Devices Usage`/`Device Reservations`) or license-seat accounting (use `License Usage`) |
 | `Users Statistics` | `Time Logged, Time Logged Formatted, User, Project, Clicks, Swipe Distance, Keys Sent, Installs, Screens Sent, Screen Minutes, Screen Time Min (ms), Screen Time Max (ms), Screen Time Avg (ms), User Tag` | Per-interaction-event telemetry from interactive/manual sessions (clicks, gestures, screen streaming) — one row per logged event, not a rollup. | Manual-testing engagement/activity analysis, "how actively is user X interacting", auditing interactive session intensity | Aggregate reservation-time totals (use `Device Reservations`/`Users Usage`) or automated test-execution results (use `list_test_reports` / reporting tools, not this) |
 | `License Usage` | `Session Start Timestamp, Session Start Date, Session Start Hour, Session End Timestamp, Session End Date, Session End Hour, Session Duration, Session Duration (in hours), User ID, Username, User's first/last name, User's email, Project, Session type, License type, Reservation Host, Device ID/Name/UDID/OS/OS Version/Model/Manufacturer, Product` | The most granular report — one row per license-consuming session, across every project (no project/user filter exists). | License-seat exhaustion analysis, per-product/per-license-type consumption, full session-level compliance audit trail | Anything a coarser report already answers — this is also the **largest and slowest** report (measured ~27 MB/month unfiltered), so reach for `Device Reservations` or `Devices Usage` first if they contain the field you actually need |
-
-**Corrected finding:** an earlier internal note assumed the `Users Statistics` wire value was misspelled `"Users Stastistics"`. Live testing against this tenant disproved that — the correctly-spelled `"Users Statistics"` returns real data (200) and the misspelled variant 500s consistently. The implementation uses the correct spelling; if a future platform version flips this, re-verify both before trusting either.
 
 **Column sets are not perfectly fixed** — the optional `Tokens` column on `Device Reservations`/`Users Usage` appeared in some live samples and was absent in others (likely tied to whether the queried project has token-based licensing configured). Parse the CSV's own header row rather than hardcoding a column list.
 
@@ -549,7 +568,7 @@ Every row below reflects a real sample pulled live, not the object-type name alo
 | `digital-ai://farm/status` | Live device farm status: counts by availability, OS, and agent health |
 | `digital-ai://reporting/recent-failures` | The 20 most recent failed test executions in the active connection's reporter scope |
 
-**Prompts** — invoked by name in prompt-aware clients. Tool-first clients like Code Agents use the equivalent tool directly.
+**Prompts** — invoked by name in prompt-aware clients. Clients without prompt support use the equivalent tool directly.
 
 | Prompt | Equivalent Tool | What it does |
 |---|---|---|
@@ -557,6 +576,7 @@ Every row below reflects a real sample pulled live, not the object-type name alo
 | `investigate_test_failures` | — | Step-by-step failure triage: summary → recent failures → OS/device breakdown |
 | `device_farm_health_check` | — | Full farm health: device statuses → agent health → orphaned sessions |
 | `prepare_test_run` | — | Pre-run readiness check: devices → app version → provisioning profile validity |
+| `performance_comparison_report` | — | Plan and run a rigorous performance comparison (app versions, devices, OS versions, regions, network profiles): scrubs confounds, agrees sample size, requires explicit plan confirmation, runs the series with outlier-driven reruns, then reports the Speed Index delta (trimmed mean, median, raw mean) |
 | `collaborative_test_creation` | — | Build a mobile test script together with the operator: live inspection session with shared view URLs, element discovery, interactive verification, final script generation |
 | `collaborative_web_test_creation` | — | Build a Selenium web test together with the operator: browser inspection session, screenshot relay checkpoints, Shadow DOM element discovery, verified CSS selector capture, browser-neutral script generation |
 

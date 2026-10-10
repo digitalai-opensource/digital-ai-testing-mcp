@@ -6,7 +6,7 @@
 
 # Digital.ai Testing — MCP Server
 
-An MCP (Model Context Protocol) server that connects AI assistants to a Digital.ai Testing device farm. The server exposes **191 tools**, **2 resources**, and **7 prompts** covering 26 capability areas: device management, test execution, app lifecycle, reporting, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+An MCP (Model Context Protocol) server that connects AI assistants to a Digital.ai Testing device farm. The server exposes **202 tools**, **2 resources**, and **7 prompts** covering 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -53,6 +53,8 @@ Then ask: *"Show me the overall health of the device farm."*
 - [Access Keys](#access-keys)
 - [Installation](#installation)
 - [Configuration](#configuration)
+  - [Toolsets](#toolsets-reducing-context-size)
+  - [Debug mode](#debug-mode-remediation-notes)
 - [Connecting AI Clients](#connecting-ai-clients)
   - [Claude Desktop](#claude-desktop)
   - [Claude Code (VS Code)](#claude-code-vs-code)
@@ -66,11 +68,13 @@ Then ask: *"Show me the overall health of the device farm."*
   - [Project Lifecycle](#project-lifecycle)
 - [Boilerplate Generation](#boilerplate-generation)
   - [Recommended agent guardrails](docs/recommended-agent-guardrails.md)
+- [Performance Comparison Reports](#performance-comparison-reports)
 - [Reference](#reference)
   - [Response Format](#response-format)
   - [Understanding maxResults](#understanding-maxresults)
   - [List Filters & Sorting](#list-filters--sorting)
   - [Test Reporting Schema](#test-reporting-schema)
+  - [Local File Transfer](#local-file-transfer-docker--remote-deployments-only)
 - [Safety Guards](#safety-guards)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -95,7 +99,7 @@ Your Digital.ai access key determines what the MCP server can do on your behalf.
 |---|---|
 | **Cloud Admin** | All tools: device management, user provisioning, project administration, infrastructure, performance data |
 | **Project Admin** | Scoped to one project. Can manage device tags, view project admin settings, list users. v2 API tools (agents, regions, license data) return 403. |
-| **Project User** | Scoped to one project. Read/test operations only. Cannot manage tags, access admin settings, or delete reports. |
+| **Project User** | Scoped to one project. Read/test operations only. Cannot manage tags or access admin settings; deleting reports requires the project's `allowUsersDeleteTests` setting. |
 
 > **The key format does not tell you the access level.** Older keys are long `eyJ…` tokens; since Digital.ai 24.11 newly generated keys use a shorter `aut_1_…` token, and that applies to Cloud Admins too. The MCP server therefore detects your access level from the API (`GET /api/v1/users/my-account-info` → `Admin` / `ProjectAdmin` / `User`) and never from the key's prefix. `get_server_info` and `list_environments` show what was detected for each profile.
 
@@ -229,12 +233,16 @@ docker build -t digital-ai-testing-mcp:latest .
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
 | `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
 | `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. See [Debug mode](#debug-mode-remediation-notes) |
+| `MCP_REMEDIATION_DIR` | Optional | — | Debug mode only: folder to write remediation files to (overrides project detection) |
+| `AXE_DEVTOOLS_API_KEY` | Optional | — | Deque Axe DevTools Mobile key used by `includeAxeScan` boilerplate |
+| `TEST_ORCHESTRATOR_JAR_URL` / `TEST_ORCHESTRATOR_JAR_SHA256` | Optional | pinned | Override the Test Orchestrator agent download location; both are required |
+| `ACCESS_PROBE_TIMEOUT_MS` | Optional | `8000` | Timeout for the access-level detection call |
 
 Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure named profiles for multi-project or multi-environment use. See [Access Keys](#access-keys) and `.env.example` for examples.
 
 ### Toolsets (reducing context size)
 
-All 200 tool definitions add up to roughly 68K tokens of context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 25K tokens) or `MCP_TOOLSETS=inspection,authoring` (about 32K).
+All 202 tool definitions add up to roughly 68K tokens of context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 25K tokens) or `MCP_TOOLSETS=inspection,authoring` (about 32K).
 
 Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so the detailed usage guidance is always seen before the tool runs. The AI can also load toolsets up front with `enable_toolset`. Leave `MCP_TOOLSETS` unset (the default) to load everything in full, exactly as before.
 
@@ -277,7 +285,7 @@ Where the files go: a `remediation/` folder in the root of **the project the AI 
 | Docker | Returned to the AI, which saves them to `remediation/` in its project if it can write files (Claude Code can; Claude Desktop needs a filesystem tool) | Kept in server memory; a summary is included in every note |
 
 With the npm install, the server finds the project in this order, and records the step it used as `location:` in each file:
-1. `MCP_REMEDIATION_DIR`, if set;
+1. `MCP_REMEDIATION_DIR`, if set (files go directly into that folder);
 2. the workspace folder the AI client reports;
 3. the folder the server was started in, if it looks like a project;
 4. `~/remediation`.
@@ -286,7 +294,7 @@ The `remediation/` folder contains its own `.gitignore` (`*`), so it is never co
 
 Debug mode costs extra tokens (the instructions and the notes). Leave it off for normal use, and don't use debug sessions as token baselines.
 
-To process a batch, collect the `remediation/` folders you want to analyse, from one machine or several, and run `npm run remediation:digest -- --dir <folder> --dir <folder>` in this repository. With no `--dir`, it reads `./remediation` and `~/remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
+To process a batch, collect the `remediation/` folders you want to analyse, from one machine or several, and run `npm run remediation:digest -- --dir <folder> --dir <folder>` in a clone of this repository (the npm package doesn't include it). With no `--dir`, it reads `$MCP_REMEDIATION_DIR`, or else `./remediation` and `~/remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
 - notes by category, and issues that recur across sessions;
 - per-tool errors, guards, retries, response sizes and latency;
 - every note in a table.
@@ -485,7 +493,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 - *"Find an available Android phone, then generate a Java JUnit5 test boilerplate"*
 - *"Show the pass/fail breakdown by OS — are Android and iOS failing at different rates?"*
 - *"Did the latest release introduce a CPU regression? Compare version 10553 vs 10554 on Android."*
-- *"Set up a new POC for Acme Corp — 6 devices in US2, 3 iOS and 3 Android, through August 31st"*
+- *"Set up a new POC for Acme Corp — 6 devices in US2, 3 iOS and 3 Android, for the next 4 weeks"*
 
 **[→ docs/examples.md](docs/examples.md)** has 200+ prompts organized by scenario: farm health, device groups, regression sign-off, test analytics, performance, usage reports, interactive inspection, POC lifecycle, and more.
 
@@ -493,7 +501,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 
 ## Capabilities
 
-191 tools across 26 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
+202 tools across 27 capability domains. The complete per-tool reference — descriptions, filters, auth requirements, and usage notes — lives in **[docs/tools.md](docs/tools.md)**.
 
 | Domain | Tools | Highlights |
 |---|---|---|
@@ -509,21 +517,22 @@ Once connected, talk to the server in plain language — no tool names needed:
 | [Backup](docs/tools.md#backup) | 1 | Trigger a system backup |
 | [Health & Diagnostics](docs/tools.md#health--diagnostics) | 11 | Farm health, readiness checks, license utilization |
 | [Coverage Analytics](docs/tools.md#coverage-analytics) | 2 | Tested-vs-available device gap analysis |
-| [Reporting](docs/tools.md#reporting) | 20 | Search/filter test reports, failure summarization, stability, trends, logs, attachment download command, cleanup |
+| [Reporting](docs/tools.md#reporting) | 23 | Search/filter test reports, root-cause analysis, failure summarization, stability, trends, logs, video download (byte ranges), share links, attachment download command, cleanup |
+| [Test Runs](docs/tools.md#test-runs-espresso--xcuitest--maestro) | 5 | Run Espresso, XCUITest and Maestro suites on the platform; status, cancel, local command; generate Maestro flows |
 | [Test Views](docs/tools.md#test-views) | 7 | Dashboard view groups |
-| [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics *(Cloud Admin)* |
+| [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics |
 | [Agents](docs/tools.md#agents) | 2 | Host machine status *(Cloud Admin)* |
 | [Regions](docs/tools.md#regions) | 2 | Region status and infrastructure topology *(Cloud Admin)* |
 | [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(Cloud Admin)* |
 | [Environment Management](docs/tools.md#environment-management) | 2 | Named connection profiles, runtime switching |
 | [Workflows](docs/tools.md#workflows) | 6 | POC and project lifecycle orchestration |
-| [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 3 | Ready-to-run Appium and Selenium test scripts in 4 languages; validate scripts before delivery |
+| [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | Ready-to-run Appium and Selenium test scripts in 4 languages, Test Orchestrator agent install; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud device as a local ADB device |
-| [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 22 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control |
+| [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 24 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, Android Auto / CarPlay projection, mock biometric authentication |
 | [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 8 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
-| [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation *(Cloud Admin)* |
-| [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, license usage *(Cloud Admin)* |
-| [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 6 guided prompts |
+| [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation |
+| [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, license usage; multi-section CSVs with a User Tag column, about 2 years of retention; large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
+| [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 7 guided prompts |
 
 ---
 
@@ -546,7 +555,7 @@ Collects all parameters upfront, presents a confirmation summary to the operator
 7. Remove devices from the Default group — done only after the project exists, so a project-creation failure never strands devices
 8. Locate the Default project
 9. Create users, assign to the POC project, remove from Default, and tag each account with the POC tag. Cloud Admin access is never granted through this workflow.
-10. Assign ExperiBank (or a specified app) to the POC project — falls back to the latest available version if the exact version is not found
+10. Assign ExperiBank (or the app identified by `androidPackageName` / `iosBundleId`) to the POC project — if a binary isn't in the repository, the summary reports it as a manual upload and the workflow continues
 
 If any step fails, the workflow stops, reports which steps completed with all created resource IDs, and offers resume (re-invoke — existing resources are detected and reused) or unwind (`delete_poc`) paths.
 
@@ -557,7 +566,7 @@ If any step fails, the workflow stops, reports which steps completed with all cr
 | `customerName` | e.g. `"Acme Corp"` → derives project `"Acme Corp POC"` and tag `"acmecorppoc"` |
 | `region` | Testing region, e.g. `"US2"`, `"EU"`, `"SG"` |
 | `salesforceUrl` | Salesforce Opportunity URL — recorded in project notes |
-| `endDate` | Accepts ISO (`"2026-08-31"`), relative offsets (`"+14d"`, `"+2w"`), or natural language (`"in 2 weeks"`) |
+| `endDate` | Accepts ISO (`"YYYY-MM-DD"`), relative offsets (`"+14d"`, `"+2w"`), or natural language (`"in 2 weeks"`) |
 | `users` | Array of `{email, firstName, lastName, role}` — role must be `"User"` or `"ProjectAdmin"` |
 
 **Optional parameters:**
@@ -569,7 +578,8 @@ If any step fails, the workflow stops, reports which steps completed with all cr
 | `androidCount` | `floor(deviceCount / 2)` |
 | `automationType` | `"appium-server"` (alternative: `"appium-grid"`) |
 | `appName` | `"ExperiBank"` |
-| `appVersion` | `"1.0"` |
+| `androidPackageName` | `"com.experitest.ExperiBank"` |
+| `iosBundleId` | `"com.experitest.ExperiBank"` |
 
 Steps 1 and 6 check for an existing group/project by name before creating — safe to re-run after a partial failure.
 
@@ -611,7 +621,7 @@ At the start, the workflow asks whether to create a **simple** project record on
 
 Full setup steps:
 
-1. Create (or reuse) the project with the specified name and automation type; record the memo in project notes
+1. Create (or reuse) the project with the specified name and automation type; record `projectMemo` in project notes
 2. Create (or reuse) a device group and link it to the project
 3. Pre-flight check that the target app exists in the repository
 4. Select available devices matching the target OS and region — presented to the operator for confirmation
@@ -638,8 +648,10 @@ Full setup steps:
 | `automationType` | `"appium-server"` | `"appium-server"` or `"appium-grid"` |
 | `isolateDevices` | `false` | Remove devices from all other groups before assignment |
 | `users` | `[]` | Array of `{email, firstName, lastName, role}` |
-| `appName` | _(none)_ | App to assign to the project |
-| `memo` | _(none)_ | Notes to record on the project |
+| `appName` | `"ExperiBank"` | App to assign to the project |
+| `androidPackageName` | `"com.experitest.ExperiBank"` | Android package used to find the app |
+| `iosBundleId` | `"com.experitest.ExperiBank"` | iOS bundle ID used to find the app |
+| `projectMemo` | _(none)_ | Notes to record on the project |
 
 ---
 
@@ -699,7 +711,7 @@ For **Java (JUnit 5 / TestNG) on an Appium Server project**, the generated proje
 
 Requirements: a **Java 17 or 21** JDK with a current truststore, JUnit 5 or TestNG 7+, Appium java-client 8–10. See [Limitations](docs/limitations.md#17-test-orchestrator-known-issues) for known issues.
 
-The agent JAR is **not** shipped with this server. By default it is downloaded from the [Digital.ai Test Orchestrator sample repository](https://github.com/raheekhandigitalai/Digital.ai-Testing-Test-Orchestrator), pinned to a fixed commit and verified by SHA-256 (see `resources/test-orchestrator/agent.json`). To use a different location — for example an internal mirror, or a permanent production URL once one exists — set `TEST_ORCHESTRATOR_JAR_URL` **and** `TEST_ORCHESTRATOR_JAR_SHA256` (both required; a URL without a checksum is refused).
+The agent JAR is **not** shipped with this server. By default it is downloaded from the [Digital.ai Test Orchestrator sample repository](https://github.com/raheekhandigitalai/Digital.ai-Testing-Test-Orchestrator), pinned to a fixed commit and verified by SHA-256 (see `resources/test-orchestrator/agent.json`). To use a different location — for example an internal mirror — set `TEST_ORCHESTRATOR_JAR_URL` **and** `TEST_ORCHESTRATOR_JAR_SHA256` (both required; a URL without a checksum is refused).
 
 | Parameter | Values | Default |
 |---|---|---|
@@ -716,23 +728,25 @@ The agent JAR is **not** shipped with this server. By default it is downloaded f
 | `includePerformanceTransactions` | `true` \| `false` | `false` |
 | `includeAxeScan` | `true` \| `false` | `false` |
 | `confirmSelectorsVerified` | `true` \| `false` | _(optional)_ |
+| `orchestration` | `auto` \| `on` \| `off` | `auto` |
+| `orchestrationMaxRetries` | `0`–`5` | `2` (`0` for placeholder or performance tests) |
+| `automotiveProjection` | Android Auto / CarPlay resolution | _(optional)_ |
 | `outputFormat` | `json` \| `human` | `json` |
 
-> **Inspection gate (v42):** when you target a real app (`appId`/`packageName`/`bundleIdentifier`), this tool returns **no code** and a structured `{ status: "blocked", reason: "no_verified_selectors" }` error UNLESS a live inspection session exists in the MCP process, or you set `confirmSelectorsVerified: true` (escape hatch for selectors already captured via rdb/UIAutomator, `open_mobile_studio`, or authoritative source). The built-in ExperiBank demo (no app identifiers) is never gated. This makes it structurally impossible to receive a placeholder scaffold and pass it off as a finished test.
+> **Inspection gate:** when you target a real app (`appId`/`packageName`/`bundleIdentifier`), this tool returns **no code** and a structured `{ status: "blocked", reason: "no_verified_selectors" }` error UNLESS a live inspection session exists in the MCP process, or you set `confirmSelectorsVerified: true` (escape hatch for selectors already captured via rdb/UIAutomator, `open_mobile_studio`, or authoritative source). The built-in ExperiBank demo (no app identifiers) is never gated. This makes it structurally impossible to receive a placeholder scaffold and pass it off as a finished test.
 
 **Recommended workflow** for building a new test:
 
 1. `get_application_info` — confirm package name, launch activity, and app ID
-2. `get_test_boilerplate` — generate starter test with capabilities pre-filled (this step)
-3. `open_mobile_studio` or `get_automation_properties` — inspect live element IDs (no ADB required)
-4. `release_orphaned_sessions(maxAgeHours=4, dryRun=true)` — pre-flight device check
-5. `find_available_device` — select a healthy device and read its `region`
-6. Write/run the test
-7. `release_device` — explicit cleanup
+2. `find_available_device` — select a healthy device and read its `region`
+3. `start_inspection_session` (or `open_mobile_studio`) — capture real element IDs
+4. `get_test_boilerplate(appId, region, …)` — generates code while the inspection session is live, or with `confirmSelectorsVerified: true`
+5. `validate_test_script` — before saving or presenting the test
+6. Run the test, then `release_device` — explicit cleanup
 
 **Performance transactions:** Pass `includePerformanceTransactions: true` to bracket the test body with `startPerformanceTransaction` / `endPerformanceTransaction` calls. The start arg is the NV network profile (defaults to `"Monitor"` — observe without throttling); the end arg is the transaction name. The platform records CPU, memory, battery, and Speed Index metrics; results appear in the reporter Transactions tab (~1 min after `endPerformanceTransaction`) and are queryable via `list_transactions`. Pre-requisite: an NV server must be ONLINE and tunnel-connected in the device region (`list_nv_servers`). Note: a throttling profile activates NV shaping immediately; `"Monitor"` is pass-through and carries no ANR risk.
 
-**Accessibility scanning:** Pass `includeAxeScan: true` to inject a Deque Axe DevTools Mobile accessibility scan (`mobile: axeScan` executeScript call). Sets the required `appium:automationName` capability automatically (`AxeUiAutomator2` for Android, `AxeXCUITest` for iOS). Requires `AXE_DEVTOOLS_API_KEY` in the MCP environment.
+**Accessibility scanning:** Pass `includeAxeScan: true` to inject a Deque Axe DevTools Mobile accessibility scan (`mobile: axeScan` executeScript call). Sets the required `appium:automationName` capability automatically (`AxeUiAutomator2` for Android, `AxeXCUITest` for iOS). Also pins `appiumVersion` to 2.16.2 (the Axe driver is unavailable on Appium Server 3.3.0+; don't raise it). The key comes from `AXE_DEVTOOLS_API_KEY`; if that's unset, a placeholder is written.
 
 Both flags can be combined — the Axe scan runs inside the performance transaction boundary.
 
@@ -742,7 +756,7 @@ Both flags can be combined — the Axe scan runs inside the performance transact
 
 ### `validate_test_script`
 
-Delivery backstop (v43) for the case the `get_test_boilerplate` gate cannot catch — a test written by hand with guessed selectors. Pass the full `scriptContent` before presenting or saving any test; it scans for unreplaced `<…>` placeholder selectors, the deliberate scaffold fail-guard, placeholder/fabricated credentials, and resource IDs from a known prior fabrication incident. Returns `isError` with a `fail` verdict when any high-severity pattern is found, so a non-functional test cannot be delivered as finished. A `pass` is necessary but not sufficient — it confirms obvious placeholders are gone, not that selectors are real; a live inspection remains the authoritative source.
+Delivery backstop for the case the `get_test_boilerplate` gate cannot catch — a test written by hand with guessed selectors. Pass the full `scriptContent` before presenting or saving any test; it scans for unreplaced `<…>` placeholder selectors, the deliberate scaffold fail-guard, placeholder/fabricated credentials, and known fabricated resource IDs. Returns `isError` with a `fail` verdict when any high-severity pattern is found, so a non-functional test cannot be delivered as finished. A `pass` is necessary but not sufficient — it confirms obvious placeholders are gone, not that selectors are real; a live inspection remains the authoritative source.
 
 | Parameter | Values | Default |
 |---|---|---|
@@ -757,7 +771,7 @@ Delivery backstop (v43) for the case the `get_test_boilerplate` gate cannot catc
 | Language | Files |
 |---|---|
 | `java-junit5` / `java-testng` | `AndroidNative.java` or `iOSNative.java` + `build.gradle` + `pom.xml` |
-| `nodejs` | `wdio.conf.js` + test file + setup shell steps |
+| `nodejs` | `wdio.conf.js` + test file + setup shell steps (WebdriverIO 7.40 for Appium Grid projects, WebdriverIO 9 for Appium Server) |
 | `python` | Test file + `requirements.txt` |
 
 All boilerplate defaults to the ExperiBank demo app as the starting point. ExperiBank is available on most farm devices and can verify connectivity before switching to your own app.
@@ -770,15 +784,15 @@ Generates a complete, pre-configured Selenium test script for browser testing. T
 |---|---|---|
 | `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` | _(required)_ |
 | `url` | URL of the page being tested | _(optional)_ |
-| `testName` | Any string | `"My First Web Test"` |
-| `targetBrowser` | `chrome` \| `firefox` \| `edge` \| `safari` | _(optional)_ |
+| `testName` | Any string | `"WebTest"` |
+| `targetBrowser` | `chrome` \| `firefox` \| `MicrosoftEdge` \| `safari` \| `opera` (names as `list_available_browsers` returns them; `edge` is accepted for `MicrosoftEdge`) | _(optional)_ |
 | `shadowDomSupport` | `auto` \| `always` \| `never` | `auto` |
 | `confirmSelectorsVerified` | `true` \| `false` | _(optional)_ |
 | `outputFormat` | `json` \| `human` | `json` |
 
 > **Inspection gate:** when you target a real URL (`url` provided), this tool returns **no code** and a structured `{ status: "blocked", reason: "no_verified_selectors" }` error UNLESS a live browser inspection session exists in the MCP process, or you set `confirmSelectorsVerified: true` (escape hatch for selectors captured via a prior `start_browser_inspection_session` session). This mirrors the mobile boilerplate gate.
 
-**Browser-neutral by default:** when `targetBrowser` is omitted, the generated script reads the browser name at runtime from an environment variable (`BROWSER`). This means the same script runs on Chrome, Firefox, Edge, and Safari without modification — just change the env var or CI matrix. Specify `targetBrowser` only when you need browser-specific options (e.g. Safari-only session setup).
+**Browser-neutral by default:** when `targetBrowser` is omitted, the generated script reads the browser name at runtime from an environment variable (`BROWSER`). This means the same script runs on Chrome, Firefox, Microsoft Edge, Safari and Opera without modification — just change the env var or CI matrix. Specify `targetBrowser` only when you need browser-specific options (e.g. Safari-only session setup).
 
 **Shadow DOM support:** when `shadowDomSupport` is `auto` (the default) or `always`, the generated script includes a `shadowQuery(host, cssSelector)` helper that traverses into shadow roots using `executeScript`. Use this for apps built with Web Components, Lit, Polymer, or other shadow-DOM frameworks. `get_page_dom` detects shadow DOM automatically during inspection and reports `hasShadowDom: true` when present.
 
@@ -807,7 +821,7 @@ The headline metric is reported three ways every time — **trimmed mean, median
 | `detect_performance_outliers` | Robust median/MAD outlier flagging on a single set; returns the kept set and recommended exclusions/re-runs. |
 | `performance_transaction_control` | Phase 2: generate fresh samples inside an inspection session — `start` (with an NV profile) → run the verified flow → `end` (names the record). Records appear in the reporter ~1 min later. |
 
-> **Why the confound check matters:** comparing transactions 1894 (Speed Index 1015) and 1895 (1000) looks like a 1.5% version delta — but they ran on *different device models, different OS versions, and different projects*, and 1894 has no CPU/memory telemetry. `assess_comparison_confounds` returns **confounded** and names all three, so the delta is never misread as a version regression.
+> **Why the confound check matters:** comparing two transactions with Speed Index 1015 vs 1000 looks like a 1.5% version delta — but if they ran on *different device models, different OS versions, and different projects*, and one has no CPU/memory telemetry, `assess_comparison_confounds` returns **confounded** and names each cause, so the delta is never misread as a version regression.
 
 The **`performance_comparison_report` prompt** orchestrates the full workflow end to end: define the axis → scrub confounds → negotiate sample size → **require explicit plan confirmation with a time estimate** → run the series with outlier-driven re-runs → report the delta with root-cause reasoning. True host/background interference is not directly observable; the report approximates device quietness (idle, healthy status, no concurrent reservation) and states that limit explicitly.
 
@@ -852,15 +866,15 @@ Use filters to narrow results rather than raising `maxResults`. When results are
 | Tool | Available Filters | Available `sortBy` values |
 |---|---|---|
 | `list_users` | firstName, lastName, email, authenticationType, isCloudAdmin, tag | firstName, lastName, email, userName, authenticationType |
-| `list_devices` | query (@-syntax), region, model | deviceName, deviceOs, osVersion, manufacturer, displayStatus, agentName, region |
+| `list_devices` | query (@-syntax), os, region, model | deviceName, deviceOs, osVersion, manufacturer, displayStatus, agentName, region |
 | `get_devices_in_group` | osType, status, category, excludeTags, requireTags | _(none)_ |
 | `list_reservations` | username, project, deviceUid | reservationStart, reservationEnd, username, project, deviceUid |
 | `list_projects` | name (partial match) | name, id |
-| `list_project_users` | username (partial), role (exact) | firstName, lastName, email, userName, role |
-| `list_applications` | nameContains, osType, packageName, bundleIdentifier, fileType, isForSimulator | applicationName, version, createdAt (default), osType |
+| `list_project_users` | username (partial), role (exact) | username, role |
+| `list_applications` | nameContains, osType, packageName, bundleIdentifier, uniqueName, fileType, isForSimulator | applicationName, releaseVersion, buildVersion, createdAt (default), osType, fileType |
 | `list_test_reports` | status, name, has_attachment, success; startDate/endDate (date range) | start_time |
 
-All list tools accept `sortOrder: "asc" | "desc"` (default: `"asc"`).
+All list tools accept `sortOrder: "asc" | "desc"` (default `"asc"`, except `list_applications`, which defaults to `"desc"`, newest first).
 
 `list_test_reports` sorting is performed by the platform for every access level. If the platform ever refuses it for a credential, the server transparently falls back to a client-side scan (up to 5,000 records) so "newest first" results stay correct, just slower on large report sets.
 
@@ -940,11 +954,15 @@ list_test_reports
 get_test_report(testId: 69)
   → cause, errorCategory, errorClassification, errorDetail (stack trace)
 
+# 2b. Platform root-cause analysis (read-only)
+get_root_cause_analysis(uuid: "…")      # or reportUrl / testId
+
 # 3. Full Appium log as text, when the structured fields aren't enough
 get_test_log(uuid: "…", logType: "appium")
 
-# 4. Pull the binary artifacts (session video .mp4, full ZIP) to YOUR machine
-#    — only needed if the server runs in Docker/remote (not the npm install)
+# 4. Pull the binary artifacts (session video .mp4, full ZIP) to YOUR machine.
+#    With the npm install, call download_test_video / download_test_attachments
+#    directly; under Docker/remote, generate a local command instead:
 get_test_attachments_download_command(uuid: "…", localPlatform: "macos")
   → a curl command you run locally; the file never transits the container
 ```
@@ -963,6 +981,7 @@ For those deployments, every file-transfer tool has a **command-generator siblin
 | Upload repo file | `upload_repository_file` | `get_repository_upload_command` |
 | Upload profile | `upload_provisioning_profile` | `get_provisioning_profile_upload_command` |
 | Download test attachments (.mp4, logs) | `download_test_attachments` | `get_test_attachments_download_command` |
+| Download test video (.mp4, byte ranges) | `download_test_video` | `get_test_attachments_download_command` (`artifact: "video"`) |
 | Download repo file | `download_repository_file` | `get_repository_file_download_command` |
 | Download profile | `download_provisioning_profile` | `get_provisioning_profile_download_command` |
 | Download app language files | `extract_app_language_files` | `get_app_language_files_download_command` |
@@ -1016,9 +1035,12 @@ npm run test:utils            # utility functions
 npm run test:transactions     # performance transactions
 npm run test:analytics        # analytics tools
 npm run test:infrastructure   # agents / regions / NV servers / sessions
+npm run test:live             # live API-behavior probes (requires .env; not part of npm test)
+npm run test:fidelity         # agent tool-choice evaluation (builds first)
+npm run remediation:digest    # summarize debug-mode remediation notes
 ```
 
-Tests can also be run from VS Code: `Ctrl+Shift+P` → "Tasks: Run Task".
+See `package.json` for the full list of scripts.
 
 ---
 
@@ -1029,7 +1051,7 @@ Tests can also be run from VS Code: `Ctrl+Shift+P` → "Tasks: Run Task".
 | Symptom | Cause | Fix |
 |---|---|---|
 | `403 Forbidden` on admin tools (agents, regions, license) | Active profile is a project-level key — v2 endpoints require Cloud Admin access | Ask Agent: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one |
-| Report delete tools return "Cloud Admin access required" | Reporter mutation endpoints are CSRF-blocked for project-level keys (Project Admin and Project User) | Switch to a Cloud Admin profile, re-run, switch back |
+| Report delete tools refuse with "Reporter deletes are disabled for project …" | The project's `allowUsersDeleteTests` setting is false, so project-level roles can't delete reports | Ask a Cloud Admin to enable it for the project, or switch to a Cloud Admin profile |
 | `install_application` returns 400 on a device you can see | Device is reserved via an rdb (remote debug) session | Install **first**, then run `get_remote_debug_command` — not the other way around |
 | `install_application` returns 400 (no rdb involved) | App not assigned to a project containing the target device | Call `assign_app_to_project` first |
 | Repeatable `NoSuchElementException` while sibling tests pass | Device health, not test code — device stuck in a wrong state or offline-but-pooled | Run `get_device_health_summary`; scope the deviceQuery with `@region='<healthy-region>'` |
@@ -1046,7 +1068,7 @@ On Windows this usually means the `--env-file` path was stored with backslashes 
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 191) and active profile
+1. get_server_info           — confirm tool count (expect 202; 203 with MCP_DEBUG_MODE=true) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -1056,7 +1078,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 191,
+  "registeredToolCount": 202,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
@@ -1082,12 +1104,12 @@ The server also logs a readiness check at startup (visible in your terminal, or 
 
 The four most commonly encountered:
 
-1. **No API to trigger Appium test execution.** Tests launch from Appium clients (IDE, CI scripts). The server manages devices, apps, reservations, and results — it cannot start an Appium session itself. (Interactive [mobile inspection sessions](docs/tools.md#mobile-inspection-sessions) and [browser inspection sessions](docs/tools.md#web-inspection-sessions) are the exception: live WebDriver sessions for element discovery on Android, iOS, and desktop browsers.)
+1. **No API to trigger Appium or Selenium test execution.** Those tests launch from Appium clients (IDE, CI scripts); the server manages devices, apps, reservations, and results. Espresso, XCUITest and Maestro suites are different: the platform runs them itself via `execute_test_run` / `get_test_run_status` / `cancel_test_run` / `get_test_run_command` (Maestro is Android-only). Espresso and Maestro runs are verified; XCUITest uses the same API but is not yet verified end to end. Interactive [mobile inspection sessions](docs/tools.md#mobile-inspection-sessions) and [browser inspection sessions](docs/tools.md#web-inspection-sessions) are also live WebDriver sessions for element discovery on Android, iOS, and desktop browsers.
 2. **Inspection sessions support Android and iOS** on both the legacy Appium Grid (JWP) and Appium Server (W3C/OSS) projects. iOS caveats: no clear-app-data, no clipboard on Grid devices, and back navigation uses the nav-bar button (iOS has no Back button).
 3. **No user disable/lock endpoint.** Removing access for a user provisioned solely for a POC means deleting the account — which is why `close_poc` requires per-user confirmation.
-4. **Reporter API restrictions for project-level keys** — server-side sort and report deletion require Cloud Admin access. Tools compensate automatically (client-side sorting, clear pre-flight errors), at the cost of slower full-scan queries under project-level keys.
+4. **Deleting test reports with a project-level key depends on a per-project setting** (`allowUsersDeleteTests`). Cloud Admin can always delete. When the setting is off, the tools refuse up front and explain how to get it enabled.
 
-See [docs/limitations.md](docs/limitations.md) for the full list of 15.
+See [docs/limitations.md](docs/limitations.md) for the full list.
 
 ---
 

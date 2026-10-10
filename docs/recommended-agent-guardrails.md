@@ -18,9 +18,11 @@ The server defends against this in two ways that travel with it automatically:
 - **Server `instructions`** — a mode-first / no-guessed-selectors policy delivered in the MCP
   `initialize` handshake. Most clients surface it into the model's
   context before it acts.
-- **Structural tool behavior** — `get_test_boilerplate` returns *no code* for a real app unless a
-  live inspection session exists (or you explicitly confirm verified selectors), and
-  `validate_test_script` returns an error when it detects placeholder/fabricated patterns.
+- **Structural tool behavior** — `get_test_boilerplate` and `generate_maestro_flow` return *no code*
+  for a real app unless a live inspection session exists (or you explicitly confirm verified
+  selectors); `get_web_test_boilerplate` does the same for a real URL without a live browser
+  session; and `validate_test_script` returns an error when it detects placeholder/fabricated
+  patterns.
 
 Two gaps remain that **no MCP server can close on its own**:
 
@@ -57,6 +59,12 @@ a task list, before calling any MCP tool, before opening an editor:
   AND you already have a real selector source (captured inspection IDs, or
   authoritative app source in this workspace). Action: `get_test_boilerplate`.
 
+### Maestro flows
+
+- Same rule: build steps from resource-ids captured in a live Android inspection
+  session. `generate_maestro_flow` returns no flow without one (or
+  `confirmSelectorsVerified: true`, only for IDs captured from the real app).
+
 ### Web browser tests
 
 - **INTERACTIVE** — the default whenever intent is vague, you have no prior
@@ -80,6 +88,10 @@ PROHIBITED — treated as a task FAILURE, not a deliverable:
 
 Before you present or save ANY test — generated or hand-written — run
 `validate_test_script` on it and fix anything it flags.
+
+Never set `confirmDeletion`, `confirmPublicShare` or `confirmLargeExport` to true
+unless the user explicitly agreed in this conversation. Never set
+`confirmSelectorsVerified` unless every selector came from the real app.
 
 If you have no selector source you are in INTERACTIVE mode by definition.
 A test-type label from a menu ("login test", "smoke", "e2e") is a category, not a
@@ -121,6 +133,20 @@ repository-level custom instructions.
 Paste the snippet into whatever "custom instructions" / "system prompt" / "rules" mechanism the
 client offers. If it has none, you are relying on the server `instructions` field — confirm your
 client surfaces it (most do).
+
+---
+
+## Toolsets and debug mode (governance notes)
+
+**`MCP_TOOLSETS` limits context, not capability.** Tools outside the loaded toolsets still appear
+and load themselves when called, so toolsets are not an access control. Restrict what an agent can
+do with the role of the access key it uses (Project User / Project Admin / Cloud Admin).
+
+**`MCP_DEBUG_MODE=true`** adds instructions asking the agent to record notes about errors,
+corrections and wasted calls, and logs every tool call (duration, size, outcome, truncated
+arguments). Keys, tokens, emails and signed-URL parameters are redacted. Files go to a
+`remediation/` folder in your project with its own `.gitignore`. Leave it off outside evaluations,
+and review the folder before sharing it. See [Debug mode](../README.md#debug-mode-remediation-notes).
 
 ---
 
