@@ -42,6 +42,9 @@ beforeAll(async () => {
       if (url.startsWith('/api/v1/users/my-account-info')) {
         return void res.end(JSON.stringify({ status: 'SUCCESS', data: { username: 'u', role: 'Admin', project: { id: 1, name: 'Default', isAppiumOss: true } } }));
       }
+      if (url.startsWith('/reporter/api/tests/grouped')) {
+        return void res.end(JSON.stringify({ count: 2, data: [{ status: 'Passed', _count_: 90 }, { status: 'Failed', _count_: 10 }] }));
+      }
       if (url.startsWith('/reporter/api/tests/distinct')) {
         return void res.end(JSON.stringify({ count: 4, data: [{ 'device.os': 'ANDROID' }, { 'device.os': 'Android' }, { 'device.os': 'IOS' }, { 'device.os': 'iOS' }] }));
       }
@@ -85,6 +88,14 @@ describe('UAT 2026-10-10 fixes', () => {
     assert.deepEqual((r.rawValues as Record<string, unknown>)['device.os'], ['ANDROID', 'Android', 'IOS', 'iOS']);
   });
 
+  it('get_grouped_test_reports adds totalRecords when returnTotalCount is true (the platform\x27s count is the number of groups)', async () => {
+    const r = await callJson('get_grouped_test_reports', { groupBy: ['status'], returnTotalCount: true });
+    assert.equal(r.count, 2);
+    assert.equal(r.totalRecords, 100);
+    const without = await callJson('get_grouped_test_reports', { groupBy: ['status'], returnTotalCount: false });
+    assert.equal('totalRecords' in without, false);
+  });
+
   it('get_daily_execution_trend names the missing range and suggests a maxRecords value when capped', async () => {
     const r = await callJson('get_daily_execution_trend', { lookbackDays: 14, maxRecords: 100 });
     assert.equal(r.windowComplete, false);
@@ -121,6 +132,8 @@ describe('UAT 2026-10-10 fixes', () => {
   it('automotive session failures get specific guidance', () => {
     assert.match(automotiveSessionHint('HTTP 500: Automotive Projection is only supported on Apple Silicon Device Host Machines') ?? '', /Apple Silicon device host.*not your request/);
     assert.match(automotiveSessionHint('HTTP 500: Failed to enable automotive dev mode and start Android Auto on the device') ?? '', /Android 10 or later/);
+    assert.match(automotiveSessionHint('HTTP 500: Timeout while waiting for the DHU process to connect.') ?? '', /head unit \(DHU\) never connected/);
+    assert.match(automotiveSessionHint('HTTP 500: no Android Auto head unit server on the device') ?? '', /property of the device/);
     assert.equal(automotiveSessionHint('HTTP 500: something else'), null);
   });
 

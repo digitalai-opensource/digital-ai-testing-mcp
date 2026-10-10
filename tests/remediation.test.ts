@@ -101,6 +101,10 @@ describe('event log and nudges', () => {
     assert.equal(classifyOutcome(ok('⚠️  Large export guard triggered.')).outcome, 'guard');
     assert.equal(classifyOutcome(err('{"status": "blocked", "reason": "no_verified_selectors"}')).outcome, 'guard');
     assert.equal(classifyOutcome(ok('Re-call with confirmDeletion: true to delete')).outcome, 'guard');
+    assert.equal(classifyOutcome(ok('⚠️  Preview — nothing has been shared.')).outcome, 'guard');
+    // Generated code that merely mentions "blocked" is a normal result, not a guard.
+    const boilerplate = JSON.stringify({ platform: 'android', serverModeNote: 'x'.repeat(500), files: [{ content: '// the request is blocked until login completes' }] });
+    assert.equal(classifyOutcome(ok(boilerplate)).outcome, 'ok');
   });
 
   it('records each call, flags retries and repeats, and nudges once per tool and outcome', async () => {

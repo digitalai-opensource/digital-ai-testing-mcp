@@ -9,7 +9,9 @@ import type { Device } from '../types/digital-ai.js';
 export function registerAgentTools(server: McpServer): void {
   server.tool(
     'list_agents',
-    'List all test agents (host machines) connected to the platform. Shows OS, region, device count, status, and any warnings. Cloud Admin only.',
+    'List all test agents (host machines) connected to the platform. Shows OS, region, device count, status, and any warnings. Cloud Admin only. ' +
+    'devicesCount is the number of the agent\x27s devices that are NOT offline (verified live 2026-10-10), so it can be lower than ' +
+    'the per-agent totals in get_device_health_summary; get_agent_devices lists every device on an agent.',
     {
       region: z.string().optional().describe('Filter by region code (client-side, partial match). E.g. "US1", "SG1".'),
       osType: z.string().optional().describe('Filter by OS type (client-side, case-insensitive). E.g. "Mac", "Linux", "Windows".'),

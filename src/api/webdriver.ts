@@ -603,6 +603,13 @@ export function automotiveSessionHint(detail: string): string | null {
       'is not one. This is a property of the device, not your request: try another device or region, or ask your platform ' +
       'admin which devices support Android Auto / CarPlay projection. Retrying the same device will fail the same way.';
   }
+  // Seen live: "Timeout while waiting for the DHU process to connect" (UAT 2026-10-10), and a "no head unit server"
+  // failure on a device without Android Auto set up.
+  if (/\bDHU\b|head ?unit server/i.test(detail)) {
+    return 'The Android Auto head unit (DHU) never connected — usually Android Auto isn\'t set up on this device or its ' +
+      'head-unit server didn\'t start. This is a property of the device: try another device or region; retrying the same ' +
+      'device usually fails the same way.';
+  }
   if (/automotive dev mode|start Android Auto/i.test(detail)) {
     return 'The device could not switch on Android Auto developer mode. It needs Android 10 or later, and not every device ' +
       'or host supports projection: try another device, or ask your platform admin which devices support it.';
