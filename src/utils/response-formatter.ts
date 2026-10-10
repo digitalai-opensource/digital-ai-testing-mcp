@@ -476,7 +476,7 @@ export function formatAgentList(agents: Agent[]): string {
       const xcodeStr = a.xcodeVersion ? ` | Xcode: ${a.xcodeVersion}` : '';
       return (
         `${statusEmoji} ${a.name} (ID: ${a.id}) — ${a.osType} ${a.osVersion} | ` +
-        `Region: ${a.region?.name ?? a.region} | Devices: ${a.devicesCount} | Status: ${a.statusForDisplay}${xcodeStr}${warn}`
+        `Region: ${a.region?.name ?? a.region} | Devices online: ${a.devicesCount} | Status: ${a.statusForDisplay}${xcodeStr}${warn}`
       );
     })
     .join('\n');

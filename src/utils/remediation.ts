@@ -202,7 +202,13 @@ let sessionHeaderWritten = false;
 export function classifyOutcome(result: unknown): { outcome: Outcome; text: string } {
   const r = result as { isError?: boolean; content?: Array<{ type?: string; text?: string }> } | undefined;
   const text = (r?.content ?? []).map((c) => (c.type === 'text' ? c.text ?? '' : '')).join('\n');
-  const guard = /"status":\s*"blocked"|⛔|\bBLOCKED\b|guard triggered|confirmDeletion:\s*true|confirmPublicShare:\s*true|confirmLargeExport|Nothing was executed/i.test(text);
+  // Guard messages announce themselves in their opening lines. Scanning the whole response, case-insensitively,
+  // counted generated test code that merely contained the word "blocked" as a guard — and nudged on it
+  // (UAT 2026-10-10 run 3: get_test_boilerplate / get_web_test_boilerplate successes logged as guards).
+  const head = text.slice(0, 400);
+  const guard =
+    /"status":\s*"blocked"|⛔|\bBLOCKED\b|guard triggered|Preview — nothing has been shared|Nothing was executed/.test(head) ||
+    /confirmDeletion:\s*true|confirmPublicShare:\s*true|confirmLargeExport/i.test(head);
   if (guard) return { outcome: 'guard', text };
   return { outcome: r?.isError ? 'error' : 'ok', text };
 }

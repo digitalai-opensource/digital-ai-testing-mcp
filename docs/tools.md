@@ -227,7 +227,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `get_test_report` | Full test execution report by UUID (preferred), numeric test ID, or report URL | Any |
 | `get_test_by_report_id` | Report by `report_api_id` (returned when starting a session) | Any |
 | `find_latest_test_for_name` | Most recent run record for a test by name | Any |
-| `get_grouped_test_reports` | Pass/fail counts grouped by field (use `groupBy`, e.g. `["device.os"]`). Supports `pivotBy` for per-status columns. | Any |
+| `get_grouped_test_reports` | Pass/fail counts grouped by field (use `groupBy`, e.g. `["device.os"]`). Supports `pivotBy` for per-status columns. `returnTotalCount: true` adds `totalRecords` (records across all groups; `count` is the number of groups). | Any |
 | `get_test_stability_report` | Last N runs of a named test: pass rate, sparkline trend, and consecutive streak count | Any |
 | `get_cross_platform_divergence` | Tests passing on one OS but failing on the other, with configurable minimum run count and divergence threshold | Any |
 | `get_daily_execution_trend` | Execution counts and pass rates bucketed by day or week. Stops at `lookbackDays` or `maxRecords` (default 5,000; max 25,000), whichever comes first. | Any |
@@ -292,7 +292,7 @@ Transactions are performance-instrumented segments of a test session. Developers
 
 | Tool | What it does |
 |---|---|
-| `list_agents` | List all host machines / test agents with OS, region, device count, and health status. Filterable by region and OS type. |
+| `list_agents` | List all host machines / test agents with OS, region, online device count (`devicesCount` excludes offline devices), and health status. Filterable by region and OS type. |
 | `get_agent_devices` | List devices connected to a specific agent |
 
 ### Regions
@@ -461,7 +461,7 @@ get_test_boilerplate(...)                           → generate the test script
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `start_browser_inspection_session` | Open a browser on the Digital.ai Selenium Grid. Prompts for browser choice if `inspectionBrowser` is omitted — always call `list_available_browsers` first. `inspectionBrowser` takes the names `list_available_browsers` returns — `chrome`, `firefox`, `MicrosoftEdge`, `safari`, `opera` — with case-insensitive aliases such as `Chrome` / `edge` normalised. Returns a session handle. | Any |
+| `start_browser_inspection_session` | Open a browser on the Digital.ai Selenium Grid. Prompts for browser choice if `inspectionBrowser` is omitted — always call `list_available_browsers` first. `inspectionBrowser` takes the names `list_available_browsers` returns — `chrome`, `firefox`, `MicrosoftEdge`, `safari`, `opera` — with case-insensitive aliases such as `Chrome` / `edge` normalised. Returns a session handle. Returns JSON by default (`handle`, `browserName`, `browserVersion`, `reportUrl`). | Any |
 | `stop_browser_inspection_session` | Close the browser and delete the probe report. `keepReport: true` preserves the session video for retrieval via `download_test_attachments`. Always call when done. | Any |
 | `navigate_to` | Navigate to a URL. Waits for `document.readyState === "complete"` (up to 30 s). | Any |
 | `get_page_dom` | Extract interactive elements from the rendered DOM. Automatic shadow DOM detection: uses a recursive JS walker (depth ≤ 3) for React/Angular/Vue pages, standard DOM for others. Returns element tags, IDs, data-testid, aria-label, role, text, and shadow subtrees. | Any |

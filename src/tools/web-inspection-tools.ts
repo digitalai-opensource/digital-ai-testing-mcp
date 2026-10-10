@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { canonicalBrowserName } from '../utils/browser-name.js';
-import { respond } from '../utils/output-format.js';
+import { respond, outputFormatParam } from '../utils/output-format.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   quitInspectionSession,
@@ -68,6 +68,7 @@ export function registerWebInspectionTools(server: McpServer): void {
         .string()
         .optional()
         .describe("Name shown in the Digital.ai reporter for this session. Default: '[MCP Browser Inspection] <browser>'."),
+      outputFormat: outputFormatParam,
     },
     async (args) => {
       if (!args.inspectionBrowser) {
@@ -89,6 +90,16 @@ export function registerWebInspectionTools(server: McpServer): void {
           reportName: args.reportName,
         });
 
+        // Structured like start_inspection_session — the handle is what every later call needs (UAT 2026-10-10 run 3).
+        const structured: Record<string, unknown> = {
+          handle: session.handle,
+          browserName: session.browserName ?? args.inspectionBrowser,
+          browserVersion: session.deviceVersion || null,
+          reportUrl: session.reportUrl || null,
+          sessionNote: 'No live view URL for browser sessions — use take_inspection_screenshot to relay the page state. ' +
+            'The inspection browser is for element discovery only; the generated test is browser-neutral.',
+          next: `stop_browser_inspection_session("${session.handle}") when done`,
+        };
         const lines = [
           `✅ Browser inspection session started.`,
           `Handle:       ${session.handle}`,
@@ -105,14 +116,16 @@ export function registerWebInspectionTools(server: McpServer): void {
           try {
             await navigateTo(session.handle, args.url);
             lines.push(``, `Navigated to: ${session.currentUrl || args.url}`);
+            structured.currentUrl = session.currentUrl || args.url;
           } catch (navErr) {
             lines.push(``, `⚠️  Initial navigation to "${args.url}" failed: ${(navErr as Error).message}. Session is still open.`);
+            structured.navigationError = (navErr as Error).message;
           }
         }
 
         lines.push(``, `When done, call stop_browser_inspection_session("${session.handle}").`);
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return respond(args.outputFormat, structured, lines.join('\n'));
       } catch (e) {
         return {
           content: [{ type: 'text' as const, text: `Error starting browser session: ${(e as Error).message}` }],

@@ -496,7 +496,7 @@ export function registerReportingTools(server: McpServer): void {
       returnTotalCount: z
         .boolean()
         .optional()
-        .describe('If true, includes total record count across all groups.'),
+        .describe('If true, adds totalRecords — the number of test records across all groups (the response\x27s count is the number of groups).'),
       projectId: z.number().int().optional().describe('Scope to this project ID.'),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
@@ -539,7 +539,15 @@ export function registerReportingTools(server: McpServer): void {
           result = { ...result, data: rows, ...(result.count != null ? { count: rows.length } : {}) };
         }
 
-        return respond(outputFormat, result as object, formatGroupedTestReports(result));
+        // The platform's `count` is the number of GROUPS; it returns no record total even when asked. Compute it from
+        // the per-group _count_ so returnTotalCount does what it says (UAT 2026-10-10 run 3).
+        let payload: object = result;
+        if (returnTotalCount === true && Array.isArray(result?.data)) {
+          const totalRecords = result.data.reduce((n, row) => n + (typeof row['_count_'] === 'number' ? (row['_count_'] as number) : 0), 0);
+          payload = { ...result, totalRecords };
+        }
+
+        return respond(outputFormat, payload, formatGroupedTestReports(result));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
