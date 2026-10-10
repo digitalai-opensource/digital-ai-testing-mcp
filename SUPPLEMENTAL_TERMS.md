@@ -93,7 +93,7 @@ Digital.ai does not endorse, certify, warrant, or represent the safety, accuracy
 
 User expressly acknowledges and agrees that:
 
-- (a) The Connector Software enables AI Clients to perform actions on the Testing Platform that may be irreversible, including device reboots, test quarantine, CI pipeline modifications, and build blocking;
+- (a) The Connector Software may enable AI Clients, depending on the tools available, to perform actions on the Testing Platform that may be irreversible, including device reboots, test quarantine, CI pipeline modifications, and build blocking;
 - (b) Digital.ai is not responsible for any Agentic Action that causes unintended consequences, including but not limited to disruption of shared device availability, suppression of test failures, incorrect release gating decisions, or downstream production incidents;
 - (c) User bears sole responsibility for implementing controls - including permission scoping, rate limiting, and human approval requirements - appropriate to the risk level of Agentic Actions User authorizes its AI Client to perform; and
 - (d) Digital.ai's provision of the Connector Software does not constitute a recommendation that any particular Agentic Action is safe, appropriate, or advisable for User's specific environment.
