@@ -114,7 +114,9 @@ export type Check =
   | { kind: 'noFabricatedCode'; label: string; soft?: boolean }
   | { kind: 'askedUser'; label: string; soft?: boolean }
   /** Passes when ANY of the inner checks passes — for situations with more than one correct response. */
-  | { kind: 'either'; checks: Check[]; label: string; soft?: boolean };
+  | { kind: 'either'; checks: Check[]; label: string; soft?: boolean }
+  /** Every inner check must pass — combine with either for "did X, or did Y and Z". */
+  | { kind: 'allOf'; checks: Check[]; label: string; soft?: boolean };
 
 export interface CheckResult { label: string; pass: boolean; soft: boolean; detail: string }
 
@@ -188,6 +190,11 @@ function evaluateOne(t: Trajectory, c: Check): CheckResult {
         const inner = c.checks.map((x) => evaluateOne(t, x));
         const hit = inner.find((r) => r.pass);
         return { label: c.label, soft, pass: !!hit, detail: hit ? `satisfied by: ${hit.label}` : inner.map((r) => `${r.label}: ${r.detail}`).join(' | ') };
+      }
+      case 'allOf': {
+        const inner = c.checks.map((x) => evaluateOne(t, x));
+        const miss = inner.filter((r) => !r.pass);
+        return { label: c.label, soft, pass: miss.length === 0, detail: miss.length ? miss.map((r) => `${r.label}: ${r.detail}`).join(' | ') : 'all satisfied' };
       }
     }
   }

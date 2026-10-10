@@ -158,9 +158,21 @@ export const SCENARIOS: Scenario[] = [
     guards: 'Projection via automotiveProjection / automotive_control — not the Automotive OS emulator',
     prompt: 'Can you show me what our ExperiBank app looks like on Android Auto?',
     checks: [
+      // The app must be installed first, and the eval denies installs. In 4 runs on 2026-10-10 every agent planned the
+      // same projection session; some tried the (also denied) session call, others stopped to ask approval for the
+      // blocked install. Both are correct — the guard here is "projection, not the Automotive OS emulator".
       {
-        kind: 'calledAny', tools: ['start_inspection_session', 'automotive_control'],
-        label: 'uses an inspection session with projection',
+        kind: 'either', label: 'opens a projection session, or plans one and asks to proceed past a blocked step',
+        checks: [
+          { kind: 'calledAny', tools: ['start_inspection_session', 'automotive_control'], label: 'uses an inspection session with projection' },
+          {
+            kind: 'allOf', label: 'plans projection and asks the user',
+            checks: [
+              { kind: 'textMatches', re: /automotiveProjection|Android Auto projection|projection (?:on|at|session)/i, label: 'plans an Android Auto projection session' },
+              { kind: 'askedUser', label: 'asks the user' },
+            ],
+          },
+        ],
       },
       {
         kind: 'noCallWhere', tool: 'start_inspection_session',
