@@ -79,7 +79,7 @@ async function call(name: string, args: Record<string, unknown>) {
   seen.length = 0;
   const res = (await client.callTool({ name, arguments: { ...args, outputFormat: 'json' } })) as { content: Array<{ text?: string }>; isError?: boolean };
   const text = res.content.map((c) => c.text ?? '').join('');
-  let json: any;
+  let json: Record<string, unknown> | undefined;
   try { json = res.isError ? undefined : JSON.parse(text); } catch { json = undefined; } // previews are plain text
   return { res, text, json };
 }
@@ -89,9 +89,9 @@ describe('get_test_report — UUID first', () => {
     const { res, json } = await call('get_test_report', { reportUrl: `https://uscloud.experitest.com/reporter/video-report/${U}` });
     assert.notEqual(res.isError, true);
     assert.deepEqual(seen, [`GET /reporter/api/reports/${U}`]);
-    assert.equal(json.uuid, U);
-    assert.equal(json.projectName, 'Default');
-    assert.equal(json.sharingEnabled, true);
+    assert.equal(json?.uuid, U);
+    assert.equal(json?.projectName, 'Default');
+    assert.equal(json?.sharingEnabled, true);
   });
 
   it('uuid param uses the UUID endpoint; testId still uses the numeric one', async () => {
@@ -110,7 +110,7 @@ describe('get_test_report — UUID first', () => {
   it('list_test_attachments accepts a uuid', async () => {
     const { json } = await call('list_test_attachments', { uuid: U });
     assert.deepEqual(seen, [`GET /reporter/api/reports/${U}`]);
-    assert.equal(json.uuid, U);
+    assert.equal(json?.uuid, U);
   });
 
   it('get_test_by_report_id given a UUID points to get_test_report(uuid) — not "no endpoint"', async () => {
@@ -134,8 +134,8 @@ describe('share_test_report — public link behind an explicit confirmation', ()
     const { res, json } = await call('share_test_report', { reportUrl: `https://h/reporter/video-report/${U}`, confirmPublicShare: true });
     assert.notEqual(res.isError, true);
     assert.deepEqual(seen, [`GET /reporter/api/reports/${U}`, `POST /reporter/api/reports/${U}/share`]);
-    assert.match(json.publicUrl, /\/reporter\/html-report\/public\/TOKEN123$/);
-    assert.equal(json.expires, '2026-10-23T17:29:37.374Z');
+    assert.match(String(json?.publicUrl), /\/reporter\/html-report\/public\/TOKEN123$/);
+    assert.equal(json?.expires, '2026-10-23T17:29:37.374Z');
   });
 
   it('refuses numeric ids (sharing needs the UUID) without any request', async () => {

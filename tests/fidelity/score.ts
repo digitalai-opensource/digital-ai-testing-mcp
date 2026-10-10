@@ -14,6 +14,29 @@ export interface Call {
   error: boolean;
 }
 
+/** The parts of a `claude -p --output-format stream-json` line the scorer reads. */
+interface StreamLine {
+  type?: string;
+  subtype?: string;
+  model?: string;
+  memory_paths?: unknown;
+  num_turns?: unknown;
+  total_cost_usd?: unknown;
+  result?: unknown;
+  message?: { content?: unknown };
+}
+
+interface StreamBlock {
+  type?: string;
+  text?: unknown;
+  name?: unknown;
+  id?: string;
+  input?: Record<string, unknown>;
+  tool_use_id?: string;
+  content?: unknown;
+  is_error?: unknown;
+}
+
 export interface Trajectory {
   calls: Call[];
   finalText: string;
@@ -37,7 +60,7 @@ export function parseTranscript(jsonl: string): Trajectory {
   let memoryPaths: unknown = null;
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
-    let m: Record<string, any>;
+    let m: StreamLine;
     try { m = JSON.parse(line); } catch { continue; }
     if (m.type === 'system' && m.subtype === 'init') { model = m.model ?? null; memoryPaths = m.memory_paths ?? null; continue; }
     if (m.type === 'result') {
@@ -48,7 +71,7 @@ export function parseTranscript(jsonl: string): Trajectory {
     }
     const content = m.message?.content;
     if (!Array.isArray(content)) continue;
-    for (const b of content) {
+    for (const b of content as StreamBlock[]) {
       if (m.type === 'assistant' && b.type === 'text' && typeof b.text === 'string') texts.push(b.text);
       if (m.type === 'assistant' && b.type === 'tool_use') {
         const name = String(b.name ?? '');
