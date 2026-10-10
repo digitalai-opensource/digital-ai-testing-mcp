@@ -280,7 +280,14 @@ There is one file per session; the `<id>` suffix keeps parallel sessions apart. 
 
 Debug mode costs extra tokens (the instructions and the notes). Leave it off for normal use, and don't use debug sessions as token baselines.
 
-To process the notes, give the `~/remediation` folder (or a selection of files) to the development agent. Each file describes itself: front matter with the MCP version, client, toolsets and deployment mode, then one section per note.
+To process a batch, run `npm run remediation:digest` in this repository. It condenses every unprocessed file in `~/remediation` into one summary, so the development agent reads a few KB instead of every raw note:
+- notes by category, and issues that recur across sessions;
+- per-tool errors, guards, retries, response sizes and latency;
+- every note in a table.
+
+Useful options:
+- `--out <file>` writes the summary to a file; `--since YYYY-MM-DD` limits it to recent sessions; `--json` gives machine-readable output.
+- `--archive <session…>` or `--archive-all` moves handled files into `~/remediation/processed/<date>/`. Nothing is deleted.
 
 ---
 
