@@ -3,13 +3,15 @@
  */
 import { describe, it, beforeEach, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { homedir, hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   isDebugMode, redact, classifyOutcome, instrumentHandler, startRemediationSession, getRecordedEvents, saveNote,
-  debugInstructions, summarizeEvents, REMEDIATION_CATEGORIES,
+  debugInstructions, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject,
+  ensureRemediationDir, getRemediationSession,
 } from '../src/utils/remediation.js';
 import { registerRemediationTools } from '../src/tools/remediation-tools.js';
 
@@ -60,7 +62,7 @@ describe('MCP_DEBUG_MODE flag', () => {
   it('instructions list all six categories and where notes go', () => {
     const text = debugInstructions();
     for (const c of REMEDIATION_CATEGORIES) assert.match(text, new RegExp(`\\b${c}\\b`));
-    assert.match(text, /~\/remediation/);
+    assert.match(text, /remediation\/ folder of the project/);
     assert.match(text, /Never include credentials/);
   });
 });
@@ -131,6 +133,62 @@ describe('event log and nudges', () => {
     await instrumentHandler('list_devices', async () => ok())({});
     assert.deepEqual(readdirSync(dir), []);
     assert.equal(getRecordedEvents().length, 1);
+  });
+});
+
+describe('location: the client project, never committed', () => {
+  const restart = (roots?: () => Promise<string[]>) =>
+    startRemediationSession({ mcpVersion: '9.9.9', toolsets: 'all', client: () => undefined, roots, now: new Date(2026, 9, 9, 16, 30, 12) });
+
+  it('prefers the client workspace root (MCP roots) over the start folder and home', async () => {
+    delete process.env.MCP_REMEDIATION_DIR;
+    const project = mkdtempSync(join(tmpdir(), 'client-project-'));
+    restart(async () => [pathToFileURL(project).href]);
+    try {
+      const loc = await resolveRemediationLocation();
+      assert.deepEqual(loc, { dir: join(project, 'remediation'), source: 'client-roots' });
+      await instrumentHandler('list_devices', async () => ok())({});
+      assert.ok(existsSync(join(project, 'remediation', `${getRemediationSession()!.id}.events.jsonl`)));
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the start folder when it looks like a project, else home; a failing roots call is harmless', async () => {
+    delete process.env.MCP_REMEDIATION_DIR;
+    restart(async () => { throw new Error('client has no roots'); });
+    const loc = await resolveRemediationLocation();
+    // The test runner starts in this repo (it has package.json), so the start folder qualifies.
+    assert.deepEqual(loc, { dir: join(process.cwd(), 'remediation'), source: 'start-folder' });
+    assert.equal(looksLikeProject(process.cwd()), true);
+    assert.equal(looksLikeProject(homedir()), false);
+    assert.equal(looksLikeProject(mkdtempSync(join(tmpdir(), 'not-a-project-'))), false);
+  });
+
+  it('MCP_REMEDIATION_DIR wins, and the folder ignores itself so it can never be committed', async () => {
+    restart(async () => ['file:///somewhere/else']);
+    assert.deepEqual(await resolveRemediationLocation(), { dir, source: 'env' });
+    ensureRemediationDir();
+    assert.match(readFileSync(join(dir, '.gitignore'), 'utf8'), /^\*$/m);
+  });
+
+  it('records machine, user and location in the notes front matter', () => {
+    const r = saveNote({ category: 'improvement', title: 'x', intent: 'y', whatHappened: 'z' });
+    const text = readFileSync(r.written!, 'utf8');
+    assert.match(text, new RegExp(`machine: ${hostname()}`));
+    assert.match(text, /^user: \S+/m);
+    assert.match(text, /^location: env /m);
+  });
+
+  it('Docker: tells the agent to save in its project and create the self-ignoring .gitignore', async () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'docker';
+    const s = new McpServer({ name: 's', version: '0' });
+    registerRemediationTools(s);
+    const tool = (s as unknown as { _registeredTools: Record<string, { handler: (a: unknown, extra: unknown) => Promise<{ content: Array<{ text: string }> }> }> })._registeredTools.record_remediation_note;
+    const res = await tool.handler({ category: 'error', title: 'abc', intent: 'i', whatHappened: 'w' }, {});
+    assert.match(res.content[0].text, /remediation\/\S+\.md in the root of the project you are working in/);
+    assert.match(res.content[0].text, /remediation\/\.gitignore containing a single line "\*"/);
+    assert.deepEqual(readdirSync(dir), []);
   });
 });
 
