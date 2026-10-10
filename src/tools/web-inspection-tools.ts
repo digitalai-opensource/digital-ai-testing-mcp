@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { canonicalBrowserName } from '../utils/browser-name.js';
+import { respond } from '../utils/output-format.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   quitInspectionSession,
@@ -51,7 +52,7 @@ export function registerWebInspectionTools(server: McpServer): void {
         .string()
         .optional()
         .describe(
-          "Browser to open for this inspection session: 'chrome', 'firefox', 'MicrosoftEdge', 'safari' or 'opera' (case-sensitive — 'microsoftedge' is rejected). " +
+          "Browser to open for this inspection session: 'chrome', 'firefox', 'MicrosoftEdge', 'safari' or 'opera' (names as list_available_browsers returns them; case variants and 'edge' are normalised). " +
           "If omitted, call list_available_browsers and ask the user to choose. " +
           "This is the session browser for element discovery — the generated test is browser-neutral."
         ),
@@ -251,19 +252,12 @@ export function registerWebInspectionTools(server: McpServer): void {
           (args.shadowMode ?? 'auto') as 'auto' | 'always' | 'never',
           args.includeRawHtml ?? false
         );
-        if (args.outputFormat === 'json') {
-          const rawHtml = result.rawHtml && result.rawHtml.length > 50_000 ? `${result.rawHtml.slice(0, 50_000)}…` : result.rawHtml;
-          return {
-            content: [{
-              type: 'text' as const,
-              text: JSON.stringify({
-                url: result.url, title: result.title, hasShadowDom: result.hasShadowDom,
-                elementCount: result.elements?.length ?? 0, elements: result.elements ?? [],
-                ...(rawHtml ? { rawHtml, rawHtmlLength: result.rawHtml!.length } : {}),
-              }),
-            }],
-          };
-        }
+        const rawHtmlForJson = result.rawHtml && result.rawHtml.length > 50_000 ? `${result.rawHtml.slice(0, 50_000)}…` : result.rawHtml;
+        const structured = {
+          url: result.url, title: result.title, hasShadowDom: result.hasShadowDom,
+          elementCount: result.elements?.length ?? 0, elements: result.elements ?? [],
+          ...(rawHtmlForJson ? { rawHtml: rawHtmlForJson, rawHtmlLength: result.rawHtml!.length } : {}),
+        };
 
         const lines: string[] = [
           `URL:          ${result.url}`,
@@ -302,7 +296,8 @@ export function registerWebInspectionTools(server: McpServer): void {
           }
         }
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        // This tool defaults to 'human' (unlike outputFormatParam) — the UAT suite and existing callers rely on it.
+        return respond(args.outputFormat ?? 'human', structured, lines.join('\n'));
       } catch (e) {
         return {
           content: [{ type: 'text' as const, text: `Error extracting page DOM: ${(e as Error).message}` }],
