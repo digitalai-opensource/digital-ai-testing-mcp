@@ -90,11 +90,15 @@ export function testsFieldName(t: TestRunExecutionType): { file: string; url: st
 export function validateTestRunRequest(r: TestRunRequest): string | null {
   const appSources = [r.appPath, r.appUrl, r.cloudAppId].filter((v) => v != null && v !== '').length;
   if (appSources !== 1) return 'Provide exactly one app source: appPath, appUrl or cloudAppId (numeric application id from list_applications).';
+  // Maestro accepts only a file bundle, so name only what works (UAT 2026-10-10: the generic message suggested
+  // testsUrl/cloudTestAppId, which Maestro can't use).
+  const maestroBundle = 'MAESTRO needs the flow bundle as a file: pass testsPath (a .zip containing flows/*.yaml — generate_maestro_flow can build it).';
   const testSources = [r.testsPath, r.testsUrl, r.cloudTestAppId].filter((v) => v != null && v !== '').length;
+  if (r.executionType === 'MAESTRO' && testSources === 0) return maestroBundle;
   if (testSources !== 1) return 'Provide exactly one test source: testsPath, testsUrl or cloudTestAppId.';
   if (r.executionType === 'MAESTRO' && !r.testsPath) {
     // Verified live: the platform demands the multipart file field ("tests is required when Execution type is MAESTRO").
-    return 'MAESTRO needs the flow bundle as a file: pass testsPath (a .zip containing flows/*.yaml).';
+    return maestroBundle;
   }
   if (r.deviceQueries.length === 0) return 'Provide at least one deviceQuery, e.g. "@os=\'android\' and @category=\'PHONE\'".';
   if (r.runningType === 'fastFeedback' && r.deviceQueries.length > 1) {

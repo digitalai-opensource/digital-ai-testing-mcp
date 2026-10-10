@@ -394,7 +394,8 @@ export function registerMetaTools(server: McpServer): void {
     'Project-scoped credentials are single-project scoped: there is no API call to change project within a key — the only way to work with a different project is to switch to a profile that holds that project\'s credentials. ' +
     'Use list_environments first to show the user available profiles so they can pick the right one. ' +
     'All subsequent tool calls use the new profile\'s URL and credentials immediately — no restart required. ' +
-    'Accepts either the exact profile name OR role-based aliases: "cloud admin" / "admin" / "full access" resolve to the Cloud Admin profile; "project" resolves to the only project-scoped profile (or lists options if multiple exist).',
+    'Accepts either the exact profile name OR role-based aliases: "cloud admin" / "admin" / "full access" resolve to the Cloud Admin profile; "project" resolves to the only project-scoped profile (or lists options if multiple exist). ' +
+    'An exact profile name always wins over an alias: if a profile is literally named "admin", "admin" selects it even when it is not Cloud Admin — use "cloud admin" to be sure.',
     {
       profileName: z
         .string()
@@ -475,7 +476,13 @@ export function registerMetaTools(server: McpServer): void {
       }
 
       const activeProfile = profiles.find(p => p.name === resolvedName.toLowerCase());
-      const accessLine = describeLevel(await getAccessInfo());
+      const accessInfo = await getAccessInfo();
+      const accessLine = describeLevel(accessInfo);
+      // A profile named like the Cloud Admin alias ("admin") is chosen by exact name — say so when it isn't Cloud Admin
+      // (UAT 2026-10-10: the dev .env has an "admin" profile holding a Project Admin key).
+      const aliasNote = ['admin', 'cloud', 'full access'].includes(profileName.toLowerCase().trim()) && isKnownNotCloudAdmin(accessInfo.level)
+        ? `   ⚠️  "${profileName}" matched a profile by that exact name, which is not Cloud Admin. For the Cloud Admin profile use switch_environment("cloud admin").`
+        : null;
 
       return {
         content: [{
@@ -485,6 +492,7 @@ export function registerMetaTools(server: McpServer): void {
             `   URL: ${activeProfile?.url ?? creds.url}`,
             `   Access: ${accessLine}`,
             `   ${verifyLine}`,
+            ...(aliasNote ? [aliasNote] : []),
           ].join('\n'),
         }],
       };
