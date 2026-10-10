@@ -391,12 +391,14 @@ export interface TestReport {
   name: string;
   /** Six statuses (see src/utils/test-status.ts) — Error and Healed were missing here before 2026-10-09. */
   status: 'Passed' | 'Failed' | 'Error' | 'Incomplete' | 'Skipped' | 'Healed';
-  status_code: number;
+  /** List records only — the single-record GET has no status code. */
+  status_code?: number;
   success: boolean;
   start_time: string;
   create_time: string;
   duration: number | null;
-  project_id: number;
+  /** List records only — the single-record GET carries projectName instead. */
+  project_id?: number;
   has_attachment: string;
   attachment_count: number;
   attachments_size: number;

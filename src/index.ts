@@ -91,7 +91,8 @@ ACCESS LEVEL: never infer privilege from key format. A Cloud Admin may hold eith
 PROJECT CONTEXT: each Project Admin / Project User key is scoped to exactly one project — there is no API call to change project within the same key. "Switch projects", "change project context", "use a different project", or "access project X" all mean switch_environment to the profile holding that project's key. Use list_environments to show available profiles.`;
 
 const debugMode = isDebugMode();
-const server = new McpServer({ name, version }, { instructions: SERVER_INSTRUCTIONS + (debugMode ? debugInstructions() : '') });
+const server = new McpServer({ name, version }, // Debug block goes FIRST: clients truncate long instructions, and at the end it was the part that got cut (2026-10-10).
+  { instructions: (debugMode ? debugInstructions() : '') + SERVER_INSTRUCTIONS });
 
 // Capture every module first, then register through the toolset layer (src/utils/toolsets.ts). With MCP_TOOLSETS
 // unset this registers everything in full, exactly as before; with it set, tools outside the chosen toolsets become

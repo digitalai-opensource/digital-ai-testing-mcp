@@ -19,6 +19,7 @@ import {
   extractAttachmentLog,
   summarizeTestFailures,
 } from '../api/reporting.js';
+import { normaliseDeviceOs } from '../api/transactions.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { checkDeleteAllowed, serverSortAvailable } from '../api/access-level.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -45,6 +46,8 @@ export function registerReportingTools(server: McpServer): void {
     'Retrieve a full test execution report by UUID, numeric test ID, or the report URL printed in tearDown (digitalai:reportUrl — e.g. .../reporter/video-report/<uuid>). ' +
     'Provide ONE of uuid, testId or reportUrl. PREFER uuid (or the report URL): UUIDs are global, while numeric test IDs are only unique per project and can resolve to a different test in another project. ' +
     'uuid and test_id are both returned by list_test_reports and find_latest_test_for_name. ' +
+    'The single report has projectName but no status_code/project_id (those exist only on list records); its attachment_count ' +
+    'counts the attachment files (as list_test_attachments does), which can be higher than the list record\'s figure. ' +
     'NOTE: Step-level detail is not available on this endpoint — the backend API does not support it here. ' +
     'To get steps, use get_test_by_report_id with the report_api_id from a live session. ' +
     'For failure diagnosis use the cause/errorCategory/errorDetail fields in this response, or get_test_log for the full Appium log.',
@@ -559,9 +562,21 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ keys, projectId, projectName, outputFormat }) => {
       try {
-        const result = await getDistinctKeyValues(keys, projectId, projectName);
+        const raw = await getDistinctKeyValues(keys, projectId, projectName);
+        // device.os comes back as ANDROID/Android/IOS/iOS; fold the case variants the same way get_grouped_test_reports
+        // does, so the two tools agree (UAT 2026-10-10). The platform's own spellings are kept under rawValues.
+        const result: Record<string, unknown> = { ...raw };
+        const rawOs = (raw as Record<string, unknown>)['device.os'];
+        if (Array.isArray(rawOs)) {
+          const folded = [...new Set(rawOs.map((v) => (v == null ? v : normaliseDeviceOs(String(v)))))];
+          if (folded.length !== rawOs.length) {
+            result['device.os'] = folded;
+            result.rawValues = { 'device.os': rawOs };
+          }
+        }
         const lines: string[] = [];
-        for (const [key, rawValues] of Object.entries(result)) {
+        for (const key of Object.keys(raw)) {
+          const rawValues = result[key];
           lines.push(`${key}:`);
           const values = Array.isArray(rawValues)
             ? rawValues
@@ -1555,6 +1570,15 @@ export function registerReportingTools(server: McpServer): void {
         const sorted = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b));
         // Earliest record actually read — when the scan was capped, days before this are missing, not empty.
         const coveredFrom = records.reduce((min, r) => (r.start_time < min ? r.start_time : min), records[0].start_time);
+        // When capped, extrapolate from the observed rate so the caller gets a concrete next step (UAT 2026-10-10: a
+        // 14-day request covered 6 days and the agent had to guess what to change).
+        const MAX_RECORDS = 25_000;
+        const coveredDays = Math.max((Date.now() - new Date(coveredFrom).getTime()) / 86_400_000, 1 / 24);
+        const estimatedNeeded = Math.ceil((records.length / coveredDays) * lookbackDays * 1.1 / 500) * 500;
+        const suggestedMaxRecords = scanCapped ? Math.min(estimatedNeeded, MAX_RECORDS) : null;
+        const fittingLookbackDays = scanCapped && estimatedNeeded > MAX_RECORDS
+          ? Math.max(1, Math.floor((MAX_RECORDS / (records.length / coveredDays)) / 1.1))
+          : null;
         const structured = {
           bucketBy,
           lookbackDays,
@@ -1564,6 +1588,13 @@ export function registerReportingTools(server: McpServer): void {
           scanCapped,
           windowComplete: !scanCapped,
           coveredFrom: scanCapped ? coveredFrom : new Date(cutoffTs).toISOString(),
+          ...(scanCapped
+            ? {
+                missingRange: { from: new Date(cutoffTs).toISOString(), to: coveredFrom },
+                suggestedMaxRecords,
+                ...(fittingLookbackDays != null ? { fittingLookbackDays } : {}),
+              }
+            : {}),
           buckets: sorted.map(([date, b]) => ({
             date,
             total: b.total,
@@ -1590,7 +1621,9 @@ export function registerReportingTools(server: McpServer): void {
           lines.push(
             `\n  ⚠️  INCOMPLETE WINDOW: the scan stopped at maxRecords (${maxRecords}) and only covers ${coveredFrom.slice(0, 10)} onward — ` +
             `days before that are MISSING from this trend, not days with zero executions. ` +
-            `Increase maxRecords (max 25,000) or reduce lookbackDays for the full ${lookbackDays}-day window.`
+            (fittingLookbackDays != null
+              ? `At this project's rate even the 25,000 maximum won't cover ${lookbackDays} days — use lookbackDays: ${fittingLookbackDays} with maxRecords: 25000, or bucketBy "week" over several shorter calls.`
+              : `Re-run with maxRecords: ${suggestedMaxRecords} to cover the full ${lookbackDays}-day window (estimated from the rate observed so far).`)
           );
         }
         return respond(outputFormat, structured, lines.join('\n'));

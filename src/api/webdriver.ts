@@ -112,11 +112,17 @@ export async function createInspectionSession(
       capabilities: { alwaysMatch, firstMatch: [{}] },
     });
   } catch (e) {
+    const detail = describeWdError(e);
+    // Automotive projection failures have specific causes the generic advice below doesn't cover (UAT 2026-10-10).
+    const automotive = automotiveSessionHint(detail);
+    if (automotive) throw new Error(`Session creation failed: ${detail}. ${automotive}`);
     // The Grid often returns a bare 500 with no body when the device agent pool
     // is saturated (v36) — give the caller a diagnosis path instead of a status code.
     throw new Error(
-      `Session creation failed: ${describeWdError(e)}. Diagnostics: ` +
-      `(1) run check_${platform === 'ios' ? 'ios' : 'android'}_readiness — if available is 0, the device pool or platform agents are busy; ` +
+      `Session creation failed: ${detail}. Diagnostics: ` +
+      (platform === 'ios'
+        ? '(1) run check_ios_readiness — if available is 0, the device pool or platform agents are busy; '
+        : '(1) run find_available_device(os: "android") or get_device_health_summary — if nothing is available, the device pool or platform agents are busy; ') +
       `(2) if launching an app, verify it is assigned to your ACTIVE project (get_application_info → projectsInfo) — a successful install does NOT imply the session can use the app; ` +
       `(3) specific-device queries (@name/@serialNumber) can time out — prefer a generic @os/@category query with the region param. ` +
       `A bare 500 usually means platform load — retry shortly.`
@@ -546,6 +552,23 @@ export async function clearElement(handle: string, elementId: string): Promise<v
 // family arrived in the Appium 1.22 era. Each helper tries the session's
 // native format first and falls back to the other on unknown-command errors,
 // because the Digital.ai Grid proxy does not always match the agent's protocol.
+
+/**
+ * Specific guidance for automotive projection failures, or null. Both messages were seen live (UAT 2026-10-10) when
+ * a session was started with digitalai:automotiveProjection on a device that can't project.
+ */
+export function automotiveSessionHint(detail: string): string | null {
+  if (/Apple Silicon Device Host/i.test(detail)) {
+    return 'Automotive projection only works on devices attached to an Apple Silicon device host, and this device\'s host ' +
+      'is not one. This is a property of the device, not your request: try another device or region, or ask your platform ' +
+      'admin which devices support Android Auto / CarPlay projection. Retrying the same device will fail the same way.';
+  }
+  if (/automotive dev mode|start Android Auto/i.test(detail)) {
+    return 'The device could not switch on Android Auto developer mode. It needs Android 10 or later, and not every device ' +
+      'or host supports projection: try another device, or ask your platform admin which devices support it.';
+  }
+  return null;
+}
 
 // Extract a readable error from an Axios/WebDriver failure — the agent's actual
 // message (e.g. "No alert is present on the screen") lives in the response body,
