@@ -46,6 +46,8 @@
     "test:maestro": "vitest run tests/maestro-flow.test.ts",
     "test:find-elements": "vitest run tests/find-elements.test.ts",
     "test:remediation": "vitest run tests/remediation.test.ts",
+    "test:remediation-digest": "vitest run tests/remediation-digest.test.ts",
+    "remediation:digest": "tsx tests/remediation-intake/digest.ts",
     "test:test-views": "vitest run tests/test-views.test.ts",
     "test:transactions": "vitest run tests/transactions.test.ts",
     "test:analytics": "vitest run tests/analytics.test.ts",
