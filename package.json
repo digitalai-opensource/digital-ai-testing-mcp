@@ -1,6 +1,6 @@
 {
   "name": "digital-ai-testing-mcp",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "MCP server for Digital.ai Testing — device farm, app lifecycle, test runs, reporting and analytics, performance, live mobile and browser inspection, and test authoring",
   "keywords": [
     "mcp",
@@ -59,6 +59,7 @@
     "test:remediation-digest": "vitest run tests/remediation-digest.test.ts",
     "test:tool-catalog": "vitest run tests/tool-catalog.test.ts",
     "test:uat-2026-10-10": "vitest run tests/uat-2026-10-10.test.ts",
+    "test:uat-2026-10-10b": "vitest run tests/uat-2026-10-10b.test.ts",
     "test:appium3-gestures": "vitest run tests/appium3-gestures.test.ts",
     "test:backlog-batch": "vitest run tests/backlog-batch.test.ts",
     "test:examples-doc": "vitest run tests/examples-doc.test.ts",
