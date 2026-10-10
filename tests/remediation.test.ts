@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   isDebugMode, redact, classifyOutcome, instrumentHandler, startRemediationSession, getRecordedEvents, saveNote,
-  debugInstructions, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject,
+  debugInstructions, debugStatusLine, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject,
   ensureRemediationDir, getRemediationSession,
 } from '../src/utils/remediation.js';
 import { registerRemediationTools } from '../src/tools/remediation-tools.js';
@@ -65,6 +65,20 @@ describe('MCP_DEBUG_MODE flag', () => {
     assert.match(text, /remediation\/ folder of the project/);
     assert.match(text, /Never include credentials/);
   });
+
+  it('instructions open with debug mode, state its purpose, and exempt expected outcomes', () => {
+    const text = debugInstructions();
+    assert.match(text, /^DEBUG MODE IS ON/, 'first, so client truncation cannot cut it');
+    assert.match(text, /improve this MCP's functionality and cut wasted tokens/);
+    assert.match(text, /Do NOT record expected outcomes — deliberate negative tests/);
+    assert.match(text, /\n\n$/, 'separated from the server instructions that follow');
+  });
+
+  it('debug status line appears only when debug mode is on', () => {
+    assert.match(debugStatusLine() ?? '', /^Debug mode:\s+ON — call record_remediation_note .*not for expected errors/);
+    process.env.MCP_DEBUG_MODE = 'false';
+    assert.equal(debugStatusLine(), null);
+  });
 });
 
 describe('redact', () => {
@@ -95,8 +109,9 @@ describe('event log and nudges', () => {
     const r1 = (await flaky({ testId: 1 })) as { content: Array<{ text: string }> };
     const r2 = (await flaky({ testId: 1 })) as { content: Array<{ text: string }> };
     const r3 = (await flaky({ testId: 2 })) as { content: Array<{ text: string }> };
-    assert.match(r1.content.at(-1)!.text, /\[debug mode\].*record_remediation_note/);
-    assert.equal(r2.content.length, 1, 'no second nudge for the same tool+outcome');
+    assert.match(r1.content[0].text, /^\[debug mode\] If this error was unexpected .*Skip it if the error was expected/, 'leads the response, not a trailing footer');
+    assert.equal(r1.content[1].text, 'Error: not found', 'the tool result itself is kept');
+    assert.equal(r2.content.length, 1, 'no second nudge for the same error');
     assert.equal(r3.content.length, 1, 'no nudge on success');
     const ev = getRecordedEvents();
     assert.deepEqual(ev.map((e) => e.outcome), ['error', 'error', 'ok']);
@@ -107,6 +122,26 @@ describe('event log and nudges', () => {
     assert.ok(ev.every((e) => typeof e.ms === 'number' && e.responseChars > 0));
     assert.match(summarizeEvents(), /3 tool calls: 1 ok, 2 error, 0 guard/);
     assert.match(summarizeEvents(), /Retried after an error\/guard: get_test_report/);
+  });
+
+  it('a different error from the same tool gets its own reminder', async () => {
+    let n = 0;
+    const tool = instrumentHandler('start_inspection_session', async () =>
+      err(++n === 1 ? 'Error: CarPlay supports automotiveProjection "800x480" only.' : 'Error: HTTP 500: Automotive Projection is only supported on Apple Silicon Device Host Machines'));
+    const a = (await tool({})) as { content: Array<{ text: string }> };
+    const b = (await tool({})) as { content: Array<{ text: string }> };
+    assert.match(a.content[0].text, /^\[debug mode\]/);
+    assert.match(b.content[0].text, /^\[debug mode\]/);
+  });
+
+  it('puts the reminder inside a JSON payload as _debugMode, keeping the payload parseable', async () => {
+    const payload = { verdict: 'fail', highSeverityCount: 2 };
+    const r = (await instrumentHandler('validate_test_script', async () => ({ content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }], isError: true }))({})) as { content: Array<{ text: string }> };
+    assert.equal(r.content.length, 1);
+    const parsed = JSON.parse(r.content[0].text);
+    assert.match(parsed._debugMode, /^\[debug mode\]/);
+    assert.equal(Object.keys(parsed)[0], '_debugMode', 'first key, so it is seen');
+    assert.equal(parsed.verdict, 'fail');
   });
 
   it('does not change a successful result and does not nudge placeholders', async () => {

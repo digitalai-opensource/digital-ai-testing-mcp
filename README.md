@@ -266,16 +266,17 @@ Set `MCP_DEBUG_MODE=true` while evaluating or developing the MCP to collect feed
 When it is on:
 
 - **The AI records notes.** The server asks the AI client to call `record_remediation_note` (a tool that exists only in debug mode) whenever it:
-  - hits an error;
+  - hits an unexpected error;
   - wastes calls because guidance was unclear;
   - is corrected or stopped by you;
   - gives up;
   - finds a better path than the one recommended;
   - spots a way to make things cleaner or cheaper.
 
-  It records each note once the situation is resolved or abandoned, not in the middle of your task.
+  It records each note once the situation is resolved or abandoned, not in the middle of your task. Expected outcomes, such as deliberate negative tests or a safety check that worked as intended, are not recorded: they show nothing to improve.
 - **The server logs what it sees.** Every tool call is logged with its duration, response size and outcome (ok, error or guard), with flags for retries and repeated calls. This is objective data the AI can't under-report.
-- **Errors get a reminder.** The first time a tool returns an error or a guard, the response ends with a one-line reminder to record a note.
+- **The AI is told up front.** The debug-mode instructions come first in what the server sends at connect time, and `get_server_info` and `check_connectivity` show "Debug mode: ON".
+- **Errors get a reminder.** The first time a tool returns a given error or guard, the response starts with a one-line reminder to record a note if it was unexpected (in JSON responses, as a `_debugMode` field).
 
 Where the files go: a `remediation/` folder in the root of **the project the AI is working in**, so each note sits next to the app and tests it's about.
 

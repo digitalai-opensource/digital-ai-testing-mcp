@@ -316,15 +316,47 @@ export function summarizeEvents(list: readonly ToolEvent[] = events): string {
 
 // ── Nudges ───────────────────────────────────────────────────────────────────
 
-/** One line, once per tool+outcome per session — enough to prompt a note without nagging. */
-export function nudgeFor(tool: string, outcome: Outcome): string | null {
+/**
+ * One reminder per tool + outcome + distinct message per session. Keyed on the message too, so a second, different
+ * error from the same tool still gets one (UAT 2026-10-10: an automotive 500 after a validation error got none and
+ * read as inconsistent). Expected outcomes are exempt: debug mode exists to improve the MCP and cut wasted tokens,
+ * and a deliberate negative test or a guard that worked as intended shows nothing to improve.
+ */
+export function nudgeFor(tool: string, outcome: Outcome, detail = ''): string | null {
   if (outcome === 'ok' || tool === 'record_remediation_note') return null;
-  const key = `${tool}:${outcome}`;
+  const key = `${tool}:${outcome}:${detail.replace(/\d+/g, '#').slice(0, 80)}`;
   if (nudged.has(key)) return null;
   nudged.add(key);
   return outcome === 'error'
-    ? `[debug mode] Once this error is resolved or abandoned, record it with record_remediation_note (category "error": what you were doing, the error, the workaround). Don't interrupt the user's task to do it.`
-    : `[debug mode] If this guard was unclear or cost extra calls, record it with record_remediation_note (category "unclear-guidance").`;
+    ? `[debug mode] If this error was unexpected or blocked the task, record it with record_remediation_note (category "error") once it is resolved or abandoned. Skip it if the error was expected, e.g. a deliberate negative test.`
+    : `[debug mode] If this guard was unclear or cost extra calls, record it with record_remediation_note (category "unclear-guidance"). Skip it if the guard worked as intended.`;
+}
+
+/** Status line for get_server_info / check_connectivity, so the agent learns debug mode is on from its first calls. */
+export function debugStatusLine(): string | null {
+  if (!isDebugMode()) return null;
+  return 'Debug mode:       ON — call record_remediation_note for unexpected errors, unclear guidance, user corrections, giving up, better paths and token-saving ideas (not for expected errors).';
+}
+
+/**
+ * Put the reminder where it is read: inside a JSON payload as a "_debugMode" field (structured data is acted on), or
+ * as the FIRST text item otherwise. A trailing footer was skimmed past as boilerplate for a whole 71-test run.
+ */
+export function withNudge<T extends { content?: Array<{ type: string; text?: string }> }>(result: T, nudge: string): T {
+  const content = result.content ?? [];
+  const first = content[0];
+  if (first?.type === 'text' && first.text) {
+    try {
+      const parsed: unknown = JSON.parse(first.text);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const text = JSON.stringify({ _debugMode: nudge, ...(parsed as Record<string, unknown>) }, null, first.text.includes('\n') ? 2 : 0);
+        return { ...result, content: [{ ...first, text }, ...content.slice(1)] };
+      }
+    } catch {
+      // not JSON — fall through to a leading text item
+    }
+  }
+  return { ...result, content: [{ type: 'text', text: nudge }, ...content] };
 }
 
 // ── Handler wrapping ─────────────────────────────────────────────────────────
@@ -356,9 +388,9 @@ export function instrumentHandler(tool: string, callback: Handler, opts: { place
       throw e;
     }
     const ev = safely('event log', () => recordToolEvent({ tool, args, ms: Date.now() - started, result, placeholder: opts.placeholder }));
-    const nudge = opts.placeholder || !ev ? null : nudgeFor(tool, ev.outcome);
+    const nudge = opts.placeholder || !ev ? null : nudgeFor(tool, ev.outcome, ev.detail ?? '');
     const r = result as { content?: Array<{ type: string; text?: string }> } | undefined;
-    if (nudge && r && Array.isArray(r.content)) return { ...r, content: [...r.content, { type: 'text', text: nudge }] };
+    if (nudge && r && Array.isArray(r.content)) return withNudge(r, nudge);
     return result;
   };
 }
@@ -447,14 +479,14 @@ export function debugInstructions(): string {
   const where = canWriteLocally()
     ? 'The server saves each note in a remediation/ folder of the project you are working in.'
     : 'The tool returns each note as markdown: if you can write files, append it to remediation/<fileName> in the root of the project you are working in (create the folder, plus remediation/.gitignore containing "*" so it is never committed); if you cannot, skip saving — never paste notes into the conversation unasked.';
-  return `
-
-DEBUG MODE IS ON (MCP_DEBUG_MODE=true) — help improve this MCP. Call record_remediation_note once per occurrence, when it is resolved or abandoned (never interrupt the user's task for it):
+  return `DEBUG MODE IS ON (MCP_DEBUG_MODE=true). Its purpose is to improve this MCP's functionality and cut wasted tokens. Call record_remediation_note once per occurrence, when it is resolved or abandoned (never interrupt the user's task for it):
 1. error — an error you hit: what you were doing, the error, any workaround.
 2. unclear-guidance — calls wasted because a tool's guidance was unclear: the request, the misunderstanding, the resolution.
 3. user-correction — the user corrected or stopped you: what you did, what they said, the fix.
 4. gave-up — you could not complete the request: your understanding of the intent and why it could not be done.
 5. better-path — you found a better route than the one the MCP recommended.
 6. improvement — anything that would make the experience cleaner or cheaper in tokens.
-Count calls rather than guessing tokens. Never include credentials. Before you finish a task, make sure each such event has a note. ${where}`;
+Do NOT record expected outcomes — deliberate negative tests, errors the user asked you to provoke, or guards that worked as intended — they show nothing to improve. Count calls rather than guessing tokens. Never include credentials. Before you finish a task, make sure each qualifying event has a note. ${where}
+
+`;
 }

@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { resetClient, getActiveProfileName, getActiveUrl } from '../api/client.js';
 import { getToolCatalog } from '../utils/tool-catalog.js';
+import { debugStatusLine } from '../utils/remediation.js';
 import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
 import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
@@ -204,6 +205,7 @@ export function registerMetaTools(server: McpServer): void {
 
       const lines = [
         `Server:           ${name} v${version}`,
+        ...[debugStatusLine()].filter((l): l is string => l !== null),
         `Target API:       ${activeUrl}`,
         envLine,
         projectLine,
@@ -270,6 +272,7 @@ export function registerMetaTools(server: McpServer): void {
           `   Authenticated as: ${info.username} (${info.firstName} ${info.lastName})`,
           `   Role: ${info.role}`,
           `   Project context: ${info.project?.name ?? 'none'} (ID: ${info.project?.id ?? 'n/a'})`,
+          ...[debugStatusLine()].filter((l): l is string => l !== null).map((l) => `   ${l.replace(/\s{2,}/, ' ')}`),
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       } catch (e) {

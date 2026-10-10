@@ -134,7 +134,7 @@ The shared vs dedicated device-pool breakdown (`device.pool.actual`) needs platf
 
 ## 25. Android Auto / CarPlay Verification
 
-Android Auto projection is verified on Appium Server Android phones. CarPlay follows the platform documentation and has not been verified live. Starting projection mid-session fails on some devices (e.g. Galaxy S10 / Android 12) — start the session with `automotiveProjection` instead. Projection is not available on Appium Grid projects (see limitation 18).
+Android Auto projection is verified on Appium Server Android phones. CarPlay follows the platform documentation and has not been verified live. Starting projection mid-session fails on some devices (e.g. Galaxy S10 / Android 12) — start the session with `automotiveProjection` instead. Projection is not available on Appium Grid projects (see limitation 18). It also needs a device attached to an Apple Silicon device host; on other devices session creation fails with "Automotive Projection is only supported on Apple Silicon Device Host Machines", and not every device in the farm qualifies.
 
 ## 26. No Fold/Unfold Control for Foldable Devices
 

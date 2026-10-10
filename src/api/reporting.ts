@@ -66,13 +66,15 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
     test_id: raw.id,
     name: raw.name,
     status: raw.status as TestReport['status'],
-    status_code: 0,
+    // status_code and project_id are not in the single-record response — they used to be filled with 0, which
+    // contradicted the list record for the same test (UAT 2026-10-10). Omitted now; projectName is set below.
     success: raw.success,
     start_time: raw.startTime,
     create_time: raw.startTime,
     duration: raw.duration ?? null,
-    project_id: 0,
     has_attachment: attachments.length > 0 ? 'Y' : 'N',
+    // Counts the attachment files themselves (matches list_test_attachments). The list record's attachment_count is
+    // the platform's own figure and can be lower for the same test.
     attachment_count: attachments.length,
     attachments_size: totalSize,
     subTestCount: raw.count ?? undefined,
