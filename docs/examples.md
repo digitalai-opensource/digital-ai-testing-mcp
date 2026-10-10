@@ -4,7 +4,9 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 
 > **Destructive operations** (delete, release, remove) require explicit confirmation.
 > Your Agent will present a safety summary before acting — reply "yes, confirm" or include
-> `confirmDeletion: true` in your request to proceed.
+> `confirmDeletion: true` in your request to proceed. Two other gates work the same way and need
+> your explicit agreement, never the agent's own decision: public report links (`share_test_report`,
+> `confirmPublicShare`) and very large usage exports (`confirmLargeExport`).
 
 > **File uploads from local paths**: if installed via the recommended
 > [npm package](../README.md#option-a--install-via-npm-recommended) (Option A) and run directly on your
@@ -153,6 +155,8 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "What browser/OS combinations are available for Selenium testing?"
 - "Start a Chrome session on Windows 10"
 - "Open a Firefox browser session on the latest available macOS"
+- "Start an Edge session on Windows 11" *(browser names are case-sensitive — the agent passes `MicrosoftEdge` exactly as `list_available_browsers` returns it)*
+- "Is Opera available? Open an Opera browser inspection session on our login page"
 - "Create a manual browser test called 'Login Flow' with 3 steps"
 
 ---
@@ -194,6 +198,7 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "Connect to the QA project key so I can run tests without full admin access"
 - "What access level am I currently connected with — Cloud Admin, Project Admin, or Project User?"
 - "Load the performance tools" *(only relevant when the server runs with `MCP_TOOLSETS` — tools outside the loaded toolsets also load themselves on first use)*
+- "That guidance sent us the wrong way — record a remediation note" *(only when the server runs with `MCP_DEBUG_MODE=true`; `record_remediation_note` saves notes in a `remediation/` folder at your project's root)*
 
 ---
 
@@ -204,7 +209,7 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "Am I connected to an Appium Grid or an OSS Appium server?"
 - "Get the appCapabilityString for our latest Android build — I need to paste it into a CI pipeline"
 - "Check iOS provisioning profiles before running the test suite — are any expired or expiring this month?"
-- "Is there a free Android device available in the US2 region right now? I need at least iOS 16 and Android 13."
+- "Is there a free Android 13+ phone and an iOS 16+ iPhone available in the US2 region right now?"
 - "Prepare the device environment before our regression run: clear any orphaned sessions, then show me how many devices are available"
 - "We need 5 Android phones and 3 iPhones for tonight's regression. Are there enough available?"
 
@@ -212,7 +217,7 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 
 ## Test Boilerplate Generation
 
-Before generating boilerplate, always find an available device first so the correct OS version is used:
+Before generating boilerplate, find an available device first so the correct OS version is used. For your own app (an app ID, package or bundle ID), the agent first captures real element IDs in an inspection session — or uses app source in your workspace — because `get_test_boilerplate` returns no runnable code without a verified selector source. Prompts without an app produce the built-in ExperiBank demo.
 
 - "Find an available Android phone, then generate a Java JUnit5 test boilerplate"
 - "Find an available iPhone, then generate an iOS Python test script for app ID 123"
@@ -224,7 +229,7 @@ Before generating boilerplate, always find an available device first so the corr
 - "Generate test scripts for our app in all 4 supported languages — JUnit5, TestNG, NodeJS, and Python — so the team can use whichever framework they prefer"
 - "Generate both an Android and an iOS test script for app IDs 456 (Android) and 789 (iOS) using Java JUnit5"
 - "Generate a Python test for app 456 with performance transactions enabled so CPU and memory get recorded" *(starts NV throttling — the generated code brackets the test body, not app launch)*
-- "Generate a JUnit5 test with an Axe accessibility scan included" *(requires `AXE_DEVTOOLS_API_KEY` in the MCP environment)*
+- "Generate a JUnit5 test with an Axe accessibility scan included" *(reads `AXE_DEVTOOLS_API_KEY` from the MCP environment — a placeholder is inserted if it is unset; pins Appium 2.16.2 because the Axe driver is unavailable on Appium Server 3.3.0+)*
 - "Switch to the QA project profile, then generate the boilerplate — I want the script to carry the project-scoped key, not the admin key"
 
 ---
@@ -252,10 +257,12 @@ Before generating boilerplate, always find an available device first so the corr
 - "Set the device location to Mountain View and verify the store finder shows the right results"
 - "Clear the app's data so we can test the first-launch onboarding flow from scratch"
 - "Open the deep link myapp://orders/42 and verify it lands on the order detail screen"
-- "Stop the session but keep the report — I want the session video for the bug ticket" *(keepReport: true, then download_test_attachments)*
+- "Stop the session but keep the report — I want the session video for the bug ticket" *(keepReport: true, then download_test_video — or download_test_attachments for video plus logs)*
 - "Start an inspection session and give me the live view URL so I can watch while you work"
 - "Start an iOS inspection session on an iPhone, launch our app by bundle ID, and map the login screen's elements"
 - "On the iPhone session, navigate into Settings → General and come back using the nav-bar back button"
+- "On the iPhone session, find the Login button with an iOS predicate" *(`-ios predicate string` works on Appium Server projects only; on an Appium Grid project the agent uses xpath or accessibility id)*
+- "Find every button on this screen" *(attributes are returned for the first 20 matches — narrow the selector to see more)*
 - "I want to create a test together — walk me through it step by step and share the device view link" *(the `collaborative_test_creation` prompt packages this flow)*
 - "Create a login test for our app" *(specific intent + source in the workspace → the agent builds it autonomously, verifying selectors with a silent inspection session)*
 - "Login, tap Transfer, pick account 43x, set $50.00, tap Transfer Now — make that a test" *(step-level detail → autonomous, no collaboration needed)*
@@ -295,7 +302,7 @@ Before generating boilerplate, always find an available device first so the corr
 - "Refresh the page and confirm the session state is preserved"
 - "Type the search term into the search box, press enter, and show me the results"
 - "I want to create a browser test together — walk me through the login flow step by step" *(the `collaborative_web_test_creation` prompt packages this flow)*
-- "Stop the browser session but keep the report — I want the session video"
+- "Stop the browser session but keep the report — I want the session video" *(then download_test_video)*
 - "What browser inspection sessions are still open? Stop them all."
 - "Clean up any leftover browser inspection reports from sessions that didn't shut down cleanly"
 - "Generate a Java JUnit5 Selenium test from what we just discovered — selectors are verified from the live session"
@@ -317,12 +324,12 @@ Before generating boilerplate, always find an available device first so the corr
 
 ## Execution Pipelines
 
-*Using Code Agent (with file system and shell access), the agent can run the full loop: generate → write to disk → execute → retrieve results.*
+*Using Code Agent (with file system and shell access), the agent can run the full loop: generate → write to disk → execute → retrieve results. For your own app, the agent captures selectors in an inspection session first (or uses app source in the workspace) and runs validate_test_script before executing.*
 
 - "Find an available Android device, generate a JUnit5 test for app ID 456, write it to disk, run it, and show me whether it passed" *(Code Agent)*
 - "Generate a Python test for our iOS app, save it to /tmp/test_login.py, run pytest, then get the result from the reporter" *(Code Agent)*
 - "Run our NodeJS regression script against the latest app build on an available Android 14 device and show me the results" *(Code Agent)*
-- "Generate a test script for the 'Checkout' flow, run it on an available iPhone 15, and show me the step-level failure detail"
+- "Generate a test script for the 'Checkout' flow from the selectors we captured, run it on an available iPhone 15, and summarize why it failed" *(failure cause comes from get_test_report)*
 - "The 'Login' test failed last night — find the device it failed on, generate a matching test script, run it again to confirm whether it's fixed" *(Code Agent)*
 - "I just ended a manual test session — its report_api_id is abc-123-xyz. Show me the results."
 
@@ -332,13 +339,16 @@ Before generating boilerplate, always find an available device first so the corr
 
 *The platform runs these suites itself — no local driver. Results land in the Reporter tagged with the run ID.*
 
-- "Run my Maestro flows from C:/flows/bundle.zip against the ExperiBank Android app on one phone" *(the ZIP must contain a `flows/` folder; Maestro is Android-only)*
+- "Run my Maestro flows from C:/flows/bundle.zip against the ExperiBank Android app on one phone" *(the ZIP must contain a `flows/` folder; Maestro is Android-only; under Docker, use get_test_run_command instead)*
 - "Run our Espresso test APK against app 456 on three Android phones in US2 and retry failures once"
-- "Run the XCUITest suite at https://ci.internal/tests.zip on every iPhone model we have — one device per model" *(coverage mode: one device per device query)*
+- "Run our Espresso suite that drives the Settings app — it uses UiAutomator" *(useUIAutomator: true; Espresso alone cannot instrument preinstalled apps)*
+- "Run the XCUITest suite at https://ci.internal/tests.zip on every iPhone model we have — one device per model" *(coverage mode: one device per device query — XCUITest runs use the same API but have not yet been verified end to end)*
 - "What's the status of test run 27971406? Wait for it to finish"
 - "Cancel test run 27971406" *(asks for confirmation first)*
 - "I'm running the MCP in Docker — give me the command to start the Maestro run from my laptop" *(get_test_run_command)*
 - "The Maestro run finished — show me the failing flows and their videos"
+- "We just walked through ExperiBank's login in the inspection session — turn those steps into a Maestro flow and run it on two Android phones" *(`generate_maestro_flow` writes the bundle while the Android session is still open, then execute_test_run with executionType MAESTRO)*
+- "Build a Maestro smoke flow from the resource IDs in our UIAutomator dump" *(confirmSelectorsVerified: true — only for IDs captured from the real app; without a live session or that confirmation, no flow is generated)*
 
 ---
 
@@ -374,12 +384,15 @@ Before generating boilerplate, always find an available device first so the corr
 - "Download the attachments for test UUID abc-456 and save them to /tmp/test-artifacts.zip"
 - "Delete all test reports older than 90 days"
 - "Delete all test reports whose name contains '[Smoke Test]' — show me what would be deleted before confirming"
-- "Find and delete all test reports named '[MCP Probe] smoke-test' from the 'DAIMCP POC' project"
+- "Find and delete all test reports named '[MCP Probe] smoke-test' from the 'Mobile QA' project"
 - "Clean up all probe/debug test reports from last week — names contain '[MCP'"
 - "Get a test summary for the QA project — what are the most commonly failing tests?"
 - "What tests are running right now?"
 - "Here's a report link — https://<tenant>/reporter/video-report/<uuid> — what failed?" *(report URLs and UUIDs work directly; UUIDs are unique across projects, numeric test IDs are not)*
 - "How many tests ended in Error versus Failed this month?" *(Error = the test ended abnormally — crash, infrastructure, session ended early)*
+- "What's our pass rate this week?" *(pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error); Skipped and Incomplete are excluded)*
+- "Do tests on shared devices fail more often than on dedicated ones?" *(grouped by device.pool.actual — platform 26.7+)*
+- "Which runs this week included an Axe accessibility scan?" *(filter accessibility_report = true, a boolean)*
 - "Give me a link to the latest health_check report that I can send to a stakeholder who has no Digital.ai account — show me what would be exposed first" *(share_test_report previews first; a public link opens the report, its data and video without login for 14 days and can only be revoked by deleting the report)*
 
 ---
@@ -389,7 +402,7 @@ Before generating boilerplate, always find an available device first so the corr
 > **The chain:** `list_test_reports` (find the failures) → `summarize_test_failures` (classify them all in one call) → `get_test_report` (per-test cause, error category, and stack trace) → `get_test_log` (full Appium/device log returned inline as text — no download) → `get_test_attachments_download_command` (a curl/PowerShell command to pull the session video + logs onto your own machine). The reporter *list* never carries the failure cause — only the single-record report does — so summarization fetches each failed report (N+1, bounded by `maxReports`); `groupBy: "name"` skips that fan-out.
 
 - "Why are my tests failing? Give me a breakdown by error type."
-- "Summarize the failures in the DAIMCP POC project — what's the dominant cause?"
+- "Summarize the failures in the Mobile QA project — what's the dominant cause?"
 - "Of this week's failures, how many are element-not-found vs. timeout?"
 - "Summarize failures for tests named 'SampleApp Login', bucketed by error classification"
 - "Group this week's failures by test name — which test is failing the most?"
@@ -398,6 +411,8 @@ Before generating boilerplate, always find an available device first so the corr
 - "Get the device logcat for the failed Login test"
 - "I'm running the MCP in Docker — give me a command to download test 69's session video to my Mac"
 - "Pull the attachment ZIP (video + logs) for the failed run onto my local machine"
+- "Download just the session video for the failed Checkout run — I don't need the logs" *(download_test_video)*
+- "How big is that video? Download only the last 2 MB so I can see how the session ended" *(infoOnly first, then lastBytes)*
 - "Has the platform's AI analysed why the Checkout test failed? Show me its hypothesis and evidence" *(get_root_cause_analysis — read-only; analyses are started from the video report, Appium Server tests only)*
 - "Which reports already have a completed root-cause analysis?" *(list_test_reports filtered on rca.status = COMPLETED)*
 
@@ -410,7 +425,7 @@ Before generating boilerplate, always find an available device first so the corr
 - "Show me the pass rate and trend for the 'Payment Processing' test over the last 20 runs"
 - "Are there any tests that fail on Android but pass on iOS? Flag anything with more than a 20-point pass rate gap."
 - "Which tests behave differently on one platform vs. the other?"
-- "What is the distribution of test statuses — how many Error, Failed, Incomplete, and Skipped results do we have?"
+- "What is the distribution of test statuses — Passed, Healed, Failed, Error, Incomplete and Skipped?"
 
 ---
 
@@ -492,21 +507,24 @@ Before generating boilerplate, always find an available device first so the corr
 - "Which specific devices have barely been used this month? Pull a per-device usage report for the QA project."
 - "Export device utilization hours for the last 2 weeks — I want to find candidates to retire from the pool"
 
-**Per-user reservation breakdown (→ Users Usage, only when you already have a user ID):**
-- "Bob's user ID is 26062411 — break down his device-reservation hours by project for the last quarter"
-- "How many device-hours did jane@company.com personally use across all projects last month?" *(the agent should resolve her user ID first, e.g. via list_users, then call Users Usage with it — calling it without a userId would just return the same data as Device Reservations)*
+**Per-user and per-tag reservation hours (→ Users Usage):**
+- "Bob's user ID is 12345 — break down his device-reservation hours by project for the last quarter"
+- "How many device-hours did jane@company.com personally use across all projects last month?" *(the agent can resolve her user ID via list_users and pass it, or read her rows from the per-user section of Users Usage)*
+- "Break down last month's device-reservation hours by user tag" *(Users Usage, summarize_usage_report groupBy "User Tag" — a user with several tags counts in each; platform 26.2+)*
+- "Which devices were reserved most last week, and why were reservations released?" *(Device Reservations per-reservation section, groupBy "Device Name" or "Release Reason")*
+- "Pull device reservations for 2023" *(usage data is kept for 2 years — the agent will say that older periods come back empty, not that there was no usage)*
 
 **Browser/version testing audits (→ Browser Usage):**
 - "Export browser and version usage for the last two weeks — I want to see if our Safari coverage has picked up"
-- "Which browser versions were exercised by the DigitalSSO project last month? Give me a CSV."
+- "Which browser versions were exercised by the Web Portal project last month? Give me a CSV."
 
 **Manual-session engagement analysis (→ Users Statistics):**
 - "How actively is jane@company.com using manual/interactive sessions? Pull her click and screen-time stats for this week"
-- "Export interactive-session activity for the Accenture S-Payment PoV project — clicks, swipes, screen time"
+- "Export interactive-session activity for the Mobile QA project — clicks, swipes, screen time"
 
 **License-seat consumption & compliance audit (→ License Usage — the largest report, use last):**
-- "Check overall license utilization first" *(get_license_utilization for the aggregate view)* "— then pull a session-level License Usage export for the Default project for last week for the compliance file"
-- "Export a full year of License Usage across all projects for the annual audit — I know it'll be large, go ahead" *(confirmLargeExport: true — License Usage has no project/user filter, so the guard only relaxes on explicit confirmation)*
+- "Check overall license utilization first" *(get_license_utilization for the aggregate view)* "— then pull last week's session-level License Usage export for the compliance file" *(License Usage is always platform-wide — it has no project filter)*
+- "Export a full year of License Usage across all projects for the annual audit — I know it'll be large, go ahead" *(you agreed up front, so the agent may pass confirmLargeExport: true — License Usage has no project/user filter, so any range over 31 days needs your explicit agreement)*
 - "Which license type is closest to being exhausted, and who's actually consuming it right now?"
 
 **Delivery mode:**
