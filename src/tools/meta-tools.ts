@@ -120,9 +120,12 @@ export const REGISTERED_TOOLS = [
   'download_usage_report', 'get_usage_report_download_command', 'summarize_usage_report',
   // Test runs — Espresso / XCUITest / Maestro executed by the platform
   'execute_test_run', 'get_test_run_status', 'cancel_test_run', 'get_test_run_command', 'generate_maestro_flow',
+  // Debug mode only (MCP_DEBUG_MODE=true) — not registered otherwise, so not in TOOL_COUNT
+  'record_remediation_note',
 ] as const;
 
-export const TOOL_COUNT = REGISTERED_TOOLS.length;
+export const DEBUG_ONLY_TOOLS: readonly string[] = ['record_remediation_note'];
+export const TOOL_COUNT = REGISTERED_TOOLS.length - DEBUG_ONLY_TOOLS.length;
 
 export function registerMetaTools(server: McpServer): void {
   // ─── get_server_info ───────────────────────────────────────────────────────
