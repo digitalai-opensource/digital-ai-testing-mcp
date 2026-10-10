@@ -317,13 +317,19 @@ export function summarizeEvents(list: readonly ToolEvent[] = events): string {
 // ── Nudges ───────────────────────────────────────────────────────────────────
 
 /**
+ * Tools whose "error" is their normal answer: validate_test_script returns isError for a "fail" verdict, which is the
+ * tool working — a reminder there read like an MCP malfunction (UAT 2026-10-10).
+ */
+const NO_NUDGE_TOOLS: ReadonlySet<string> = new Set(['record_remediation_note', 'validate_test_script']);
+
+/**
  * One reminder per tool + outcome + distinct message per session. Keyed on the message too, so a second, different
  * error from the same tool still gets one (UAT 2026-10-10: an automotive 500 after a validation error got none and
  * read as inconsistent). Expected outcomes are exempt: debug mode exists to improve the MCP and cut wasted tokens,
  * and a deliberate negative test or a guard that worked as intended shows nothing to improve.
  */
 export function nudgeFor(tool: string, outcome: Outcome, detail = ''): string | null {
-  if (outcome === 'ok' || tool === 'record_remediation_note') return null;
+  if (outcome === 'ok' || NO_NUDGE_TOOLS.has(tool)) return null;
   const key = `${tool}:${outcome}:${detail.replace(/\d+/g, '#').slice(0, 80)}`;
   if (nudged.has(key)) return null;
   nudged.add(key);

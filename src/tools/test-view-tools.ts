@@ -212,8 +212,9 @@ export function registerTestViewTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Whether to show this view on the main dashboard. Default: false.'),
+      outputFormat: outputFormatParam,
     },
-    async ({ name, byKey, groupByKey1, groupByKey2, keys, showInDashboard }) => {
+    async ({ name, byKey, groupByKey1, groupByKey2, keys, showInDashboard, outputFormat }) => {
       try {
         const view = await createTestView({
           name,
@@ -223,14 +224,8 @@ export function registerTestViewTools(server: McpServer): void {
           ...(keys && { keys }),
           showInDashboard: showInDashboard ?? false,
         });
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `✅ Test view "${view.name}" created successfully (ID: ${view.id}).`,
-            },
-          ],
-        };
+        // Structured too — the id is what the next call needs (UAT 2026-10-10: json mode returned only text).
+        return respond(outputFormat, { created: true, ...view }, `✅ Test view "${view.name}" created successfully (ID: ${view.id}).`);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -250,17 +245,16 @@ export function registerTestViewTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Set to true to show on the dashboard, false to hide it.'),
+      outputFormat: outputFormatParam,
     },
-    async ({ id, viewId: viewIdParam, name, showInDashboard }) => {
+    async ({ id, viewId: viewIdParam, name, showInDashboard, outputFormat }) => {
       const resolvedId = id ?? viewIdParam;
       if (resolvedId === undefined) {
         return { content: [{ type: 'text' as const, text: 'Error: id is required' }], isError: true };
       }
       try {
         const view = await updateTestView({ id: resolvedId, ...(name && { name }), ...(showInDashboard !== undefined && { showInDashboard }) });
-        return {
-          content: [{ type: 'text', text: `✅ Test view "${view.name}" (ID: ${view.id}) updated.` }],
-        };
+        return respond(outputFormat, { updated: true, ...view }, `✅ Test view "${view.name}" (ID: ${view.id}) updated.`);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -279,17 +273,21 @@ export function registerTestViewTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Must be true to confirm the deletion.'),
+      outputFormat: outputFormatParam,
     },
-    async ({ id, viewId: viewIdParam, confirmDeletion }) => {
+    async ({ id, viewId: viewIdParam, confirmDeletion, outputFormat }) => {
       const resolvedId = id ?? viewIdParam;
       if (resolvedId === undefined) {
         return { content: [{ type: 'text' as const, text: 'Error: id is required' }], isError: true };
       }
-      const guard = checkDestructiveGuard(confirmDeletion, `Delete test view ${resolvedId}`);
+      // Name the view in the guard and the result, so the user confirms what they recognise (UAT 2026-10-10).
+      const viewName = await getTestViewById(resolvedId).then((v) => v.name).catch(() => null);
+      const label = viewName ? `test view "${viewName}" (ID ${resolvedId})` : `test view ${resolvedId}`;
+      const guard = checkDestructiveGuard(confirmDeletion, `Delete ${label}`);
       if (guard) return { content: [{ type: 'text', text: guard }] };
       try {
         await deleteTestView(resolvedId);
-        return { content: [{ type: 'text', text: `✅ Test view ${resolvedId} deleted.` }] };
+        return respond(outputFormat, { deleted: true, id: resolvedId, name: viewName }, `✅ Deleted ${label}.`);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

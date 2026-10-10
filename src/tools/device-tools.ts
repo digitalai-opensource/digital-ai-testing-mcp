@@ -847,12 +847,8 @@ export function registerDeviceTools(server: McpServer): void {
         });
 
         if (orphaned.length === 0) {
-          return {
-            content: [{
-              type: 'text',
-              text: `No orphaned sessions found (threshold: ${maxAgeHours}h). All in-use devices are within the time limit.`,
-            }],
-          };
+          return respond(outputFormat, { orphaned: 0, thresholdHours: maxAgeHours, released: 0 },
+            `No orphaned sessions found (threshold: ${maxAgeHours}h). All in-use devices are within the time limit.`);
         }
 
         const preview = orphaned

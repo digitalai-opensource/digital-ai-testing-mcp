@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import type { InspectionSession } from '../types/digital-ai.js';
-import { deleteTests } from './reporting.js';
+import { deleteTests, listTests } from './reporting.js';
 import { getMyAccountInfo } from './users.js';
 import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
@@ -71,6 +71,10 @@ export async function createInspectionSession(
   let query =
     opts.deviceQuery ??
     (platform === 'ios' ? "@os='iOS' and @category='PHONE'" : "@os='android' and @category='PHONE'");
+  // Android Auto projection needs Android 10+ — the default query landed on an Android 9 phone that the platform then
+  // rejected (UAT 2026-10-10). The query compares versions numerically (verified live: 66 phones = 63 at >= 10 + 3 below).
+  // Only the default is narrowed; an explicit query or a pinned device stays the caller's choice.
+  if (!opts.deviceQuery && opts.automotiveProjection && platform === 'android') query = `${query} and @version>='10.0'`;
   if (opts.region) query = `${query} and @region='${opts.region}'`;
 
   const desiredCapabilities: Record<string, unknown> = {
@@ -105,6 +109,8 @@ export async function createInspectionSession(
   }
 
   const client = makeClient();
+  const testName = desiredCapabilities['digitalai:testName'] as string;
+  const requestedAt = Date.now();
   let res;
   try {
     res = await client.post('/session', {
@@ -113,9 +119,11 @@ export async function createInspectionSession(
     });
   } catch (e) {
     const detail = describeWdError(e);
+    // A start that fails after a device was allocated still leaves an "Error" report (UAT 2026-10-10: five of them).
+    const leftover = await cleanUpFailedSessionReport(testName, projectName, requestedAt);
     // Automotive projection failures have specific causes the generic advice below doesn't cover (UAT 2026-10-10).
     const automotive = automotiveSessionHint(detail);
-    if (automotive) throw new Error(`Session creation failed: ${detail}. ${automotive}`);
+    if (automotive) throw new Error(`Session creation failed: ${detail}. ${automotive}${leftover}`);
     // The Grid often returns a bare 500 with no body when the device agent pool
     // is saturated (v36) — give the caller a diagnosis path instead of a status code.
     throw new Error(
@@ -125,7 +133,8 @@ export async function createInspectionSession(
         : '(1) run find_available_device(os: "android") or get_device_health_summary — if nothing is available, the device pool or platform agents are busy; ') +
       `(2) if launching an app, verify it is assigned to your ACTIVE project (get_application_info → projectsInfo) — a successful install does NOT imply the session can use the app; ` +
       `(3) specific-device queries (@name/@serialNumber) can time out — prefer a generic @os/@category query with the region param. ` +
-      `A bare 500 usually means platform load — retry shortly.`
+      `A bare 500 usually means platform load — retry shortly.` +
+      leftover
     );
   }
 
@@ -552,6 +561,37 @@ export async function clearElement(handle: string, elementId: string): Promise<v
 // family arrived in the Appium 1.22 era. Each helper tries the session's
 // native format first and falls back to the other on unknown-command errors,
 // because the Digital.ai Grid proxy does not always match the agent's protocol.
+
+/**
+ * After a failed session start, find the report that attempt created — same test name, started after the request was
+ * sent — and delete it the way stop_inspection_session does. If deleting isn't allowed, name it so the caller can.
+ * Returns a sentence to append to the error ('' when nothing was left or the lookup failed). Never throws.
+ */
+export async function cleanUpFailedSessionReport(testName: string, projectName: string | undefined, requestedAt: number): Promise<string> {
+  try {
+    const find = async () => {
+      const batch = await listTests({ limit: 10, filter: [{ property: 'name', operator: '=', value: testName }] }, undefined, projectName);
+      // 15 s of slack for clock skew. Only Error records (what a failed start leaves), and never a report that belongs to
+      // a live session in this process — the default test name is shared, so a parallel session could match otherwise.
+      return (batch.data ?? [])
+        .filter((r) => r.status === 'Error' && new Date(r.start_time).getTime() >= requestedAt - 15_000 && !allReports.has(r.test_id))
+        .map((r) => r.test_id);
+    };
+    let ids = await find();
+    if (ids.length === 0) {
+      await new Promise((r) => setTimeout(r, 2_000)); // the record can land a moment after the failure
+      ids = await find();
+    }
+    if (ids.length === 0) return '';
+    if ((await checkDeleteAllowed(projectName)) === null) {
+      await deleteTests(ids, undefined, projectName);
+      return ` The report this attempt created (${ids.join(', ')}) was deleted.`;
+    }
+    return ` This attempt left report ${ids.join(', ')} behind — delete it with delete_test_reports if you don't need it.`;
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Specific guidance for automotive projection failures, or null. Both messages were seen live (UAT 2026-10-10) when

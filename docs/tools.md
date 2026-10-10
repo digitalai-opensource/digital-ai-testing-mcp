@@ -194,7 +194,7 @@ Always loaded, even when `MCP_TOOLSETS` limits the other toolsets.
 | `check_connectivity` | Verify the MCP server can reach the Digital.ai API | Any |
 | `check_workflow_readiness` | Readiness report for all workflow tools — which dependency tools are present or missing. Call this first when diagnosing workflow failures. | Any |
 | `list_environments` | List all named connection profiles — name, URL, and the access level detected from the API (role). Marks the active profile. Credentials are never exposed. | Any |
-| `switch_environment` | Switch to a named profile instantly. Verifies the new connection and reports the connected user. All subsequent tool calls use the new credentials. | Any |
+| `switch_environment` | Switch to a named profile instantly. Verifies the new connection and reports the connected user. All subsequent tool calls use the new credentials. Aliases: `"cloud admin"` / `"admin"` → the Cloud Admin profile, `"project"` → the project-scoped profile — but an exact profile name always wins (a profile named `admin` is chosen by `"admin"` even if it is not Cloud Admin; the response says so). | Any |
 | `enable_toolset` | List toolsets and load them in full when the server runs with `MCP_TOOLSETS` (tools outside the loaded toolsets also load themselves on first call) | Any |
 | `record_remediation_note` | **(debug mode only — `MCP_DEBUG_MODE=true`)** Records an error, unclear guidance, user correction, giving up, a better path or an improvement idea as a structured note. Written to `remediation/<session>.md` in the client project (npm install) or returned for the AI to save there (Docker); redacted | Any |
 
@@ -269,9 +269,9 @@ The platform schedules, runs and reports these suites itself — no local driver
 | `search_test_views` | Search and paginate test view groups | Any |
 | `get_test_view` | Get test view configuration detail | Any |
 | `get_test_view_summary` | Counts for all six statuses for a view, with its saved filter applied | Any |
-| `create_test_view` | Create a test view group | Cloud Admin |
+| `create_test_view` | Create a test view group; returns the new view (with its `id`) | Cloud Admin |
 | `update_test_view` | Rename or toggle dashboard visibility | Cloud Admin |
-| `delete_test_view` | Delete a test view group. Requires `confirmDeletion: true`. | Cloud Admin |
+| `delete_test_view` | Delete a test view group. Requires `confirmDeletion: true`; the confirmation names the view. | Cloud Admin |
 
 ### Transactions & Performance
 
@@ -391,7 +391,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `start_inspection_session` | Reserve an Android or iOS (`platform: "ios"`) device and open a live WebDriver session. Pin a specific device with `device` (e.g. the one you installed the app on), or route with `deviceQuery` / `region`. Returns a session handle plus a watch-only `viewUrl` so the operator can follow the session in a browser. Device allocation takes 20–90 s. | Any |
+| `start_inspection_session` | Reserve an Android or iOS (`platform: "ios"`) device and open a live WebDriver session. Pin a specific device with `device` (e.g. the one you installed the app on), or route with `deviceQuery` / `region`. Returns a session handle plus a watch-only `viewUrl` so the operator can follow the session in a browser. Device allocation takes 20–90 s. With `automotiveProjection` and no device or query, only Android 10+ devices are considered. If a start fails after a device was allocated, the leftover report is deleted (or named, if your role may not delete reports). | Any |
 | `stop_inspection_session` | Release the device and delete the probe report from the reporter. `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | Any |
 | `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Agent. Use after each interaction to verify UI state. | Any |
 | `automotive_control` | Android Auto / CarPlay projection in an inspection session: `start`/`stop` projection, `screenshot` the head unit (CarPlay `cluster` display too), `tap` in head-unit coordinates, `dump` (CarPlay only). Prefer `start_inspection_session(automotiveProjection)` — mid-session start is not supported on every device. Projection needs a device attached to an Apple Silicon device host. Android Automotive OS emulators are not projection targets: use `deviceQuery "@os='android' and @emulator='true' and @model='automotive_1024p_landscape'"` (`@emulator='true'` is required) and the normal inspection tools. | Any |

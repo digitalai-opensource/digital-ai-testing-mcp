@@ -29,7 +29,12 @@ export async function getTestViewById(id: number): Promise<TestView> {
     }
     return result as TestView;
   } catch (e) {
-    throw new Error(`getTestViewById failed: ${(e as Error).message}`);
+    const msg = (e as Error).message;
+    // A real 404 comes back as "Request failed with status code 404" — say what it means (UAT 2026-10-10).
+    if (/\[404\]|status code 404/.test(msg)) {
+      throw new Error(`Test view ${id} not found — it may have been deleted. list_test_views shows the views that exist.`);
+    }
+    throw new Error(`getTestViewById failed: ${msg}`);
   }
 }
 

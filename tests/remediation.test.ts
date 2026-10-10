@@ -136,7 +136,7 @@ describe('event log and nudges', () => {
 
   it('puts the reminder inside a JSON payload as _debugMode, keeping the payload parseable', async () => {
     const payload = { verdict: 'fail', highSeverityCount: 2 };
-    const r = (await instrumentHandler('validate_test_script', async () => ({ content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }], isError: true }))({})) as { content: Array<{ text: string }> };
+    const r = (await instrumentHandler('execute_test_run', async () => ({ content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }], isError: true }))({})) as { content: Array<{ text: string }> };
     assert.equal(r.content.length, 1);
     const parsed = JSON.parse(r.content[0].text);
     assert.match(parsed._debugMode, /^\[debug mode\]/);
