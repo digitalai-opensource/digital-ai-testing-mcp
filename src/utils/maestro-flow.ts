@@ -51,6 +51,8 @@ export interface MaestroFlowSpec {
 
 const q = (s: string) => JSON.stringify(s);
 const needsSelector: ReadonlySet<MaestroAction> = new Set(['tapOn', 'longPressOn', 'assertVisible', 'assertNotVisible', 'scrollUntilVisible']);
+/** Commands emitted in mapping form, where Maestro's `optional: true` can be attached. */
+const supportsOptional: ReadonlySet<MaestroAction> = new Set(['launchApp', 'tapOn', 'longPressOn', 'assertVisible', 'assertNotVisible', 'scrollUntilVisible', 'inputText', 'swipe']);
 
 /** Every problem with the spec, so the caller can fix them in one pass. Empty array = valid. */
 export function validateMaestroFlow(spec: MaestroFlowSpec): string[] {
@@ -65,6 +67,8 @@ export function validateMaestroFlow(spec: MaestroFlowSpec): string[] {
     if (s.action === 'pressKey' && !s.value) errors.push(`${at}: needs value (the key, e.g. "Enter").`);
     if (s.action === 'swipe' && !s.direction) errors.push(`${at}: needs direction.`);
     if (s.action === 'eraseText' && s.value != null && !/^\d+$/.test(s.value)) errors.push(`${at}: value must be a character count.`);
+    // The emitter only writes `optional: true` for commands in mapping form; refuse it elsewhere rather than drop it silently.
+    if (s.optional && !supportsOptional.has(s.action)) errors.push(`${at}: optional is not supported for ${s.action} (only ${[...supportsOptional].join(', ')}).`);
   });
   return errors;
 }
@@ -92,15 +96,16 @@ function stepYaml(s: MaestroStep): string[] {
       return [`- ${s.action}:`, ...selector(s, '    '), ...opt];
     case 'inputText': {
       // With a target, tap it first so the text lands in the right field.
-      const tap = s.id ? ['- tapOn:', `    id: ${q(s.id)}`] : [];
-      return [...tap, `- inputText: ${q(s.text ?? '')}`];
+      const tap = s.id ? ['- tapOn:', `    id: ${q(s.id)}`, ...opt] : [];
+      // Mapping form (`inputText: { text }`) is what carries `optional`; the scalar form stays for the common case.
+      return [...tap, ...(s.optional ? ['- inputText:', `    text: ${q(s.text ?? '')}`, ...opt] : [`- inputText: ${q(s.text ?? '')}`])];
     }
     case 'eraseText':
       return [s.value ? `- eraseText: ${s.value}` : '- eraseText'];
     case 'scrollUntilVisible':
       return ['- scrollUntilVisible:', '    element:', ...selector(s, '      '), `    direction: ${s.direction ?? 'DOWN'}`, ...opt];
     case 'swipe':
-      return ['- swipe:', `    direction: ${s.direction}`];
+      return ['- swipe:', `    direction: ${s.direction}`, ...opt];
     case 'pressKey':
       return [`- pressKey: ${q(s.value ?? '')}`];
     case 'takeScreenshot':

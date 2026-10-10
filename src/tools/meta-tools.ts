@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { resetClient, getActiveProfileName, getActiveUrl } from '../api/client.js';
+import { getToolCatalog } from '../utils/tool-catalog.js';
 import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
 import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
@@ -127,6 +128,49 @@ export const REGISTERED_TOOLS = [
 export const DEBUG_ONLY_TOOLS: readonly string[] = ['record_remediation_note'];
 export const TOOL_COUNT = REGISTERED_TOOLS.length - DEBUG_ONLY_TOOLS.length;
 
+// Short descriptions per tool module; counts come from the registrations themselves (src/utils/tool-catalog.ts).
+const DOMAINS: Array<[module: string, label: string, note: string]> = [
+  ['users', 'Users', 'list, create, delete, assign, tag'],
+  ['devices', 'Devices', 'list, detail, control, tag, find available, release orphaned sessions'],
+  ['device-groups', 'Device Groups', 'list, create, edit, delete, assign'],
+  ['reservations', 'Reservations', 'list, create, reserve now, delete, availability window'],
+  ['applications', 'Applications', 'list, upload, install, uninstall, bulk install, plugins, language files'],
+  ['repository', 'File Repository', 'list, upload, download, update, delete'],
+  ['provisioning-profiles', 'Provisioning', 'list, detail, upload, download, delete'],
+  ['browsers', 'Browsers', 'list, Selenium session, manual session'],
+  ['projects', 'Projects', 'list, create, delete, users, tokens, settings, admin settings'],
+  ['backup', 'Backup', 'create'],
+  ['health', 'Health & Platform', 'environment summary, iOS readiness, agent status, active sessions, storage, license, utilization'],
+  ['agents', 'Agents', 'list, devices (Cloud Admin)'],
+  ['regions', 'Regions', 'list, topology (Cloud Admin)'],
+  ['nv-servers', 'NV Servers', 'list, detail (Cloud Admin)'],
+  ['reporting', 'Reporting', 'search, summaries, failures, root-cause analysis, stability, trends, logs, video, share links, delete'],
+  ['test-views', 'Test Views', 'list, search, detail, summary, create, update, delete'],
+  ['coverage', 'Coverage', 'device and regional coverage'],
+  ['transactions', 'Transactions', 'list, detail, performance summary, trend (all roles)'],
+  ['performance', 'Performance Comparison', 'compare, confounds, outliers, transaction control (all roles)'],
+  ['usage-reports', 'Usage Reports', 'summarize, download, download command (Cloud Admin)'],
+  ['boilerplate', 'Boilerplate', 'Appium/Selenium test projects, Test Orchestrator agent, validate_test_script'],
+  ['test-runs', 'Test Runs', 'Espresso/XCUITest/Maestro runs, status, cancel, command, Maestro flow generation'],
+  ['inspection', 'Mobile Inspection', 'live sessions: element tree, find, tap, type, gestures, keys, app/device control, Android Auto / CarPlay'],
+  ['web-inspection', 'Browser Inspection', 'live browser sessions: DOM, find, navigate, actions'],
+  ['debug', 'Remote Debug', 'get_remote_debug_command'],
+  ['workflows', 'Workflows', 'POC and project setup / teardown (Cloud Admin)'],
+  ['meta', 'Server', 'server info, connectivity, workflow readiness, environments'],
+  ['toolsets', 'Toolsets', 'enable_toolset'],
+  ['remediation', 'Debug Mode', 'record_remediation_note'],
+];
+
+export function capabilityLines(): string[] {
+  const catalog = getToolCatalog();
+  const known = new Set(DOMAINS.map(([m]) => m));
+  const line = (label: string, note: string, n: number) => `  ${label.padEnd(22)} — ${note} (${n} tool${n === 1 ? '' : 's'})`;
+  const lines = DOMAINS.filter(([m]) => (catalog.get(m)?.length ?? 0) > 0).map(([m, label, note]) => line(label, note, catalog.get(m)!.length));
+  // A module added later without a description still shows up, with its tool names.
+  for (const [m, tools] of catalog) if (!known.has(m) && tools.length) lines.push(line(m, tools.join(', '), tools.length));
+  return lines;
+}
+
 export function registerMetaTools(server: McpServer): void {
   // ─── get_server_info ───────────────────────────────────────────────────────
 
@@ -169,34 +213,7 @@ export function registerMetaTools(server: McpServer): void {
         `Registered tools: ${TOOL_COUNT} tools + 2 resources + 7 prompts`,
         '',
         'Capability domains:',
-        '  Users              — list, create, delete, assign, tag, get-tags (8 tools)',
-        '  Devices            — list, detail, control, tag, health, find, release-orphaned (19 tools)',
-        '  Device Groups      — list, create, edit, delete, assign (9 tools)',
-        '  Reservations       — list, create, reserve-now, delete, check-window (5 tools)',
-        '  Applications       — list, upload, upload-command, install, uninstall, bulk-install, plugins, download-command (15 tools)',
-        '  Repository         — list, upload, upload-command, download, download-command, update, delete (8 tools)',
-        '  Browsers           — list, selenium-session, manual-session (3 tools)',
-        '  Projects           — list, create, delete, users (by id OR name), tokens, settings (16 tools)',
-        '  Provisioning       — list, detail, upload, upload-command, download, download-command, delete (7 tools)',
-        '  Backup             — create (1 tool)',
-        '  Health             — environment, iOS-readiness, Android-readiness, agent-status (4 tools)',
-        '  Reporting          — list+date-filter, find-latest, grouped, summary, failure-summary, attachments, download-command, logs, delete, active-executions (17 tools)',
-        '  Test Views         — list, search, detail, summary, create, update, delete (7 tools)',
-        '  Meta               — get_server_info, check_connectivity, check_workflow_readiness, list_environments, switch_environment (5 tools)',
-        '  Workflows — POC    — create_poc, close_poc, delete_poc (3 tools, Cloud Admin only)',
-        '  Workflows — Project— setup_project, close_project_resources, teardown_project (3 tools, Cloud Admin only)',
-        '  Boilerplate        — get_test_boilerplate (Test Orchestrator by default for Java on Appium Server), validate_test_script, install_test_orchestrator_agent (3 tools)',
-        '  Agents             — list_agents, get_agent_devices (2 tools, Cloud Admin only)',
-        '  Regions            — list_regions, get_region_topology (2 tools, Cloud Admin only)',
-        '  NV Servers         — list_nv_servers, get_nv_server (2 tools, Cloud Admin only)',
-        '  Sessions/Storage   — list_active_sessions, get_reporter_project_storage, get_license_info (3 tools, Cloud Admin only)',
-        '  Project Admin      — get_project_admin_settings (1 tool, Project Admin or higher — 35+ config fields in one call)',
-        '  Transactions       — list_transactions, get_transaction, get_transaction_performance_summary, get_performance_trend (4 tools, all roles — project-scoped for project-level keys)',
-        '  Analytics          — get_test_stability_report, get_cross_platform_divergence, get_daily_execution_trend (3 tools)',
-        '  Coverage           — get_device_coverage_summary, get_regional_test_coverage (2 tools)',
-        '  Utilization        — get_license_utilization (1 tool, Cloud Admin only)',
-        '  Remote Debug       — get_remote_debug_command (1 tool)',
-        '  Inspection         — start/stop session, screenshot, element tree, find, tap, type, clear, gestures (swipe/long-press/double-tap/drag/pinch/scroll-to), keys, keyboard, app/device control, launch-app, list, cleanup (22 tools)',
+        ...capabilityLines(),
         '',
         '── High-value analytics (35 of 50 industry-standard queries fully supported) ──',
         '  Functional quality:',
@@ -244,7 +261,8 @@ export function registerMetaTools(server: McpServer): void {
     'Verifies that this MCP server can reach the Digital.ai backend API. Makes a single lightweight call to the account-info endpoint and reports success or the error. Use this immediately after confirming get_server_info to validate end-to-end connectivity.',
     {},
     async () => {
-      const baseUrl = process.env['DIGITAL_AI_BASE_URL'] ?? '(not set)';
+      // The ACTIVE profile's URL — process.env reflects the default profile only and ignores switch_environment.
+      const baseUrl = getActiveUrl() || '(not set)';
       try {
         const info = await getMyAccountInfo();
         const lines = [

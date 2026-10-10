@@ -1806,7 +1806,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           ],
           guidance: [
             'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
-            'Set BROWSER=chrome (or firefox/microsoftedge/safari) in your environment.',
+            'Set BROWSER=chrome (or firefox / MicrosoftEdge / safari / opera) in your environment.',
             `Grid URL: ${gridUrl}`,
           ],
         };

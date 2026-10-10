@@ -211,7 +211,8 @@ function summarizeArgs(args: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!args || typeof args !== 'object') return out;
   for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
-    const s = typeof v === 'string' ? v : JSON.stringify(v);
+    // JSON.stringify(undefined) is undefined, not a string — never let the bookkeeping throw on an odd argument.
+    const s = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v));
     out[k] = redact(s.length > 160 ? `${s.slice(0, 160)}…(${s.length} chars)` : s);
   }
   return out;
@@ -260,7 +261,11 @@ function sessionMeta() {
 }
 
 export function recordToolEvent(e: { tool: string; args: unknown; ms: number; result: unknown; placeholder?: boolean }): ToolEvent {
-  const { outcome, text } = classifyOutcome(e.result);
+  const classified = classifyOutcome(e.result);
+  // A placeholder's guidance text says "Nothing was executed", which the guard regex matches — but a placeholder is
+  // its own signal (the `placeholder` flag), not a guard, and the real call that follows is not a "retry after a guard".
+  const outcome: Outcome = e.placeholder && !(e.result as { isError?: boolean } | undefined)?.isError ? 'ok' : classified.outcome;
+  const text = classified.text;
   const args = summarizeArgs(e.args);
   const argsKey = JSON.stringify(args);
   const prev = lastOutcome.get(e.tool);
@@ -277,7 +282,8 @@ export function recordToolEvent(e: { tool: string; args: unknown; ms: number; re
     ...(e.placeholder ? { placeholder: true } : {}),
     ...(outcome !== 'ok' ? { detail: redact(text.split('\n').find((l) => l.trim()) ?? '').slice(0, 300) } : {}),
   };
-  lastOutcome.set(e.tool, { outcome, argsKey });
+  // Placeholder calls carry no arguments, so they must not make the first real call look like a repeat.
+  if (!e.placeholder) lastOutcome.set(e.tool, { outcome, argsKey });
   events.push(ev);
   if (events.length > MAX_MEMORY_EVENTS) events.shift();
   writeEventLine(ev);
@@ -328,7 +334,17 @@ type Handler = (...a: unknown[]) => unknown;
 /** Wrap a tool callback: time it, log the event, append a nudge on error/guard. Never changes the tool's own result. */
 export function instrumentHandler(tool: string, callback: Handler, opts: { placeholder?: boolean } = {}): Handler {
   return async (...a: unknown[]) => {
-    if (canWriteLocally()) await resolveRemediationLocation();
+    // Debug-mode bookkeeping must never turn a working tool into a failing one: every step around the real call is
+    // guarded, and a bookkeeping error is logged to stderr instead of propagating to the client.
+    const safely = <T>(what: string, fn: () => T): T | undefined => {
+      try {
+        return fn();
+      } catch (e) {
+        console.error(`[debug-mode] ${what} failed: ${(e as Error).message}`);
+        return undefined;
+      }
+    };
+    if (canWriteLocally()) await resolveRemediationLocation().catch((e) => console.error(`[debug-mode] could not resolve the remediation folder: ${(e as Error).message}`));
     const started = Date.now();
     // The note itself is already in the .md file — log only that the call happened.
     const args = opts.placeholder || tool === 'record_remediation_note' ? {} : a[0];
@@ -336,11 +352,11 @@ export function instrumentHandler(tool: string, callback: Handler, opts: { place
     try {
       result = await callback(...a);
     } catch (e) {
-      recordToolEvent({ tool, args, ms: Date.now() - started, result: { isError: true, content: [{ type: 'text', text: `thrown: ${(e as Error).message}` }] }, placeholder: opts.placeholder });
+      safely('event log', () => recordToolEvent({ tool, args, ms: Date.now() - started, result: { isError: true, content: [{ type: 'text', text: `thrown: ${(e as Error).message}` }] }, placeholder: opts.placeholder }));
       throw e;
     }
-    const ev = recordToolEvent({ tool, args, ms: Date.now() - started, result, placeholder: opts.placeholder });
-    const nudge = opts.placeholder ? null : nudgeFor(tool, ev.outcome);
+    const ev = safely('event log', () => recordToolEvent({ tool, args, ms: Date.now() - started, result, placeholder: opts.placeholder }));
+    const nudge = opts.placeholder || !ev ? null : nudgeFor(tool, ev.outcome);
     const r = result as { content?: Array<{ type: string; text?: string }> } | undefined;
     if (nudge && r && Array.isArray(r.content)) return { ...r, content: [...r.content, { type: 'text', text: nudge }] };
     return result;

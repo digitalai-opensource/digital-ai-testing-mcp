@@ -107,7 +107,7 @@ export function registerWorkflowTools(server: McpServer): void {
         .describe('Salesforce Opportunity URL — recorded in project notes.'),
       endDate: z
         .string()
-        .describe('POC end date. Accepts ISO format ("2026-08-31"), relative offsets ("+14d", "+2w"), or natural language ("in 2 weeks"). Stored in project notes.'),
+        .describe('POC end date. Accepts ISO format ("2027-06-30"), relative offsets ("+14d", "+2w"), or natural language ("in 2 weeks"). Stored in project notes.'),
       users: z
         .array(
           z.object({

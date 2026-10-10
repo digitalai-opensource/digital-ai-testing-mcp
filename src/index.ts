@@ -36,6 +36,7 @@ import { isDebugMode, startRemediationSession, instrumentHandler, debugInstructi
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { makeToolsetTools } from './tools/toolset-tools.js';
 import { captureRegistrations, parseToolsetSelection, registerWithToolsets, TOOLSETS, type RegisterFn, type ToolsetController } from './utils/toolsets.js';
+import { setToolCatalog } from './utils/tool-catalog.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
@@ -80,11 +81,11 @@ APP NOT IN REPOSITORY: When list_applications returns 0 results for a requested 
 GENERAL: credentials and base URL come from the active profile (switch_environment changes it — never read them from env). Destructive tools require confirmDeletion:true.
 API BEHAVIOR — critical facts for device, reporter, and application tools:
 DEVICE QUERIES: Use displayStatus (not currentStatus) for availability — currentStatus only returns online/offline/error, never "Available". @category must be UPPERCASE ('PHONE', 'TABLET'). @version requires decimal ('14.0' not '14'). These fields silently return empty results — never use in queries, filter client-side instead: @manufacturer, @tag, @deviceName, @id, @udid, @status, @available, @agentName, @pool, @project, @isEmulator.
-REPORTER: List results use snake_case (test_id, start_time). CSRF-blocked filter properties (return 401): start_time, create_time, uuid. CSRF-blocked operators: !=, like, startsWith, in. Use projectName (never projectId — CSRF-blocked on reporter endpoints) to scope reporter calls to a project. Reporter delete endpoints are Cloud Admin only (project keys CSRF-blocked). For "most recent" queries use find_latest_test_for_name or list_active_test_executions — not list_test_reports with sort. get_grouped_test_reports requires groupBy field (not keys — keys is silently ignored). Transaction and performance tools work for all access levels; project keys see only their own project's transactions.
+REPORTER: List results use snake_case (test_id, start_time). CSRF-blocked filter properties (return 401): start_time, create_time, uuid. CSRF-blocked operators: !=, like, startsWith, in. Use projectName (never projectId — CSRF-blocked on reporter endpoints) to scope reporter calls to a project. Reporter deletes: Cloud Admin always; project-level keys only when the project's allowUsersDeleteTests setting is on (the tools refuse up front otherwise). For "most recent" queries use find_latest_test_for_name or list_active_test_executions. get_grouped_test_reports requires groupBy field (not keys — keys is silently ignored). Transaction and performance tools work for all access levels; project keys see only their own project's transactions.
 APPLICATIONS: applicationName filter param is silently ignored — use the nameContains tool param for client-side filtering instead.
 RESERVATIONS: project= causes 400; deviceUid= causes 400 — use projectId= and deviceId= instead.
 DATES: Reservation and provisioning-profile dates are MM/DD/YYYY HH:mm:ss (not ISO 8601) — use the tool's dedicated date parser, not new Date().
-SLOW TOOLS (avoid in loops): get_environment_summary, get_transaction_performance_summary, get_performance_trend, get_daily_execution_trend, find_latest_test_for_name (under project keys).
+SLOW TOOLS (avoid in loops): get_environment_summary, get_transaction_performance_summary, get_performance_trend, get_daily_execution_trend.
 ACCESS LEVEL: never infer privilege from key format. A Cloud Admin may hold either a long eyJ... key or a short aut_1_... key. The real level (Cloud Admin / Project Admin / Project User) is detected from the API — read it from get_server_info or list_environments before telling the user what they can or cannot do.
 
 PROJECT CONTEXT: each Project Admin / Project User key is scoped to exactly one project — there is no API call to change project within the same key. "Switch projects", "change project context", "use a different project", or "access project X" all mean switch_environment to the profile holding that project's key. Use list_environments to show available profiles.`;
@@ -154,9 +155,11 @@ if (debugMode) {
         : "notes are returned to the agent to save in its project's remediation/ folder (server is not on the user's machine).")
   );
 }
+const captured = captureRegistrations(modules);
+setToolCatalog(captured.tools); // get_server_info reports real per-area counts from this
 const controller = registerWithToolsets(
   server,
-  captureRegistrations(modules),
+  captured,
   toolsetSelection,
   debugMode ? (tool, callback, placeholder) => instrumentHandler(tool, callback, { placeholder }) : undefined
 );

@@ -71,7 +71,8 @@ function runOne(bin: string, scenario: Scenario, mode: string, run: number, env:
   const work = mkdtempSync(join(tmpdir(), 'dai-fidelity-'));
   const cwd = join(work, 'cwd');
   mkdirSync(cwd);
-  const serverEnv: Record<string, string> = { ...env, MCP_DEPLOYMENT_MODE: 'local' };
+  // Debug mode adds server instructions and nudges — it would change what is being measured, so always off here.
+  const serverEnv: Record<string, string> = { ...env, MCP_DEPLOYMENT_MODE: 'local', MCP_DEBUG_MODE: 'false' };
   if (mode !== 'all') serverEnv.MCP_TOOLSETS = mode;
   const mcpConfig = join(work, 'mcp.json');
   writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { dai: { command: process.execPath, args: [join(ROOT, 'dist', 'index.js')], env: serverEnv } } }));

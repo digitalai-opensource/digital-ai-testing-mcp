@@ -26,12 +26,9 @@ export function registerBrowserTools(server: McpServer): void {
       try {
         const browsers = await getAllBrowsers();
         const paged = applyMaxResults(browsers, maxResults);
-        // total/returned/truncated: without them a list cut at maxResults looked complete (UAT 2026-10-09 — exactly 50
-        // rows, no Edge or Windows Chrome, no sign of truncation).
+        // withPaging adds total/returned/truncated: without them a list cut at maxResults looked complete (UAT
+        // 2026-10-09 — exactly 50 rows, no Edge or Windows Chrome, no sign of truncation).
         const structured = {
-          total: paged.total,
-          returned: paged.returned,
-          truncated: paged.truncated,
           browsers: paged.items.map(b => ({
             browserName: b.browserName,
             browserVersion: b.browserVersion,
@@ -59,7 +56,7 @@ export function registerBrowserTools(server: McpServer): void {
       browserName: z
         .string()
         .optional()
-        .describe("Browser name, exactly as list_available_browsers returns it (case-sensitive): 'chrome', 'firefox', 'MicrosoftEdge', 'safari', 'opera'."),
+        .describe("Browser name as list_available_browsers returns it: 'chrome', 'firefox', 'MicrosoftEdge', 'safari', 'opera' (case variants and 'edge' are normalised)."),
       browserVersion: z
         .string()
         .optional()
@@ -71,7 +68,7 @@ export function registerBrowserTools(server: McpServer): void {
     },
     async ({ browserName, browserVersion, os }) => {
       try {
-        const result = await startWebControlSession({ browserName: canonicalBrowserName(browserName) ?? browserName, browserVersion, os });
+        const result = await startWebControlSession({ browserName: canonicalBrowserName(browserName), browserVersion, os });
         return {
           content: [
             {

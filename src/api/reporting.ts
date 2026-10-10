@@ -193,11 +193,13 @@ export function buildRootCauseAnalysis(
   };
 }
 
-export async function getRootCauseAnalysis(uuid: string): Promise<RootCauseAnalysis> {
+/** One fetch of the raw report (by UUID or numeric id — the single-record GET carries the UUID either way), then the RCA endpoints. */
+export async function getRootCauseAnalysis(ref: ReportRef): Promise<RootCauseAnalysis> {
   try {
     const raw = await apiGet<{ uuid: string; id: number; name: string; status: string; projectName?: string; keyValuePairs?: Record<string, unknown> }>(
-      `/reporter/api/reports/${encodeURIComponent(uuid)}`
+      ref.kind === 'uuid' ? `/reporter/api/reports/${encodeURIComponent(ref.uuid)}` : `/reporter/api/tests/${ref.testId}`
     );
+    const uuid = raw.uuid;
     // Status and info are best-effort: a report is still worth showing when the RCA service endpoints are unavailable.
     const [rcaStatus, info] = await Promise.all([
       apiGet<{ attemptCount?: number; lastStatus?: string | null; lastRcaId?: string | null }>(`/reporter/api/reports/${encodeURIComponent(uuid)}/rca/status`).catch(() => null),
