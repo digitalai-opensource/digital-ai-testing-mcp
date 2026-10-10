@@ -108,6 +108,17 @@ describe('evaluate', () => {
     assert.equal(none.pass, false);
   });
 
+  it('allOf passes only when every inner check passes', () => {
+    const checks = [{ kind: 'textMatches' as const, re: /projection/, label: 'plans' }, { kind: 'askedUser' as const, label: 'asks' }];
+    const plan = 'Plan: start a session with Android Auto projection at 800x480. Want me to go ahead?';
+    const both = traj([say(plan), done(plan)]);
+    assert.equal(evaluate(both, [{ kind: 'allOf', label: 'x', checks }])[0].pass, true);
+    const askOnly = traj([say('Want me to go ahead?'), done('Want me to go ahead?')]);
+    const [r] = evaluate(askOnly, [{ kind: 'allOf', label: 'x', checks }]);
+    assert.equal(r.pass, false);
+    assert.match(r.detail, /plans/);
+  });
+
   it('SI_WITH_TIME_UNITS catches table cells and threshold columns, not correct SI reporting', () => {
     // Verbatim shape from the core-mode failure on 2026-10-09.
     const bad = '| Model | n | Avg SI | Min | Max | Over 2s |\n|---|---|---|---|---|---|\n| **iPhone XR** | 12 | **4,450 ms** | 3,425 | 7,750 | 12 / 12 |';
@@ -131,7 +142,7 @@ describe('evaluate', () => {
 describe('scenario and safety definitions', () => {
   const registered = new Set<string>(REGISTERED_TOOLS);
   const toolsIn = (c: Check): string[] =>
-    c.kind === 'either' ? c.checks.flatMap(toolsIn)
+    c.kind === 'either' || c.kind === 'allOf' ? c.checks.flatMap(toolsIn)
       : 'tools' in c ? c.tools : 'before' in c ? [...c.before, ...c.after] : 'tool' in c ? [c.tool] : [];
 
   it('every tool a scenario names exists (a rename must not silently weaken a check)', () => {
