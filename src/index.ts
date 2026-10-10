@@ -140,8 +140,19 @@ if (debugMode) {
     mcpVersion: version,
     toolsets: process.env.MCP_TOOLSETS || 'all',
     client: () => server.server.getClientVersion(),
+    // The client's workspace folders — where the remediation/ folder goes. Only clients that declare roots support answer.
+    roots: async () => {
+      if (!server.server.getClientCapabilities()?.roots) return [];
+      const { roots } = await server.server.listRoots(undefined, { timeout: 3000 });
+      return roots.map((r) => r.uri);
+    },
   });
-  console.error(`[${name}] Debug mode ON — remediation session ${s.id}: ${canWriteLocally() ? `notes and event log in ${remediationDir()}` : "notes returned to the agent (server is not on the user's machine)"}.`);
+  console.error(
+    `[${name}] Debug mode ON — remediation session ${s.id}: ` +
+      (canWriteLocally()
+        ? `notes and event log go to remediation/ in the client's project (resolved on first use; current guess ${remediationDir()}).`
+        : "notes are returned to the agent to save in its project's remediation/ folder (server is not on the user's machine).")
+  );
 }
 const controller = registerWithToolsets(
   server,

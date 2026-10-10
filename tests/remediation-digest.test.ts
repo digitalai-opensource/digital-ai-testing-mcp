@@ -5,10 +5,10 @@
 import { describe, it, beforeEach, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startRemediationSession, instrumentHandler, saveNote } from '../src/utils/remediation.js';
-import { digestFolder, renderDigest, archiveSessions, parseNotesFile } from './remediation-intake/digest.js';
+import { digestFolder, digestFolders, defaultDirs, renderDigest, archiveSessions, parseNotesFile } from './remediation-intake/digest.js';
 
 const saved = { ...process.env };
 let dir: string;
@@ -86,6 +86,43 @@ describe('remediation digest', () => {
     assert.equal(moved.length, 2);
     assert.ok(existsSync(join(dir, 'processed', '2026-10-13', `${first}.md`)));
     assert.equal(digestFolder(dir).sessions.length, 1, 'archived session no longer digested');
+  });
+
+  it('merges folders from several machines, attributes sessions, and archives each in its own folder', async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'remediation-machine2-'));
+    try {
+      await fakeSession(new Date(2026, 9, 9, 10, 0, 0), { installFails: true, note: true });
+      process.env.MCP_REMEDIATION_DIR = dir2;
+      await fakeSession(new Date(2026, 9, 9, 11, 0, 0), { installFails: true, note: true });
+
+      const d = digestFolders([dir, dir2]);
+      assert.equal(d.sessions.length, 2);
+      assert.deepEqual(d.sessions.map((s) => s.dir), [dir, dir2]);
+      assert.ok(d.sessions.every((s) => s.machine === hostname() && s.user));
+      assert.equal(Object.values(d.machines)[0], 2);
+      assert.equal(d.groups[0].sessions, 2, 'the same issue on both machines is one recurring group');
+      assert.match(renderDigest(d), /\| Folder \|/);
+
+      const second = d.sessions[1].session;
+      assert.deepEqual(archiveSessions(dir, [second]), [], 'a session is only archived from its own folder');
+      assert.equal(archiveSessions(dir2, [second]).length, 2);
+    } finally {
+      rmSync(dir2, { recursive: true, force: true });
+    }
+  });
+
+  it('defaults to this project\'s remediation/ and ~/remediation when no folder is given', () => {
+    delete process.env.MCP_REMEDIATION_DIR;
+    assert.deepEqual(defaultDirs(['a', 'b']), ['a', 'b']);
+    const cwd = mkdtempSync(join(tmpdir(), 'proj-'));
+    try {
+      const dirs = defaultDirs([], cwd);
+      assert.equal(dirs[0], join(cwd, 'remediation'), 'falls back to ./remediation even before it exists');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+    process.env.MCP_REMEDIATION_DIR = dir;
+    assert.deepEqual(defaultDirs([]), [dir]);
   });
 
   it('ignores unrelated files and reports unreadable event lines', () => {

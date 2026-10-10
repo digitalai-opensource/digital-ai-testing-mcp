@@ -5,17 +5,22 @@
  * On, three things work together:
  *  1. A server-side EVENT LOG of what the MCP observes itself — every tool call with timing, response size (a token
  *     proxy), outcome (ok / error / guard), and "retried after an error or guard" signals. The agent can't under-report
- *     these. Written to ~/remediation/<session>.events.jsonl when the server runs on the user's machine
- *     (MCP_DEPLOYMENT_MODE=local); kept in memory under Docker, where the server's ~ is the container's.
+ *     these. Written to <project>/remediation/<session>.events.jsonl when the server runs on the user's machine
+ *     (MCP_DEPLOYMENT_MODE=local); kept in memory under Docker, where the server's filesystem is the container's.
  *  2. record_remediation_note — a structured tool the agent calls for what only it can know (user corrections, giving
- *     up, a better path, unclear guidance). Local: appended to ~/remediation/<session>.md. Docker: the note text is
- *     returned for the agent to save on the user's machine.
+ *     up, a better path, unclear guidance). Local: appended to <project>/remediation/<session>.md. Docker: the note
+ *     text is returned for the agent to save in remediation/ of the project it is working in.
+ * <project> = the CLIENT's project (the folder the agent works in), so notes sit next to the app/tests they are about:
+ * MCP_REMEDIATION_DIR → the client's workspace roots (MCP roots/list) → the folder the server was started in, if it
+ * looks like a project → ~/remediation. The folder gets its own ".gitignore" containing "*" so it never ends up in the
+ * customer's repo. Files carry the machine and user so batches from several machines can be merged and attributed.
  *  3. NUDGES — one line appended to an error or guard response, prompting a note at the moment it matters.
  * Everything written or returned is redacted (keys, JWTs, emails, signed-URL parameters).
  */
-import { appendFileSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { homedir, hostname, userInfo } from 'os';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
 import { getDeploymentMode } from './deployment-mode.js';
 
@@ -50,14 +55,23 @@ interface SessionInfo {
   mcpVersion: string;
   toolsets: string;
   client: () => { name?: string; version?: string } | undefined;
+  /** The client's workspace folders (MCP roots), as file:// URIs. */
+  roots?: () => Promise<string[]>;
+  location?: RemediationLocation;
+}
+
+export type LocationSource = 'env' | 'client-roots' | 'start-folder' | 'home';
+export interface RemediationLocation {
+  dir: string;
+  source: LocationSource;
 }
 
 let session: SessionInfo | null = null;
 
 /** Called once at startup when debug mode is on. The short random suffix keeps parallel sessions apart. */
-export function startRemediationSession(opts: { mcpVersion: string; toolsets: string; client: SessionInfo['client']; now?: Date }): SessionInfo {
+export function startRemediationSession(opts: { mcpVersion: string; toolsets: string; client: SessionInfo['client']; roots?: SessionInfo['roots']; now?: Date }): SessionInfo {
   const startedAt = opts.now ?? new Date();
-  session = { id: `${remediationStamp(startedAt)}-${randomBytes(2).toString('hex')}`, startedAt, mcpVersion: opts.mcpVersion, toolsets: opts.toolsets, client: opts.client };
+  session = { id: `${remediationStamp(startedAt)}-${randomBytes(2).toString('hex')}`, startedAt, mcpVersion: opts.mcpVersion, toolsets: opts.toolsets, client: opts.client, roots: opts.roots };
   events.length = 0;
   lastOutcome.clear();
   nudged.clear();
@@ -70,9 +84,66 @@ export function getRemediationSession(): SessionInfo | null {
   return session;
 }
 
-/** Overridable for tests; ~/remediation otherwise. */
+const PROJECT_MARKERS = [
+  '.git', 'package.json', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts',
+  'pyproject.toml', 'requirements.txt', 'Package.swift', 'go.mod', '.claude', '.mcp.json', '.vscode',
+];
+
+/** A folder counts as a project if it has a typical marker — never the home folder or a filesystem root. */
+export function looksLikeProject(dir: string): boolean {
+  try {
+    if (!dir || dir === homedir() || /^([A-Za-z]:)?[\\/]?$/.test(dir) || !statSync(dir).isDirectory()) return false;
+    if (PROJECT_MARKERS.some((m) => existsSync(join(dir, m)))) return true;
+    return readdirSync(dir).some((n) => /\.(xcodeproj|xcworkspace|sln|csproj)$/i.test(n));
+  } catch {
+    return false;
+  }
+}
+
+/** Synchronous best guess — used until (or instead of) the roots-aware resolution. */
+function locateWithoutRoots(): RemediationLocation {
+  if (process.env.MCP_REMEDIATION_DIR) return { dir: process.env.MCP_REMEDIATION_DIR, source: 'env' };
+  if (looksLikeProject(process.cwd())) return { dir: join(process.cwd(), 'remediation'), source: 'start-folder' };
+  return { dir: join(homedir(), 'remediation'), source: 'home' };
+}
+
+/**
+ * Where this session's files go, resolved once (the client's roots are only available after it has connected):
+ * MCP_REMEDIATION_DIR → first client workspace root → the server's start folder if it is a project → ~/remediation.
+ */
+export async function resolveRemediationLocation(): Promise<RemediationLocation> {
+  if (session?.location) return session.location;
+  let loc: RemediationLocation | null = process.env.MCP_REMEDIATION_DIR ? { dir: process.env.MCP_REMEDIATION_DIR, source: 'env' } : null;
+  if (!loc && session?.roots) {
+    try {
+      for (const uri of await session.roots()) {
+        const path = uri.startsWith('file:') ? fileURLToPath(uri) : uri;
+        if (existsSync(path) && statSync(path).isDirectory()) {
+          loc = { dir: join(path, 'remediation'), source: 'client-roots' };
+          break;
+        }
+      }
+    } catch {
+      // Client without roots support, or it did not answer — fall through.
+    }
+  }
+  loc ??= locateWithoutRoots();
+  if (session) session.location = loc;
+  return loc;
+}
+
+/** The resolved folder, or the best synchronous guess before resolution. */
 export function remediationDir(): string {
-  return process.env.MCP_REMEDIATION_DIR || join(homedir(), 'remediation');
+  return (session?.location ?? locateWithoutRoots()).dir;
+}
+
+/** Create the folder with a ".gitignore" of "*" so it can never be committed to the project it lives in. */
+export function ensureRemediationDir(dir: string = remediationDir()): void {
+  mkdirSync(dir, { recursive: true });
+  const ignore = join(dir, '.gitignore');
+  if (!existsSync(ignore)) {
+    writeFileSync(ignore, '# Debug-mode remediation notes (digital-ai-testing-mcp) — may contain customer data; never commit.\n*\n');
+  }
 }
 
 /** Only when the server's filesystem is the user's machine (npm/local install). */
@@ -154,7 +225,7 @@ function writeEventLine(obj: unknown): void {
   const base = sessionFileBase();
   if (!base || !canWriteLocally()) return;
   try {
-    mkdirSync(remediationDir(), { recursive: true });
+    ensureRemediationDir();
     if (!sessionHeaderWritten) {
       sessionHeaderWritten = true;
       appendFileSync(`${base}.events.jsonl`, JSON.stringify({ type: 'session', ...sessionMeta() }) + '\n');
@@ -165,9 +236,20 @@ function writeEventLine(obj: unknown): void {
   }
 }
 
+function currentUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return process.env.USERNAME || process.env.USER || 'unknown';
+  }
+}
+
 function sessionMeta() {
   const c = session?.client();
   return {
+    machine: hostname(),
+    user: currentUser(),
+    location: session?.location?.source ?? locateWithoutRoots().source,
     session: session?.id,
     startedAt: session?.startedAt.toISOString(),
     mcpVersion: session?.mcpVersion,
@@ -246,6 +328,7 @@ type Handler = (...a: unknown[]) => unknown;
 /** Wrap a tool callback: time it, log the event, append a nudge on error/guard. Never changes the tool's own result. */
 export function instrumentHandler(tool: string, callback: Handler, opts: { placeholder?: boolean } = {}): Handler {
   return async (...a: unknown[]) => {
+    if (canWriteLocally()) await resolveRemediationLocation();
     const started = Date.now();
     // The note itself is already in the .md file — log only that the call happened.
     const args = opts.placeholder || tool === 'record_remediation_note' ? {} : a[0];
@@ -289,6 +372,9 @@ export function noteFileHeader(): string {
     `deploymentMode: ${m.deploymentMode}`,
     `toolsets: ${m.toolsets}`,
     `client: ${m.client}`,
+    `machine: ${m.machine}`,
+    `user: ${m.user}`,
+    `location: ${m.location}  # env | client-roots | start-folder | home`,
     'debugMode: true  # debug sessions spend extra tokens on notes — exclude them from token baselines',
     canWriteLocally() ? `eventsLog: ${m.session}.events.jsonl` : 'eventsLog: none (server not on this machine) — see "Server-observed events" in each note',
     '---',
@@ -332,7 +418,7 @@ export function saveNote(note: RemediationNote): { written: string | null; markd
     notesWritten++;
     return { written: null, markdown, fileName };
   }
-  mkdirSync(remediationDir(), { recursive: true });
+  ensureRemediationDir();
   const path = join(remediationDir(), fileName);
   appendFileSync(path, markdown);
   notesWritten++;
@@ -343,8 +429,8 @@ export function saveNote(note: RemediationNote): { written: string | null; markd
 /** Instructions block appended to the server instructions when debug mode is on (kept short — it costs tokens). */
 export function debugInstructions(): string {
   const where = canWriteLocally()
-    ? 'The server saves each note to ~/remediation/ on this machine.'
-    : 'The tool returns each note as markdown: if you can write files on the user\'s machine, append it to ~/remediation/<fileName> (create the folder); if you cannot, skip saving — never paste notes into the conversation unasked.';
+    ? 'The server saves each note in a remediation/ folder of the project you are working in.'
+    : 'The tool returns each note as markdown: if you can write files, append it to remediation/<fileName> in the root of the project you are working in (create the folder, plus remediation/.gitignore containing "*" so it is never committed); if you cannot, skip saving — never paste notes into the conversation unasked.';
   return `
 
 DEBUG MODE IS ON (MCP_DEBUG_MODE=true) — help improve this MCP. Call record_remediation_note once per occurrence, when it is resolved or abandoned (never interrupt the user's task for it):

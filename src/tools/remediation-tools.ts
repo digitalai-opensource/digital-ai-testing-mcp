@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { REMEDIATION_CATEGORIES, isDebugMode, saveNote } from '../utils/remediation.js';
+import { REMEDIATION_CATEGORIES, isDebugMode, saveNote, canWriteLocally, resolveRemediationLocation } from '../utils/remediation.js';
 
 /**
  * Debug mode only (MCP_DEBUG_MODE=true): registered only then, so it costs nothing in normal use.
@@ -31,6 +31,7 @@ export function registerRemediationTools(server: McpServer): void {
     },
     async (args) => {
       try {
+        if (canWriteLocally()) await resolveRemediationLocation();
         const { written, markdown, fileName } = saveNote(args);
         if (written) {
           return { content: [{ type: 'text', text: `📝 Remediation note saved to ${written}. Continue with the user's task.` }] };
@@ -40,7 +41,8 @@ export function registerRemediationTools(server: McpServer): void {
             type: 'text',
             text:
               `📝 Remediation note (${args.category}). The MCP server is not on the user's machine, so it cannot save this itself.\n` +
-              `If you can write files on the user's machine, APPEND the markdown below to ~/remediation/${fileName} (create the folder if needed). ` +
+              `If you can write files, APPEND the markdown below to remediation/${fileName} in the root of the project you are working in. ` +
+              `If the remediation/ folder is new, also create remediation/.gitignore containing a single line "*" so it is never committed. ` +
               `If you cannot write files, skip it — do not paste it into the conversation unless the user asks. Then continue with the user's task.\n\n` +
               `----- BEGIN ${fileName} -----\n${markdown}----- END -----`,
           }],

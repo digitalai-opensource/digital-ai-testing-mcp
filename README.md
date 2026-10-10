@@ -269,25 +269,31 @@ When it is on:
 - **The server logs what it sees.** Every tool call is logged with its duration, response size and outcome (ok, error or guard), with flags for retries and repeated calls. This is objective data the AI can't under-report.
 - **Errors get a reminder.** The first time a tool returns an error or a guard, the response ends with a one-line reminder to record a note.
 
-Where the files go:
+Where the files go: a `remediation/` folder in the root of **the project the AI is working in**, so each note sits next to the app and tests it's about.
 
 | Install | Notes | Event log |
 |---|---|---|
-| npm (`MCP_DEPLOYMENT_MODE=local`) | The server writes `~/remediation/<yyyymmddhhmmss>-<id>.md` | The server writes `~/remediation/<yyyymmddhhmmss>-<id>.events.jsonl` |
-| Docker | Returned to the AI, which saves them to `~/remediation/<…>.md` on your machine if it can write files (Claude Code can; Claude Desktop needs a filesystem tool) | Kept in server memory; a summary is included in every note |
+| npm (`MCP_DEPLOYMENT_MODE=local`) | The server writes `<project>/remediation/<yyyymmddhhmmss>-<id>.md` | The server writes `<project>/remediation/<yyyymmddhhmmss>-<id>.events.jsonl` |
+| Docker | Returned to the AI, which saves them to `remediation/` in its project if it can write files (Claude Code can; Claude Desktop needs a filesystem tool) | Kept in server memory; a summary is included in every note |
 
-There is one file per session; the `<id>` suffix keeps parallel sessions apart. Keys, tokens, emails and signed-URL parameters are redacted before anything is written or returned.
+With the npm install, the server finds the project in this order, and records the step it used as `location:` in each file:
+1. `MCP_REMEDIATION_DIR`, if set;
+2. the workspace folder the AI client reports;
+3. the folder the server was started in, if it looks like a project;
+4. `~/remediation`.
+
+The `remediation/` folder contains its own `.gitignore` (`*`), so it is never committed to the project it lives in. There is one file per session; the `<id>` suffix keeps parallel sessions apart, and each file records the machine and user, so files collected from several machines can be merged. Keys, tokens, emails and signed-URL parameters are redacted before anything is written or returned.
 
 Debug mode costs extra tokens (the instructions and the notes). Leave it off for normal use, and don't use debug sessions as token baselines.
 
-To process a batch, run `npm run remediation:digest` in this repository. It condenses every unprocessed file in `~/remediation` into one summary, so the development agent reads a few KB instead of every raw note:
+To process a batch, collect the `remediation/` folders you want to analyse, from one machine or several, and run `npm run remediation:digest -- --dir <folder> --dir <folder>` in this repository. With no `--dir`, it reads `./remediation` and `~/remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
 - notes by category, and issues that recur across sessions;
 - per-tool errors, guards, retries, response sizes and latency;
 - every note in a table.
 
 Useful options:
 - `--out <file>` writes the summary to a file; `--since YYYY-MM-DD` limits it to recent sessions; `--json` gives machine-readable output.
-- `--archive <session…>` or `--archive-all` moves handled files into `~/remediation/processed/<date>/`. Nothing is deleted.
+- `--archive <session…>` or `--archive-all` moves handled files into `processed/<date>/` inside the folder they came from. Nothing is deleted.
 
 ---
 
