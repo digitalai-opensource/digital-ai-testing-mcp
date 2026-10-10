@@ -228,6 +228,7 @@ docker build -t digital-ai-testing-mcp:latest .
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
 | `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
+| `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. See [Debug mode](#debug-mode-remediation-notes) |
 
 Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure named profiles for multi-project or multi-environment use. See [Access Keys](#access-keys) and `.env.example` for examples.
 
@@ -249,6 +250,37 @@ Nothing becomes unavailable. Tools outside the chosen toolsets are still listed,
 | `admin` | Users, projects, backups, usage reports, POC and project workflows |
 
 Always loaded in full: environment and connection tools (`get_server_info`, `switch_environment`, …), `enable_toolset`, and `validate_test_script`.
+
+### Debug mode (remediation notes)
+
+Set `MCP_DEBUG_MODE=true` while evaluating or developing the MCP to collect feedback for improving it. With the default `false`, nothing changes.
+
+When it is on:
+
+- **The AI records notes.** The server asks the AI client to call `record_remediation_note` (a tool that exists only in debug mode) whenever it:
+  - hits an error;
+  - wastes calls because guidance was unclear;
+  - is corrected or stopped by you;
+  - gives up;
+  - finds a better path than the one recommended;
+  - spots a way to make things cleaner or cheaper.
+
+  It records each note once the situation is resolved or abandoned, not in the middle of your task.
+- **The server logs what it sees.** Every tool call is logged with its duration, response size and outcome (ok, error or guard), with flags for retries and repeated calls. This is objective data the AI can't under-report.
+- **Errors get a reminder.** The first time a tool returns an error or a guard, the response ends with a one-line reminder to record a note.
+
+Where the files go:
+
+| Install | Notes | Event log |
+|---|---|---|
+| npm (`MCP_DEPLOYMENT_MODE=local`) | The server writes `~/remediation/<yyyymmddhhmmss>-<id>.md` | The server writes `~/remediation/<yyyymmddhhmmss>-<id>.events.jsonl` |
+| Docker | Returned to the AI, which saves them to `~/remediation/<…>.md` on your machine if it can write files (Claude Code can; Claude Desktop needs a filesystem tool) | Kept in server memory; a summary is included in every note |
+
+There is one file per session; the `<id>` suffix keeps parallel sessions apart. Keys, tokens, emails and signed-URL parameters are redacted before anything is written or returned.
+
+Debug mode costs extra tokens (the instructions and the notes). Leave it off for normal use, and don't use debug sessions as token baselines.
+
+To process the notes, give the `~/remediation` folder (or a selection of files) to the development agent. Each file describes itself: front matter with the MCP version, client, toolsets and deployment mode, then one section per note.
 
 ---
 

@@ -120,7 +120,10 @@ export interface ToolsetController {
  * Register every captured tool (full or placeholder), then prompts and resources, onto the real server.
  * Placeholder-to-full restores use RegisteredTool.update(), which emits notifications/tools/list_changed.
  */
-export function registerWithToolsets(server: McpServer, captured: Captured, selection: Selection): ToolsetController {
+/** Optional callback wrapper (debug mode instruments every tool and placeholder through this). */
+export type ToolWrapper = (name: string, callback: (...a: unknown[]) => unknown, placeholder: boolean) => (...a: unknown[]) => unknown;
+
+export function registerWithToolsets(server: McpServer, captured: Captured, selection: Selection, wrap?: ToolWrapper): ToolsetController {
   const s = server as unknown as { tool: (...a: unknown[]) => RegisteredTool; prompt: (...a: unknown[]) => unknown; resource: (...a: unknown[]) => unknown };
   const loaded = new Set<string>(selection.toolsets);
   const handles = new Map<string, { tool: CapturedTool; handle: RegisteredTool; toolset: string | null }>();
@@ -142,7 +145,7 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
         loaded.add(ts);
         for (const { tool, handle, toolset } of handles.values()) {
           if (toolset !== ts || CORE_TOOLS.includes(tool.name)) continue;
-          handle.update({ description: tool.description, paramsSchema: tool.shape as never, callback: tool.callback as never });
+          handle.update({ description: tool.description, paramsSchema: tool.shape as never, callback: (wrap ? wrap(tool.name, tool.callback, false) : tool.callback) as never });
           changed.push(tool.name);
         }
       }
@@ -165,7 +168,8 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
   for (const tool of captured.tools) {
     const toolset = toolsetOfModule(tool.module);
     if (isFull(tool, toolset)) {
-      handles.set(tool.name, { tool, handle: s.tool(...tool.args), toolset });
+      const args = wrap ? [...tool.args.slice(0, -1), wrap(tool.name, tool.callback, false)] : tool.args;
+      handles.set(tool.name, { tool, handle: s.tool(...args), toolset });
       continue;
     }
     const ts = toolset!;
@@ -183,7 +187,7 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
       ].join('\n');
       return { content: [{ type: 'text' as const, text: guidance }] };
     };
-    handles.set(tool.name, { tool, handle: s.tool(tool.name, placeholderDescription(tool, ts), {}, placeholder), toolset });
+    handles.set(tool.name, { tool, handle: s.tool(tool.name, placeholderDescription(tool, ts), {}, wrap ? wrap(tool.name, placeholder, true) : placeholder), toolset });
   }
   for (const p of captured.prompts) s.prompt(...p.args);
   for (const r of captured.resources) s.resource(...r.args);

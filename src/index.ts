@@ -31,6 +31,8 @@ import { registerWebInspectionTools } from './tools/web-inspection-tools.js';
 import { registerPerformanceTools } from './tools/performance-tools.js';
 import { registerUsageReportTools } from './tools/usage-report-tools.js';
 import { registerTestRunTools } from './tools/test-run-tools.js';
+import { registerRemediationTools } from './tools/remediation-tools.js';
+import { isDebugMode, startRemediationSession, instrumentHandler, debugInstructions, remediationDir, canWriteLocally } from './utils/remediation.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { makeToolsetTools } from './tools/toolset-tools.js';
 import { captureRegistrations, parseToolsetSelection, registerWithToolsets, TOOLSETS, type RegisterFn, type ToolsetController } from './utils/toolsets.js';
@@ -87,7 +89,8 @@ ACCESS LEVEL: never infer privilege from key format. A Cloud Admin may hold eith
 
 PROJECT CONTEXT: each Project Admin / Project User key is scoped to exactly one project — there is no API call to change project within the same key. "Switch projects", "change project context", "use a different project", or "access project X" all mean switch_environment to the profile holding that project's key. Use list_environments to show available profiles.`;
 
-const server = new McpServer({ name, version }, { instructions: SERVER_INSTRUCTIONS });
+const debugMode = isDebugMode();
+const server = new McpServer({ name, version }, { instructions: SERVER_INSTRUCTIONS + (debugMode ? debugInstructions() : '') });
 
 // Capture every module first, then register through the toolset layer (src/utils/toolsets.ts). With MCP_TOOLSETS
 // unset this registers everything in full, exactly as before; with it set, tools outside the chosen toolsets become
@@ -122,6 +125,7 @@ const modules: Array<[string, RegisterFn]> = [
   ['performance', registerPerformanceTools],
   ['usage-reports', registerUsageReportTools],
   ['test-runs', registerTestRunTools],
+  ['remediation', registerRemediationTools], // registers nothing unless MCP_DEBUG_MODE=true
   ['meta', registerMetaTools],
   ['toolsets', makeToolsetTools(() => toolsetController)],
 ];
@@ -129,13 +133,28 @@ const toolsetSelection = parseToolsetSelection(process.env.MCP_TOOLSETS);
 if (toolsetSelection.unknown.length > 0) {
   console.error(`[${name}] ⚠️  MCP_TOOLSETS: unknown toolset(s) ignored: ${toolsetSelection.unknown.join(', ')} (valid: ${Object.keys(TOOLSETS).join(', ')}, core, all)`);
 }
-const controller = registerWithToolsets(server, captureRegistrations(modules), toolsetSelection);
+// Debug mode (MCP_DEBUG_MODE=true): every tool and placeholder is instrumented for the remediation event log.
+// Off (the default): no wrapper is passed, so registration is byte-for-byte what it was.
+if (debugMode) {
+  const s = startRemediationSession({
+    mcpVersion: version,
+    toolsets: process.env.MCP_TOOLSETS || 'all',
+    client: () => server.server.getClientVersion(),
+  });
+  console.error(`[${name}] Debug mode ON — remediation session ${s.id}: ${canWriteLocally() ? `notes and event log in ${remediationDir()}` : "notes returned to the agent (server is not on the user's machine)"}.`);
+}
+const controller = registerWithToolsets(
+  server,
+  captureRegistrations(modules),
+  toolsetSelection,
+  debugMode ? (tool, callback, placeholder) => instrumentHandler(tool, callback, { placeholder }) : undefined
+);
 if (!toolsetSelection.all) {
   toolsetController = controller;
   console.error(`[${name}] Toolsets loaded in full: ${controller.loaded().join(', ') || '(core only)'} — the rest are self-loading placeholders.`);
 }
 
-console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 7 prompts).`);
+console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools${debugMode ? " + record_remediation_note" : ""} + 2 resources + 7 prompts).`);
 
 // Startup parity check: verify all workflow dependency tools are actually registered.
 // A missing tool here means a module failed to load — the image needs to be rebuilt.
