@@ -223,7 +223,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `list_test_reports` | Search, filter, sort, and paginate test reports. Filters include `status` (all six statuses), `accessibility_report` (JSON boolean `true`/`false` — the string `"true"` is rejected; `true` = runs with an Axe accessibility scan), `rca.status` (e.g. `COMPLETED` for reports with a Root Cause Analysis), `user`, `device.os`; use `startDate`/`endDate` for date ranges. See [Test Reporting Schema](../README.md#test-reporting-schema). | Any |
+| `list_test_reports` | Search, filter, sort, and paginate test reports. Filters include `status` (all six statuses), `accessibility_report` (JSON boolean `true`/`false` — the string `"true"` is rejected; `true` = runs with an Axe accessibility scan), `rca.status` (e.g. `COMPLETED` for reports with a Root Cause Analysis), `user`, `device.os`; use `startDate`/`endDate` for date ranges. See [Test reporting schema](#test-reporting-schema). | Any |
 | `get_test_report` | Full test execution report by UUID (preferred), numeric test ID, or report URL | Any |
 | `get_test_by_report_id` | Report by `report_api_id` (returned when starting a session) | Any |
 | `find_latest_test_for_name` | Most recent run record for a test by name | Any |
@@ -248,6 +248,48 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin † |
 
 > † Cloud Admin can always delete. Project Admins and Project Users can delete only when the project's `allowUsersDeleteTests` setting is on (it is off by default). A Project Admin is refused up front when the setting is off, with a message asking a Cloud Admin to enable it; a Project User cannot read the setting, so the platform answers with its own 403. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
+
+#### Test reporting schema
+
+Report fields use **snake_case** to match the API response:
+
+| Field | Type | Description |
+|---|---|---|
+| `uuid` | string | Unique test execution identifier |
+| `test_id` | number | Numeric reporter ID |
+| `name` | string | Test name |
+| `status` | string | `Passed`, `Failed`, `Incomplete`, `Skipped`, `Error`, `Healed` |
+| `success` | boolean | True when status is Passed (false for Healed — filter on `status` when counting passes) |
+| `start_time` | string | ISO 8601 execution start timestamp |
+| `duration` | number \| null | Milliseconds (`null` for in-progress sessions) |
+| `project_id` | number | Owning project |
+| `has_attachment` | string | `"Y"` or `"N"` |
+
+**Diagnostic fields — `get_test_report` (single record) only, NOT present on `list_test_reports`:**
+
+| Field | Type | Description |
+|---|---|---|
+| `cause` | string | Human-readable failure cause (e.g. `"no such element - …"`) |
+| `errorCategory` | string | Broad bucket (e.g. `assertion`) |
+| `errorClassification` | string | Specific class (e.g. `element_not_found`) |
+| `errorDetail` | string | Full error object including stack trace |
+| `subTestCount` / `failedSubTestCount` | number | Sub-test totals for merged reports |
+
+To diagnose a failure, list with `list_test_reports`, then call `get_test_report(testId)` per test — the list view does not carry the diagnostic fields (the backend omits them there).
+
+**Confirmed working filter properties:** `status`, `name` (with `contains` for substring match), `user` (email, exact match), `has_attachment`, `success` (boolean), `accessibility_report` (JSON boolean, not the string `"true"`), `test_id`, `project_id`, `device.os` (case-sensitive: `"Android"` / `"iOS"`), `duration`, `attachment_count`, `attachments_size`, `status_code`, `rca.status`. Operators: `=`, `>`, `<`, `>=`, `<=`, `contains`.
+
+**CSRF-blocked filters** — return 401 regardless of key type: `start_time`, `create_time`, `uuid`. Use the `startDate`/`endDate` parameters on `list_test_reports` for date-range filtering instead — these are applied client-side after fetching.
+
+**Reporter ID types:**
+
+| Identifier | Source | How to retrieve |
+|---|---|---|
+| `uuid` | List results, report URLs (`/reporter/video-report/<uuid>`) | `get_test_report(uuid: "...")` or `get_test_report(reportUrl: "...")` — preferred, globally unique |
+| `test_id` | List results | `get_test_report(testId: N)` — unique only within a project; the same number can be a different test in another project |
+| `report_api_id` | Returned by session-start tools | `get_test_by_report_id(reportApiId: "...")` — wait ~60 s after session close |
+
+For worked examples (recent failures, date ranges, pass/fail by OS, root-cause analysis of a failure), see [Test Results and Root Cause Analysis](../README.md#test-results-and-root-cause-analysis) in the README.
 
 ### Test Runs (Espresso / XCUITest / Maestro)
 
@@ -336,7 +378,7 @@ Six tools cover POC and general project lifecycle management. See the [Workflow 
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `get_test_boilerplate` | Generate a complete, pre-configured Appium test project for Android or iOS (`java-junit5`, `java-testng`, `python`, `nodejs`). For a real app (`appId` / `packageName` / `bundleIdentifier`) it returns no code unless a live inspection session exists or `confirmSelectorsVerified: true` — set that only when real selectors were captured elsewhere (rdb/UIAutomator dump, `open_mobile_studio` including its iOS Test Recorder, or authoritative app source). Options: `region`, `includePerformanceTransactions`, `includeAxeScan` (Deque Axe DevTools scan; pins Appium Server 2.16.2 — Axe is unavailable on ≥3.3.0), `automotiveProjection` (Appium Server projects; Android Auto / CarPlay projection and a head-unit screenshot step), `orchestration` (Test Orchestrator, default on for Java on Appium Server). See [Boilerplate Generation](../README.md#boilerplate-generation). | Any |
+| `get_test_boilerplate` | Generate a complete, pre-configured Appium test project for Android or iOS (`java-junit5`, `java-testng`, `python`, `nodejs`). For a real app (`appId` / `packageName` / `bundleIdentifier`) it returns no code unless a live inspection session exists or `confirmSelectorsVerified: true` — set that only when real selectors were captured elsewhere (rdb/UIAutomator dump, `open_mobile_studio` including its iOS Test Recorder, or authoritative app source). Options: `region`, `includePerformanceTransactions`, `includeAxeScan` (Deque Axe DevTools scan; pins Appium Server 2.16.2 — Axe is unavailable on ≥3.3.0), `automotiveProjection` (Appium Server projects; Android Auto / CarPlay projection and a head-unit screenshot step), `orchestration` (Test Orchestrator, default on for Java on Appium Server). See [Creating Tests](../README.md#creating-tests). | Any |
 | `get_web_test_boilerplate` | Generate a Selenium WebDriver test script for web browser automation. Browser-neutral by default (reads `BROWSER` env var at runtime — `chrome` / `firefox` / `MicrosoftEdge` / `safari` / `opera` without code changes). Pass `targetBrowser` (same names; `edge` is accepted for `MicrosoftEdge`) for browser-specific setup (ChromeOptions etc.). Pass `shadowDomSupport: "always"` to include a `shadowQuery()` helper for Web Components. Gate: if `url` is provided, requires a live browser session or `confirmSelectorsVerified: true`. Supports `java-junit5`, `java-testng`, `python`, and `nodejs`. | Any |
 | `install_test_orchestrator_agent` | Download the Digital.ai Test Orchestrator agent on demand, verify its SHA-256, and install it into a generated project at `lib/smart-agent.jar`. Under the npm install it writes the file directly; under Docker it returns a bash/PowerShell download command that verifies the file and deletes it on a mismatch. Source: the pinned sample-repository download, or `TEST_ORCHESTRATOR_JAR_URL` + `TEST_ORCHESTRATOR_JAR_SHA256` when configured. If the download fails, the response explains how to install it manually. See [Test Orchestrator](../README.md#test-orchestrator-default-for-java-on-appium-server). | Any |
 | `validate_test_script` | Delivery backstop that scans any test script (generated or hand-written) for unreplaced `<…>` placeholder selectors, CSS placeholder selectors (`#YOUR_SELECTOR`, `.your-class`, etc.), the scaffold fail-guard, placeholder credentials, and known fabricated resource IDs. Returns `isError` with a `fail` verdict when any high-severity pattern is found — a non-functional test cannot be delivered as finished. | Any |
@@ -345,7 +387,7 @@ Six tools cover POC and general project lifecycle management. See the [Workflow 
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `get_remote_debug_command` | Generate a ready-to-run `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) script that connects a cloud device as a locally attached ADB/USB device. Install the app first — `install_application` fails while a device is reserved via rdb. Also useful for device diagnostics (ping, nslookup, dumpsys) before NV-dependent tests. **Cloud Admin recommended for reliable serial resolution** — a project-level key may produce an internal device ID that rdb rejects. | Any¹ |
+| `get_remote_debug_command` | Generate a ready-to-run `start-rdb.ps1` (Windows) or `start-rdb.sh` (macOS) script that connects a cloud Android or iOS device as if it were attached locally (ADB on Android, usbmuxd on iOS). Install the app first — `install_application` fails while a device is reserved via rdb. Also useful for device diagnostics (ping, nslookup, dumpsys) before NV-dependent tests. **Cloud Admin recommended for reliable serial resolution** — a project-level key may produce an internal device ID that rdb rejects. | Any¹ |
 
 > ¹ Callable with any access level, but **Cloud Admin recommended** for reliable device serial resolution. If called with a project-level key and rdb fails with `"validation error / Failed to reserve device"`, switch to your Cloud Admin profile first: `switch_environment("cloud admin")` (or the profile's name) → `get_remote_debug_command` → switch back.
 
