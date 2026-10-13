@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import { listProfiles, getProfileCredentials } from '../utils/profile-loader.js';
 import { authHeadersFor, authSchemeFor, peekAccessInfo, describeLevel, type AuthScheme } from '../utils/access-level.js';
+import { extractApiErrorMessage } from '../utils/api-error.js';
 
 export { formatDeviceTimestamp } from '../utils/timestamp.js';
 
@@ -32,11 +33,7 @@ function buildClient(baseURL: string, accessKey: string): AxiosInstance {
     (response) => response,
     (error) => {
       const status = error.response?.status ?? 'unknown';
-      const rawMsg =
-        error.response?.data?.message ??
-        error.response?.data?.data ??
-        error.message ??
-        'Unknown error';
+      const rawMsg = extractApiErrorMessage(error.response?.data, error.message);
 
       // Enrich 403 responses with auth guidance and environment-switching hints — APPENDED to the
       // platform's own message, never replacing it (e.g. "You have no permission to delete tests" is

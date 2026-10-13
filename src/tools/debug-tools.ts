@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getDevicesByQuery, getDevice } from '../api/devices.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
 import { getAccessInfo } from '../api/access-level.js';
-import { isKnownNotCloudAdmin, describeLevel } from '../utils/access-level.js';
+import { isKnownNotCloudAdmin, describeLevel, type AccessInfo } from '../utils/access-level.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import type { Device } from '../types/digital-ai.js';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
@@ -14,6 +14,37 @@ function resolveSerial(d: Device): string {
 
 function deviceLabel(d: Device): string {
   return `${d.deviceName} (${d.deviceOs} ${d.osVersion})`;
+}
+
+/**
+ * Warn when rdb is likely to reject the serial: the active role is KNOWN to be below Cloud Admin (the
+ * device lookup may then return an internal ID), or the serial already looks like one. The role comes
+ * from the API — never the key format — and an `unknown` level does not warn on its own.
+ */
+export function remoteDebugAuthWarning(
+  info: AccessInfo,
+  serial: string,
+): { authWarning: string | null; warningLines: string[] } {
+  const belowCloudAdmin = isKnownNotCloudAdmin(info.level);
+  const serialLooksLikeInternalId = /^\d+$/.test(serial);
+  if (!belowCloudAdmin && !serialLooksLikeInternalId) return { authWarning: null, warningLines: [] };
+
+  const reasons: string[] = [];
+  if (belowCloudAdmin) {
+    reasons.push(`Not running as Cloud Admin (detected: ${describeLevel(info)}) — the device serial may be an internal ID.`);
+  }
+  if (serialLooksLikeInternalId) {
+    reasons.push(`"${serial}" looks like an internal device ID, not an ADB/UDID serial — rdb will likely reject it.`);
+  }
+  const fix = 'Fix: switch_environment("cloud admin") → re-run get_remote_debug_command → switch back.';
+  return {
+    authWarning: `${reasons.join(' ')} ${fix}`,
+    warningLines: [
+      '⚠️  AUTH WARNING: rdb serial resolution requires Cloud Admin credentials.',
+      ...reasons.map(r => `   ${r}`),
+      `   ${fix}`,
+    ],
+  };
 }
 
 export function registerDebugTools(server: McpServer): void {
@@ -208,26 +239,13 @@ export function registerDebugTools(server: McpServer): void {
         }
 
         // ── Build human output ──────────────────────────────────────────────
-        const accessInfo = await getAccessInfo();
-        const isProjectApiKey = isKnownNotCloudAdmin(accessInfo.level);
-        const serialLooksLikeInternalId = /^\d+$/.test(serial);
+        const { authWarning, warningLines } = remoteDebugAuthWarning(await getAccessInfo(), serial);
 
         const lines: string[] = [];
         lines.push(`Remote debug session ready for: ${label}`);
         lines.push(`Serial: ${serial}`);
         lines.push('');
-
-        if (isProjectApiKey || serialLooksLikeInternalId) {
-          lines.push('⚠️  AUTH WARNING: rdb serial resolution requires Cloud Admin credentials.');
-          if (isProjectApiKey) {
-            lines.push(`   The active profile is ${describeLevel(accessInfo)} — device serial lookup may be incomplete.`);
-          }
-          if (serialLooksLikeInternalId) {
-            lines.push(`   "${serial}" is an internal device ID, not an ADB serial. rdb will likely reject it.`);
-          }
-          lines.push('   Fix: switch_environment("default") → re-run get_remote_debug_command → switch back.');
-          lines.push('');
-        }
+        if (warningLines.length > 0) lines.push(...warningLines, '');
 
         if (rdbPath) {
           // Compact output — returning user already has rdb
@@ -320,10 +338,6 @@ export function registerDebugTools(server: McpServer): void {
           lines.push('Android Studio, Xcode, and Appium MCP will detect it automatically.');
           lines.push('If Android Studio does not detect the device, run: adb kill-server && adb start-server');
         }
-
-        const authWarning = (isProjectApiKey || serialLooksLikeInternalId)
-          ? 'Project API key active — serial resolution may be incomplete. Switch to Cloud Admin profile before running.'
-          : null;
 
         return respond(outputFormat, {
           device: { label, serial },
