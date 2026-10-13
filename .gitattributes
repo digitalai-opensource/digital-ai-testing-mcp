@@ -1,0 +1,16 @@
+# Store and check out text files with LF on every machine, regardless of core.autocrlf.
+# CI, Docker and the npm package are built on Linux; Windows editors handle LF fine.
+* text=auto eol=lf
+
+# Windows script formats need CRLF to run reliably.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touch binaries.
+*.jar binary
+*.png binary
+*.jpg binary
+*.apk binary
+*.ipa binary
+*.zip binary
