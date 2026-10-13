@@ -49,10 +49,13 @@ npm run remediation:digest   # summarise debug-mode remediation notes (see READM
 
 See `.env.example` for required environment variables.
 
+Text files are stored and checked out with LF line endings (`.gitattributes`); Windows script formats (`.ps1`, `.bat`, `.cmd`) keep CRLF.
+
 ## Adding a Tool
 
 1. Put the API call in `src/api/<domain>.ts` (throw `Error` on failure) and register the tool in `src/tools/<domain>-tools.ts` (catch and return `isError: true`).
-2. Add the name to `REGISTERED_TOOLS` in `src/tools/meta-tools.ts` — a test fails if the list and the registrations drift apart.
-3. Destructive tools use `checkDestructiveGuard(confirmDeletion, …)`; tools that read or write local files use `validateInputPath` / `validateOutputPath`. Add a handler-level case for any guard or gate to `tests/tools.test.ts`.
-4. Verify against the live API any parameter you send and any response field you map — don't assume the platform honours it.
-5. Add a row to `docs/tools.md`, and update the README if the change is user-visible.
+2. Add the name to `REGISTERED_TOOLS` in `src/tools/meta-tools.ts` — a test fails if the list and the registrations drift apart. A new tool module (a new `src/tools/*-tools.ts` file) must also be assigned to exactly one toolset in `TOOLSETS` (`src/utils/toolsets.ts`).
+3. Destructive tools use `checkDestructiveGuard(confirmDeletion, …)` and never set `isError` on the guard response. Tools that read or write local files use `validateInputPath` / `validateOutputPath`, and build their descriptions with the deployment-mode helpers in `src/utils/locality.ts` (npm and Docker differ in whose filesystem the path is on). Add a handler-level case for any guard or gate to `tests/tools.test.ts`.
+4. Never infer privilege from the access key's format. Role comes from the platform (`src/api/access-level.ts`); in tests, set it with `actAs(level)`.
+5. Verify against the live API any parameter you send and any response field you map — don't assume the platform honours it. Add a probe to `tests/live/api-behavior.live.ts` (`npm run test:live`).
+6. Add a row to `docs/tools.md`, and update the README if the change is user-visible. If you add a test file, add a `test:<suite>` script for it in `package.json`.

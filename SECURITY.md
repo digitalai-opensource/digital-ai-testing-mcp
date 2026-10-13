@@ -40,10 +40,11 @@ This server reads a `DIGITAL_AI_ACCESS_KEY` from environment variables or a `.en
 - Several tools return the active access key in plaintext in their output: `get_remote_debug_command` (the rdb script), every `get_*_upload_command` and `get_*_download_command` tool, `get_test_run_command`, and the generated test boilerplate. Each output carries a warning. Treat it as a secret: don't commit it or paste it into tickets, and delete generated scripts after use.
 - Every tool that reads a local file to send it to the platform (application, repository and provisioning-profile uploads, test-run bundles, pushing a file to a device) validates the path first and refuses credential-file names (`.env*`, SSH private keys). A steered or mistaken request cannot publish secrets to the cloud.
 - Credentials are resolved through the active connection profile (`switch_environment`), never raw environment variables — generated artifacts (boilerplate, rdb scripts) always carry the currently active profile's key, so a project-scoped key can be used for customer-facing output.
+- The access level of each profile is read from the platform (`GET /api/v1/users/my-account-info`), never guessed from the key, and `list_environments` shows it. Role restrictions are enforced by the platform itself; give an AI assistant the least-privileged profile that covers the task.
 
 ### Debug mode (`MCP_DEBUG_MODE`)
 
-Off by default. When set to `true`, the server records remediation notes and a tool-call event log in a `remediation/` folder in the root of the project the AI is working in (or in `MCP_REMEDIATION_DIR`). The folder contains its own `.gitignore` so it is not committed. Access keys, tokens, emails and signed-URL parameters are redacted, but notes can still contain customer data such as app, device, project and test names, on-screen text and error messages. Review them before sharing them outside your organization, and leave debug mode off on customer tenants unless that has been agreed.
+Off by default. When set to `true`, the server captures remediation notes and a tool-call event log. With the npm package it writes them to a `remediation/` folder in the root of the project the AI is working in (or in `MCP_REMEDIATION_DIR`); with Docker the event log stays in memory and each note is returned to the AI assistant, which saves it to that folder itself. The folder gets its own `.gitignore` so it is not committed. Each session file records the machine name and OS user name. Access keys, tokens, emails and signed-URL parameters are redacted, but notes can still contain customer data such as app, device, project and test names, on-screen text and error messages. Review them before sharing them outside your organization, and leave debug mode off on customer tenants unless that has been agreed.
 
 ### What This Server Can Do
 
@@ -53,11 +54,15 @@ When connected to an AI assistant, this MCP server can — on behalf of the oper
 - Install and uninstall applications on physical and virtual devices
 - Reserve, release, and reboot devices
 - Delete test reports and repository files (requires `confirmDeletion: true`)
-- Create and delete projects and device groups
+- Create and delete projects and device groups, and change project settings
 - Start and cancel Espresso, XCUITest and Maestro test runs
+- Drive devices in live inspection sessions (taps, typing, app and device control, push and pull files)
 - Create public, no-login share links to test reports (requires `confirmPublicShare: true`)
+- Export platform usage reports (large unfiltered exports require `confirmLargeExport: true`)
 
-All destructive operations are guarded by an explicit `confirmDeletion: true` parameter that must be set by the caller, and public sharing by `confirmPublicShare: true`. A missing or `false` value returns a confirmation prompt, not an error, so the AI is clearly instructed to re-call with confirmation rather than treating the guard as a failure.
+Deletions, releases and cancellations are guarded by an explicit `confirmDeletion: true` parameter that must be set by the caller, public sharing by `confirmPublicShare: true`, and large usage exports by `confirmLargeExport: true`. A missing or `false` value returns a confirmation prompt, not an error, so the AI is clearly instructed to re-call with confirmation rather than treating the guard as a failure.
+
+Not every consequential action has a confirmation step: rebooting or resetting a device, creating reservations, starting test runs, installing apps and changing project settings run as soon as they are called. Deleting test reports with a project-level role is refused up front when the project does not allow it; every other role restriction is enforced by the platform. To limit what an assistant can reach, use a least-privileged profile, load only the toolsets you need (`MCP_TOOLSETS`), and add the rules in [docs/recommended-agent-guardrails.md](docs/recommended-agent-guardrails.md) to your project's agent instructions.
 
 ### Transport Security
 
@@ -69,7 +74,7 @@ With the npm package (the recommended install), the server runs as your own user
 
 ### Dependency Audit
 
-Runtime dependencies are minimal (the MCP SDK, Axios, adm-zip, dotenv, form-data, Zod). Development dependencies include Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies. As of the latest release, it reports no findings.
+Runtime dependencies are minimal (the MCP SDK, Axios, adm-zip, dotenv, form-data, Zod). Development dependencies include TypeScript, ESLint, tsx and Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies. As of the latest release, it reports no findings.
 
 ---
 
