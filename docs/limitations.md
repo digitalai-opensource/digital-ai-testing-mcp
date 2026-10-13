@@ -18,7 +18,7 @@ Devices designated as "shared" in Digital.ai may not be fully managed through th
 
 ## 4. Reporter API: Date Filter CSRF Restriction
 
-The Digital.ai reporter API routes certain filter properties through CSRF-protected middleware. The following are blocked for all callers (Cloud Admin, Project Admin, and Project User): `start_time`, `create_time`, `uuid`. For date-range filtering, use the `startDate`/`endDate` parameters on `list_test_reports` — these fetch records newest-first (server-sorted for every role, falling back to a capped full scan only if the platform refuses sort for a credential) and apply the date comparison client-side.
+The Digital.ai reporter API routes certain filter properties through CSRF-protected middleware. The following are blocked for all callers (Cloud Admin, Project Admin, and Project User): `start_time`, `create_time`, `uuid`. For date-range filtering, use the `startDate`/`endDate` parameters on `list_test_reports` — these fetch records newest-first (server-sorted for every role, falling back to a capped full scan only if the platform refuses sort for a credential) and apply the date comparison client-side. To find a report by UUID, use `get_test_report`, which looks it up directly by UUID (or by the report URL printed in tearDown).
 
 Confirmed working filter properties: `status`, `name` (with `contains`), `has_attachment`, `success` (boolean), `test_id`, `project_id`, `device.os` (case-sensitive), `duration`, `attachment_count`, `attachments_size`, `status_code`, `accessibility_report` (JSON boolean — the string `"true"` is rejected), `rca.status`. `status` takes the six values Passed, Failed, Error, Incomplete, Skipped and Healed; `success` is false for Healed runs, so filter on `status` rather than `success` when counting passes.
 
@@ -64,9 +64,9 @@ To observe a device screen, the AI agent must hold a live WebDriver session: `st
 
 ## 13. `get_remote_debug_command` Requires Cloud Admin for Reliable Serial Resolution
 
-When the active `DIGITAL_AI_ACCESS_KEY` is a **project-level key** (Project Admin or Project User), the device serial lookup API may return an internal numeric ID rather than the actual device UDID. The generated `adb connect` command in the output script will use that internal ID, which the ADB server cannot resolve — the connection will fail silently or immediately disconnect.
+When the active profile holds a **project-level role** (Project Admin or Project User), the device serial lookup may return the platform's internal numeric device ID rather than the device's real serial/UDID. The generated `start-rdb` script then passes that internal ID to `rdb start-remote-debug --serial-number`, and rdb rejects it ("validation error / Failed to reserve device").
 
-Use a **Cloud Admin** profile when running `get_remote_debug_command` to ensure the device serial is resolved to the real UDID. The tool includes an `authWarning` field in its structured response when a project-level key is detected, flagging this condition before the script is written to disk.
+Use a **Cloud Admin** profile when running `get_remote_debug_command` (`switch_environment` to it, generate the script, then switch back) to ensure the serial is resolved correctly. The tool flags this before you run the script: its response carries an auth warning (the `authWarning` field in JSON output) when the active role, as reported by the platform, is below Cloud Admin, or when the resolved serial is a purely numeric internal ID. The role is detected from the API, not from the format of your access key.
 
 ## 14. Android 15+ Samsung Devices: UIAutomator Dump Silently Fails
 
@@ -106,7 +106,7 @@ The agent itself is currently a **1.0-SNAPSHOT** build. It is not shipped with t
 
 ## 18. Appium Grid Projects Support Fewer Commands than Appium Server
 
-Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locator `-ios predicate string` (use xpath or accessibility id); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom, alerts and geolocation reset; and clipboard on iOS devices. The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
+Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locator `-ios predicate string` (use xpath or accessibility id); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom, alerts and geolocation reset; and clipboard and app-state queries on iOS devices. There is no launch-by-package command on the Grid, so `launch_app` on an Android Grid session needs the launch activity (`mainActivity` from `get_application_info`). The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
 
 ## 19. `find_elements` Details Only the First 20 Matches
 
@@ -118,7 +118,7 @@ With `MCP_DEBUG_MODE=true` under Docker, the server cannot write to your project
 
 ## 21. Usage Reports: 2-Year Retention, Large Exports
 
-Usage data is kept for 2 years (platform 25.9+); earlier periods come back empty or partial, which is not evidence of zero usage. An unfiltered export spanning more than 31 days can reach hundreds of MB, so the tools stop and ask; only you can approve such an export (`confirmLargeExport`), never the agent on its own. `License Usage` has no project or user filter, so it is always platform-wide.
+The usage-report tools (`download_usage_report`, `get_usage_report_download_command`, `summarize_usage_report`) are Cloud Admin only. Usage data is kept for 2 years (platform 25.9+); earlier periods come back empty or partial, which is not evidence of zero usage. An unfiltered export spanning more than 31 days can reach hundreds of MB, so the tools stop and ask; only you can approve such an export (`confirmLargeExport`), never the agent on its own. `License Usage` has no project or user filter, so it is always platform-wide.
 
 ## 22. Public Report Links Cannot Be Revoked
 
@@ -143,3 +143,14 @@ Digital.ai 26.9 added fold/unfold as a Mobile Studio UI action only. No document
 ## 27. No User Disable/Lock Endpoint
 
 The platform API has no way to disable or lock a user account. Removing access for a user provisioned solely for a POC means deleting the account — which is why `close_poc` requires per-user confirmation.
+
+## 28. Performance Transactions: Prerequisites, Delay and Client-Side Filtering
+
+- **NV server required.** Performance transactions record only when a Network Virtualization server is ONLINE and tunnel-connected in the device's region — check with `list_nv_servers(region=…)` before an instrumented run. NV profile names (such as `Monitor`, which observes without throttling) are configured on the NV server by your platform admin and can differ between deployments.
+- **Reporting delay.** A transaction appears in Reporter about a minute after `endPerformanceTransaction`; `list_transactions` returns nothing if queried immediately after the run.
+- **No server-side filtering.** The platform returns all transaction records in one response, so every filter on `list_transactions`, `get_transaction_performance_summary` and `get_performance_trend` is applied by the MCP server after it fetches the full set — slower on tenants with many transactions.
+- **Project scope.** Project Admin and Project User keys see only their own project's transactions.
+
+## 29. iOS Inspection Sessions Differ from Android
+
+iOS has no Back button: `press_back` taps the navigation bar's back button and falls back to a left-edge swipe (on the Grid a synthetic edge swipe does not trigger the system back gesture). App data cannot be cleared on iOS (`app_control` `clear_data` is Android-only) — uninstall and reinstall instead. On Appium Grid iOS devices, clipboard and `query_state` are also unavailable (see limitation 18).

@@ -13,8 +13,9 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 > own machine, local paths just work — no volume mount needed, skip the rest of this note. When running
 > via Docker instead (Option B or C), the MCP server runs inside a container. Local file paths must be
 > mounted as Docker volumes (e.g. `-v /host/builds:/builds`) and referenced by their container path
-> (`/builds/MyApp.ipa`). Use `upload_application_from_url` to avoid this — provide a direct-download URL
-> accessible from the server's network instead.
+> (`/builds/MyApp.ipa`). To avoid this, use `upload_application_from_url` with a direct-download URL
+> accessible from the server's network, or ask for the upload command (`get_application_upload_command`)
+> and run it on your own machine.
 
 ---
 
@@ -198,7 +199,7 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "Connect to the QA project key so I can run tests without full admin access"
 - "What access level am I currently connected with — Cloud Admin, Project Admin, or Project User?"
 - "Load the performance tools" *(only relevant when the server runs with `MCP_TOOLSETS` — tools outside the loaded toolsets also load themselves on first use)*
-- "That guidance sent us the wrong way — record a remediation note" *(only when the server runs with `MCP_DEBUG_MODE=true`; `record_remediation_note` saves notes in a `remediation/` folder at your project's root)*
+- "That guidance sent us the wrong way — record a remediation note" *(only when the server runs with `MCP_DEBUG_MODE=true`; notes go to a `remediation/` folder at your project's root — written by the server with the npm install, saved by the agent under Docker)*
 
 ---
 
@@ -268,7 +269,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Login, tap Transfer, pick account 43x, set $50.00, tap Transfer Now — make that a test" *(step-level detail → autonomous, no collaboration needed)*
 - "I want a test for app X" *(vague → the agent starts the interactive experience, or asks which mode you want)*
 - "What inspection sessions are still open? Stop them all."
-- "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin, or a Project Admin whose project has `allowUsersDeleteTests` enabled — see [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting))*
+- "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin, or a project-level key whose project has `allowUsersDeleteTests` enabled — see [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting))*
 
 ---
 
@@ -277,10 +278,10 @@ Before generating boilerplate, find an available device first so the correct OS 
 *Projection testing: the phone's apps rendered on a car head unit. Supported on Appium Server projects; Appium Grid does not support projection.*
 
 - "Show me what our ExperiBank app looks like on Android Auto" *(an inspection session with projection on, then a head-unit screenshot)*
-- "Start an inspection session with Android Auto projection at 1280x720 and screenshot the head unit"
+- "Start an inspection session with Android Auto projection at 1280x720 and screenshot the head unit" *(projection needs a device attached to an Apple Silicon device host; if the start fails, the error says whether the device itself can't project, and the Error report the failed attempt left in the Reporter is deleted — or named, if your role can't delete reports)*
 - "Tap the Exit button on the head unit and show me the result" *(taps use head-unit coordinates)*
 - "Turn projection on for the current session, take a head-unit screenshot, then turn it off" *(mid-session start works on recent Pixels; if a device rejects it, start a new session with projection instead)*
-- "Generate a JUnit5 test that runs with Android Auto projection and captures the head unit"
+- "Generate a JUnit5 test that runs with Android Auto projection and captures the head unit" *(the default device query is narrowed to Android 10+; a query you supply is left as is)*
 - "Open an Android Automotive OS emulator and show me its screen" *(the head unit IS the device — no projection; the agent queries `@emulator='true'` with the automotive model)*
 
 ---
@@ -318,7 +319,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Generate the remote debug script for device R5CR111SB4X — I want to inspect it with Android Studio's Layout Inspector"
 - "I need ADB access to a Samsung Galaxy in US2: install app 456 on it first, then give me the rdb connection script" *(install must come first — it fails while the device is rdb-reserved)*
 - "Give me the rdb script for a device so I can check its network health before tonight's NV performance run"
-- "rdb says 'Failed to reserve device' — switch to the admin profile, regenerate the script, then switch back"
+- "rdb says 'Failed to reserve device' — switch to the Cloud Admin profile, regenerate the script, then switch back" *(ask for "cloud admin" rather than a profile name: a profile literally named `admin` is selected even if its key is not Cloud Admin, and the agent will say so)*
 
 ---
 
@@ -371,7 +372,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 
 - "Show me the last 20 failed tests sorted by most recent"
 - "Did the last run of 'Login Flow' pass or fail?"
-- "Get the full report for test ID 377918" *(step-level detail is only available for sessions started through the MCP — `get_test_by_report_id` with the report_api_id)*
+- "Get the full report for test ID 377918" *(step-level detail comes from `get_test_by_report_id`, which takes the report_api_id returned when a manual or web-control session starts, and only for tests that logged steps)*
 - "Show me the report for the session I just ended — report_api_id is abc-123"
 - "List all tests that ran today for the QA project"
 - "How many tests passed vs failed this week?"
@@ -534,7 +535,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "I tried grouping by 'user' but got an error listing different column names — use the exact one it gave me" *(the tool validates groupBy against the CSV's real header and lists the actual columns on a mismatch, so retry with the name it reports)*
 - "Split last week's License Usage sessions by Android vs iOS" *(groupBy isn't limited to Username — any real column works, e.g. "Device OS")*
 - "Which license types are we actually consuming, and how much total time each?" *(groupBy: "License type", sumColumn: "Session Duration (in hours)")*
-- "Break down yesterday's browser sessions by browser name" *(groupBy: "Browser Name" on Browser Usage — confirmed live: safari/firefox/chrome/MicrosoftEdge/opera split)*
+- "Break down yesterday's browser sessions by browser name" *(groupBy: "Browser Name" on Browser Usage — e.g. safari / firefox / chrome / MicrosoftEdge / opera)*
 - "Don't group License Usage by Device UDID or timestamp — group by something with repeated values" *(near-unique columns technically work but just produce mostly-1-count buckets, not a useful summary)*
 
 ---
@@ -543,5 +544,5 @@ Before generating boilerplate, find an available device first so the correct OS 
 
 - "Set up a new POC for Acme Corp — we need 6 devices in the US2 region, 3 iOS and 3 Android, running through August 31st. Users are alice@acme.com (ProjectAdmin) and bob@acme.com (User). Salesforce URL is https://acme.salesforce.com/opp/001."
 - "What is the status of the Acme Corp POC? Is it set up correctly?"
-- "Wind down the Acme Corp POC — remove the device tags and return devices to the Default pool, but keep the project"
+- "Wind down the Acme Corp POC — remove the device tags and return devices to the Default pool, but keep the project" *(close_poc also deletes the user accounts created for the POC, confirming each one)*
 - "Fully tear down the Acme Corp POC — remove devices, delete the project and device group"

@@ -98,7 +98,7 @@ Your Digital.ai access key determines what the MCP server can do on your behalf.
 | Access level | Access |
 |---|---|
 | **Cloud Admin** | All tools: device management, user provisioning, project administration, infrastructure, performance data |
-| **Project Admin** | Scoped to one project. Can manage device tags, view project admin settings, list users. v2 API tools (agents, regions, license data) return 403. |
+| **Project Admin** | Scoped to one project. Can manage device tags, view project admin settings, list its own project's users. v2 API tools (agents, regions, license data) return 403. |
 | **Project User** | Scoped to one project. Read/test operations only. Cannot manage tags or access admin settings; deleting reports requires the project's `allowUsersDeleteTests` setting. |
 
 > **The key format does not tell you the access level.** Older keys are long `eyJ…` tokens; since Digital.ai 24.11 newly generated keys use a shorter `aut_1_…` token, and that applies to Cloud Admins too. The MCP server therefore detects your access level from the API (`GET /api/v1/users/my-account-info` → `Admin` / `ProjectAdmin` / `User`) and never from the key's prefix. `get_server_info` and `list_environments` show what was detected for each profile.

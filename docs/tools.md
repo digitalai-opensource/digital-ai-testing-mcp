@@ -23,13 +23,13 @@ Complete per-tool reference for the Digital.ai Testing MCP Server — all 202 to
 
 | Tool | What it does | Filters / Sort | Admin Required? |
 |---|---|---|---|
-| `list_users` | List all user accounts | firstName, lastName, email, authenticationType, isCloudAdmin, tag; sortBy/sortOrder | Cloud Admin |
+| `list_users` | List the user accounts you can see — every user for a Cloud Admin, the project's own users for a Project Admin | firstName, lastName, email, authenticationType, isCloudAdmin, tag; sortBy/sortOrder | Cloud Admin / Project Admin (own project's users) |
 | `create_user` | Create a new user account | — | Cloud Admin |
 | `delete_user` | Permanently delete a user account. Requires `confirmDeletion: true`. | — | Cloud Admin |
 | `get_my_account_info` | Show the account tied to the active API key | — | Any |
 | `assign_user_to_projects` | Grant user access to one or more projects | — | Cloud Admin |
 | `unassign_user_from_projects` | Remove user from one or more projects. Requires `confirmDeletion: true`. | — | Cloud Admin |
-| `get_user_tags` | List tags on a user | — | Cloud Admin |
+| `get_user_tags` | List tags on a user | — | Cloud Admin / Project Admin (own project's users) |
 | `set_user_tags` | Replace all tags on a user (max 10) | — | Cloud Admin |
 
 ### Devices
@@ -95,7 +95,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 |---|---|---|---|
 | `list_reservations` | List current and upcoming reservations. Cloud Admins see all reservations; others see their own. | username, project (Cloud Admin only), deviceUid; sortBy/sortOrder | Any |
 | `create_reservation` | Reserve one or more devices | — | Cloud Admin / Project Admin |
-| `reserve_device_for_duration` | Reserve a device for N hours starting now (e.g. `0.5` = 30 min, `1.0` = 1 hour) | — | Cloud Admin / Project Admin |
+| `reserve_device_for_duration` | Reserve a device for N hours starting now (e.g. `0.5` = 30 min, `1.0` = 1 hour) | — | Any (reserving for another user via `userId` is Cloud Admin only) |
 | `delete_reservation` | Cancel a reservation. Requires `confirmDeletion: true`. | — | Any (Cloud Admin: any reservation; Project Admin: its project's; User: own) |
 | `check_device_availability_window` | Check a device's reservation schedule over a time window | — | Cloud Admin |
 
@@ -103,7 +103,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 
 | Tool | What it does | Filters / Sort | Admin Required? |
 |---|---|---|---|
-| `list_applications` | List all apps in the repository | nameContains, osType, packageName, bundleIdentifier, fileType, isForSimulator; sortBy/sortOrder | Any |
+| `list_applications` | List all apps in the repository | nameContains, osType, packageName, bundleIdentifier, uniqueName, fileType, isForSimulator; sortBy/sortOrder | Any |
 | `get_application_info` | Full app detail | — | Any |
 | `find_latest_application` | Find the newest uploaded version by name, bundle ID, or package name. Returns `appCapabilityString` (e.g. `cloud:MyApp`) ready for the Appium `app` capability. | — | Any |
 | `upload_application_file` | Upload APK/IPA/AAB from a local path (under Docker the path must be inside a mounted volume). Project-level keys upload to their assigned project; use `project` to target a specific project (Cloud Admin only). | — | Any |
@@ -247,7 +247,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `delete_test_reports_before_date` | Delete all test records started before a given date | Cloud Admin † |
 | `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin † |
 
-> † Cloud Admin can always delete. A project-level key (Project Admin or Project User) is refused up front when its project's `allowUsersDeleteTests` setting is off (the default), with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
+> † Cloud Admin can always delete. Project Admins and Project Users can delete only when the project's `allowUsersDeleteTests` setting is on (it is off by default). A Project Admin is refused up front when the setting is off, with a message asking a Cloud Admin to enable it; a Project User cannot read the setting, so the platform answers with its own 403. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 ### Test Runs (Espresso / XCUITest / Maestro)
 
@@ -269,9 +269,9 @@ The platform schedules, runs and reports these suites itself — no local driver
 | `search_test_views` | Search and paginate test view groups | Any |
 | `get_test_view` | Get test view configuration detail | Any |
 | `get_test_view_summary` | Counts for all six statuses for a view, with its saved filter applied | Any |
-| `create_test_view` | Create a test view group; returns the new view (with its `id`) | Cloud Admin |
-| `update_test_view` | Rename or toggle dashboard visibility | Cloud Admin |
-| `delete_test_view` | Delete a test view group. Requires `confirmDeletion: true`; the confirmation names the view. | Cloud Admin |
+| `create_test_view` | Create a test view group; returns the new view (with its `id`) | Any |
+| `update_test_view` | Rename or toggle dashboard visibility | Any |
+| `delete_test_view` | Delete a test view group. Requires `confirmDeletion: true`; the confirmation names the view. | Any |
 
 ### Transactions & Performance
 
@@ -283,7 +283,7 @@ Transactions are performance-instrumented segments of a test session. Developers
 |---|---|
 | `list_transactions` | List transactions filtered by app, version, transaction name, device OS, date range, duration threshold, or network profile. Sorted newest first. |
 | `get_transaction` | Full detail for one transaction, including time-series CPU, memory, battery, and network samples |
-| `get_transaction_performance_summary` | Aggregate avg/max/min CPU, memory, battery, duration, and Speed Index grouped by app version, transaction name, device model, device type, or network profile. Sorted worst-first. |
+| `get_transaction_performance_summary` | Aggregate avg/max/min CPU, memory, battery, duration, and Speed Index grouped by app version, transaction name, device model, device type, device screen, device name, or network profile. Sorted worst-first. |
 | `get_performance_trend` | Metrics (Speed Index, CPU, memory, duration) bucketed by day/week/month over a configurable lookback window |
 
 ### Agents
@@ -392,7 +392,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 | Tool | What it does | Admin Required? |
 |---|---|---|
 | `start_inspection_session` | Reserve an Android or iOS (`platform: "ios"`) device and open a live WebDriver session. Pin a specific device with `device` (e.g. the one you installed the app on), or route with `deviceQuery` / `region`. Returns a session handle plus a watch-only `viewUrl` so the operator can follow the session in a browser. Device allocation takes 20–90 s. With `automotiveProjection` and no device or query, only Android 10+ devices are considered. If a start fails after a device was allocated, the leftover report is deleted (or named, if your role may not delete reports). | Any |
-| `stop_inspection_session` | Release the device and delete the probe report from the reporter. `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | Any |
+| `stop_inspection_session` | Release the device and delete the probe report from the reporter (when your role may delete reports — see † below; otherwise the report is kept). `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | Any |
 | `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Agent. Use after each interaction to verify UI state. | Any |
 | `automotive_control` | Android Auto / CarPlay projection in an inspection session: `start`/`stop` projection, `screenshot` the head unit (CarPlay `cluster` display too), `tap` in head-unit coordinates, `dump` (CarPlay only). Prefer `start_inspection_session(automotiveProjection)` — mid-session start is not supported on every device. Projection needs a device attached to an Apple Silicon device host. Android Automotive OS emulators are not projection targets: use `deviceQuery "@os='android' and @emulator='true' and @model='automotive_1024p_landscape'"` (`@emulator='true'` is required) and the normal inspection tools. | Any |
 | `get_element_tree` | Get the full UI hierarchy as a formatted element table. Shows resource-id, content-desc, text, and clickability for all elements on screen. | Any |
@@ -416,7 +416,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 | `list_inspection_sessions` | List all active inspection sessions in the current server process. | Any |
 | `cleanup_inspection_sessions` | Delete all test reports created by abandoned inspection sessions (scoped to the project each session was created under). Requires `confirmDeletion: true`. | Cloud Admin † |
 
-> † Cloud Admin can always delete. A project-level key (Project Admin or Project User) is refused up front when its project's `allowUsersDeleteTests` setting is off (the default), with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
+> † Cloud Admin can always delete. Project Admins and Project Users can delete only when the project's `allowUsersDeleteTests` setting is on (it is off by default). A Project Admin is refused up front when the setting is off, with a message asking a Cloud Admin to enable it; a Project User cannot read the setting, so the platform answers with its own 403. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 **Typical workflow:**
 
@@ -462,7 +462,7 @@ get_test_boilerplate(...)                           → generate the test script
 | Tool | What it does | Admin Required? |
 |---|---|---|
 | `start_browser_inspection_session` | Open a browser on the Digital.ai Selenium Grid. Prompts for browser choice if `inspectionBrowser` is omitted — always call `list_available_browsers` first. `inspectionBrowser` takes the names `list_available_browsers` returns — `chrome`, `firefox`, `MicrosoftEdge`, `safari`, `opera` — with case-insensitive aliases such as `Chrome` / `edge` normalised. Returns a session handle. Returns JSON by default (`handle`, `browserName`, `browserVersion`, `reportUrl`). | Any |
-| `stop_browser_inspection_session` | Close the browser and delete the probe report. `keepReport: true` preserves the session video for retrieval via `download_test_attachments`. Always call when done. | Any |
+| `stop_browser_inspection_session` | Close the browser and delete the probe report (when your role may delete reports — see † below; otherwise the report is kept). `keepReport: true` preserves the session video for retrieval via `download_test_attachments`. Always call when done. | Any |
 | `navigate_to` | Navigate to a URL. Waits for `document.readyState === "complete"` (up to 30 s). | Any |
 | `get_page_dom` | Extract interactive elements from the rendered DOM. Automatic shadow DOM detection: uses a recursive JS walker (depth ≤ 3) for React/Angular/Vue pages, standard DOM for others. Returns element tags, IDs, data-testid, aria-label, role, text, and shadow subtrees. | Any |
 | `browser_action` | Browser navigation: `back`, `forward`, `refresh`, or `get_current_url`. | Any |
@@ -470,7 +470,7 @@ get_test_boilerplate(...)                           → generate the test script
 | `list_browser_inspection_sessions` | List all active browser inspection sessions in the current server process. | Any |
 | `cleanup_browser_inspection_sessions` | Delete probe reports from abandoned browser sessions. Requires `confirmDeletion: true`. | Cloud Admin † |
 
-> † Cloud Admin can always delete. A project-level key (Project Admin or Project User) is refused up front when its project's `allowUsersDeleteTests` setting is off (the default), with a message asking a Cloud Admin to enable it. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
+> † Cloud Admin can always delete. Project Admins and Project Users can delete only when the project's `allowUsersDeleteTests` setting is on (it is off by default). A Project Admin is refused up front when the setting is off, with a message asking a Cloud Admin to enable it; a Project User cannot read the setting, so the platform answers with its own 403. See [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting).
 
 > **Shared tools** — these mobile-inspection tools also work for browser session handles: `take_inspection_screenshot`, `tap_element`, `type_into_element`, `clear_element`, `scroll_to_element`, `find_elements` (prefer `find_web_elements` for the CSS-oriented description).
 
@@ -526,6 +526,8 @@ Three tools for platform usage-report CSVs — Cloud Admin only; other roles rec
 **Size guard:** an unfiltered request spanning more than 31 days is blocked with a message (not an error) instructing you to add a `projectId`/`userId` filter, shorten the range, or — only after the user explicitly agrees to a large export — pass `confirmLargeExport: true`. The agent must not confirm on the user's behalf. Measured live: one unfiltered month of `License Usage` was ~27 MB; one unfiltered week of `Device Reservations` was ~6.4 MB — a multi-month or full-year unfiltered pull can run into the hundreds of MB and take minutes. `License Usage` has no filter to narrow by, so its guard fires on date range alone.
 
 **`projectId: 0` / `userId: 0` mean "All"** — same as omitting the parameter — and do NOT satisfy the size guard's narrowing requirement.
+
+**Filter support varies by report type:** `projectId` works on every type except `License Usage`; `userId` works on `Device Reservations`, `Users Usage` and `Users Statistics` only. Passing an unsupported filter returns an error rather than being silently ignored.
 
 **If the server runs in Docker or remotely**, `download_usage_report` writes to the server's own filesystem, which your client may not be able to reach. Use `summarize_usage_report` for counts and breakdowns, or `get_usage_report_download_command` to download the raw CSV straight to your machine. With the npm install the server's filesystem is your own and this doesn't apply.
 

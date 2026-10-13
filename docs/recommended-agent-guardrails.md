@@ -21,8 +21,13 @@ The server defends against this in two ways that travel with it automatically:
 - **Structural tool behavior** — `get_test_boilerplate` and `generate_maestro_flow` return *no code*
   for a real app unless a live inspection session exists (or you explicitly confirm verified
   selectors); `get_web_test_boilerplate` does the same for a real URL without a live browser
-  session; and `validate_test_script` returns an error when it detects placeholder/fabricated
-  patterns.
+  session; and `validate_test_script` returns an error when it detects placeholder selectors
+  (including unfilled CSS selectors), the scaffold fail-guard, or placeholder credentials.
+
+Consequential actions are guarded the same way: deletes, releases and cancellations need
+`confirmDeletion: true` (without it the tool returns a preview), public report links need
+`confirmPublicShare: true`, and unfiltered usage exports over 31 days need `confirmLargeExport: true`.
+Upload tools refuse credential files (`.env*`, SSH private keys) whatever the request says.
 
 Two gaps remain that **no MCP server can close on its own**:
 
@@ -57,7 +62,9 @@ a task list, before calling any MCP tool, before opening an editor:
   from those.
 - **AUTONOMOUS** — only when the intent names specific screens/actions/results
   AND you already have a real selector source (captured inspection IDs, or
-  authoritative app source in this workspace). Action: `get_test_boilerplate`.
+  authoritative app source in this workspace). Action: `get_test_boilerplate`
+  (it returns no code for a real app unless a live inspection session exists or
+  you pass `confirmSelectorsVerified: true`).
 
 ### Maestro flows
 
@@ -72,31 +79,50 @@ a task list, before calling any MCP tool, before opening an editor:
   Action: call `start_browser_inspection_session`, navigate to the target URL,
   use `get_page_dom` / `find_web_elements` to capture REAL CSS selectors and
   element IDs, relay screenshots at every key step.
-- **AUTONOMOUS** — only when you already have real CSS selectors captured from a
-  prior inspection session. Action: `get_web_test_boilerplate` with
-  `confirmSelectorsVerified: true`.
+- **AUTONOMOUS** — only when you already have real CSS selectors (from a live or
+  prior browser inspection session, or authoritative source). Action:
+  `get_web_test_boilerplate` — with a live browser session open it generates
+  directly; otherwise pass `confirmSelectorsVerified: true`.
 
 PROHIBITED — treated as a task FAILURE, not a deliverable:
 - Writing or generating a test file with invented/placeholder element IDs
   (`nav_catalog`, `home_container`, …), guessed XPaths, guessed CSS selectors
   (`#YOUR_SELECTOR`, `.your-class`), or fabricated credentials.
 - Doing the above by authoring the file yourself instead of calling
-  `get_test_boilerplate` or `get_web_test_boilerplate` — bypassing the tool does
-  NOT exempt you from this rule.
+  `get_test_boilerplate`, `get_web_test_boilerplate` or `generate_maestro_flow` —
+  bypassing the tool does NOT exempt you from this rule.
 - Presenting any test built without real, inspection-sourced (or source-derived)
   selectors as finished or runnable.
 
 Before you present or save ANY test — generated or hand-written — run
 `validate_test_script` on it and fix anything it flags.
 
-Never set `confirmDeletion`, `confirmPublicShare` or `confirmLargeExport` to true
-unless the user explicitly agreed in this conversation. Never set
-`confirmSelectorsVerified` unless every selector came from the real app.
+Never set `confirmSelectorsVerified` unless every selector came from the real app.
 
 If you have no selector source you are in INTERACTIVE mode by definition.
 A test-type label from a menu ("login test", "smoke", "e2e") is a category, not a
 specification. If unsure which mode the user wants, ASK before calling any tool
 or writing any code.
+
+## Consequential actions on the Digital.ai platform
+
+- Never set `confirmDeletion`, `confirmPublicShare` or `confirmLargeExport` to
+  true unless the user explicitly agreed in this conversation. Call without it
+  first and show the user the preview the tool returns.
+- These have no built-in confirmation — ask before calling them: `reboot_device`,
+  `reset_device_usb`, `create_reservation` / `reserve_device_for_duration` (they
+  hold devices other people may need), `execute_test_run` (uses devices and
+  licenses), `bulk_install_to_group`, `update_project_settings`,
+  `set_telephony_status`, and user/project administration (`create_user`,
+  `assign_user_to_project(s)`, `setup_project`, `create_poc`).
+- If a tool refuses because of your access level or a project setting (for
+  example a report delete blocked by `allowUsersDeleteTests`), tell the user. Do
+  not `switch_environment` to a more privileged profile to get around it unless
+  the user asks.
+- Generated scripts (`get_test_boilerplate`, `get_web_test_boilerplate`,
+  `get_remote_debug_command`) can contain the active profile's access key. Move
+  it to an environment variable before committing, and never commit or upload
+  `.env` files or keys.
 ```
 
 ---
@@ -136,17 +162,28 @@ client surfaces it (most do).
 
 ---
 
-## Toolsets and debug mode (governance notes)
+## Access, file paths, toolsets and debug mode (governance notes)
+
+**Restrict capability with the key's role.** What an agent can do is decided by the role of the
+access key it uses (Project User / Project Admin / Cloud Admin). The server detects that role from
+the API — not from the key's format — and `list_environments` shows it for each profile. Give an
+agent the least-privileged profile that covers its task.
 
 **`MCP_TOOLSETS` limits context, not capability.** Tools outside the loaded toolsets still appear
-and load themselves when called, so toolsets are not an access control. Restrict what an agent can
-do with the role of the access key it uses (Project User / Project Admin / Cloud Admin).
+and load themselves when called, so toolsets are not an access control.
+
+**File paths depend on how the server is installed.** With the npm install
+(`MCP_DEPLOYMENT_MODE=local`), file tools read and write your own machine. Under Docker they read
+and write the container's filesystem, so the agent should use the `get_*_command` tools (which
+produce a command you run locally) or `summarize_usage_report` instead. Each tool's description
+states which applies.
 
 **`MCP_DEBUG_MODE=true`** adds instructions asking the agent to record notes about errors,
-corrections and wasted calls, and logs every tool call (duration, size, outcome, truncated
-arguments). Keys, tokens, emails and signed-URL parameters are redacted. Files go to a
-`remediation/` folder in your project with its own `.gitignore`. Leave it off outside evaluations,
-and review the folder before sharing it. See [Debug mode](../README.md#debug-mode-remediation-notes).
+corrections and wasted calls, and logs every tool call (duration, response size, outcome,
+summarised arguments). Keys, tokens, emails and signed-URL parameters are redacted. With the npm
+install, files go to a `remediation/` folder in your project with its own `.gitignore`; under
+Docker, notes are returned to the agent to save there. Leave it off outside evaluations, and
+review the folder before sharing it. See [Debug mode](../README.md#debug-mode-remediation-notes).
 
 ---
 
@@ -155,5 +192,7 @@ and review the folder before sharing it. See [Debug mode](../README.md#debug-mod
 Even with the snippet installed, an agent *can* ignore instructions and hand-write a fabricated
 test — instructions are advisory, and file-writing is outside the MCP boundary. The realistic
 posture is **defense in depth that raises compliance**, not guaranteed prevention. The structural
-checks (`get_test_boilerplate`'s no-code gate and `validate_test_script`) are the only
-client-agnostic, can't-be-ignored layer, and they apply only when those tools are used.
+checks (the no-code gates in `get_test_boilerplate`, `get_web_test_boilerplate` and
+`generate_maestro_flow`, `validate_test_script`, and the `confirm*` parameters on consequential
+tools) are the only client-agnostic, can't-be-ignored layer, and they apply only when those tools
+are used.
