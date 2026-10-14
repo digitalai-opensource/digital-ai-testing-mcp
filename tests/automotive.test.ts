@@ -36,6 +36,10 @@ beforeAll(async () => {
     // Session START (projection via capability) — the live Appium-infrastructure failure, verified 2026-10-10.
     if (req.path === '/wd/hub/session' && req.method === 'POST') {
       sessionBodies.push(req.json as { desiredCapabilities: Record<string, unknown> });
+      // Live 2026-10-14 (CarPlay, iPhone 13 Pro Max): the host's projection service missed the platform's 60 s deadline.
+      if ((req.json as { desiredCapabilities?: { platformName?: string } }).desiredCapabilities?.platformName === 'iOS') {
+        return reply(500, { value: { message: 'Failed to prepare the Appium Infrastructure: DEADLINE_EXCEEDED: CallOptions deadline exceeded after 59.999413458s. Name resolution delay 0.000333542 seconds. [closed=[], open=[[connecting_and_lb_delay=20265291ns, remote_addr=localhost/127.0.0.1:9726]]]' } });
+      }
       return reply(500, { value: { message: 'Failed to prepare the Appium Infrastructure: Failed to enable automotive dev mode and start Android Auto on the device.' } });
     }
     if (req.path === '/reporter/api/tests/list') {
@@ -56,6 +60,14 @@ beforeAll(async () => {
     if (req.path.includes('sid-NOCAP')) {
       const message = script === 'digitalai:automotive.start' ? 'Failed to execute start("LOW")' : 'Automotive projection is not specified';
       return reply(script === 'digitalai:automotive.start' ? 500 : 404, { value: { error: 'unknown error', message } });
+    }
+    // Live CarPlay responses 2026-10-14: the host's projection service missed the platform's 60 s deadline, and a
+    // second start in the same session is refused because the platform counts the failed one as executed.
+    if (req.path.includes('sid-CARPLAYDEADLINE')) {
+      return reply(500, { value: { error: 'unknown error', message: 'CallOptions deadline exceeded after 59.999961917s. Name resolution delay 0.000000000 seconds. [closed=[], open=[[remote_addr=localhost/127.0.0.1:9726]]]' } });
+    }
+    if (req.path.includes('sid-ONESHOT')) {
+      return reply(404, { value: { error: 'unknown error', message: 'Automotive start command was already executed for this session' } });
     }
     // Live Appium Grid response: the execute layer runs the command as page JavaScript.
     if (req.path.includes('sid-GRIDJS')) {
@@ -145,6 +157,24 @@ describe('automotive_control — platform refusals are explained, not misread as
     assert.doesNotMatch(r.text, /terminated|no longer usable|hybridRunJavascript/);
   });
 
+  it('CarPlay: a host-side deadline explains the consent dialog and the new-session retry, not a dead session', async () => {
+    registerSession(session('CARPLAYDEADLINE', { platform: 'ios', deviceOs: 'iOS', deviceName: 'iPhone 13 Pro Max' }));
+    const r = await call('automotive_control', { handle: 'CARPLAYDEADLINE', action: 'start', resolution: '800x480', clusterContent: 'Map' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /did not answer within the platform's 60 s deadline/);
+    assert.match(r.text, /Allow CarPlay with 'CarPlay Simulator'/);
+    assert.match(r.text, /start a NEW one/);
+    assert.doesNotMatch(r.text, /terminated|no longer usable/);
+  });
+
+  it('CarPlay: "start command was already executed" says start is one-shot per session', async () => {
+    registerSession(session('ONESHOT', { platform: 'ios', deviceOs: 'iOS' }));
+    const r = await call('automotive_control', { handle: 'ONESHOT', action: 'start' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /one projection start per session, even after a failed attempt/);
+    assert.match(r.text, /stop_inspection_session, then start_inspection_session again/);
+  });
+
   it('a 404 "projection is not specified" keeps the platform message and does NOT claim the session died', async () => {
     registerSession(session('NOCAP'));
     const r = await call('automotive_control', { handle: 'NOCAP', action: 'screenshot' });
@@ -208,11 +238,22 @@ describe('start_inspection_session — automotiveProjection start failures (veri
     );
   });
 
+  it('a CarPlay session start that misses the host deadline gets the consent-dialog / host guidance and a longer client timeout', async () => {
+    setAccessLevelOverrideForTests('cloud-admin');
+    await assert.rejects(
+      createInspectionSession({ platform: 'ios', automotiveProjection: '800x480', instrumentCluster: 'Map', testName: 'CarPlay' }),
+      (e: Error) => /did not finish starting CarPlay/.test(e.message) && /tap Allow/.test(e.message) && /report the host name/.test(e.message)
+    );
+    assert.equal(sessionBodies.at(-1)?.desiredCapabilities['digitalai:automotiveProjection'], '800x480');
+    assert.equal(sessionBodies.at(-1)?.desiredCapabilities['digitalai:instrumentCluster'], 'Map');
+  });
+
   it('automotiveSessionHint gives specific guidance per platform failure', () => {
     assert.match(automotiveSessionHint('HTTP 500: Automotive Projection is only supported on Apple Silicon Device Host Machines') ?? '', /Apple Silicon device host.*not your request/);
     assert.match(automotiveSessionHint('HTTP 500: Failed to enable automotive dev mode and start Android Auto on the device') ?? '', /Android 10 or later/);
     assert.match(automotiveSessionHint('HTTP 500: Timeout while waiting for the DHU process to connect.') ?? '', /head unit \(DHU\) never connected/);
     assert.match(automotiveSessionHint('HTTP 500: no Android Auto head unit server on the device') ?? '', /property of the device/);
+    assert.match(automotiveSessionHint('HTTP 500: Failed to prepare the Appium Infrastructure: DEADLINE_EXCEEDED: CallOptions deadline exceeded after 59.9s') ?? '', /60 s deadline.*Allow CarPlay/);
     assert.equal(automotiveSessionHint('HTTP 500: something else'), null);
   });
 });

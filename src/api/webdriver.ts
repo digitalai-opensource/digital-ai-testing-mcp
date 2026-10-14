@@ -113,10 +113,15 @@ export async function createInspectionSession(
   const requestedAt = Date.now();
   let res;
   try {
+    // A projection session can take longer than the client default: the platform's projection start has its own 60 s
+    // deadline on the device host, and a failed CarPlay start reached the reporter at 125.8 s (live 2026-10-14) — past
+    // the 120 s default, so the client timed out first, never saw the platform's reason, and the failed-start cleanup
+    // below never ran. Wait long enough to receive the platform's answer.
+    const timeout = opts.automotiveProjection ? 240_000 : 120_000;
     res = await client.post('/session', {
       desiredCapabilities,
       capabilities: { alwaysMatch, firstMatch: [{}] },
-    });
+    }, { timeout });
   } catch (e) {
     const detail = describeWdError(e);
     // A start that fails after a device was allocated still leaves an "Error" report (UAT 2026-10-10: five of them).
@@ -598,6 +603,17 @@ export async function cleanUpFailedSessionReport(testName: string, projectName: 
  * a session was started with digitalai:automotiveProjection on a device that can't project.
  */
 export function automotiveSessionHint(detail: string): string | null {
+  // Seen live 2026-10-14 (iPhone 13 Pro Max on a newly CarPlay-enabled host): the host's projection service never
+  // finished the start inside the platform's own 60 s deadline. The phone showed a one-time iOS consent dialog
+  // ("Allow CarPlay with 'CarPlay Simulator' while phone is locked?"); accepting it did not clear the deadline on
+  // that host, so it is a host-side condition to report, after ruling the dialog out.
+  if (/DEADLINE_EXCEEDED|deadline exceeded/i.test(detail)) {
+    return 'The device host\'s projection service did not finish starting CarPlay / Android Auto within the platform\'s 60 s ' +
+      'deadline. Start a plain session on the same device and take_inspection_screenshot: if the phone shows "Allow CarPlay ' +
+      'with \'CarPlay Simulator\' while phone is locked?", tap Allow (it is a one-time consent) and retry projection in a NEW ' +
+      'session. If the deadline repeats after that, the host\'s projection service is not responding — report the host name ' +
+      'to your platform admin; retrying will fail the same way.';
+  }
   if (/Apple Silicon Device Host/i.test(detail)) {
     return 'Automotive projection only works on devices attached to an Apple Silicon device host, and this device\'s host ' +
       'is not one. This is a property of the device, not your request: try another device or region, or ask your platform ' +
@@ -1004,6 +1020,23 @@ export async function automotiveControl(
 // fall back to the dead-session diagnosis (sessionAwareError) when the message is not one of these.
 function automotiveError(e: unknown, handle: string): string {
   const detail = describeWdError(e);
+  // Seen live 2026-10-14 (CarPlay, iPhone 13 Pro Max): the platform's own 60 s deadline on the host's projection service.
+  if (/DEADLINE_EXCEEDED|deadline exceeded/i.test(detail)) {
+    return (
+      `${detail} — the device host's projection service did not answer within the platform's 60 s deadline. ` +
+      'Call take_inspection_screenshot: if the phone shows "Allow CarPlay with \'CarPlay Simulator\' while phone is locked?", ' +
+      'tap Allow (one-time consent) — then stop this session and start a NEW one before retrying, because the platform ' +
+      'counts this start as executed. If it repeats, the host\'s projection service is not responding: report the host to ' +
+      'your platform admin.'
+    );
+  }
+  // Seen live 2026-10-14: the platform marks start as executed even when it failed, so a session gets ONE start attempt.
+  if (/start command was already executed/i.test(detail)) {
+    return (
+      `${detail} — the platform allows one projection start per session, even after a failed attempt. ` +
+      'stop_inspection_session, then start_inspection_session again (or start it with automotiveProjection) and retry.'
+    );
+  }
   if (/start\("?LOW"?\)|Failed to execute start/i.test(detail)) {
     return (
       `${detail} — the mid-session start command is not supported on this device. Start a new session with ` +

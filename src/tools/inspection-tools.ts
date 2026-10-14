@@ -588,6 +588,10 @@ export function registerInspectionTools(server: McpServer): void {
     'The phone side may need Android Auto setup completed by the device admin before apps appear on the head unit. ' +
     'Not for Android Automotive OS emulators — there the head unit IS the device; use the normal inspection tools. ' +
     'Verified on Appium Server Android phones (start/stop/screenshot/tap); CarPlay-only actions follow the platform docs. ' +
+    'CarPlay (iOS): the platform allows ONE start per session, even after a failed attempt — after a failed start, stop the ' +
+    'session and begin a new one. The first CarPlay connection on a phone shows an iOS consent dialog ("Allow CarPlay with ' +
+    '\'CarPlay Simulator\' while phone is locked?") — take_inspection_screenshot and tap Allow, then retry in a new session. ' +
+    'A "deadline exceeded" error after that means the device host\'s projection service is not responding (report the host). ' +
     'NOT supported on Appium Grid projects (verified: the Grid runs these commands as JavaScript and every one fails).',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
