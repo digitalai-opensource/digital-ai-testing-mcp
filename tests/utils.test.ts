@@ -1,4 +1,5 @@
 import { describe, it, afterEach } from 'vitest';
+import { z } from 'zod';
 import assert from 'node:assert/strict';
 import { applyMaxResults, appendTruncationNotice, withPaging, DEFAULT_MAX_RESULTS, ABSOLUTE_MAX_RESULTS } from '../src/utils/pagination.js';
 import { checkDestructiveGuard } from '../src/utils/destructive-guard.js';
@@ -314,5 +315,15 @@ describe('caseInsensitiveEnum', () => {
     assert.equal(osTypeLower().optional().parse(undefined), undefined);
     assert.throws(() => osTypeLower().parse('windows'));
     assert.throws(() => osTypeLower().parse(7));
+  });
+
+  it('keeps a default in the published JSON schema when passed as an option (chaining .default() on the wrapper drops it)', () => {
+    const withDefault = caseInsensitiveEnum(['android', 'ios'], { default: 'android' });
+    const schema = z.toJSONSchema(z.object({ platform: withDefault }), { io: 'input' }) as { properties: Record<string, { default?: string; enum?: string[] }> };
+    assert.equal(schema.properties.platform.default, 'android');
+    assert.deepEqual(schema.properties.platform.enum, ['android', 'ios']);
+    assert.equal(z.object({ platform: withDefault }).parse({}).platform, 'android');
+    assert.equal(z.object({ platform: withDefault }).parse({ platform: 'IOS' }).platform, 'ios');
+    assert.equal(withDefault.isOptional(), true, 'signatures must not star it as required');
   });
 });

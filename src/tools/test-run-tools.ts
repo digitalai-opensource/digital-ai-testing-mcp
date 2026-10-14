@@ -51,9 +51,7 @@ function intParam(min?: number) {
 // Shared by execute_test_run and get_test_run_command — one schema, so the two cannot drift.
 const runParams = {
   executionType: caseInsensitiveEnum(TEST_RUN_EXECUTION_TYPES).describe('ESPRESSO (Android instrumentation), XCUITEST (iOS) or MAESTRO (Android flows).'),
-  runningType: caseInsensitiveEnum(TEST_RUN_RUNNING_TYPES)
-    .optional()
-    .default('fastFeedback')
+  runningType: caseInsensitiveEnum(TEST_RUN_RUNNING_TYPES, { default: 'fastFeedback' })
     .describe('fastFeedback (default): spread the tests across up to maxDevices devices matching ONE deviceQuery. coverage: run every test on one device per deviceQuery.'),
   cloudAppId: intParam().optional().describe('Numeric application id from list_applications (NOT the app name — a name is rejected). One app source is required.'),
   appUrl: z.string().optional().describe('URL of the application under test. One app source is required.'),

@@ -197,8 +197,8 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
           if (toolset !== ts || CORE_TOOLS.includes(tool.name)) continue;
           handle.update({ description: tool.description, annotations: annotationsFor(tool.name), callback: (wrap ? wrap(tool.name, tool.callback, false) : tool.callback) as never });
           // update() only accepts a raw shape for paramsSchema (it wraps it in a permissive object), so the strict
-          // schema is assigned directly — the same field update() writes.
-          (handle as unknown as { inputSchema: unknown }).inputSchema = strictShape(tool.shape);
+          // schema is assigned to RegisteredTool's public `inputSchema` field — the same field update() writes.
+          handle.inputSchema = strictShape(tool.shape);
           changed.push(tool.name);
         }
       }

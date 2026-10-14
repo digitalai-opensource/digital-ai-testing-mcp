@@ -152,6 +152,10 @@ describe('MCP_TOOLSETS unset → identical to direct registration', () => {
     assert.deepEqual(norm(viaToolsets), norm(direct));
     assert.ok(viaToolsets.every((t) => t.inputSchema.additionalProperties === false), 'every tool rejects unknown parameters');
     assert.ok(viaToolsets.every((t) => typeof t.annotations?.readOnlyHint === 'boolean'), 'every tool is annotated');
+    // A case-insensitive enum with a default must still publish that default (it was dropped when .default() was chained outside).
+    const platform = viaToolsets.find((t) => t.name === 'start_inspection_session')!.inputSchema.properties!.platform as { default?: string; enum?: string[] };
+    assert.equal(platform.default, 'android');
+    assert.deepEqual(platform.enum, ['android', 'ios']);
     assert.ok(viaToolsets.every((t) => !PLACEHOLDER.test(t.description ?? '')));
   });
 });

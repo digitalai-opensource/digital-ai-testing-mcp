@@ -299,9 +299,7 @@ export function registerInspectionTools(server: McpServer): void {
     'Always call stop_inspection_session when done — open sessions consume a reserved device and create a reporter record. ' +
     'Use cleanup_inspection_sessions for abandoned sessions.',
     {
-      platform: caseInsensitiveEnum(['android', 'ios'])
-        .optional()
-        .default('android')
+      platform: caseInsensitiveEnum(['android', 'ios'], { default: 'android' })
         .describe("Target platform. Default 'android'. Sets platformName and the default deviceQuery @os."),
       device: z
         .string()
