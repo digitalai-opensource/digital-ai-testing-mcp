@@ -60,7 +60,7 @@ import { registerUsageReportTools } from '../src/tools/usage-report-tools.js';
 import { registerTestRunTools } from '../src/tools/test-run-tools.js';
 import { registerMetaTools } from '../src/tools/meta-tools.js';
 
-type ToolEntry = { name: string; description?: string; inputSchema: { properties?: Record<string, unknown> } };
+type ToolEntry = { name: string; description?: string; inputSchema: { properties?: Record<string, unknown>; additionalProperties?: boolean }; annotations?: Record<string, unknown> };
 
 function modules(getController: () => ToolsetController | undefined): Array<[string, RegisterFn]> {
   return [
@@ -144,8 +144,13 @@ describe('MCP_TOOLSETS unset → identical to direct registration', () => {
     const direct = await bootDirect();
     const { list } = await boot(undefined);
     const viaToolsets = await list();
-    const norm = (ts: ToolEntry[]) => ts.map((t) => JSON.stringify(t)).sort();
+    // The toolsets path adds two things on purpose — strict schemas (additionalProperties: false) and name-derived
+    // annotations — so compare everything else, then assert those two separately.
+    const norm = (ts: ToolEntry[]) =>
+      ts.map((t) => JSON.stringify({ name: t.name, description: t.description, inputSchema: { ...t.inputSchema, additionalProperties: undefined } })).sort();
     assert.deepEqual(norm(viaToolsets), norm(direct));
+    assert.ok(viaToolsets.every((t) => t.inputSchema.additionalProperties === false), 'every tool rejects unknown parameters');
+    assert.ok(viaToolsets.every((t) => typeof t.annotations?.readOnlyHint === 'boolean'), 'every tool is annotated');
     assert.ok(viaToolsets.every((t) => !PLACEHOLDER.test(t.description ?? '')));
   });
 });
@@ -197,6 +202,34 @@ describe('MCP_TOOLSETS=reporting → placeholders that load themselves', () => {
     await client.callTool({ name: 'cancel_test_run', arguments: {} });
     const res = (await client.callTool({ name: 'cancel_test_run', arguments: { testRunId: '1' } })) as { content: Array<{ text?: string }> };
     assert.match(res.content.map((c) => c.text ?? '').join(''), /Safety guard|confirmDeletion/);
+  });
+
+  it('rejects unknown parameters instead of silently dropping them; placeholders accept anything', async () => {
+    const { client, list } = await boot('reporting');
+    // A loaded tool: an invented parameter is an error that names the key (the SDK default would strip it and run).
+    const bad = (await client.callTool({ name: 'list_test_reports', arguments: { search: 'x', outputFormat: 'json' } })) as { isError?: boolean; content: Array<{ text?: string }> };
+    assert.equal(bad.isError, true);
+    assert.match(bad.content[0].text ?? '', /Unrecognized key.*search/);
+    const schema = (await list()).find((t) => t.name === 'list_test_reports')!.inputSchema as { additionalProperties?: boolean };
+    assert.equal(schema.additionalProperties, false, 'the published schema says so too');
+    // A placeholder: whatever the agent sends, it loads the toolset and returns guidance — never a validation error.
+    const ph = (await client.callTool({ name: 'list_applications', arguments: { search: 'x', nameContains: 'y' } })) as { isError?: boolean; content: Array<{ text?: string }> };
+    assert.notEqual(ph.isError, true);
+    assert.match(ph.content[0].text ?? '', /Nothing was executed/);
+  });
+
+  it('annotations: placeholders are read-only; loaded tools carry readOnlyHint / destructiveHint by name', async () => {
+    const { client, list } = await boot('reporting');
+    const before = new Map((await list()).map((t) => [t.name, t.annotations as { readOnlyHint?: boolean; destructiveHint?: boolean } | undefined]));
+    assert.equal(before.get('delete_application')?.readOnlyHint, true, 'a placeholder runs nothing, so it is read-only');
+    assert.equal(before.get('list_test_reports')?.readOnlyHint, true);
+    assert.equal(before.get('delete_test_reports')?.readOnlyHint, false);
+    assert.equal(before.get('delete_test_reports')?.destructiveHint, true);
+    await client.callTool({ name: 'enable_toolset', arguments: { toolsets: ['apps'] } });
+    const after = new Map((await list()).map((t) => [t.name, t.annotations as { readOnlyHint?: boolean; destructiveHint?: boolean } | undefined]));
+    assert.equal(after.get('delete_application')?.readOnlyHint, false, 'loaded: the real annotation replaces the placeholder one');
+    assert.equal(after.get('delete_application')?.destructiveHint, true);
+    assert.equal(after.get('list_applications')?.readOnlyHint, true);
   });
 
   it('enable_toolset lists state and loads toolsets on demand', async () => {

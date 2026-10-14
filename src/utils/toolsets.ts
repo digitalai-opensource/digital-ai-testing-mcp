@@ -16,7 +16,14 @@
  *  - Server instructions and prompts are unchanged; every name they mention exists.
  * Unset / "all" registers everything in full — zero behaviour change for existing installs.
  */
+import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { annotationsFor } from './tool-annotations.js';
+
+/** The tool's zod shape as a STRICT object: unknown keys fail validation (and the JSON schema says additionalProperties: false). */
+function strictShape(shape: Record<string, unknown>) {
+  return z.strictObject(shape as z.ZodRawShape);
+}
 
 export type RegisterFn = (server: McpServer) => void;
 
@@ -188,7 +195,10 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
         loaded.add(ts);
         for (const { tool, handle, toolset } of handles.values()) {
           if (toolset !== ts || CORE_TOOLS.includes(tool.name)) continue;
-          handle.update({ description: tool.description, paramsSchema: tool.shape as never, callback: (wrap ? wrap(tool.name, tool.callback, false) : tool.callback) as never });
+          handle.update({ description: tool.description, annotations: annotationsFor(tool.name), callback: (wrap ? wrap(tool.name, tool.callback, false) : tool.callback) as never });
+          // update() only accepts a raw shape for paramsSchema (it wraps it in a permissive object), so the strict
+          // schema is assigned directly — the same field update() writes.
+          (handle as unknown as { inputSchema: unknown }).inputSchema = strictShape(tool.shape);
           changed.push(tool.name);
         }
       }
@@ -214,8 +224,12 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
   for (const tool of captured.tools) {
     const toolset = toolsetOfModule(tool.module);
     if (isFull(tool, toolset)) {
-      const args = wrap ? [...tool.args.slice(0, -1), wrap(tool.name, tool.callback, false)] : tool.args;
-      handles.set(tool.name, { tool, handle: s.tool(...args), toolset });
+      const callback = wrap ? wrap(tool.name, tool.callback, false) : tool.callback;
+      // Strict input: an unknown parameter is an error, never silently dropped. With the SDK's default (strip)
+      // behaviour `list_applications({ search: "ExperiBank" })` returned the whole catalogue and the agent spent turns
+      // wondering whether the filter had worked (fidelity eval 2026-10-14).
+      const handle = server.registerTool(tool.name, { description: tool.description, inputSchema: strictShape(tool.shape), annotations: annotationsFor(tool.name) }, callback as never);
+      handles.set(tool.name, { tool, handle, toolset });
       continue;
     }
     const ts = toolset!;
@@ -233,7 +247,13 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
       ].join('\n');
       return { content: [{ type: 'text' as const, text: guidance }] };
     };
-    handles.set(tool.name, { tool, handle: s.tool(tool.name, placeholderDescription(tool, ts), {}, wrap ? wrap(tool.name, placeholder, true) : placeholder), toolset });
+    // A placeholder accepts ANY arguments (an agent may send the real parameters on its first call) and runs nothing.
+    const handle = server.registerTool(
+      tool.name,
+      { description: placeholderDescription(tool, ts), inputSchema: z.looseObject({}), annotations: annotationsFor(tool.name, { placeholder: true }) },
+      (wrap ? wrap(tool.name, placeholder, true) : placeholder) as never,
+    );
+    handles.set(tool.name, { tool, handle, toolset });
   }
   for (const p of captured.prompts) s.prompt(...p.args);
   for (const r of captured.resources) s.resource(...r.args);

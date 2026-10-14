@@ -377,6 +377,7 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `MCP_REMEDIATION_DIR` | Optional | — | Debug mode only: folder to write remediation files to (overrides project detection) |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
+| `USAGE_REPORT_TIMEOUT_MS` | Optional | `240000` | Wall-clock cap on one usage-report CSV fetch (`download_usage_report` / `summarize_usage_report`). An unfiltered month can be ~12 MB and take minutes to transfer; a fetch that outlives the cap returns an error that says how to narrow it |
 | `ACCESS_PROBE_TIMEOUT_MS` | Optional | `8000` | Timeout for the access-level detection call |
 | `AXE_DEVTOOLS_API_KEY` | Optional | — | Deque Axe DevTools Mobile key used by `includeAxeScan` boilerplate |
 | `TEST_ORCHESTRATOR_JAR_URL` / `TEST_ORCHESTRATOR_JAR_SHA256` | Optional | pinned | Override the Test Orchestrator agent download location; both are required |
@@ -389,7 +390,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 All 202 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
 
-Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. The AI can also load toolsets up front with `enable_toolset`. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
+Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
 | Toolset | Covers |
 |---|---|
