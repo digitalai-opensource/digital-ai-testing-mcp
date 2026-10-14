@@ -41,6 +41,8 @@ import {
   automotiveControl,
   AUTOMOTIVE_RESOLUTIONS,
   INSTRUMENT_CLUSTER_CONTENT,
+  getForegroundActivity,
+  isSameActivity,
 } from '../api/webdriver.js';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -344,7 +346,11 @@ export function registerInspectionTools(server: McpServer): void {
         .boolean()
         .optional()
         .default(true)
-        .describe('If false, clears app data before launching. Default true.'),
+        .describe(
+          'If false, clears app data before launching. Default true — which means an app that was already running on the ' +
+          'device RESUMES ON ITS LAST SCREEN, not on appActivity. The response reports currentActivity and a screenNote when ' +
+          'they differ; pass noReset: false to replay a flow from its first screen.'
+        ),
       testName: z
         .string()
         .optional()
@@ -432,9 +438,27 @@ export function registerInspectionTools(server: McpServer): void {
           }
         }
 
+        // Android app sessions: say which screen is actually in front. With noReset (the default) a running app resumes
+        // where it was, so the caller's appActivity is a request, not a guarantee (remediation note 2026-10-14).
+        let currentActivity: string | null = null;
+        let screenNote: string | undefined;
+        if (session.platform === 'android' && (args.app || args.appPackage)) {
+          currentActivity = await getForegroundActivity(session.handle);
+          if (currentActivity && args.appActivity && !isSameActivity(args.appActivity, currentActivity)) {
+            screenNote =
+              `The app is showing "${currentActivity}", not the requested "${args.appActivity}": noReset is ${args.noReset ?? true}, so a running app ` +
+              'resumed on its last screen. Call get_element_tree before acting on this screen, or stop and start again with noReset: false ' +
+              'to begin from the first screen.';
+          } else if (!currentActivity) {
+            screenNote = 'Could not read the foreground activity — call get_element_tree before assuming which screen is showing.';
+          }
+        }
+
         const structured: Record<string, unknown> = {
           handle: session.handle,
           platform: session.platform,
+          ...(currentActivity !== null ? { currentActivity } : {}),
+          ...(screenNote ? { screenNote } : {}),
           device: {
             id: deviceId,
             name: session.deviceName,

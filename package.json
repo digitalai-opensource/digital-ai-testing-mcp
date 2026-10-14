@@ -64,6 +64,7 @@
     "test:video": "vitest run tests/test-video.test.ts",
     "test:maestro": "vitest run tests/maestro-flow.test.ts",
     "test:find-elements": "vitest run tests/find-elements.test.ts",
+    "test:inspection-start": "vitest run tests/inspection-start.test.ts",
     "test:remediation": "vitest run tests/remediation.test.ts",
     "test:tool-catalog": "vitest run tests/tool-catalog.test.ts",
     "test:appium3-gestures": "vitest run tests/appium3-gestures.test.ts",

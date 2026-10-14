@@ -1794,6 +1794,30 @@ export function registerSession(session: InspectionSession): void {
   if (session.reportTestId > 0) allReports.set(session.reportTestId, session.projectName);
 }
 
+/**
+ * The Android activity in the foreground right now, or null when it cannot be read (iOS has no equivalent; a
+ * failure here is never fatal). Used by start_inspection_session: with noReset=true (the default) an app that was
+ * already running resumes on its LAST screen, not the activity the caller named — an agent that assumed the
+ * login screen then wasted three calls on "No element found" (remediation note 2026-10-14).
+ */
+export async function getForegroundActivity(handle: string): Promise<string | null> {
+  const session = requireSession(handle);
+  if (session.platform !== 'android') return null;
+  try {
+    const res = await makeClient().get(`/session/${session.gridSessionId}/appium/device/current_activity`, { timeout: 15_000 });
+    const activity = res.data?.value;
+    return typeof activity === 'string' && activity ? activity : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when `current` is the activity the caller asked for — `.LoginActivity` vs `com.x.app.LoginActivity` are the same screen. */
+export function isSameActivity(requested: string, current: string): boolean {
+  const tail = (a: string) => a.split(/[./]/).filter(Boolean).pop()?.toLowerCase() ?? '';
+  return tail(requested) === tail(current);
+}
+
 export function requireSession(handle: string): InspectionSession {
   const s = sessionRegistry.get(handle);
   if (!s)
