@@ -38,9 +38,20 @@ class Reply {
   constructor(public readonly status: number, public readonly body: unknown) {}
 }
 
-/** Answer with a specific status. A string body is sent verbatim; anything else is JSON-encoded. */
+/**
+ * Answer with a specific status. A string body is sent verbatim; a `Buffer[]` is written one element per tick so the
+ * client sees separate 'data' events (for stream-consumer tests); anything else is JSON-encoded.
+ */
 export function reply(status: number, body: unknown = {}): Reply {
   return new Reply(status, body);
+}
+
+async function writeChunked(res: http.ServerResponse, chunks: Buffer[]): Promise<void> {
+  for (const c of chunks) {
+    res.write(c);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  res.end();
 }
 
 /** The `{ status, data }` envelope `/api/v1/users/my-account-info` returns. */
@@ -86,6 +97,7 @@ export async function startStubApi(handler: StubHandler, opts: StubOptions = {})
       if (out === undefined) { res.statusCode = 404; return void res.end('{}'); }
       const r = out instanceof Reply ? out : new Reply(200, out);
       res.statusCode = r.status;
+      if (Array.isArray(r.body) && r.body.every((c) => Buffer.isBuffer(c))) return void writeChunked(res, r.body as Buffer[]);
       res.end(typeof r.body === 'string' ? r.body : JSON.stringify(r.body));
     });
   });

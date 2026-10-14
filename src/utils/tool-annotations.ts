@@ -10,8 +10,11 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 /** Tools that only read, or only generate text (get_*_command) — safe to run without a side effect. */
 export const READ_ONLY_TOOL_RE = /^(list_|get_|find_|check_|summarize_|compare_|assess_|detect_|validate_|search_)|^(enable_toolset|switch_environment)$/;
 
-/** Tools that delete, release or cancel something that cannot be undone. */
-export const DESTRUCTIVE_TOOL_RE = /^(delete_|release_|cancel_|uninstall_|remove_|cleanup_)/;
+/**
+ * Tools that delete, release or cancel something that cannot be undone. Every tool that calls checkDestructiveGuard
+ * must match (tests/toolsets.test.ts asserts it) — `unassign_user_from_projects` was missed the first time.
+ */
+export const DESTRUCTIVE_TOOL_RE = /^(delete_|release_|cancel_|uninstall_|remove_|unassign_|cleanup_)/;
 
 export function isReadOnlyTool(name: string): boolean {
   return READ_ONLY_TOOL_RE.test(name);

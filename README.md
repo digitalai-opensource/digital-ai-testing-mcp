@@ -444,7 +444,7 @@ The `remediation/` folder contains its own `.gitignore` (`*`), so it is never co
 <details>
 <summary><strong>Summarizing a batch of notes</strong></summary>
 
-Collect the `remediation/` folders you want to analyse, from one machine or several, and run `npm run remediation:digest -- --dir <folder> --dir <folder>` in a clone of this repository (the npm package doesn't include it). With no `--dir`, it reads `$MCP_REMEDIATION_DIR`, or else `./remediation` and `~/remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
+Collect the `remediation/` folders you want to analyse, from one machine or several, and run `npx tsx tests/remediation-intake/digest.ts --dir <folder> --dir <folder>` in a clone of this repository (the npm package doesn't include it). With no `--dir`, it reads `$MCP_REMEDIATION_DIR`, or else `./remediation` and `~/remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
 - notes by category, and issues that recur across sessions;
 - per-tool errors, guards, retries, response sizes and latency;
 - every note in a table.
@@ -1124,7 +1124,7 @@ npm run test:analytics        # analytics tools
 npm run test:infrastructure   # agents / regions / NV servers / sessions
 npm run test:live             # live API-behavior probes (requires .env; not part of npm test)
 npm run test:fidelity         # agent tool-choice evaluation (builds first; spends model tokens)
-npm run remediation:digest    # summarize debug-mode remediation notes
+npx tsx tests/remediation-intake/digest.ts   # summarize debug-mode remediation notes
 ```
 
 See `package.json` for the full list of scripts.

@@ -78,3 +78,44 @@ describe('summarize_usage_report', () => {
     assert.match(text, /USAGE_REPORT_TIMEOUT_MS/);
   });
 });
+
+/**
+ * The CSV is fetched as a STREAM (so a summary can stop after the first section). Two things that path must not lose:
+ *  - a platform error body: on a 403 axios hands the interceptor the body stream, not bytes — the reason
+ *    ("This endpoint requires Cloud Admin access") was replaced by "Request failed with status code 403"
+ *  - a multi-byte character split across two chunks: per-chunk utf8 decoding put U+FFFD into the kept section
+ */
+describe('summarize_usage_report over a streamed response', () => {
+  const S1 = 'Project,Total Reservation Time (hours)\nZürich QA,4\nDefault,1\n';
+  const S2 = 'Reservation Start Timestamp,Device Name,Project,Duration (minutes)\n1,Pixel 1,Default,3\n';
+  const bytes = Buffer.from(`${S1}\n${S2}`, 'utf8');
+  const cut = bytes.indexOf(Buffer.from('ü', 'utf8')) + 1; // between the two bytes of "ü"
+  let forbid = false;
+  let api2: StubApi;
+  let tools2: ToolClient;
+  beforeAll(async () => {
+    api2 = await startStubApi((req) => {
+      if (!req.path.startsWith('/api/v2/configuration/get-CSV-reports/')) return undefined;
+      if (forbid) return reply(403, { message: 'This endpoint requires Cloud Admin access' });
+      return reply(200, [bytes.subarray(0, cut), bytes.subarray(cut)]);
+    });
+    tools2 = await connectTools(registerUsageReportTools);
+  });
+  afterAll(async () => { await tools2.close(); await api2.close(); });
+  afterEach(() => { forbid = false; });
+
+  it('keeps a multi-byte character that straddles a chunk boundary in the summary section', async () => {
+    const j = await tools2.callJson('summarize_usage_report', ARGS);
+    assert.equal(j.stoppedAfterFirstSection, true);
+    const groups = j.groups as Array<{ value: string; sum?: number }>;
+    assert.deepEqual(groups.map((g) => [g.value, g.sum]), [['Zürich QA', 4], ['Default', 1]]);
+  });
+
+  it("reports the platform's 403 reason, not the generic status text", async () => {
+    forbid = true;
+    const { res, text } = await tools2.call('summarize_usage_report', ARGS);
+    assert.equal(res.isError, true);
+    assert.match(text, /\[403\]: This endpoint requires Cloud Admin access/);
+    assert.doesNotMatch(text, /Request failed with status code/);
+  });
+});

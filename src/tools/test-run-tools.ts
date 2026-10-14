@@ -38,6 +38,16 @@ function parseStringArray(v: unknown): unknown {
   return [v];
 }
 
+/**
+ * Integer that also accepts a numeric STRING ("123" — agents without a refreshed schema send ids as text). Unlike
+ * z.coerce.number(), null / booleans / "" stay invalid: coerce turned `cloudAppId: null` into 0, which then counted as
+ * an app source and was sent to the platform as cloudApp=0.
+ */
+function intParam(min?: number) {
+  const base = z.number().int();
+  return z.preprocess((v) => (typeof v === 'string' && /^\s*-?\d+\s*$/.test(v) ? Number(v) : v), min === undefined ? base : base.min(min));
+}
+
 // Shared by execute_test_run and get_test_run_command — one schema, so the two cannot drift.
 const runParams = {
   executionType: caseInsensitiveEnum(TEST_RUN_EXECUTION_TYPES).describe('ESPRESSO (Android instrumentation), XCUITEST (iOS) or MAESTRO (Android flows).'),
@@ -45,7 +55,7 @@ const runParams = {
     .optional()
     .default('fastFeedback')
     .describe('fastFeedback (default): spread the tests across up to maxDevices devices matching ONE deviceQuery. coverage: run every test on one device per deviceQuery.'),
-  cloudAppId: z.coerce.number().int().optional().describe('Numeric application id from list_applications (NOT the app name — a name is rejected). One app source is required.'),
+  cloudAppId: intParam().optional().describe('Numeric application id from list_applications (NOT the app name — a name is rejected). One app source is required.'),
   appUrl: z.string().optional().describe('URL of the application under test. One app source is required.'),
   testsUrl: z.string().optional().describe('ESPRESSO/XCUITEST only: URL of the test package (Espresso: the androidTest .apk). One test source is required.'),
   cloudTestAppId: z.number().int().optional().describe('ESPRESSO/XCUITEST only: numeric id of the test package in the file repository.'),
@@ -53,8 +63,8 @@ const runParams = {
   deviceQueries: z
     .preprocess(parseStringArray, z.array(z.string()).min(1))
     .describe("Device queries, e.g. [\"@os='android' and @category='PHONE'\"]. fastFeedback takes exactly one. Add @region from find_available_device to avoid unhealthy regions."),
-  maxDevices: z.coerce.number().int().min(1).optional().describe('fastFeedback: maximum devices to use (recommended — the default is the license maximum).'),
-  minDevices: z.coerce.number().int().min(1).optional().describe('fastFeedback: minimum devices (default 1).'),
+  maxDevices: intParam(1).optional().describe('fastFeedback: maximum devices to use (recommended — the default is the license maximum).'),
+  minDevices: intParam(1).optional().describe('fastFeedback: minimum devices (default 1).'),
   retry: z.number().int().min(0).max(5).optional().describe('Retries for failed tests, 0–5 (default 0).'),
   retryDifferentDevice: z.boolean().optional().describe('Retry failed tests on a different device.'),
   overallTimeoutMs: z.number().int().optional().describe('Timeout for the whole run in ms (platform default 4 h).'),

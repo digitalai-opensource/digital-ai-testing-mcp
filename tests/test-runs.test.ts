@@ -224,3 +224,18 @@ describe('REGISTERED_TOOLS stays in sync with the tool modules', () => {
   });
 });
 
+
+describe('execute_test_run numeric parameters', () => {
+  it('accepts a numeric string for cloudAppId / maxDevices (agents without a refreshed schema send text) and rejects null', async () => {
+    const ok = await call('execute_test_run', { executionType: 'maestro', cloudAppId: '27982153', testsPath: goodZip, deviceQueries: Q, maxDevices: '2', outputFormat: 'json' });
+    assert.notEqual(ok.res.isError, true, ok.text);
+    assert.match(hits[0].body, /name="cloudApp"\r\n\r\n27982153/);
+    assert.match(hits[0].body, /name="maxDevices"\r\n\r\n2/);
+    assert.match(hits[0].body, /name="executionType"\r\n\r\nMAESTRO/);
+    // z.coerce.number() turned null into 0 — a "valid" app source sent to the platform as cloudApp=0.
+    const bad = await call('execute_test_run', { executionType: 'MAESTRO', cloudAppId: null, appUrl: 'https://x/app.apk', testsPath: goodZip, deviceQueries: [Q] });
+    assert.equal(bad.res.isError, true);
+    assert.match(bad.text, /cloudAppId/);
+    assert.doesNotMatch(bad.text, /exactly one app source/);
+  });
+});

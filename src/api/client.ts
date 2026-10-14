@@ -32,20 +32,23 @@ function buildClient(baseURL: string, accessKey: string): AxiosInstance {
   client.interceptors.response.use(
     (response) => response,
     (error) => {
-      const status = error.response?.status ?? 'unknown';
-      const rawMsg = extractApiErrorMessage(error.response?.data, error.message);
-
-      // Enrich 403 responses with auth guidance and environment-switching hints — APPENDED to the
-      // platform's own message, never replacing it (e.g. "You have no permission to delete tests" is
-      // the actual diagnosis and must survive).
-      const hint = status === 403 ? build403Hint() : undefined;
-      const msg = hint ? `${rawMsg} — ${hint}` : rawMsg;
-
-      throw new Error(`Digital.ai API Error [${status}]: ${msg}`);
+      throw toApiError(error.response?.status, error.response?.data, error.message);
     }
   );
 
   return client;
+}
+
+/**
+ * The one place an HTTP failure becomes the `Digital.ai API Error [status]: <detail>` the tools report. `body` may be
+ * any shape the platform sends (see api-error.ts); a 403 gets auth guidance APPENDED to the platform's own message,
+ * never replacing it (e.g. "You have no permission to delete tests" is the actual diagnosis and must survive).
+ */
+function toApiError(status: number | undefined, body: unknown, fallback: string): Error {
+  const rawMsg = extractApiErrorMessage(body, fallback);
+  const hint = status === 403 ? build403Hint() : undefined;
+  const msg = hint ? `${rawMsg} — ${hint}` : rawMsg;
+  return new Error(`Digital.ai API Error [${status ?? 'unknown'}]: ${msg}`);
 }
 
 // ─── Active client state ──────────────────────────────────────────────────────
@@ -173,13 +176,16 @@ const RETRYABLE_POST_PATHS = new Set([
 ]);
 
 const TRANSIENT_STATUS_RE = /\[(429|500|502|503|504|unknown)\]/;
+// axios reports an AbortSignal that fired as `[unknown]: canceled` — a deliberate deadline, not a transient fault.
+const CANCELED_RE = /\bcancel(l)?ed\b/i;
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (e) {
-      if (attempt >= retries || !TRANSIENT_STATUS_RE.test((e as Error).message)) throw e;
+      const msg = (e as Error).message;
+      if (attempt >= retries || !TRANSIENT_STATUS_RE.test(msg) || CANCELED_RE.test(msg)) throw e;
       await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
     }
   }
@@ -244,13 +250,43 @@ export async function apiDownload(path: string, opts: { signal?: AbortSignal } =
   return Buffer.from(res.data);
 }
 
+/** Longest error body worth reading off a failed stream response — a platform error message, never a report. */
+const MAX_STREAM_ERROR_BODY_BYTES = 64 * 1024;
+
 /**
  * Binary GET as a Node stream, for responses worth abandoning part-way (a usage-report CSV whose first section is the
- * answer). Not retried: once bytes flow there is nothing transient left to retry. Caller destroys the stream to stop.
+ * answer). The request (headers) phase is retried like any read; once bytes flow nothing is retried. Caller destroys
+ * the stream to stop.
+ *
+ * Every status resolves here (`validateStatus`) because on a failure axios's `response.data` is the body STREAM, and the
+ * interceptor can't read a message out of a stream — the 403 "This endpoint requires Cloud Admin access" was lost that
+ * way. The body is read here and turned into the same `Digital.ai API Error` the interceptor builds.
  */
 export async function apiDownloadStream(path: string, opts: { signal?: AbortSignal } = {}): Promise<NodeJS.ReadableStream> {
-  const res = await withRetry(() => getClient().get<NodeJS.ReadableStream>(path, { responseType: 'stream', signal: opts.signal }));
+  const res = await withRetry(async () => {
+    const r = await getClient().get<NodeJS.ReadableStream>(path, { responseType: 'stream', signal: opts.signal, validateStatus: () => true });
+    if (r.status < 400) return r;
+    throw toApiError(r.status, await readStreamPrefix(r.data, MAX_STREAM_ERROR_BODY_BYTES), `Request failed with status code ${r.status}`);
+  });
   return res.data;
+}
+
+/** Collects up to `max` bytes of a stream, then destroys it. Never throws — an unreadable error body is just no detail. */
+function readStreamPrefix(stream: NodeJS.ReadableStream, max: number): Promise<Buffer> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const finish = () => resolve(Buffer.concat(chunks));
+    stream.on('data', (chunk: Buffer) => {
+      if (size >= max) return;
+      chunks.push(chunk.subarray(0, max - size));
+      size += chunk.length;
+      if (size >= max) (stream as unknown as { destroy: () => void }).destroy();
+    });
+    stream.on('end', finish);
+    stream.on('close', finish);
+    stream.on('error', finish);
+  });
 }
 
 /** GET with an optional HTTP Range header ("bytes=0-1023", "bytes=-100", "bytes=1000-"). Read-only, so retried. */

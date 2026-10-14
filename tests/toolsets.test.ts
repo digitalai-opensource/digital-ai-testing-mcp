@@ -11,7 +11,7 @@
  */
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -59,6 +59,7 @@ import { registerPerformanceTools } from '../src/tools/performance-tools.js';
 import { registerUsageReportTools } from '../src/tools/usage-report-tools.js';
 import { registerTestRunTools } from '../src/tools/test-run-tools.js';
 import { registerMetaTools } from '../src/tools/meta-tools.js';
+import { DESTRUCTIVE_TOOL_RE, annotationsFor } from '../src/utils/tool-annotations.js';
 
 type ToolEntry = { name: string; description?: string; inputSchema: { properties?: Record<string, unknown>; additionalProperties?: boolean }; annotations?: Record<string, unknown> };
 
@@ -255,5 +256,24 @@ describe('MCP_TOOLSETS=reporting → placeholders that load themselves', () => {
     assert.match(del!, /confirmDeletion\*?: boolean \[set only when the USER explicitly agreed\]/, 'guard flags carry the rule');
     const human = (await client.callTool({ name: 'enable_toolset', arguments: { toolsets: ['reporting'] } })) as { content: Array<{ text?: string }> };
     assert.doesNotMatch(human.content[0].text!, /Parameter names of the tools just loaded/, 'nothing listed when nothing newly loaded');
+  });
+});
+
+describe('tool annotations cover every guarded tool', () => {
+  it('every tool that calls checkDestructiveGuard matches DESTRUCTIVE_TOOL_RE (unassign_user_from_projects was missed once)', () => {
+    const dir = join(process.cwd(), 'src', 'tools');
+    const guarded: string[] = [];
+    for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts'))) {
+      const src = readFileSync(join(dir, file), 'utf8');
+      // Each registration starts with server.tool(\n 'name', …; the guard call belongs to the nearest preceding name.
+      const parts = src.split(/server\.tool\(\s*/).slice(1);
+      for (const part of parts) {
+        const name = part.match(/^'([a-z0-9_]+)'/)?.[1];
+        if (name && part.includes('checkDestructiveGuard(')) guarded.push(name);
+      }
+    }
+    assert.ok(guarded.length > 20, `found only ${guarded.length} guarded tools — the scan is broken`);
+    assert.deepEqual(guarded.filter((n) => !DESTRUCTIVE_TOOL_RE.test(n)), []);
+    assert.deepEqual(guarded.filter((n) => annotationsFor(n).destructiveHint !== true), []);
   });
 });

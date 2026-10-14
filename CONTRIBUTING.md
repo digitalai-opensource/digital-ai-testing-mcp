@@ -47,7 +47,7 @@ npm run test:<suite>         # one suite (see the scripts in package.json)
 npm run test:live            # live API-behaviour probes (tests/live) — not part of npm test; run before a release
 npm run test:fidelity-score  # check the agent fidelity eval's scenarios and scorer (no model calls)
 npm run test:fidelity        # agent fidelity eval — spends model tokens; see tests/fidelity/README.md
-npm run remediation:digest   # summarise debug-mode remediation notes (see README "Debug mode")
+npx tsx tests/remediation-intake/digest.ts   # summarise debug-mode remediation notes (gitignored internal tooling; see README "Debug mode")
 ```
 
 See `.env.example` for required environment variables.

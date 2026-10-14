@@ -27,7 +27,7 @@ function strictShape(shape: Record<string, unknown>) {
 
 export type RegisterFn = (server: McpServer) => void;
 
-export interface CapturedTool { name: string; module: string; description: string; shape: Record<string, unknown>; callback: (...a: unknown[]) => unknown; args: unknown[] }
+export interface CapturedTool { name: string; module: string; description: string; shape: Record<string, unknown>; callback: (...a: unknown[]) => unknown }
 export interface CapturedOther { module: string; args: unknown[] }
 export interface Captured { tools: CapturedTool[]; prompts: CapturedOther[]; resources: CapturedOther[] }
 
@@ -42,7 +42,7 @@ export function captureRegistrations(modules: Array<[string, RegisterFn]>): Capt
         if (typeof name !== 'string' || typeof description !== 'string' || typeof callback !== 'function') {
           throw new Error(`toolsets: unsupported server.tool signature in module ${module} (${String(name)})`);
         }
-        captured.tools.push({ name, module, description, shape: shape ?? {}, callback, args });
+        captured.tools.push({ name, module, description, shape: shape ?? {}, callback });
       },
       prompt: (...args: unknown[]) => { captured.prompts.push({ module, args }); },
       resource: (...args: unknown[]) => { captured.resources.push({ module, args }); },

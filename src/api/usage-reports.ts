@@ -1,4 +1,5 @@
 import { writeFile } from 'fs/promises';
+import { StringDecoder } from 'node:string_decoder';
 import { apiDownloadStream } from './client.js';
 import { USAGE_REPORT_TYPES, usageReportUtcMs, type UsageReportType } from '../utils/usage-report-guard.js';
 import { parseCsv, parseCsvSections } from '../utils/csv.js';
@@ -71,13 +72,16 @@ export async function fetchUsageReportCsv(
     const stream = await apiDownloadStream(path, { signal: deadline.signal });
     const chunks: Buffer[] = [];
     let probe = '';
+    // A StringDecoder carries a multi-byte character split across chunks over to the next write; decoding each chunk
+    // on its own would put U+FFFD into the first section's bytes (a project called "Zürich QA" became two groups).
+    const decoder = new StringDecoder('utf8');
     let decided = !opts.stopAfterFirstSection;
     let firstSection: Buffer | null = null;
     await new Promise<void>((resolve, reject) => {
       stream.on('data', (chunk: Buffer) => {
         chunks.push(chunk);
         if (decided) return;
-        probe += chunk.toString('utf8');
+        probe += decoder.write(chunk);
         const m = probe.match(SECTION_BREAK);
         if (!m) {
           if (probe.length > SINGLE_SECTION_PROBE_BYTES) { decided = true; probe = ''; }
