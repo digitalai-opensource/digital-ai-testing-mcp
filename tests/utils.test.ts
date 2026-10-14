@@ -11,6 +11,9 @@ import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, st
 
 // ─── getDeploymentMode / locality notices ───────────────────────────────────
 
+// path.isAbsolute() is OS-specific: a C:\ path is relative on the Linux CI runner. Build fixtures for the host OS.
+const absPath = (p: string) => (process.platform === 'win32' ? `C:\\${p.replace(/\//g, '\\')}` : `/${p}`);
+
 describe('getDeploymentMode', () => {
   const ORIGINAL = process.env.MCP_DEPLOYMENT_MODE;
   afterEach(() => {
@@ -183,7 +186,7 @@ describe('checkDestructiveGuard', () => {
 describe('validateOutputPath', () => {
   it('accepts valid absolute paths', () => {
     assert.equal(validateOutputPath('/tmp/output.zip'), null);
-    assert.equal(validateOutputPath('C:\\Users\\test\\output.zip'), null);
+    assert.equal(validateOutputPath(absPath('Users/test/output.zip')), null);
   });
 
   it('rejects relative paths', () => {

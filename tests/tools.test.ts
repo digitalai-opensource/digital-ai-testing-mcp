@@ -52,6 +52,9 @@ function actAs(level: AccessLevel | null, key: string = FAKE_PROJECT_KEY, name =
   setAccessLevelOverrideForTests(level);
 }
 
+// path.isAbsolute() is OS-specific: a C:\ path is relative on the Linux CI runner. Build fixtures for the host OS.
+const absPath = (p: string) => (process.platform === 'win32' ? `C:\\${p.replace(/\//g, '\\')}` : `/${p}`);
+
 afterAll(() => setAccessLevelOverrideForTests(null));
 
 interface ToolResult {
@@ -279,7 +282,7 @@ describe('Upload tools reject unsafe input paths before reading any file', () =>
   });
 
   it('upload_repository_file refuses to read a .env file', async () => {
-    const res = await callTool('upload_repository_file', { localFilePath: 'C:\\projects\\app\\.env' });
+    const res = await callTool('upload_repository_file', { localFilePath: absPath('projects/app/.env') });
     assert.match(textOf(res), /credential-file pattern/);
     assert.equal(res.isError, true);
   });
@@ -297,7 +300,7 @@ describe('Upload tools reject unsafe input paths before reading any file', () =>
   });
 
   it('update_repository_file refuses a .env path but allows metadata-only updates past the guard', async () => {
-    const blocked = await callTool('update_repository_file', { fileId: 1, localFilePath: 'C:\\x\\.env.production' });
+    const blocked = await callTool('update_repository_file', { fileId: 1, localFilePath: absPath('x/.env.production') });
     assert.match(textOf(blocked), /credential-file pattern/);
     // Metadata-only update has no file path — the path guard must not fire.
     // (It then fails at the network layer because the host is unreachable.)
@@ -307,7 +310,7 @@ describe('Upload tools reject unsafe input paths before reading any file', () =>
 
   it('upload_provisioning_profile validates both file paths', async () => {
     const res = await callTool('upload_provisioning_profile', {
-      p12FilePath: 'C:\\certs\\dist.p12',
+      p12FilePath: absPath('certs/dist.p12'),
       password: 'x',
       mobileprovisionFilePath: 'relative/profile.mobileprovision',
     });
@@ -346,7 +349,7 @@ describe('Upload-command tools emit a runnable command without any API call', ()
 
   it('get_provisioning_profile_upload_command emits both files and a PowerShell variant on windows', async () => {
     const res = await callTool('get_provisioning_profile_upload_command', {
-      p12FilePath: 'C:\\certs\\dist.p12',
+      p12FilePath: absPath('certs/dist.p12'),
       password: 'secret',
       mobileprovisionFilePath: 'C:\\certs\\app.mobileprovision',
       localPlatform: 'windows',
@@ -640,20 +643,20 @@ describe('summarize_usage_report validates and guards before fetching, never wri
 
 describe('path-guard unit behavior', () => {
   it('validateInputPath blocks credential filenames and traversal, allows normal files', () => {
-    assert.notEqual(validateInputPath('C:\\builds\\.env'), null);
+    assert.notEqual(validateInputPath(absPath('builds/.env')), null);
     assert.notEqual(validateInputPath('/srv/keys/id_ed25519'), null);
-    assert.notEqual(validateInputPath('C:\\a\\..\\b\\app.apk'), null);
+    assert.notEqual(validateInputPath(absPath('a/../b/app.apk')), null);
     assert.notEqual(validateInputPath('app.apk'), null);
-    assert.equal(validateInputPath('C:\\builds\\app.apk'), null);
+    assert.equal(validateInputPath(absPath('builds/app.apk')), null);
     assert.equal(validateInputPath('/builds/dist.p12'), null);
     // 'environment.json' must not be caught by the .env pattern
     assert.equal(validateInputPath('/data/environment.json'), null);
   });
 
   it('validateOutputPath unchanged: absolute + no traversal', () => {
-    assert.equal(validateOutputPath('C:\\tmp\\out.zip'), null);
+    assert.equal(validateOutputPath(absPath('tmp/out.zip')), null);
     assert.notEqual(validateOutputPath('out.zip'), null);
-    assert.notEqual(validateOutputPath('C:\\tmp\\..\\out.zip'), null);
+    assert.notEqual(validateOutputPath(absPath('tmp/../out.zip')), null);
   });
 });
 
