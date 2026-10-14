@@ -7,22 +7,20 @@
  *  - getDump is "not implemented for Android devices"
  * A fake Grid records every execute call; sessions are registered directly so nothing touches a real device.
  */
-import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { resetClient } from '../src/api/client.js';
-import { registerSession } from '../src/api/webdriver.js';
+import { registerSession, createInspectionSession, automotiveSessionHint } from '../src/api/webdriver.js';
 import { registerInspectionTools } from '../src/tools/inspection-tools.js';
+import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
 import type { InspectionSession } from '../src/types/digital-ai.js';
+import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 const calls: Array<{ script: string; args: unknown[] }> = [];
-let server: http.Server;
-let client: Client;
+const sessionBodies: Array<{ desiredCapabilities: Record<string, unknown> }> = [];
+const deleted: number[][] = [];
+let api: StubApi;
+let tools: ToolClient;
 
 function session(handle: string, extra: Partial<InspectionSession> = {}): InspectionSession {
   return {
@@ -33,48 +31,46 @@ function session(handle: string, extra: Partial<InspectionSession> = {}): Inspec
 }
 
 beforeAll(async () => {
-  server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => {
-      res.setHeader('Content-Type', 'application/json');
-      if (!/\/wd\/hub\/session\/[^/]+\/execute(\/sync)?$/.test(req.url ?? '')) { res.statusCode = 404; return void res.end('{}'); }
-      const { script, args } = JSON.parse(body || '{}');
-      calls.push({ script, args });
-      // Live responses: Galaxy S10 / Android 12 rejects mid-session start (it projects fine via the capability);
-      // a session without projection answers other commands with 404 "not specified".
-      if ((req.url ?? '').includes('sid-NOCAP')) {
-        res.statusCode = script === 'digitalai:automotive.start' ? 500 : 404;
-        const message = script === 'digitalai:automotive.start' ? 'Failed to execute start("LOW")' : 'Automotive projection is not specified';
-        return void res.end(JSON.stringify({ value: { error: 'unknown error', message } }));
-      }
-      // Live Appium Grid response: the execute layer runs the command as page JavaScript.
-      if ((req.url ?? '').includes('sid-GRIDJS')) {
-        res.statusCode = 500;
-        return void res.end(JSON.stringify({ value: { error: 'unknown error', message: "An unknown server-side error occurred. status='false'. Failed to complete internal method: 'hybridRunJavascript args: [, 0, result = null;" } }));
-      }
-      const value = script === 'digitalai:automotive.getScreenshot' ? PNG : script === 'digitalai:automotive.getDump' ? '<dump/>' : null;
-      res.end(JSON.stringify({ value }));
-    });
-  });
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  resetClient(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 'aut_1_automotive', 'auto');
-  const mcp = new McpServer({ name: 's', version: '0' });
-  registerInspectionTools(mcp);
-  client = new Client({ name: 'c', version: '0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await Promise.all([mcp.connect(b), client.connect(a)]);
+  api = await startStubApi((req) => {
+    if (req.path === '/api/v1/users/my-account-info') return accountInfo('ProjectAdmin', 'Mobile QA');
+    // Session START (projection via capability) — the live Appium-infrastructure failure, verified 2026-10-10.
+    if (req.path === '/wd/hub/session' && req.method === 'POST') {
+      sessionBodies.push(req.json as { desiredCapabilities: Record<string, unknown> });
+      return reply(500, { value: { message: 'Failed to prepare the Appium Infrastructure: Failed to enable automotive dev mode and start Android Auto on the device.' } });
+    }
+    if (req.path === '/reporter/api/tests/list') {
+      const name = (req.json.filter as Array<{ property: string; value: string }> | undefined)?.find((f) => f.property === 'name')?.value;
+      const now = Date.now();
+      return { count: null, data: [
+        { test_id: 9001, name, status: 'Error', start_time: new Date(now).toISOString() },             // this attempt
+        { test_id: 9002, name, status: 'Passed', start_time: new Date(now).toISOString() },            // not a failed start
+        { test_id: 9003, name, status: 'Error', start_time: new Date(now - 3_600_000).toISOString() }, // an hour old
+      ] };
+    }
+    if (req.path === '/reporter/api/tests/delete') { deleted.push(req.json as unknown as number[]); return {}; }
+    if (!/\/wd\/hub\/session\/[^/]+\/execute(\/sync)?$/.test(req.path)) return undefined;
+    const { script, args } = req.json;
+    calls.push({ script, args });
+    // Live responses: Galaxy S10 / Android 12 rejects mid-session start (it projects fine via the capability);
+    // a session without projection answers other commands with 404 "not specified".
+    if (req.path.includes('sid-NOCAP')) {
+      const message = script === 'digitalai:automotive.start' ? 'Failed to execute start("LOW")' : 'Automotive projection is not specified';
+      return reply(script === 'digitalai:automotive.start' ? 500 : 404, { value: { error: 'unknown error', message } });
+    }
+    // Live Appium Grid response: the execute layer runs the command as page JavaScript.
+    if (req.path.includes('sid-GRIDJS')) {
+      return reply(500, { value: { error: 'unknown error', message: "An unknown server-side error occurred. status='false'. Failed to complete internal method: 'hybridRunJavascript args: [, 0, result = null;" } });
+    }
+    const value = script === 'digitalai:automotive.getScreenshot' ? PNG : script === 'digitalai:automotive.getDump' ? '<dump/>' : null;
+    return { value };
+  }, { key: 'aut_1_automotive', profile: 'auto' });
+  tools = await connectTools(registerInspectionTools);
 });
-afterAll(() => new Promise<void>((r) => server.close(() => r())));
-beforeEach(() => { calls.length = 0; });
+afterAll(async () => { await tools.close(); await api.close(); });
+beforeEach(() => { calls.length = 0; sessionBodies.length = 0; deleted.length = 0; });
+afterEach(() => setAccessLevelOverrideForTests(null));
 
-async function call(name: string, args: Record<string, unknown>) {
-  const res = (await client.callTool({ name, arguments: args })) as {
-    content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-    isError?: boolean;
-  };
-  return { res, text: res.content.filter((c) => c.type === 'text').map((c) => c.text).join('') };
-}
+const call = (name: string, args: Record<string, unknown>) => tools.call(name, args);
 
 describe('automotive_control — command mode (toggled mid-session)', () => {
   it('start → screenshot (image) → tap → stop sends the platform commands with the right args', async () => {
@@ -180,5 +176,43 @@ describe('start_inspection_session — automotive argument validation (before an
       assert.equal(r.res.isError, true, JSON.stringify(args));
     }
     assert.deepEqual(calls, []);
+  });
+});
+
+describe('start_inspection_session — automotiveProjection start failures (verified live 2026-10-10)', () => {
+  it('a failed projection start uses an Android 10+ default query and deletes only its own Error report', async () => {
+    setAccessLevelOverrideForTests('cloud-admin');
+    await assert.rejects(
+      createInspectionSession({ platform: 'android', automotiveProjection: '800x480', testName: 'UAT automotive' }),
+      (e: Error) => /Android 10 or later/.test(e.message) && /The report this attempt created \(9001\) was deleted\./.test(e.message)
+    );
+    assert.equal(sessionBodies[0].desiredCapabilities['digitalai:deviceQuery'], "@os='android' and @category='PHONE' and @version>='10.0'");
+    assert.deepEqual(deleted, [[9001]], 'not the Passed record, not the hour-old one');
+  });
+
+  it('an explicit query or a non-projection session is left alone', async () => {
+    setAccessLevelOverrideForTests('cloud-admin');
+    await assert.rejects(createInspectionSession({ platform: 'android', automotiveProjection: '800x480', deviceQuery: "@serialNumber='X'" }));
+    await assert.rejects(createInspectionSession({ platform: 'android' }));
+    assert.equal(sessionBodies[0].desiredCapabilities['digitalai:deviceQuery'], "@serialNumber='X'");
+    assert.equal(sessionBodies[1].desiredCapabilities['digitalai:deviceQuery'], "@os='android' and @category='PHONE'");
+  });
+
+  it('when the role may not delete reports, the leftover report is named instead', async () => {
+    setAccessLevelOverrideForTests('project-user');
+    // The project-level refusal needs the project flag readable and false; when it can't be read the platform decides,
+    // so assert only that either path ends with a clear sentence about report 9001.
+    await assert.rejects(
+      createInspectionSession({ platform: 'android', testName: 'UAT automotive' }),
+      (e: Error) => /9001/.test(e.message)
+    );
+  });
+
+  it('automotiveSessionHint gives specific guidance per platform failure', () => {
+    assert.match(automotiveSessionHint('HTTP 500: Automotive Projection is only supported on Apple Silicon Device Host Machines') ?? '', /Apple Silicon device host.*not your request/);
+    assert.match(automotiveSessionHint('HTTP 500: Failed to enable automotive dev mode and start Android Auto on the device') ?? '', /Android 10 or later/);
+    assert.match(automotiveSessionHint('HTTP 500: Timeout while waiting for the DHU process to connect.') ?? '', /head unit \(DHU\) never connected/);
+    assert.match(automotiveSessionHint('HTTP 500: no Android Auto head unit server on the device') ?? '', /property of the device/);
+    assert.equal(automotiveSessionHint('HTTP 500: something else'), null);
   });
 });

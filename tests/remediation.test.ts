@@ -11,7 +11,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   isDebugMode, redact, classifyOutcome, instrumentHandler, startRemediationSession, getRecordedEvents, saveNote,
   debugInstructions, debugStatusLine, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject,
-  ensureRemediationDir, getRemediationSession,
+  ensureRemediationDir, getRemediationSession, nudgeFor,
 } from '../src/utils/remediation.js';
 import { registerRemediationTools } from '../src/tools/remediation-tools.js';
 
@@ -105,6 +105,12 @@ describe('event log and nudges', () => {
     // Generated code that merely mentions "blocked" is a normal result, not a guard.
     const boilerplate = JSON.stringify({ platform: 'android', serverModeNote: 'x'.repeat(500), files: [{ content: '// the request is blocked until login completes' }] });
     assert.equal(classifyOutcome(ok(boilerplate)).outcome, 'ok');
+  });
+
+  it('validate_test_script verdicts get no debug reminder; other tools still do', () => {
+    startRemediationSession({ mcpVersion: 't', toolsets: 'all', client: () => undefined });
+    assert.equal(nudgeFor('validate_test_script', 'error', 'fail'), null);
+    assert.match(nudgeFor('get_test_report', 'error', 'boom') ?? '', /^\[debug mode\]/);
   });
 
   it('records each call, flags retries and repeats, and nudges once per tool and outcome', async () => {

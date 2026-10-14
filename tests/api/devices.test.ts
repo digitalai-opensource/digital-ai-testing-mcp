@@ -1,8 +1,8 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { getAllDevices, getDevicesByQuery, getDevice, getDeviceTags } from './helpers/test-client.js';
-import { assertNonEmpty, assertDefined } from './helpers/test-client.js';
-import type { Device } from '../src/types/digital-ai.js';
+import { getAllDevices, getDevicesByQuery, getDevice, getDeviceTags } from '../helpers/test-client.js';
+import { assertNonEmpty, assertDefined } from '../helpers/test-client.js';
+import type { Device } from '../../src/types/digital-ai.js';
 
 describe('Devices API', () => {
   let firstDevice: Device;

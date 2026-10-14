@@ -1,7 +1,7 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { getAllProvisioningProfiles, getProvisioningProfile } from './helpers/test-client.js';
-import type { ProvisioningProfile } from '../src/types/digital-ai.js';
+import { getAllProvisioningProfiles, getProvisioningProfile } from '../helpers/test-client.js';
+import type { ProvisioningProfile } from '../../src/types/digital-ai.js';
 
 describe('Provisioning Profiles API', () => {
   let allProfiles: ProvisioningProfile[];
@@ -23,8 +23,8 @@ describe('Provisioning Profiles API', () => {
     }
   });
 
-  it('If profiles exist: GET /api/v1/provisioning-profiles/<uuid> returns matching profile', async () => {
-    if (allProfiles.length === 0) return;
+  it('If profiles exist: GET /api/v1/provisioning-profiles/<uuid> returns matching profile', async ({ skip }) => {
+    if (allProfiles.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const profile = await getProvisioningProfile(allProfiles[0].profileUUID);
     assert.equal(
       profile.profileUUID,

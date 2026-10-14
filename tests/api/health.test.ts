@@ -5,7 +5,7 @@ import {
   getCurrentAndFutureReservations,
   getApplications,
   getAllProvisioningProfiles,
-} from './helpers/test-client.js';
+} from '../helpers/test-client.js';
 
 describe('Health / Combined API', () => {
   it('Combined query — all three APIs complete without error', async () => {

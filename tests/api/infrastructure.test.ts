@@ -7,7 +7,7 @@ import {
   getActiveSessions,
   getReporterProjects,
   getLicenseInfo,
-} from './helpers/test-client.js';
+} from '../helpers/test-client.js';
 
 // v2 API and reporter endpoints — these require Cloud Admin access (either key format: a Cloud Admin
 // may hold an eyJ... key or a short aut_1_... key). If the test environment holds a project-level role
@@ -28,22 +28,22 @@ async function tryOrSkip<T>(fn: () => Promise<T>, label: string): Promise<T | nu
 }
 
 describe('Agents API (v2 — Cloud Admin only)', () => {
-  it('GET /api/v2/agents — returns array of agents', async () => {
+  it('GET /api/v2/agents — returns array of agents', async ({ skip }) => {
     const agents = await tryOrSkip(() => getAgents(), 'getAgents');
-    if (agents === null) return;
+    if (agents === null) return skip('empty response from this tenant — nothing to assert on');
     assert.ok(Array.isArray(agents), 'Should return an array');
   });
 
-  it('GET /api/v2/agents — each agent has required fields', async () => {
+  it('GET /api/v2/agents — each agent has required fields', async ({ skip }) => {
     const agents = await tryOrSkip(() => getAgents(), 'getAgents fields');
-    if (!agents || agents.length === 0) return;
+    if (!agents || agents.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const a = agents[0];
     assert.ok(typeof a.id === 'number', 'id should be a number');
     assert.ok(typeof a.name === 'string', 'name should be a string');
     // region is returned as an AgentRegion object {id, name, master, icon} — not a plain string
     assert.ok(
       typeof a.region === 'object' && a.region !== null &&
-      typeof (a.region as Record<string, unknown>).name === 'string',
+      typeof (a.region as unknown as Record<string, unknown>).name === 'string',
       'region should be an AgentRegion object with a string name field'
     );
     assert.ok(typeof a.available === 'boolean', 'available should be boolean');
@@ -51,25 +51,25 @@ describe('Agents API (v2 — Cloud Admin only)', () => {
     assert.ok(typeof a.devicesCount === 'number', 'devicesCount should be a number');
   });
 
-  it('GET /api/v2/agents/{id}/devices — returns array', async () => {
+  it('GET /api/v2/agents/{id}/devices — returns array', async ({ skip }) => {
     const agents = await tryOrSkip(() => getAgents(), 'getAgentDevices-setup');
-    if (!agents || agents.length === 0) return;
+    if (!agents || agents.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const devices = await tryOrSkip(() => getAgentDevices(agents[0].id), 'getAgentDevices');
-    if (devices === null) return;
+    if (devices === null) return skip('empty response from this tenant — nothing to assert on');
     assert.ok(Array.isArray(devices), 'Agent devices should be an array');
   });
 });
 
 describe('Regions API (v2 — Cloud Admin only)', () => {
-  it('GET /api/v2/regions — returns array of regions', async () => {
+  it('GET /api/v2/regions — returns array of regions', async ({ skip }) => {
     const regions = await tryOrSkip(() => getRegions(), 'getRegions');
-    if (regions === null) return;
+    if (regions === null) return skip('empty response from this tenant — nothing to assert on');
     assert.ok(Array.isArray(regions), 'Should return an array');
   });
 
-  it('GET /api/v2/regions — each region has id, name, status', async () => {
+  it('GET /api/v2/regions — each region has id, name, status', async ({ skip }) => {
     const regions = await tryOrSkip(() => getRegions(), 'getRegions fields');
-    if (!regions || regions.length === 0) return;
+    if (!regions || regions.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const r = regions[0];
     assert.ok(typeof r.id === 'number', 'id should be a number');
     assert.ok(typeof r.name === 'string', 'name should be a string');
@@ -79,15 +79,15 @@ describe('Regions API (v2 — Cloud Admin only)', () => {
 });
 
 describe('NV Servers API (v2 — Cloud Admin only)', () => {
-  it('GET /api/v2/nv-servers — returns array', async () => {
+  it('GET /api/v2/nv-servers — returns array', async ({ skip }) => {
     const servers = await tryOrSkip(() => getNvServers(), 'getNvServers');
-    if (servers === null) return;
+    if (servers === null) return skip('empty response from this tenant — nothing to assert on');
     assert.ok(Array.isArray(servers), 'Should return an array');
   });
 
-  it('GET /api/v2/nv-servers — each server has id, name, region, status', async () => {
+  it('GET /api/v2/nv-servers — each server has id, name, region, status', async ({ skip }) => {
     const servers = await tryOrSkip(() => getNvServers(), 'getNvServers fields');
-    if (!servers || servers.length === 0) return;
+    if (!servers || servers.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const s = servers[0];
     assert.ok(typeof s.id === 'number', 'id should be a number');
     assert.ok(typeof s.name === 'string', 'name should be a string');
@@ -105,15 +105,15 @@ describe('NV Servers API (v2 — Cloud Admin only)', () => {
 });
 
 describe('Active Sessions API (v2 — Cloud Admin only)', () => {
-  it('GET /api/v2/sessions — returns array', async () => {
+  it('GET /api/v2/sessions — returns array', async ({ skip }) => {
     const sessions = await tryOrSkip(() => getActiveSessions(), 'getActiveSessions');
-    if (sessions === null) return;
+    if (sessions === null) return skip('empty response from this tenant — nothing to assert on');
     assert.ok(Array.isArray(sessions), 'Should return an array');
   });
 
-  it('GET /api/v2/sessions — session records have expected fields when non-empty', async () => {
+  it('GET /api/v2/sessions — session records have expected fields when non-empty', async ({ skip }) => {
     const sessions = await tryOrSkip(() => getActiveSessions(), 'getActiveSessions fields');
-    if (!sessions || sessions.length === 0) return;
+    if (!sessions || sessions.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const s = sessions[0];
     assert.ok(typeof s.sessionID === 'string', 'sessionID should be a string');
     assert.ok(typeof s.username === 'string', 'username should be a string');
@@ -123,15 +123,15 @@ describe('Active Sessions API (v2 — Cloud Admin only)', () => {
 });
 
 describe('Reporter Projects Storage API (Cloud Admin only)', () => {
-  it('GET /reporter/api/projects — returns array', async () => {
+  it('GET /reporter/api/projects — returns array', async ({ skip }) => {
     const projects = await tryOrSkip(() => getReporterProjects(), 'getReporterProjects');
-    if (projects === null) return;
+    if (projects === null) return skip('empty response from this tenant — nothing to assert on');
     assert.ok(Array.isArray(projects), 'Should return an array');
   });
 
-  it('GET /reporter/api/projects — each record has storage fields', async () => {
+  it('GET /reporter/api/projects — each record has storage fields', async ({ skip }) => {
     const projects = await tryOrSkip(() => getReporterProjects(), 'getReporterProjects fields');
-    if (!projects || projects.length === 0) return;
+    if (!projects || projects.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const p = projects[0];
     assert.ok(typeof p.id === 'number', 'id should be a number');
     assert.ok(typeof p.name === 'string', 'name should be a string');
@@ -142,9 +142,9 @@ describe('Reporter Projects Storage API (Cloud Admin only)', () => {
 });
 
 describe('License Info API (v2 — Cloud Admin only)', () => {
-  it('GET /api/v2/license — returns license limits object', async () => {
+  it('GET /api/v2/license — returns license limits object', async ({ skip }) => {
     const info = await tryOrSkip(() => getLicenseInfo(), 'getLicenseInfo');
-    if (info === null) return;
+    if (info === null) return skip('empty response from this tenant — nothing to assert on');
     assert.ok(typeof info.dedicatedDevices === 'number', 'dedicatedDevices should be a number');
     assert.ok(typeof info.sharedDevices === 'number', 'sharedDevices should be a number');
     assert.ok(typeof info.virtualDevices === 'number', 'virtualDevices should be a number');

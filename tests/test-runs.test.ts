@@ -25,6 +25,7 @@ import {
 } from '../src/api/test-runs.js';
 import { resetClient } from '../src/api/client.js';
 import { registerTestRunTools } from '../src/tools/test-run-tools.js';
+import { PLAINTEXT_KEY_WARNING } from '../src/utils/command-payload.js';
 import { REGISTERED_TOOLS } from '../src/tools/meta-tools.js';
 
 const Q = "@os='android' and @category='PHONE'";
@@ -49,6 +50,12 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('test-runs (pure)', () => {
   it('accepts the verified Maestro shape', () => assert.equal(validateTestRunRequest(base), null));
+
+  it('Maestro with no test source names only the flow bundle (not testsUrl / cloudTestAppId)', () => {
+    const msg = validateTestRunRequest({ executionType: 'MAESTRO', runningType: 'fastFeedback', cloudAppId: 1, deviceQueries: [Q] });
+    assert.match(msg ?? '', /MAESTRO needs the flow bundle as a file: pass testsPath/);
+    assert.doesNotMatch(msg ?? '', /testsUrl|cloudTestAppId/);
+  });
 
   it('rejects ambiguous / missing sources and Maestro misuse', () => {
     const cases: Array<[Partial<TestRunRequest>, RegExp]> = [
@@ -168,7 +175,7 @@ describe('get_test_run_status / cancel_test_run', () => {
   it('cancel without confirmDeletion previews and sends nothing; with it, POSTs /cancel and reports the new state', async () => {
     const preview = await call('cancel_test_run', { testRunId: '555' });
     assert.notEqual(preview.res.isError, true);
-    assert.deepEqual(hits, []);
+    assert.equal(hits.length, 0);
     const done = await call('cancel_test_run', { testRunId: '555', confirmDeletion: true, outputFormat: 'json' });
     assert.equal(hits[0].method, 'POST');
     assert.equal(hits[0].path, '/api/v1/test-run/555/cancel');
@@ -182,7 +189,8 @@ describe('get_test_run_command', () => {
       executionType: 'MAESTRO', cloudAppId: 27982153, testsPath: 'C:\\work\\flows.zip', deviceQueries: [Q], localPlatform: 'linux', outputFormat: 'json',
     });
     assert.notEqual(res.isError, true, text);
-    const { curlCommand, endpoint } = JSON.parse(text);
+    const { curlCommand, endpoint, credentialWarning } = JSON.parse(text);
+    assert.equal(credentialWarning, PLAINTEXT_KEY_WARNING, 'the JSON payload carries the plaintext-credential warning (UAT #64)');
     assert.match(curlCommand, /-F "tests=@C:\/work\/flows\.zip"/);
     assert.match(curlCommand, /-F "executionType=MAESTRO"/);
     assert.match(curlCommand, /-F "cloudApp=27982153"/);

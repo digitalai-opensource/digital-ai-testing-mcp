@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { listTransactions, getTransaction } from './helpers/test-client.js';
+import { listTransactions, getTransaction } from '../helpers/test-client.js';
 
 describe('Transactions API', () => {
   it('POST /reporter/api/transactions/list — returns array', async () => {
@@ -8,9 +8,9 @@ describe('Transactions API', () => {
     assert.ok(Array.isArray(txs), 'listTransactions should return an array');
   });
 
-  it('POST /reporter/api/transactions/list — each record has required fields', async () => {
+  it('POST /reporter/api/transactions/list — each record has required fields', async ({ skip }) => {
     const txs = await listTransactions();
-    if (txs.length === 0) return; // No data in this environment — skip field checks
+    if (txs.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const t = txs[0];
     assert.ok(typeof t.id === 'number', 'id should be a number');
     assert.ok(typeof t.name === 'string', 'name should be a string');
@@ -20,9 +20,9 @@ describe('Transactions API', () => {
     assert.ok(!isNaN(new Date(t.startTime).getTime()), 'startTime should be parseable as a date');
   });
 
-  it('POST /reporter/api/transactions/list — performance metric fields are number or null', async () => {
+  it('POST /reporter/api/transactions/list — performance metric fields are number or null', async ({ skip }) => {
     const txs = await listTransactions();
-    if (txs.length === 0) return;
+    if (txs.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const t = txs[0];
     assert.ok(t.cpuAvg === null || typeof t.cpuAvg === 'number', 'cpuAvg should be number or null');
     assert.ok(t.memAvg === null || typeof t.memAvg === 'number', 'memAvg should be number or null');
@@ -31,17 +31,17 @@ describe('Transactions API', () => {
     assert.ok(typeof t.totalDownloadedBytes === 'number', 'totalDownloadedBytes should be a number');
   });
 
-  it('POST /reporter/api/transactions/list — duration is a positive number', async () => {
+  it('POST /reporter/api/transactions/list — duration is a positive number', async ({ skip }) => {
     const txs = await listTransactions();
-    if (txs.length === 0) return;
+    if (txs.length === 0) return skip('empty response from this tenant — nothing to assert on');
     for (const t of txs.slice(0, 5)) {
       assert.ok(t.duration >= 0, `duration should be >= 0, got ${t.duration}`);
     }
   });
 
-  it('GET /reporter/api/transactions/{id} — returns single transaction with time-series fields', async () => {
+  it('GET /reporter/api/transactions/{id} — returns single transaction with time-series fields', async ({ skip }) => {
     const txs = await listTransactions();
-    if (txs.length === 0) return;
+    if (txs.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const tx = await getTransaction(txs[0].id);
     assert.ok(typeof tx.id === 'number', 'id should be a number');
     assert.ok(typeof tx.name === 'string', 'name should be a string');
@@ -54,9 +54,9 @@ describe('Transactions API', () => {
     }
   });
 
-  it('GET /reporter/api/transactions/{id} — time-series samples have timestamp and value', async () => {
+  it('GET /reporter/api/transactions/{id} — time-series samples have timestamp and value', async ({ skip }) => {
     const txs = await listTransactions();
-    if (txs.length === 0) return;
+    if (txs.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const tx = await getTransaction(txs[0].id);
     for (const sample of (tx.cpuSamples ?? []).slice(0, 3)) {
       assert.ok(typeof sample.timestamp === 'number', 'sample.timestamp should be a number');

@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { getAllBrowsers } from './helpers/test-client.js';
+import { getAllBrowsers } from '../helpers/test-client.js';
 
 describe('Browsers API', () => {
   it('GET /api/v1/browsers — returns array', async () => {

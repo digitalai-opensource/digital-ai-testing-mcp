@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { getCurrentAndFutureReservations, deleteReservation } from './helpers/test-client.js';
+import { getCurrentAndFutureReservations, deleteReservation } from '../helpers/test-client.js';
 
 describe('Reservations API', () => {
   it('GET /api/v1/device-reservations — returns array (may be empty)', async () => {

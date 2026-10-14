@@ -259,3 +259,13 @@ describe('get_test_boilerplate — template line endings never disable the step 
     }
   });
 });
+
+describe('get_web_test_boilerplate — file naming', () => {
+  it('does not double the Test suffix', async () => {
+    const res = await call('get_web_test_boilerplate', { language: 'java-junit5', testName: 'ExampleWebTest', outputFormat: 'json' });
+    const j = JSON.parse(res.content.map((c) => c.text ?? '').join('')) as { files: Array<{ filename: string }> };
+    const names = j.files.map((f) => f.filename);
+    assert.ok(names.some((n) => /ExampleWebTest.java$/.test(n)), names.join(', '));
+    assert.ok(!names.some((n) => /TestTest/.test(n)), names.join(', '));
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { getAllTestViews, listTestViews } from './helpers/test-client.js';
+import { getAllTestViews, listTestViews } from '../helpers/test-client.js';
 
 describe('Test Views API', () => {
   it('GET /reporter/api/testView — returns array', async () => {

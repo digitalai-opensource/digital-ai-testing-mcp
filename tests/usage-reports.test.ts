@@ -6,6 +6,7 @@ import {
   checkUsageReportSizeGuard,
   USAGE_REPORT_TYPES,
   MAX_UNSCOPED_RANGE_DAYS,
+  usageReportRetentionNote,
 } from '../src/utils/usage-report-guard.js';
 import { buildUsageReportPath } from '../src/api/usage-reports.js';
 
@@ -184,5 +185,17 @@ describe('buildUsageReportPath', () => {
       userId: 26062411,
     });
     assert.match(path, /^\/api\/v2\/configuration\/get-CSV-reports\/27754602\/26062411\//);
+  });
+});
+
+describe('usageReportRetentionNote (2 years, platform 25.9+)', () => {
+  const now = Date.parse('2026-10-09T12:00:00Z');
+  it('warns when the range starts before the retention window', () => {
+    const note = usageReportRetentionNote('2024-01-01', now);
+    assert.match(note ?? '', /retained for 2 years/);
+    assert.match(note ?? '', /2024-01-01 to 2024-10-09/);
+  });
+  it('is silent inside the window', () => {
+    assert.equal(usageReportRetentionNote('2025-06-01', now), null);
   });
 });

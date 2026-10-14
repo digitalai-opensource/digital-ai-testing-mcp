@@ -24,7 +24,7 @@ This repo follows the [Conventional Commits](https://www.conventionalcommits.org
 1. Branch off `main` — `git checkout -b type/short-description`
 2. Commit using Conventional Commits format above
 3. Push and open a PR targeting `main`
-4. CI must pass before merging. CI runs lint, typecheck and build only, so run the tests locally too (see below)
+4. CI must pass before merging. CI runs lint, typecheck, build and the offline test project; the live API project (`npm run test:api`) only runs locally, so run it before a release
 5. At least 1 approval required (use admin bypass for solo work)
 6. Delete the branch after merging
 
@@ -38,7 +38,10 @@ npm run dev                  # live reload (tsx watch)
 npm run build                # compile TypeScript — must pass before committing
 npm run lint                 # ESLint — must pass before committing
 npm run typecheck            # TypeScript check only
-npm test                     # every tests/**/*.test.ts — API suites need a populated .env; unit suites run offline
+npm test                     # both projects below — needs a populated .env for the api project
+npm run test:offline         # tests/*.test.ts — unit and handler suites against stub servers; no .env; this is what CI runs
+npm run test:api             # tests/api/*.test.ts — integration suites against the live tenant (needs .env); a test that
+                             #   finds no data to assert on reports as SKIPPED, never as a silent pass
 npm run test:tools           # tool-layer guard/gate tests — in-memory transport, no credentials needed
 npm run test:<suite>         # one suite (see the scripts in package.json)
 npm run test:live            # live API-behaviour probes (tests/live) — not part of npm test; run before a release
@@ -59,3 +62,4 @@ Text files are stored and checked out with LF line endings (`.gitattributes`); W
 4. Never infer privilege from the access key's format. Role comes from the platform (`src/api/access-level.ts`); in tests, set it with `actAs(level)`.
 5. Verify against the live API any parameter you send and any response field you map — don't assume the platform honours it. Add a probe to `tests/live/api-behavior.live.ts` (`npm run test:live`).
 6. Add a row to `docs/tools.md`, and update the README if the change is user-visible. If you add a test file, add a `test:<suite>` script for it in `package.json`.
+7. Put every test in the file for its functional area — never in a file named after a date, a UAT run or a batch of fixes (those grow without bound and nobody can find the test for a given tool). `tests/<area>.test.ts` hits the live API through `tests/helpers/test-client.ts`; `tests/<area>-tools.test.ts` (and the other offline suites) run handlers against a stub server via `tests/helpers/offline.ts` (`startStubApi` + `connectTools`) — use that harness instead of hand-rolling an `http.createServer` + `InMemoryTransport` setup. A regression found in UAT goes next to the tool it concerns, with the finding noted in the test name or a comment.

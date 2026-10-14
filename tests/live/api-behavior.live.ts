@@ -35,8 +35,7 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
   beforeAll(async () => {
     const list = await listTests({ limit: 20, page: 1 });
     sampleTestId = list.data[0]?.test_id;
-    failedListRecord = list.data.find((r) => r.status === 'Failed') as Record<string, unknown> | undefined
-      ?? (list.data[0] as Record<string, unknown> | undefined);
+    failedListRecord = (list.data.find((r) => r.status === 'Failed') ?? list.data[0]) as unknown as Record<string, unknown> | undefined;
   });
 
   // FINDING 1 (barrier #1): the numeric-id endpoint silently ignores includeSteps.
@@ -140,7 +139,7 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
   // RCA info is readable. Read-only — never submits or cancels a run here.
   it('test-run status endpoint answers an unknown id with a 404; rca/info is readable', async () => {
     await assert.rejects(() => getTestRunStatus('1'), /404|does not exist/);
-    const rca = await getRootCauseAnalysis((await listTests({ limit: 1, page: 1 })).data[0].uuid);
+    const rca = await getRootCauseAnalysis({ kind: 'uuid', uuid: (await listTests({ limit: 1, page: 1 })).data[0].uuid });
     assert.ok(['string'].includes(typeof rca.status));
   });
 

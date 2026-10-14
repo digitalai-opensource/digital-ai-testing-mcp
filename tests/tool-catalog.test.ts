@@ -4,8 +4,9 @@
  */
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { setToolCatalog } from '../src/utils/tool-catalog.js';
-import { capabilityLines } from '../src/tools/meta-tools.js';
+import { capabilityLines, REGISTERED_TOOLS } from '../src/tools/meta-tools.js';
 
 describe('get_server_info capability domains', () => {
   it('counts tools per module from the catalog and still lists an undescribed module', () => {
@@ -21,5 +22,14 @@ describe('get_server_info capability domains', () => {
     assert.match(lines.find((l) => l.includes('Backup'))!, /\(1 tool\)$/);
     assert.match(lines.find((l) => l.includes('brand-new'))!, /shiny_tool \(1 tool\)$/);
     assert.ok(!lines.some((l) => l.includes('Test Runs')), 'areas with no registered tools are left out');
+  });
+});
+
+describe('tool names in agent-facing guidance', () => {
+  it('session-failure diagnostics only name tools that exist', () => {
+    const src = readFileSync(new URL('../src/api/webdriver.ts', import.meta.url), 'utf8');
+    const named = [...src.matchAll(/\b(check_[a-z_]+|find_available_device|get_device_health_summary|get_application_info)\b/g)].map((m) => m[1]);
+    const registered = new Set<string>(REGISTERED_TOOLS);
+    assert.deepEqual([...new Set(named)].filter((n) => !registered.has(n)), []);
   });
 });

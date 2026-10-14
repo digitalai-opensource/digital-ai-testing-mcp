@@ -1,7 +1,7 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { getUsers, getMyAccountInfo } from './helpers/test-client.js';
-import { assertDefined } from './helpers/test-client.js';
+import { getUsers, getMyAccountInfo } from '../helpers/test-client.js';
+import { assertDefined } from '../helpers/test-client.js';
 
 describe('Users API', () => {
   it('GET /api/v1/users — returns array with id, userName, email, roles', async () => {

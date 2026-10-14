@@ -1,8 +1,8 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { listTests, getGroupedTests, getDistinctKeyValues, bucketFailures } from './helpers/test-client.js';
-import type { TestReport } from '../src/types/digital-ai.js';
-import { TEST_STATUSES } from '../src/utils/test-status.js';
+import { listTests, getGroupedTests, getDistinctKeyValues, bucketFailures } from '../helpers/test-client.js';
+import type { TestReport } from '../../src/types/digital-ai.js';
+import { TEST_STATUSES } from '../../src/utils/test-status.js';
 
 function fakeReport(id: number, name: string, fields: Partial<TestReport>): TestReport {
   return { test_id: id, name, ...fields } as unknown as TestReport;

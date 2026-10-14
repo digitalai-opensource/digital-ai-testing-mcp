@@ -30,6 +30,7 @@ import { registerUsageReportTools } from '../src/tools/usage-report-tools.js';
 import { resetClient, getActiveAuthScheme, getActiveAccessKey, getActiveUrl } from '../src/api/client.js';
 import { setAccessLevelOverrideForTests, type AccessLevel } from '../src/utils/access-level.js';
 import { validateInputPath, validateOutputPath } from '../src/utils/path-guard.js';
+import { PLAINTEXT_KEY_WARNING } from '../src/utils/command-payload.js';
 
 dotenv.config();
 
@@ -337,6 +338,12 @@ describe('Upload-command tools emit a runnable command without any API call', ()
     assert.match(text, /X-API-KEY/);
   });
 
+  it('get_repository_upload_command JSON carries the plaintext-credential warning (UAT #64)', async () => {
+    const res = await callTool('get_repository_upload_command', { localFilePath: '/x/data.json', localPlatform: 'linux', outputFormat: 'json' });
+    assert.notEqual(res.isError, true, textOf(res));
+    assert.equal(JSON.parse(textOf(res)).credentialWarning, PLAINTEXT_KEY_WARNING);
+  });
+
   it('get_provisioning_profile_upload_command emits both files and a PowerShell variant on windows', async () => {
     const res = await callTool('get_provisioning_profile_upload_command', {
       p12FilePath: 'C:\\certs\\dist.p12',
@@ -374,6 +381,12 @@ describe('Download-command tools emit a runnable command without any API call', 
     assert.match(text, /reporter\/api\/reports\/abc-123-uuid\/attachments/);
     assert.match(text, /-o "\/home\/me\/session\.zip"/);
     assert.match(text, /X-API-KEY/);
+  });
+
+  it('get_test_attachments_download_command JSON carries the plaintext-credential warning (UAT #64)', async () => {
+    const res = await callTool('get_test_attachments_download_command', { uuid: '44882dbd-7cbd-4f82-96a1-9e12fcbead5f', localPlatform: 'linux', outputFormat: 'json' });
+    assert.notEqual(res.isError, true, textOf(res));
+    assert.equal(JSON.parse(textOf(res)).credentialWarning, PLAINTEXT_KEY_WARNING);
   });
 
   it('get_repository_file_download_command emits a PowerShell Invoke-WebRequest on windows', async () => {

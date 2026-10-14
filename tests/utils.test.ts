@@ -1,11 +1,11 @@
 import { describe, it, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
-import { applyMaxResults, appendTruncationNotice, DEFAULT_MAX_RESULTS, ABSOLUTE_MAX_RESULTS } from '../src/utils/pagination.js';
+import { applyMaxResults, appendTruncationNotice, withPaging, DEFAULT_MAX_RESULTS, ABSOLUTE_MAX_RESULTS } from '../src/utils/pagination.js';
 import { checkDestructiveGuard } from '../src/utils/destructive-guard.js';
 import { validateOutputPath } from '../src/utils/path-guard.js';
 import { formatDeviceTimestamp } from '../src/utils/timestamp.js';
-import { getStatusEmoji, formatProvisioningProfileList } from '../src/utils/response-formatter.js';
-import type { ProvisioningProfile } from '../src/types/digital-ai.js';
+import { getStatusEmoji, formatProvisioningProfileList, formatTestReport } from '../src/utils/response-formatter.js';
+import type { ProvisioningProfile, TestReport } from '../src/types/digital-ai.js';
 import { getDeploymentMode } from '../src/utils/deployment-mode.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, staleBuildRemedy } from '../src/utils/locality.js';
 
@@ -131,6 +131,14 @@ describe('applyMaxResults', () => {
     assert.equal(result.total, 0);
     assert.equal(result.truncated, false);
     assert.deepEqual(result.items, []);
+  });
+});
+
+describe('withPaging', () => {
+  it('adds total/returned/truncated without overwriting existing keys', () => {
+    const paged = applyMaxResults(Array.from({ length: 60 }, (_, i) => i), 50);
+    assert.deepEqual(withPaging({ items: [] }, paged), { items: [], total: 60, returned: 50, truncated: true });
+    assert.equal(withPaging({ total: 'devices' }, paged).total, 'devices', 'an existing total keeps its meaning');
   });
 });
 
@@ -277,5 +285,17 @@ describe('formatProvisioningProfileList', () => {
     const result = formatProvisioningProfileList([valid]);
     assert.ok(result.includes('🟢'));
     assert.ok(result.includes('VALID'));
+  });
+});
+
+describe('formatTestReport', () => {
+  const base: TestReport = {
+    uuid: 'u', test_id: 1, name: 'Axe Test', status: 'Passed', status_code: 0, success: true,
+    start_time: '2026-06-10T13:52:49.656Z', create_time: '2026-06-10T13:52:49.656Z', duration: 1000, project_id: 1,
+    has_attachment: 'N', attachment_count: 0, attachments_size: 0,
+  };
+  it('shows an accessibility line only when the run has an Axe report', () => {
+    assert.match(formatTestReport({ ...base, accessibility_report: true }), /Accessibility: Axe report/);
+    assert.doesNotMatch(formatTestReport({ ...base, accessibility_report: false }), /Accessibility/);
   });
 });

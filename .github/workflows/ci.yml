@@ -32,3 +32,7 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # Unit + handler suites only (stub servers, no credentials). tests/api needs a live tenant and stays local.
+      - name: Test (offline)
+        run: npm run test:offline

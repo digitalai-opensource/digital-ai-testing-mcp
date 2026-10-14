@@ -4,8 +4,8 @@ import {
   getAllProjects,
   getUsersInProject,
   getAutomationProperties,
-} from './helpers/test-client.js';
-import type { Project } from '../src/types/digital-ai.js';
+} from '../helpers/test-client.js';
+import type { Project } from '../../src/types/digital-ai.js';
 
 describe('Projects API', () => {
   let allProjects: Project[];
@@ -32,8 +32,8 @@ describe('Projects API', () => {
     assert.ok(defaultProject !== undefined, 'Default project should exist in the list');
   });
 
-  it('GET /api/v1/projects/<id>/users — returns array for Default project', async () => {
-    if (!defaultProject) return;
+  it('GET /api/v1/projects/<id>/users — returns array for Default project', async ({ skip }) => {
+    if (!defaultProject) return skip('no Default project in this tenant');
     const users = await getUsersInProject(defaultProject.id);
     assert.ok(Array.isArray(users), 'Users should be an array');
     for (const u of users.slice(0, 3)) {

@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { getDeviceGroups, getDevicesInDeviceGroup } from './helpers/test-client.js';
+import { getDeviceGroups, getDevicesInDeviceGroup } from '../helpers/test-client.js';
 
 describe('Device Groups API', () => {
   it('GET /api/v1/device-groups — returns a record/map of id→name', async () => {

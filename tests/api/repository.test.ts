@@ -1,7 +1,7 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { listFiles, getFileInfo } from './helpers/test-client.js';
-import type { RepositoryFile } from '../src/types/digital-ai.js';
+import { listFiles, getFileInfo } from '../helpers/test-client.js';
+import type { RepositoryFile } from '../../src/types/digital-ai.js';
 
 describe('Repository API', () => {
   let allFiles: RepositoryFile[];
@@ -24,8 +24,8 @@ describe('Repository API', () => {
     }
   });
 
-  it('GET /api/v1/files/<id> — returns single file detail matching list entry', async () => {
-    if (allFiles.length === 0) return;
+  it('GET /api/v1/files/<id> — returns single file detail matching list entry', async ({ skip }) => {
+    if (allFiles.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const file = await getFileInfo(allFiles[0].id);
     assert.equal(file.id, allFiles[0].id, 'File ID should match');
     assert.equal(file.uniqueName, allFiles[0].uniqueName, 'uniqueName should match');

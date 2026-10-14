@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { extractApiErrorMessage } from '../src/utils/api-error.js';
+import { Buffer } from 'node:buffer';
 
 describe('extractApiErrorMessage', () => {
   it('prefers a top-level message', () => {

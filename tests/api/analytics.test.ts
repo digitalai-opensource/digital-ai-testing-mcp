@@ -1,16 +1,16 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { listTests, getGroupedTests } from './helpers/test-client.js';
+import { listTests, getGroupedTests } from '../helpers/test-client.js';
 
 // Tests for the analytics tools' underlying API operations.
 // The tools themselves (get_test_stability_report, get_cross_platform_divergence,
 // get_daily_execution_trend) are thin wrappers over these API functions.
 
 describe('Analytics — test stability foundations', () => {
-  it('listTests with name contains filter returns matching records', async () => {
+  it('listTests with name contains filter returns matching records', async ({ skip }) => {
     // Get any test name to search for
     const seed = await listTests({ limit: 1, page: 1, returnTotalCount: false });
-    if (!seed.data || seed.data.length === 0) return;
+    if (!seed.data || seed.data.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const testName = seed.data[0].name.slice(0, 10); // first 10 chars as substring
 
     const result = await listTests({
@@ -27,21 +27,21 @@ describe('Analytics — test stability foundations', () => {
     }
   });
 
-  it('listTests sorted descending by start_time is ordered newest-first', async () => {
+  it('listTests sorted descending by start_time is ordered newest-first', async ({ skip }) => {
     const result = await listTests({
       limit: 10, page: 1, returnTotalCount: false,
       sort: [{ property: 'start_time', descending: true }],
     });
-    if (!result.data || result.data.length < 2) return;
+    if (!result.data || result.data.length < 2) return skip('fewer than two records in this tenant — ordering cannot be checked');
     const times = result.data.map(r => new Date(r.start_time).getTime());
     for (let i = 1; i < times.length; i++) {
       assert.ok(times[i - 1] >= times[i], `Result ${i - 1} should be newer than result ${i}`);
     }
   });
 
-  it('listTests returns records with parseable start_time dates', async () => {
+  it('listTests returns records with parseable start_time dates', async ({ skip }) => {
     const result = await listTests({ limit: 5, page: 1 });
-    if (!result.data) return;
+    if (!result.data) return skip('empty response from this tenant — nothing to assert on');
     for (const r of result.data) {
       const ts = new Date(r.start_time).getTime();
       assert.ok(!isNaN(ts), `start_time "${r.start_time}" should be a valid date`);
@@ -96,12 +96,12 @@ describe('Analytics — cross-platform divergence foundations', () => {
 });
 
 describe('Analytics — daily trend foundations', () => {
-  it('listTests returns records with ISO 8601 start_time for bucketing', async () => {
+  it('listTests returns records with ISO 8601 start_time for bucketing', async ({ skip }) => {
     const result = await listTests({
       limit: 20, page: 1,
       sort: [{ property: 'start_time', descending: true }],
     });
-    if (!result.data || result.data.length === 0) return;
+    if (!result.data || result.data.length === 0) return skip('empty response from this tenant — nothing to assert on');
     for (const r of result.data) {
       const d = new Date(r.start_time);
       assert.ok(!isNaN(d.getTime()), `start_time "${r.start_time}" must be valid ISO 8601`);
@@ -110,10 +110,10 @@ describe('Analytics — daily trend foundations', () => {
     }
   });
 
-  it('listTests status field is one of the expected values', async () => {
+  it('listTests status field is one of the expected values', async ({ skip }) => {
     const VALID = new Set(['Passed', 'Failed', 'Incomplete', 'Skipped', 'Error', 'Healed']);
     const result = await listTests({ limit: 20, page: 1 });
-    if (!result.data) return;
+    if (!result.data) return skip('empty response from this tenant — nothing to assert on');
     for (const r of result.data) {
       assert.ok(VALID.has(r.status), `Unexpected status value: "${r.status}"`);
     }

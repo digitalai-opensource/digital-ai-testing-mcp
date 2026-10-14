@@ -1,7 +1,7 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { getApplications, getApplicationInfo } from './helpers/test-client.js';
-import type { Application } from '../src/types/digital-ai.js';
+import { getApplications, getApplicationInfo } from '../helpers/test-client.js';
+import type { Application } from '../../src/types/digital-ai.js';
 
 describe('Applications API', () => {
   let allApps: Application[];
@@ -30,8 +30,8 @@ describe('Applications API', () => {
     }
   });
 
-  it('GET /api/v1/applications/<id> — returns full app detail including plugins array', async () => {
-    if (allApps.length === 0) return;
+  it('GET /api/v1/applications/<id> — returns full app detail including plugins array', async ({ skip }) => {
+    if (allApps.length === 0) return skip('empty response from this tenant — nothing to assert on');
     const app = await getApplicationInfo(allApps[0].id);
     assert.equal(app.id, allApps[0].id, 'App ID should match');
     assert.ok('plugins' in app || app.plugins === undefined, 'Should have plugins field');
