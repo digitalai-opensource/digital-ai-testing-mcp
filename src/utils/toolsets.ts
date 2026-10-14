@@ -95,6 +95,47 @@ export function describeShape(shape: Record<string, unknown>): string[] {
   return lines;
 }
 
+/**
+ * `name(required*, optional, …)` — one line per tool. enable_toolset returns these for every tool it just loaded
+ * because a client that does not honour tools/list_changed keeps the placeholder schema (no parameters) and the agent
+ * then INVENTS parameter names (fidelity eval 2026-10-14: execute_test_run called with framework/testBundlePath/
+ * applicationId instead of executionType/testsPath/cloudAppId).
+ */
+export function signatureOf(name: string, shape: Record<string, unknown>): string {
+  const params = Object.entries(shape).map(([key, node]) => {
+    const optional = typeof (node as { isOptional?: () => boolean })?.isOptional === 'function' && (node as { isOptional: () => boolean }).isOptional();
+    // A bare name invites misuse of guard flags: with only the signature in view (no description) an agent set
+    // confirmLargeExport: true on its first call. Keep the rule visible where the name is.
+    const guard = /^confirm/i.test(key) ? ' [set only when the USER explicitly agreed]' : '';
+    return `${key}${optional ? '' : '*'}: ${zodTypeLabel(node)}${guard}`;
+  });
+  return `${name}(${params.join(', ')})`;
+}
+
+/** Compact type for a zod (v4) node: `string`, `number`, `string[]`, `"a"|"b"`, … — unwrapping optional/default/preprocess. */
+function zodTypeLabel(node: unknown, depth = 0): string {
+  const def = (node as { _def?: Record<string, unknown> } | undefined)?._def;
+  if (!def || depth > 6) return 'unknown';
+  switch (def.type) {
+    case 'optional': case 'default': case 'nullable': case 'readonly': case 'catch':
+      return zodTypeLabel(def.innerType, depth + 1);
+    case 'pipe': // z.preprocess(fn, schema): `out` is the real schema
+      return zodTypeLabel(def.out ?? def.in, depth + 1);
+    case 'array':
+      return `${zodTypeLabel(def.element, depth + 1)}[]`;
+    case 'enum':
+      return Object.values(def.entries as Record<string, unknown>).map((v) => JSON.stringify(v)).join('|');
+    case 'literal':
+      return (def.values as unknown[]).map((v) => JSON.stringify(v)).join('|');
+    case 'object':
+      return 'object';
+    case 'union':
+      return (def.options as unknown[]).map((o) => zodTypeLabel(o, depth + 1)).join('|');
+    default:
+      return typeof def.type === 'string' ? def.type : 'unknown';
+  }
+}
+
 function firstSentence(text: string, max = 150): string {
   const s = text.replace(/\s+/g, ' ').trim();
   const end = s.search(/[.!?](\s|$)/);
@@ -104,7 +145,7 @@ function firstSentence(text: string, max = 150): string {
 
 /** Kept short — it repeats for every unloaded tool. enable_toolset's description explains the mechanism in full. */
 export function placeholderDescription(tool: CapturedTool, toolset: string): string {
-  return `[${toolset} toolset — loads on first call] ${firstSentence(tool.description, 120)}`;
+  return `[${toolset} toolset — loads on first call; that first call runs nothing and returns the full parameters] ${firstSentence(tool.description, 120)}`;
 }
 
 export interface ToolsetController {
@@ -114,6 +155,8 @@ export interface ToolsetController {
   enable(toolsets: string[]): string[];
   /** Per-toolset summary for get_server_info / enable_toolset. */
   summary(): Array<{ toolset: string; description: string; loaded: boolean; tools: number }>;
+  /** `name(param*, …)` signatures for the named tools (required params marked *), in the given order. */
+  signatures(names: string[]): string[];
 }
 
 /**
@@ -154,6 +197,9 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
       }
       if (changed.length) notify.call(server);
       return changed;
+    },
+    signatures(names) {
+      return names.flatMap((n) => { const h = handles.get(n); return h ? [signatureOf(n, h.tool.shape)] : []; });
     },
     summary() {
       return Object.entries(TOOLSETS).map(([toolset, t]) => ({

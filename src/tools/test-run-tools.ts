@@ -22,6 +22,7 @@ import AdmZip from 'adm-zip';
 import { listActiveSessions } from '../api/webdriver.js';
 import { detectFabricationIssues } from './boilerplate-tools.js';
 import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
+import { caseInsensitiveEnum } from '../utils/schema.js';
 import { MAESTRO_ACTIONS, buildMaestroFlowYaml, validateMaestroFlow, bareIdWarnings, flowFileName, type MaestroFlowSpec } from '../utils/maestro-flow.js';
 
 const MAESTRO_BUNDLE_NOTE =
@@ -29,24 +30,31 @@ const MAESTRO_BUNDLE_NOTE =
   'an optional config.yaml and utils/ may sit alongside. Android only. Build flows from element IDs captured live ' +
   '(start_inspection_session → get_element_tree) — never guessed IDs. generate_maestro_flow builds the YAML and the bundle.';
 
+/** `'["a","b"]'` → `["a","b"]`, `"a"` → `["a"]`; arrays and anything else pass through untouched. */
+function parseStringArray(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const t = v.trim();
+  if (t.startsWith('[')) { try { return JSON.parse(t); } catch { return v; } }
+  return [v];
+}
+
 // Shared by execute_test_run and get_test_run_command — one schema, so the two cannot drift.
 const runParams = {
-  executionType: z.enum(TEST_RUN_EXECUTION_TYPES).describe('ESPRESSO (Android instrumentation), XCUITEST (iOS) or MAESTRO (Android flows).'),
-  runningType: z
-    .enum(TEST_RUN_RUNNING_TYPES)
+  executionType: caseInsensitiveEnum(TEST_RUN_EXECUTION_TYPES).describe('ESPRESSO (Android instrumentation), XCUITEST (iOS) or MAESTRO (Android flows).'),
+  runningType: caseInsensitiveEnum(TEST_RUN_RUNNING_TYPES)
     .optional()
     .default('fastFeedback')
     .describe('fastFeedback (default): spread the tests across up to maxDevices devices matching ONE deviceQuery. coverage: run every test on one device per deviceQuery.'),
-  cloudAppId: z.number().int().optional().describe('Numeric application id from list_applications (NOT the app name — a name is rejected). One app source is required.'),
+  cloudAppId: z.coerce.number().int().optional().describe('Numeric application id from list_applications (NOT the app name — a name is rejected). One app source is required.'),
   appUrl: z.string().optional().describe('URL of the application under test. One app source is required.'),
   testsUrl: z.string().optional().describe('ESPRESSO/XCUITEST only: URL of the test package (Espresso: the androidTest .apk). One test source is required.'),
   cloudTestAppId: z.number().int().optional().describe('ESPRESSO/XCUITEST only: numeric id of the test package in the file repository.'),
+  // Without a refreshed schema (MCP_TOOLSETS placeholder) agents send this as a JSON string or a bare query — accept both.
   deviceQueries: z
-    .array(z.string())
-    .min(1)
+    .preprocess(parseStringArray, z.array(z.string()).min(1))
     .describe("Device queries, e.g. [\"@os='android' and @category='PHONE'\"]. fastFeedback takes exactly one. Add @region from find_available_device to avoid unhealthy regions."),
-  maxDevices: z.number().int().min(1).optional().describe('fastFeedback: maximum devices to use (recommended — the default is the license maximum).'),
-  minDevices: z.number().int().min(1).optional().describe('fastFeedback: minimum devices (default 1).'),
+  maxDevices: z.coerce.number().int().min(1).optional().describe('fastFeedback: maximum devices to use (recommended — the default is the license maximum).'),
+  minDevices: z.coerce.number().int().min(1).optional().describe('fastFeedback: minimum devices (default 1).'),
   retry: z.number().int().min(0).max(5).optional().describe('Retries for failed tests, 0–5 (default 0).'),
   retryDifferentDevice: z.boolean().optional().describe('Retry failed tests on a different device.'),
   overallTimeoutMs: z.number().int().optional().describe('Timeout for the whole run in ms (platform default 4 h).'),

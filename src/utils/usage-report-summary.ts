@@ -31,6 +31,12 @@ export interface SummaryResult {
   availableColumns: string[];
   /** True when multi-value cells were split — a row then counts (and sums) once in EACH of its values. */
   valuesSplit?: boolean;
+  /** Wall-clock time the platform took to generate and stream the CSV — minutes for an unfiltered month. */
+  fetchMs?: number;
+  /** Size of the CSV that was fetched and discarded after aggregation. */
+  csvBytes?: number;
+  /** True when only the first (summary) section was read — the per-row section was never downloaded. */
+  stoppedAfterFirstSection?: boolean;
 }
 
 const DEFAULT_TOP_N = 50;
@@ -94,10 +100,16 @@ export function summarizeRows(parsed: ParsedCsv, opts: SummarizeOptions): Summar
  * Picks the section of a multi-section report that has the requested columns (first match wins). Errors list every
  * section's columns so the caller can retry with a real name.
  */
+/** True when this header row has every column the summary needs (groupBy, and sumColumn when given). */
+export function sectionHasColumns(headers: string[], opts: SummarizeOptions): boolean {
+  const wanted = [opts.groupBy, ...(opts.sumColumn !== undefined ? [opts.sumColumn] : [])];
+  return wanted.every((name) => findColumnIndex(headers, name) !== -1);
+}
+
 export function pickSection(sections: ParsedCsv[], opts: SummarizeOptions): ParsedCsv {
   if (sections.length === 0) return { headers: [], rows: [] };
   const wanted = [opts.groupBy, ...(opts.sumColumn !== undefined ? [opts.sumColumn] : [])];
-  const match = sections.find((sec) => wanted.every((name) => findColumnIndex(sec.headers, name) !== -1));
+  const match = sections.find((sec) => sectionHasColumns(sec.headers, opts));
   if (match) return match;
   if (sections.length === 1) return sections[0]; // summarizeRows reports the missing column
   const listing = sections.map((sec, i) => `section ${i + 1}: ${sec.headers.join(', ')}`).join('; ');

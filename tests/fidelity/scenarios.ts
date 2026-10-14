@@ -147,7 +147,8 @@ export const SCENARIOS: Scenario[] = [
     guards: 'Test Run API: numeric cloudApp id, Maestro bundle, no ad-hoc inspection session',
     prompt: 'Run my Maestro flows from C:/flows/bundle.zip against the ExperiBank Android app on one Android phone.',
     checks: [
-      { kind: 'calledWhere', tool: 'execute_test_run', where: (i) => i.executionType === 'MAESTRO', label: 'submits a MAESTRO test run' },
+      // The server accepts any casing of executionType (agents without a refreshed schema send "maestro"), so the check does too.
+      { kind: 'calledWhere', tool: 'execute_test_run', where: (i) => String(i.executionType ?? '').toUpperCase() === 'MAESTRO', label: 'submits a MAESTRO test run' },
       { kind: 'calledBefore', before: ['list_applications', 'find_latest_application', 'get_application_info'], after: ['execute_test_run'], label: 'looks up the numeric app id first', soft: true },
       { kind: 'notCalled', tools: ['start_inspection_session'], label: 'does not open an inspection session to "run" flows' },
     ],

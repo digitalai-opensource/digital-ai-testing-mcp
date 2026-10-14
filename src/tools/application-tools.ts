@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { osTypeLower } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   getApplications,
@@ -64,11 +65,11 @@ export function registerApplicationTools(server: McpServer): void {
         .string()
         .optional()
         .describe(
-          'Filter by app name — partial, case-insensitive match on applicationName. ' +
-          'E.g. "ExperiBank" returns all apps with "ExperiBank" in their name, without needing the bundle ID or package name. ' +
-          'Combine with osType to narrow to a specific platform.'
+          'Filter by name — partial, case-insensitive match on the display name, package name, bundle identifier, ' +
+          'unique name or internal name. E.g. "ExperiBank" also finds the Android demo app whose display name is ' +
+          '"SeeTestDemoApp" but whose package is com.experitest.ExperiBank. Combine with osType to narrow to a platform.'
         ),
-      osType: z.enum(['ios', 'android']).optional().describe("Filter by platform: 'ios' or 'android'."),
+      osType: osTypeLower().optional().describe("Filter by platform: 'ios' or 'android'."),
       packageName: z.string().optional().describe('Filter by Android package name (exact server-side filter).'),
       bundleIdentifier: z.string().optional().describe('Filter by iOS bundle identifier (exact server-side filter).'),
       uniqueName: z.string().optional().describe('Filter by unique name alias.'),
@@ -104,8 +105,13 @@ export function registerApplicationTools(server: McpServer): void {
           isForSimulator,
         });
         if (nameContains) {
+          // Display name alone is not enough: the Android ExperiBank demo is "SeeTestDemoApp" by display name and only
+          // its package (com.experitest.ExperiBank) carries the name the user knows (fidelity eval 2026-10-14 — the
+          // agent concluded "no Android ExperiBank exists" and stopped).
           const q = nameContains.toLowerCase();
-          apps = apps.filter(a => a.applicationName.toLowerCase().includes(q));
+          apps = apps.filter(a =>
+            [a.applicationName, a.name, a.packageName, a.bundleIdentifier, a.uniqueName].some(v => (v ?? '').toLowerCase().includes(q))
+          );
         }
         if (sortBy) {
           apps = [...apps].sort((a, b) => {
@@ -126,6 +132,7 @@ export function registerApplicationTools(server: McpServer): void {
           applications: paged.items.map(a => ({
             id: a.id,
             name: a.applicationName,
+            identifier: a.osType === 'IOS' ? (a.bundleIdentifier ?? null) : (a.packageName ?? null),
             osType: a.osType,
             version: a.releaseVersion,
             uploadedAt: a.createdAtFormatted || new Date(a.createdAt).toISOString().slice(0, 10),
@@ -731,7 +738,7 @@ export function registerApplicationTools(server: McpServer): void {
           'Find by app name — partial, case-insensitive match. E.g. "ExperiBank" finds the latest upload whose name contains "ExperiBank". ' +
           'Use this when you do not know the bundle identifier or package name.'
         ),
-      osType: z.enum(['ios', 'android']).optional().describe("Platform: 'ios' or 'android'. Optional when searching by appName alone."),
+      osType: osTypeLower().optional().describe("Platform: 'ios' or 'android'. Optional when searching by appName alone."),
       packageName: z
         .string()
         .optional()

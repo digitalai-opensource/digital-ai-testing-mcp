@@ -30,16 +30,24 @@ export function makeToolsetTools(getController: () => ToolsetController | undefi
         }
         const changed = toolsets?.length ? c.enable(toolsets) : [];
         const summary = c.summary();
+        const signatures = c.signatures(changed);
+        // A client that ignores tools/list_changed still holds the placeholder schemas (no parameters). Hand the agent
+        // the parameter NAMES now so it never has to guess them; descriptions arrive with the refreshed schema or, for a
+        // tool still shown as a placeholder, from its first call.
         const lines = [
           ...(toolsets?.length
             ? [changed.length
                 ? `✅ Loaded ${toolsets.join(', ')} — ${changed.length} tool(s) now have their full definitions. Clients that support tool-list updates refresh automatically; either way the tools are callable now.`
                 : `${toolsets.join(', ')} already loaded — nothing changed.`, '']
             : []),
+          ...(signatures.length
+            ? ['Parameter names of the tools just loaded (* = required). Use these exact names — if your tool list has not refreshed, the old placeholder schema shows no parameters. confirm* flags are guards: set one only after the user explicitly agreed, never to get past a guard message.',
+               ...signatures.map((s) => `  ${s}`), '']
+            : []),
           'Toolsets:',
           ...summary.map((t) => `  ${t.loaded ? '✅' : '○'} ${t.toolset} — ${t.description} (${t.tools} tools)`),
         ];
-        return respond(outputFormat, { loadedNow: changed, toolsets: summary }, lines.join('\n'));
+        return respond(outputFormat, { loadedNow: changed, signatures, toolsets: summary }, lines.join('\n'));
       }
     );
   };

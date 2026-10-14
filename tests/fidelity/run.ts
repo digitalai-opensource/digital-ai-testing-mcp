@@ -65,6 +65,8 @@ function redactor(env: Record<string, string>): (s: string) => string {
   return (s) => secrets.reduce((acc, v) => acc.split(v).join('[REDACTED]'), s);
 }
 
+const SESSION_TIMEOUT_MS = 10 * 60_000;
+
 interface RunResult { scenario: Scenario; mode: string; run: number; trajectory: Trajectory; checks: CheckResult[]; passed: boolean; exitCode: number | null; stderr: string; transcriptFile: string }
 
 function runOne(bin: string, scenario: Scenario, mode: string, run: number, env: Record<string, string>, args: Args, outDir: string, redact: (s: string) => string): Promise<RunResult> {
@@ -92,7 +94,8 @@ function runOne(bin: string, scenario: Scenario, mode: string, run: number, env:
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
-    const timer = setTimeout(() => child.kill(), 10 * 60_000);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, SESSION_TIMEOUT_MS);
     child.on('close', (code) => {
       clearTimeout(timer);
       const transcriptFile = join(outDir, 'transcripts', `${mode}__${scenario.id}__${run}.jsonl`);
@@ -105,7 +108,9 @@ function runOne(bin: string, scenario: Scenario, mode: string, run: number, env:
         rmSync(dirname(auto.replace(/[\\/]+$/, '')), { recursive: true, force: true });
       }
       const checks = evaluate(trajectory, scenario.checks);
-      done({ scenario, mode, run, trajectory, checks, passed: scenarioPassed(checks) && code === 0, exitCode: code, stderr: redact(stderr).slice(-2000), transcriptFile });
+      // A session the harness had to kill is a failure even when every check passed: the agent never finished.
+      const killed = timedOut ? `[harness] killed after ${SESSION_TIMEOUT_MS / 60_000} min — the session never finished (a tool call hung or the agent looped)\n` : '';
+      done({ scenario, mode, run, trajectory, checks, passed: scenarioPassed(checks) && code === 0 && !timedOut, exitCode: code, stderr: (killed + redact(stderr)).slice(-2000), transcriptFile });
     });
   });
 }
@@ -146,7 +151,8 @@ function report(results: RunResult[], args: Args, started: Date): string {
       lines.push('', `**${r.mode} · run ${r.run}: ${r.passed ? 'PASS' : 'FAIL'}** — ${r.trajectory.calls.length} tool calls, ${r.trajectory.turns ?? '?'} turns, $${(r.trajectory.costUsd ?? 0).toFixed(2)}${r.exitCode !== 0 ? ` · exit ${r.exitCode}` : ''}`);
       lines.push(`- trajectory: ${r.trajectory.calls.map((c) => c.tool + (c.denied ? '⊘' : '')).join(' → ') || '(none)'}`);
       for (const c of r.checks) lines.push(`- ${c.pass ? '✅' : c.soft ? '⚠️' : '❌'} ${c.label}${c.soft ? ' (soft)' : ''} — ${c.detail}`);
-      if (r.exitCode !== 0 && r.stderr) lines.push(`- stderr: \`${r.stderr.replace(/\s+/g, ' ').slice(0, 300)}\``);
+      if (r.exitCode !== 0 && !r.stderr) lines.push(`- ❌ session ended abnormally (exit ${r.exitCode}) — a failure regardless of the checks`);
+      if (r.exitCode !== 0 && r.stderr) lines.push(`- ❌ stderr: \`${r.stderr.replace(/\s+/g, ' ').slice(0, 300)}\``);
       lines.push(`- transcript: ${r.transcriptFile.replace(ROOT, '.')}`);
     }
   }

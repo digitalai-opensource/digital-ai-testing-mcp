@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { caseInsensitiveEnum } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getDevicesByQuery, getDevice } from '../api/devices.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
@@ -124,7 +125,7 @@ export function registerDebugTools(server: McpServer): void {
           : 'Required — cannot be inferred because the MCP server runs in Docker. ') +
         'Determines the download URL, script format (.ps1 vs .sh), and binary name.'
       ),
-      devicePlatform: z.enum(['android', 'ios']).optional().describe(
+      devicePlatform: caseInsensitiveEnum(['android', 'ios']).optional().describe(
         'OS filter used when auto-selecting a device (serialNumber not provided). Ignored if serialNumber is given.'
       ),
       osVersion: z.string().optional().describe(

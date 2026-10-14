@@ -51,8 +51,8 @@ export function accountInfo(role: string, projectName: string, extra: Record<str
   };
 }
 
-/** Return `undefined` for 404, a plain value for 200 JSON, or `reply(status, body)`. */
-export type StubHandler = (req: StubRequest) => unknown;
+/** Return `undefined` for 404, a plain value for 200 JSON, or `reply(status, body)`. May be async (e.g. to delay). */
+export type StubHandler = (req: StubRequest) => unknown | Promise<unknown>;
 
 export interface StubApi {
   baseUrl: string;
@@ -73,7 +73,7 @@ export async function startStubApi(handler: StubHandler, opts: StubOptions = {})
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => { raw += c; });
-    req.on('end', () => {
+    req.on('end', async () => {
       const u = new URL(req.url ?? '/', 'http://stub');
       let json: Record<string, unknown> = {};
       try { json = raw ? JSON.parse(raw) : {}; } catch { /* multipart or plain text */ }
@@ -81,7 +81,7 @@ export async function startStubApi(handler: StubHandler, opts: StubOptions = {})
         method: req.method ?? 'GET', url: req.url ?? '/', path: u.pathname, query: u.searchParams, headers: req.headers, raw, json,
       };
       requests.push(stubReq);
-      const out = handler(stubReq);
+      const out = await handler(stubReq);
       res.setHeader('Content-Type', 'application/json');
       if (out === undefined) { res.statusCode = 404; return void res.end('{}'); }
       const r = out instanceof Reply ? out : new Reply(200, out);

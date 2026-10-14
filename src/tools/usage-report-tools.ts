@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { downloadUsageReport, summarizeUsageReport, buildUsageReportPath } from '../api/usage-reports.js';
+import { downloadUsageReport, summarizeUsageReport, buildUsageReportPath, DEFAULT_USAGE_REPORT_TIMEOUT_MS } from '../api/usage-reports.js';
 import { validateUsageReportParams, checkUsageReportSizeGuard, usageReportRetentionNote, MAX_UNSCOPED_RANGE_DAYS } from '../utils/usage-report-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { serverFsDownloadNotice, serverFsOutputParam, localPlatformParamNotice } from '../utils/locality.js';
@@ -59,6 +59,15 @@ const CONFIRM_LARGE_DESC =
   'Set true ONLY when the user has explicitly agreed to a large export (up front, or after you told them it may be very ' +
   'large) — never on your own initiative. Otherwise offer to narrow by project/user or shorten the range.';
 
+/** Generation time, not transfer time — the platform builds the CSV on request (measured live 2026-10-14). */
+const FETCH_TIME_NOTE =
+  'TIMING: an unfiltered month of Device Reservations or Users Usage is ~12 MB (~40k per-row lines) and takes 1–4 minutes ' +
+  'to TRANSFER (generation itself is seconds). summarize_usage_report with a groupBy/sumColumn from the summary section ' +
+  '(e.g. Project + "Total Reservation Time (hours)") stops reading after that section and returns in seconds; a ' +
+  'per-row groupBy (Device Name, Username, Release Reason…) or download_usage_report reads it all — use a projectId/userId ' +
+  'filter or a shorter range there, one report at a time. A fetch abandoned after USAGE_REPORT_TIMEOUT_MS ' +
+  `(default ${Math.round(DEFAULT_USAGE_REPORT_TIMEOUT_MS / 1000)} s) comes back as an error telling you how to narrow it.`;
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -72,7 +81,8 @@ export function registerUsageReportTools(server: McpServer): void {
       'Users Statistics, or License Usage. Cloud Admin only. Unfiltered multi-week exports can be large and slow ' +
       '(measured live: ~27 MB for one unfiltered month of License Usage, ~6.4 MB for one unfiltered week of Device ' +
       `Reservations) — beyond ${MAX_UNSCOPED_RANGE_DAYS} days with no project/user filter, a size guard blocks the ` +
-      'download until you narrow the request or pass confirmLargeExport: true.' +
+      'download until you narrow the request or pass confirmLargeExport: true. ' +
+      FETCH_TIME_NOTE +
       serverFsDownloadNotice(),
     {
       reportType: REPORT_TYPE_ENUM.describe(REPORT_TYPE_DESCRIPTION),
@@ -173,7 +183,8 @@ export function registerUsageReportTools(server: McpServer): void {
       'column names so you can retry correctly. Common groupBy values: "Username" (License Usage, Browser Usage), ' +
       '"User" (Users Statistics), "Project" (Device Reservations, Users Usage, Devices Usage), "Username" or ' +
       '"User Tag" (Users Usage per-user section), "Device Name" or "Release Reason" (Device Reservations ' +
-      'per-reservation section).',
+      'per-reservation section).\n\n' +
+      FETCH_TIME_NOTE,
     {
       reportType: REPORT_TYPE_ENUM.describe(REPORT_TYPE_DESCRIPTION),
       startDate: z.string().describe(START_DATE_DESC),
@@ -206,6 +217,11 @@ export function registerUsageReportTools(server: McpServer): void {
           lines.push('', `Multi-value cells were split: a row with several values counts in each group, so group counts can add up to more than ${summary.totalRows}.`);
         }
         if (summary.truncated) lines.push('', `⚠️ Truncated to top ${summary.groups.length} of ${summary.totalGroups} groups. Narrow the date range or filters to see the rest.`);
+        if (summary.fetchMs !== undefined) {
+          lines.push('', summary.stoppedAfterFirstSection
+            ? `Read only the summary section (${formatBytes(summary.csvBytes ?? 0)}) in ${(summary.fetchMs / 1000).toFixed(0)} s — the per-row section was not downloaded because these columns live in the summary.`
+            : `Fetched ${formatBytes(summary.csvBytes ?? 0)} of CSV in ${(summary.fetchMs / 1000).toFixed(0)} s${summary.fetchMs > 60_000 ? ' — a projectId/userId filter or a shorter range would be much faster; request one report at a time' : ''}.`);
+        }
         const retention = usageReportRetentionNote(startDate);
         if (retention) lines.push('', retention);
         return respond(outputFormat, retention ? { ...summary, retentionWarning: retention } : summary, lines.join('\n'));

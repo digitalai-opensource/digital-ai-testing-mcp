@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { osTypeTitle } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { listTransactions, getTransaction } from '../api/transactions.js';
 import {
@@ -31,7 +32,7 @@ export function registerTransactionTools(server: McpServer): void {
       appName: z.string().optional().describe('Filter by app package/bundle name (case-insensitive substring match).'),
       appVersion: z.string().optional().describe('Filter by app version string (case-insensitive substring match).'),
       transactionName: z.string().optional().describe('Filter by transaction name (case-insensitive substring match, e.g. "Login", "Checkout").'),
-      deviceOs: z.enum(['Android', 'iOS']).optional().describe('Filter by device OS.'),
+      deviceOs: osTypeTitle().optional().describe('Filter by device OS.'),
       deviceName: z.string().optional().describe('Filter by device name (case-insensitive substring match).'),
       networkProfile: z.string().optional().describe('Filter by network profile name (case-insensitive substring match). Empty string to find transactions with no network profile.'),
       startDate: z.string().optional().describe('ISO 8601 start of date range (inclusive), e.g. "2026-01-01".'),
@@ -190,7 +191,7 @@ export function registerTransactionTools(server: McpServer): void {
       appName: z.string().optional().describe('Scope to this app (case-insensitive substring match).'),
       appVersion: z.string().optional().describe('Scope to this app version (case-insensitive substring match). Useful with groupBy=deviceModel.'),
       transactionName: z.string().optional().describe('Scope to transactions with this name (substring match).'),
-      deviceOs: z.enum(['Android', 'iOS']).optional().describe('Scope to one OS.'),
+      deviceOs: osTypeTitle().optional().describe('Scope to one OS.'),
       deviceName: z.string().optional().describe('Scope to a specific device (substring match).'),
       networkProfile: z.string().optional().describe('Scope to a specific network profile.'),
       startDate: z.string().optional().describe('ISO 8601 start of date range.'),
@@ -321,7 +322,7 @@ export function registerTransactionTools(server: McpServer): void {
       appName: z.string().optional().describe('Scope to this app (substring match).'),
       appVersion: z.string().optional().describe('Scope to this app version (substring match).'),
       transactionName: z.string().optional().describe('Scope to transactions with this name.'),
-      deviceOs: z.enum(['Android', 'iOS']).optional().describe('Scope to one OS.'),
+      deviceOs: osTypeTitle().optional().describe('Scope to one OS.'),
       networkProfile: z.string().optional().describe('Scope to a specific network profile.'),
       outputFormat: outputFormatParam,
     },

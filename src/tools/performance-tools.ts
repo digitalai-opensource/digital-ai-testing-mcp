@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { osTypeTitle } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { listTransactions, getTransaction } from '../api/transactions.js';
 import { performanceTransaction } from '../api/webdriver.js';
@@ -21,7 +22,7 @@ const filterShape = {
   appName: z.string().optional().describe('App package/bundle name (case-insensitive substring).'),
   appVersion: z.string().optional().describe('App version string (substring).'),
   transactionName: z.string().optional().describe('Transaction name, e.g. "Login" (substring).'),
-  deviceOs: z.enum(['Android', 'iOS']).optional().describe('Device OS.'),
+  deviceOs: osTypeTitle().optional().describe('Device OS.'),
   deviceName: z.string().optional().describe('Full device name (substring).'),
   deviceModel: z.string().optional().describe('Device model code or name (substring), e.g. "SM-G991U".'),
   deviceVersion: z.string().optional().describe('OS version string (substring), e.g. "12.0".'),

@@ -168,7 +168,9 @@ export function formatApplicationList(apps: Application[]): string {
   const formatApp = (a: Application): string => {
     const uploaded = a.createdAtFormatted || new Date(a.createdAt).toISOString().split('T')[0];
     const unique = a.uniqueName ? ` | Unique: ${a.uniqueName}` : '';
-    return `  • ${a.applicationName} v${a.releaseVersion} (build ${a.buildVersion}) — ${a.fileType.toUpperCase()} | Uploaded: ${uploaded}${unique}`;
+    const identifier = a.osType === 'IOS' ? a.bundleIdentifier : a.packageName;
+    const ident = identifier ? ` | ${identifier}` : '';
+    return `  • ${a.applicationName} (ID ${a.id}) v${a.releaseVersion} (build ${a.buildVersion}) — ${a.fileType.toUpperCase()}${ident} | Uploaded: ${uploaded}${unique}`;
   };
 
   const lines: string[] = [];

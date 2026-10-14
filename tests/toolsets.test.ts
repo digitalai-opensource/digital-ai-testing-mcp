@@ -101,7 +101,7 @@ async function bootDirect() {
   return (await client.listTools()).tools as ToolEntry[];
 }
 
-const PLACEHOLDER = /^\[[a-z]+ toolset — loads on first call\]/;
+const PLACEHOLDER = /^\[[a-z]+ toolset — loads on first call; that first call runs nothing and returns the full parameters\]/;
 
 beforeAll(() => resetClient('https://unreachable.invalid', 'aut_1_toolsets', 'toolsets'));
 
@@ -205,8 +205,22 @@ describe('MCP_TOOLSETS=reporting → placeholders that load themselves', () => {
     const before = JSON.parse(listing.content[0].text!);
     assert.equal(before.toolsets.find((t: { toolset: string }) => t.toolset === 'reporting').loaded, true);
     assert.equal(before.toolsets.find((t: { toolset: string }) => t.toolset === 'apps').loaded, false);
-    await client.callTool({ name: 'enable_toolset', arguments: { toolsets: ['apps', 'devices'] } });
+    const loaded = (await client.callTool({ name: 'enable_toolset', arguments: { toolsets: ['apps', 'devices'], outputFormat: 'json' } })) as { content: Array<{ text?: string }> };
+    const after = JSON.parse(loaded.content[0].text!) as { loadedNow: string[]; signatures: string[] };
     const byName = new Map((await list()).map((t) => [t.name, t]));
     for (const n of ['list_applications', 'list_devices']) assert.doesNotMatch(byName.get(n)!.description ?? '', PLACEHOLDER, n);
+    // A client that ignores tools/list_changed keeps the placeholder schema — the response names every parameter so the
+    // agent never guesses them (fidelity eval 2026-10-14: execute_test_run called with invented parameter names).
+    assert.equal(after.signatures.length, after.loadedNow.length);
+    const sig = after.signatures.find((s) => s.startsWith('install_application('));
+    assert.ok(sig, after.signatures.slice(0, 5).join('\n'));
+    assert.match(sig!, /applicationId\*: number/, 'required params are starred and typed');
+    assert.match(sig!, /deviceId: string[,)]/, 'optional params are not starred');
+    const run = after.signatures.find((s) => s.startsWith('list_applications('));
+    assert.match(run!, /osType: "ios"\|"android"/, 'enums list their values, through optional + preprocess wrappers');
+    const del = after.signatures.find((s) => s.startsWith('delete_application('));
+    assert.match(del!, /confirmDeletion\*?: boolean \[set only when the USER explicitly agreed\]/, 'guard flags carry the rule');
+    const human = (await client.callTool({ name: 'enable_toolset', arguments: { toolsets: ['reporting'] } })) as { content: Array<{ text?: string }> };
+    assert.doesNotMatch(human.content[0].text!, /Parameter names of the tools just loaded/, 'nothing listed when nothing newly loaded');
   });
 });

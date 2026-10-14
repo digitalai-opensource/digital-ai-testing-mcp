@@ -234,9 +234,23 @@ export async function apiPutForm<T>(path: string, form: FormData): Promise<T> {
   return res.data;
 }
 
-export async function apiDownload(path: string): Promise<Buffer> {
-  const res = await withRetry(() => getClient().get<Buffer>(path, { responseType: 'arraybuffer' }));
+/**
+ * Binary GET. `signal` adds a WALL-CLOCK deadline: axios's `timeout` is an idle timeout, so a response that keeps
+ * streaming (a usage-report CSV generated row by row for minutes) never trips it. An aborted request throws
+ * `Error("aborted")`; callers turn that into an actionable message.
+ */
+export async function apiDownload(path: string, opts: { signal?: AbortSignal } = {}): Promise<Buffer> {
+  const res = await withRetry(() => getClient().get<Buffer>(path, { responseType: 'arraybuffer', signal: opts.signal }));
   return Buffer.from(res.data);
+}
+
+/**
+ * Binary GET as a Node stream, for responses worth abandoning part-way (a usage-report CSV whose first section is the
+ * answer). Not retried: once bytes flow there is nothing transient left to retry. Caller destroys the stream to stop.
+ */
+export async function apiDownloadStream(path: string, opts: { signal?: AbortSignal } = {}): Promise<NodeJS.ReadableStream> {
+  const res = await withRetry(() => getClient().get<NodeJS.ReadableStream>(path, { responseType: 'stream', signal: opts.signal }));
+  return res.data;
 }
 
 /** GET with an optional HTTP Range header ("bytes=0-1023", "bytes=-100", "bytes=1000-"). Read-only, so retried. */

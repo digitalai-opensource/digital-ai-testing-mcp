@@ -8,6 +8,7 @@ import { getStatusEmoji, formatProvisioningProfileList, formatTestReport } from 
 import type { ProvisioningProfile, TestReport } from '../src/types/digital-ai.js';
 import { getDeploymentMode } from '../src/utils/deployment-mode.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, staleBuildRemedy } from '../src/utils/locality.js';
+import { caseInsensitiveEnum, osTypeLower, osTypeTitle } from '../src/utils/schema.js';
 
 // ─── getDeploymentMode / locality notices ───────────────────────────────────
 
@@ -300,5 +301,18 @@ describe('formatTestReport', () => {
   it('shows an accessibility line only when the run has an Axe report', () => {
     assert.match(formatTestReport({ ...base, accessibility_report: true }), /Accessibility: Axe report/);
     assert.doesNotMatch(formatTestReport({ ...base, accessibility_report: false }), /Accessibility/);
+  });
+});
+
+describe('caseInsensitiveEnum', () => {
+  it('normalises casing and whitespace to the canonical value and still rejects unknown values', () => {
+    assert.equal(osTypeLower().parse('ANDROID'), 'android');
+    assert.equal(osTypeLower().parse(' iOS '), 'ios');
+    assert.equal(osTypeTitle().parse('android'), 'Android');
+    assert.equal(osTypeTitle().parse('IOS'), 'iOS');
+    assert.equal(caseInsensitiveEnum(['a', 'B']).parse('b'), 'B');
+    assert.equal(osTypeLower().optional().parse(undefined), undefined);
+    assert.throws(() => osTypeLower().parse('windows'));
+    assert.throws(() => osTypeLower().parse(7));
   });
 });
