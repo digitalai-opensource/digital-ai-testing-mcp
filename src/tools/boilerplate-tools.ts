@@ -1,5 +1,6 @@
 import { canonicalBrowserName } from '../utils/browser-name.js';
 import { z } from 'zod';
+import { caseInsensitiveEnum } from '../utils/schema.js';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -737,8 +738,7 @@ export function registerBoilerplateTools(server: McpServer): void {
     'tests in the same run find without issue (session connects and app launches normally), this is a device health signal — ' +
     'NOT a code or timing issue. Check device health first with get_device_health_summary or list_devices before modifying test code.',
     {
-      platform: z
-        .enum(['android', 'ios'])
+      platform: caseInsensitiveEnum(['android', 'ios'])
         .describe("Target mobile platform: 'android' or 'ios'."),
       language: z
         .enum(['java-junit5', 'java-testng', 'nodejs', 'python'])

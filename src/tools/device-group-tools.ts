@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { osTypeLower } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   getDeviceGroups,
@@ -84,8 +85,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
     'Used in create_poc Step 3 to select eligible devices from the Default group. Cloud Admin only.',
     {
       groupId: z.string().describe('The numeric device group ID. Use list_device_groups to find it.'),
-      osType: z
-        .enum(['ios', 'android'])
+      osType: osTypeLower()
         .optional()
         .describe("Filter by OS: 'ios' or 'android'. Case-insensitive match against the device OS field."),
       status: z

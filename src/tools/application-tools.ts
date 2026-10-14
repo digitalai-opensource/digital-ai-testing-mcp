@@ -44,6 +44,10 @@ function testCreationGuidance() {
     prohibited:
       'Authoring a test from guessed/placeholder element IDs or fabricated credentials and presenting it as finished — ' +
       'including by writing the file yourself instead of using get_test_boilerplate.',
+    appNotInRepository:
+      'If the app the user named (by name, package or bundle id) is not in this list, STOP and tell them so, then ask how to proceed ' +
+      '(upload the build with get_application_upload_command, or install from a public store). Never substitute a similarly named app, ' +
+      'a demo app, or one whose package/activity merely resembles what they described — a matching ".LoginActivity" is not evidence it is their app.',
     beforeDelivering: 'Run validate_test_script on any test you produce; do not present a script it flags.',
   };
 }
@@ -145,6 +149,11 @@ export function registerApplicationTools(server: McpServer): void {
         if (paged.total === 0) {
           structured._storeInstallGuidance = {
             appNotInRepository: true,
+            requested: nameContains ?? packageName ?? bundleIdentifier ?? uniqueName ?? null,
+            doNotSubstitute:
+              'Tell the user this app is not in the repository and ASK how to proceed. Do not search for a look-alike and build against ' +
+              'it: a different package with a similar name, a demo banking app, or a matching activity name is not the user\'s app ' +
+              '(fidelity finding: an agent substituted the ExperiBank demo for com.digitalai.bank because both had a .LoginActivity).',
             suggestion: 'Ask the user if this is a public store app they want to test. If yes, install it directly onto a farm device without needing a repository upload.',
             androidFlow: 'start_inspection_session(no appId) → app_control(action:"deep_link", url:"market://details?id=<packageName>") — returns 500 but succeeds on-device (confirmed live), ignore the error → take_inspection_screenshot to verify Play Store opened → find_elements(xpath,"//*[@content-desc=\'Install\']") + tap_element',
             iosFlow: 'start_inspection_session(no appId) → launch_app(packageName:"com.apple.AppStore") — itms-apps:// deep links return 500 on Grid iOS (confirmed), use launch_app instead → take_inspection_screenshot — if consent/onboarding screen with disabled buttons appears, stop session and use open_mobile_studio for manual interaction → user taps GET (Face ID/Touch ID cannot be automated). iOS numeric App Store ID is in the apps.apple.com URL after /id.',

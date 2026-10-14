@@ -12,6 +12,11 @@ export interface Call {
   input: Record<string, unknown>;
   denied: boolean;
   error: boolean;
+  /**
+   * MCP_TOOLSETS placeholder: the call loaded a toolset and returned guidance — the tool itself did NOT run. Order and
+   * presence checks skip these: a placeholder get_remote_debug_command is not "generating the rdb script".
+   */
+  placeholder: boolean;
 }
 
 /** The parts of a `claude -p --output-format stream-json` line the scorer reads. */
@@ -75,7 +80,7 @@ export function parseTranscript(jsonl: string): Trajectory {
       if (m.type === 'assistant' && b.type === 'text' && typeof b.text === 'string') texts.push(b.text);
       if (m.type === 'assistant' && b.type === 'tool_use') {
         const name = String(b.name ?? '');
-        const call: Call = { tool: name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name, input: b.input ?? {}, denied: false, error: false };
+        const call: Call = { tool: name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name, input: b.input ?? {}, denied: false, error: false, placeholder: false };
         calls.push(call);
         if (b.id) byId.set(b.id, call);
       }
@@ -89,6 +94,8 @@ export function parseTranscript(jsonl: string): Trajectory {
           (/requested permissions to use|permission/i.test(text) && /haven't granted|not granted|denied/i.test(text)) ||
           /No such tool available|is disabled for this session/i.test(text)
         );
+        // The server's placeholder reply (src/utils/toolsets.ts) — nothing ran.
+        call.placeholder = !call.error && /toolset .* was not loaded in this server; it is loaded now\./.test(text) && /Nothing was executed\./.test(text);
       }
     }
   }
@@ -121,7 +128,9 @@ export type Check =
 export interface CheckResult { label: string; pass: boolean; soft: boolean; detail: string }
 
 const idx = (calls: Call[], tools: string[]) => calls.findIndex((c) => tools.includes(c.tool));
-const list = (calls: Call[]) => calls.map((c) => c.tool + (c.denied ? '⊘' : '')).join(' → ') || '(no tool calls)';
+const list = (calls: Call[]) => calls.map((c) => c.tool + (c.denied ? '⊘' : c.placeholder ? '⟳' : '')).join(' → ') || '(no tool calls)';
+/** Calls that actually reached a tool handler — placeholder (toolset-loading) calls excluded. */
+const real = (t: Trajectory) => t.calls.filter((c) => !c.placeholder);
 
 /** Code blocks in the assistant's text, for fabrication scanning. */
 export function codeBlocks(text: string): string[] {
@@ -137,29 +146,29 @@ function evaluateOne(t: Trajectory, c: Check): CheckResult {
     const soft = c.soft === true;
     switch (c.kind) {
       case 'calledAny': {
-        const hit = t.calls.find((x) => c.tools.includes(x.tool));
+        const hit = real(t).find((x) => c.tools.includes(x.tool));
         return { label: c.label, soft, pass: !!hit, detail: hit ? `called ${hit.tool}` : `none of ${c.tools.join('/')} — trajectory: ${list(t.calls)}` };
       }
       case 'notCalled': {
-        const hit = t.calls.find((x) => c.tools.includes(x.tool));
+        const hit = real(t).find((x) => c.tools.includes(x.tool));
         return { label: c.label, soft, pass: !hit, detail: hit ? `called ${hit.tool} ${JSON.stringify(hit.input).slice(0, 160)}` : 'not called' };
       }
       case 'firstMeaningfulOneOf': {
-        const first = t.calls.find((x) => !ORIENTATION_TOOLS.has(x.tool));
+        const first = real(t).find((x) => !ORIENTATION_TOOLS.has(x.tool));
         return { label: c.label, soft, pass: !!first && c.tools.includes(first.tool), detail: `first meaningful call: ${first?.tool ?? '(none)'}` };
       }
       case 'calledBefore': {
-        const a = idx(t.calls, c.before);
-        const b = idx(t.calls, c.after);
+        const a = idx(real(t), c.before);
+        const b = idx(real(t), c.after);
         if (b < 0) return { label: c.label, soft, pass: !c.requireAfter, detail: c.requireAfter ? `${c.after.join('/')} never called — ${list(t.calls)}` : `${c.after.join('/')} not called (vacuous)` };
         return { label: c.label, soft, pass: a >= 0 && a < b, detail: `trajectory: ${list(t.calls)}` };
       }
       case 'noCallWhere': {
-        const hit = t.calls.find((x) => x.tool === c.tool && c.where(x.input));
+        const hit = real(t).find((x) => x.tool === c.tool && c.where(x.input));
         return { label: c.label, soft, pass: !hit, detail: hit ? `${c.tool} ${JSON.stringify(hit.input).slice(0, 200)}` : 'no offending call' };
       }
       case 'calledWhere': {
-        const hit = t.calls.find((x) => x.tool === c.tool && c.where(x.input));
+        const hit = real(t).find((x) => x.tool === c.tool && c.where(x.input));
         return { label: c.label, soft, pass: !!hit, detail: hit ? `${c.tool} ${JSON.stringify(hit.input).slice(0, 200)}` : `no matching ${c.tool} call — ${list(t.calls)}` };
       }
       case 'textMatches':

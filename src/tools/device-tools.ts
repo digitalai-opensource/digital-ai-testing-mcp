@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { osTypeTitle } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   getAllDevices,
@@ -79,8 +80,7 @@ export function registerDeviceTools(server: McpServer): void {
           "@manufacturer, @tag, @deviceName, @id, @udid, @status, @agentName, @region+manufacturer combined. " +
           "For manufacturer, tag, model substring, or region filtering prefer the dedicated params below — those apply client-side and always work."
         ),
-      os: z
-        .enum(['iOS', 'Android'])
+      os: osTypeTitle()
         .optional()
         .describe("Filter by OS (client-side convenience param — equivalent to @os in query but without needing query syntax)."),
       region: z
@@ -665,8 +665,7 @@ export function registerDeviceTools(server: McpServer): void {
     'apcloud → SG1/AU1) to avoid cross-region session latency; pass preferRegions explicitly to override, ' +
     'or preferRegions: [] to disable the default and search all regions equally.',
     {
-      os: z
-        .enum(['iOS', 'Android'])
+      os: osTypeTitle()
         .optional()
         .describe('Target operating system. Applied server-side.'),
       osVersion: z

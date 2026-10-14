@@ -156,7 +156,7 @@ function report(results: RunResult[], args: Args, started: Date): string {
       lines.push(`- transcript: ${r.transcriptFile.replace(ROOT, '.')}`);
     }
   }
-  lines.push('', '⊘ = denied by the harness (side-effecting tool) — the attempt is what is scored.');
+  lines.push('', '⊘ = denied by the harness (side-effecting tool) — the attempt is what is scored. ⟳ = MCP_TOOLSETS placeholder call: it loaded a toolset and returned guidance; the tool did not run, so order/presence checks ignore it.');
   return lines.join('\n');
 }
 

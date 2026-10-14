@@ -34,6 +34,22 @@ describe('parseTranscript', () => {
     assert.match(t.allText, /need permission/);
   });
 
+  it('a toolset placeholder reply marks the call as a placeholder, and order/presence checks skip it', () => {
+    const PLACEHOLDER_REPLY = 'The "inspection" toolset (live device and browser inspection sessions, Android Auto/CarPlay, remote debug) was not loaded in this server; it is loaded now.\nNothing was executed. Read get_remote_debug_command\'s full guidance below, then call get_remote_debug_command again with its parameters.\n\nget_remote_debug_command — full description:\n…';
+    const a = use('get_remote_debug_command');
+    const b = use('install_application', { applicationId: 1, deviceId: '2' });
+    const c = use('get_remote_debug_command', { serialNumber: 'X', localPlatform: 'windows' });
+    const t = parseTranscript([a.line, result(a.id, PLACEHOLDER_REPLY), b.line, result(b.id, '{"installed":true}'), c.line, result(c.id, 'start-rdb.ps1 …')].join('\n'));
+    assert.deepEqual(t.calls.map((x) => x.placeholder), [true, false, false]);
+    const before: Check = { kind: 'calledBefore', before: ['install_application'], after: ['get_remote_debug_command'], label: 'installs first' };
+    assert.equal(evaluate(t, [before])[0].pass, true, 'the placeholder call does not count as generating the script');
+    // Only a placeholder was called: presence checks see no real call, notCalled sees nothing offending.
+    const only = parseTranscript([a.line, result(a.id, PLACEHOLDER_REPLY)].join('\n'));
+    assert.equal(evaluate(only, [{ kind: 'calledAny', tools: ['get_remote_debug_command'], label: 'x' }])[0].pass, false);
+    assert.equal(evaluate(only, [{ kind: 'notCalled', tools: ['get_remote_debug_command'], label: 'x' }])[0].pass, true);
+    assert.match(evaluate(only, [before])[0].detail, /not called \(vacuous\)/);
+  });
+
   it('a non-permission tool error is an error, not a denial', () => {
     const a = use('get_test_report', { testId: 1 });
     const t = parseTranscript([a.line, result(a.id, 'Error: getTestById failed: 404', true)].join('\n'));
