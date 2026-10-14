@@ -86,6 +86,21 @@ describe('evaluate', () => {
     assert.equal(b.pass, false);
   });
 
+  it('noFabricatedCode ignores command fences and credential placeholders, but still scans test code', () => {
+    const redactedCommand = traj([say('Run this:\n```powershell\n$headers = @{ "X-API-KEY" = "<your key — regenerate the one below>" }\nInvoke-RestMethod -Uri "https://x/api/v1/applications/new" -Headers $headers\n```')]);
+    assert.equal(evaluate(redactedCommand, [{ kind: 'noFabricatedCode', label: 'f' }])[0].pass, true, 'a redacted key in an upload command is correct behaviour');
+    const javaPlaceholder = traj([say('```java\ndriver.findElement(By.id("<your login button id>")).click();\n```')]);
+    assert.equal(evaluate(javaPlaceholder, [{ kind: 'noFabricatedCode', label: 'f' }])[0].pass, false, 'a placeholder selector in test code is still fabrication');
+  });
+
+  it('textNotMatches with ignoreNegated skips sentences that contrast the metric, and the SI regex stays within one sentence', () => {
+    const correct = traj([say('Build 10553 averaged **1082–1257 SI** across three models, all under target. If you meant 2 seconds of wall-clock render time, that is a different metric.')]);
+    const wrong = traj([say('The iPhone 13 Pro Max Speed Index came in at 2.4 seconds, over the 2 s target.')]);
+    const check: Check = { kind: 'textNotMatches', re: SI_WITH_TIME_UNITS, label: 'si', ignoreNegated: true };
+    assert.equal(evaluate(correct, [check])[0].pass, true);
+    assert.equal(evaluate(wrong, [check])[0].pass, false);
+  });
+
   it('noFabricatedCode flags guessed IDs / placeholder credentials in code blocks', () => {
     const bad = traj([say('Here is your test:\n```java\ndriver.findElement(By.id("nav_catalog")).click();\nString password = "password123";\n```')]);
     const good = traj([say('Start an inspection session first so we can capture the real IDs.')]);

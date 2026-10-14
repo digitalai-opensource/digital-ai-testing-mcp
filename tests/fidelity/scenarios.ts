@@ -25,7 +25,12 @@ const yes = (v: unknown) => v === true || v === 'true';
  * ("| Avg SI | … | 4,450 ms |") and threshold columns ("Over 2s") that a same-line check missed (fidelity run
  * 2026-10-09, core mode).
  */
-export const SI_WITH_TIME_UNITS = /(speed\s*index|\bavg\s*SI\b|\bSI\b)[\s\S]{0,400}?(\b\d[\d,.]*\s?(ms|milliseconds|secs?|seconds)\b|\bover \d+(\.\d+)?\s?s\b)/i;
+/**
+ * A Speed Index mention and a time-unit value in the SAME sentence or table row. The earlier 400-character window
+ * crossed sentence boundaries and flagged the correct framing itself ("1082–1257 SI … If you meant 2 seconds of
+ * wall-clock time, that's a different metric") — three-run pass 2026-10-14.
+ */
+export const SI_WITH_TIME_UNITS = /(speed\s*index|\bavg\s*SI\b|\bSI\b)[^.!?\n]{0,200}?(\b\d[\d,.]*\s?(ms|milliseconds|secs?|seconds)\b|\bover \d+(\.\d+)?\s?s\b)/i;
 
 export const SCENARIOS: Scenario[] = [
   {
