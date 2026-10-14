@@ -386,7 +386,7 @@ export function registerPrompts(server: McpServer): void {
             mode ? `Preferred data source: ${mode}` : '',
             '',
             'Performance transactions work for all access levels — Cloud Admin sees all projects; project-level keys see only their own project\'s transactions.',
-            'If you need cross-project transaction data, switch to Cloud Admin with switch_environment("default") before proceeding.',
+            'If you need cross-project transaction data, switch to Cloud Admin with switch_environment("cloud admin") before proceeding.',
             '',
             'Follow these phases IN ORDER. Do not skip the confirmation gate in Phase 3.',
             '',

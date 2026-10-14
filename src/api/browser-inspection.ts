@@ -5,6 +5,7 @@ import { getMyAccountInfo } from './users.js';
 import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
 import { registerSession, requireSession, listActiveSessions } from './webdriver.js';
+import { extractApiErrorMessage } from '../utils/api-error.js';
 
 function gridBase(): string {
   const base = getActiveUrl();
@@ -21,12 +22,12 @@ function makeClient(): AxiosInstance {
 }
 
 function describeError(e: unknown): string {
-  const err = e as { response?: { data?: { value?: { message?: string }; message?: string }; status?: number }; message?: string };
-  const msg =
-    err.response?.data?.value?.message ??
-    err.response?.data?.message ??
-    err.message ??
-    String(e);
+  const err = e as { response?: { data?: unknown; status?: number }; message?: string };
+  // WebDriver errors nest under `value`; the shared extractor handles every other shape (and never
+  // yields "[object Object]" or an empty string).
+  const data = err.response?.data;
+  const value = data && typeof data === 'object' && 'value' in data ? (data as { value?: unknown }).value : undefined;
+  const msg = extractApiErrorMessage(value ?? data, err.message ?? String(e));
   const status = err.response?.status;
   return status ? `HTTP ${status}: ${msg}` : msg;
 }

@@ -72,6 +72,8 @@
     "test:tools": "vitest run tests/tools.test.ts",
     "test:usage-reports": "vitest run tests/usage-reports.test.ts",
     "test:access-level": "vitest run tests/access-level.test.ts",
+    "test:api-error": "vitest run tests/api-error.test.ts",
+    "test:debug-tools": "vitest run tests/debug-tools.test.ts",
     "test:reporting-sort": "vitest run tests/reporting-sort.test.ts",
     "test:boilerplate-templates": "vitest run tests/boilerplate-templates.test.ts",
     "test:test-orchestrator": "vitest run tests/test-orchestrator.test.ts",

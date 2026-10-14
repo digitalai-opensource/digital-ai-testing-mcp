@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { extractApiErrorMessage } from '../src/utils/api-error.js';
-import { remoteDebugAuthWarning } from '../src/tools/debug-tools.js';
 
 describe('extractApiErrorMessage', () => {
   it('prefers a top-level message', () => {
@@ -40,29 +39,32 @@ describe('extractApiErrorMessage', () => {
     expect(msg.length).toBeLessThanOrEqual(301);
     expect(msg.endsWith('…')).toBe(true);
   });
-});
 
-describe('remoteDebugAuthWarning', () => {
-  it('stays silent for a Cloud Admin with a real serial', () => {
-    expect(remoteDebugAuthWarning({ level: 'cloud-admin', source: 'role' }, 'R5CT1234ABC'))
-      .toEqual({ authWarning: null, warningLines: [] });
+  it('decodes a binary (arraybuffer) body instead of dumping bytes', () => {
+    const json = Buffer.from(JSON.stringify({ message: 'Attachment not found' }), 'utf-8');
+    expect(extractApiErrorMessage(json, 'Request failed with status code 404')).toBe('Attachment not found');
+    const text = Buffer.from('Forbidden for this role', 'utf-8');
+    expect(extractApiErrorMessage(text, 'fallback')).toBe('Forbidden for this role');
+    const html = Buffer.from('<!DOCTYPE html><html>nope</html>', 'utf-8');
+    expect(extractApiErrorMessage(html, 'Request failed with status code 404')).toBe('Request failed with status code 404');
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00]);
+    expect(extractApiErrorMessage(binary, 'Request failed with status code 404')).toBe('Request failed with status code 404');
+    expect(extractApiErrorMessage(new Uint8Array(json).buffer, 'x')).toBe('Attachment not found');
   });
 
-  it('does not warn on an unknown level alone (fail open)', () => {
-    expect(remoteDebugAuthWarning({ level: 'unknown', source: 'unresolved' }, 'R5CT1234ABC').authWarning).toBeNull();
+  it('ignores boolean/numeric envelope fields rather than rendering "true" or "0"', () => {
+    // Flags fall through to the JSON dump of the body, never to "true" / "0".
+    expect(extractApiErrorMessage({ error: true, message: '' }, 'Request failed with status code 403'))
+      .toBe('{"error":true,"message":""}');
+    expect(extractApiErrorMessage({ data: 0 }, 'fallback')).toBe('{"data":0}');
+    expect(extractApiErrorMessage({ error: true }, 'fallback')).not.toBe('true');
+    expect(extractApiErrorMessage({ error: true, code: 403, data: 'Forbidden' })).toBe('Forbidden');
   });
 
-  it('names the detected role, not a key type, when below Cloud Admin', () => {
-    const { authWarning, warningLines } = remoteDebugAuthWarning({ level: 'project-admin', role: 'ProjectAdmin', source: 'role' }, 'R5CT1234ABC');
-    expect(authWarning).toContain('Not running as Cloud Admin (detected: Project Admin');
-    expect(authWarning).not.toMatch(/API key/i);
-    expect(authWarning).toContain('switch_environment("cloud admin")');
-    expect(warningLines[0]).toContain('AUTH WARNING');
-  });
-
-  it('warns on an internal-looking serial even for a Cloud Admin', () => {
-    const { authWarning } = remoteDebugAuthWarning({ level: 'cloud-admin', source: 'role' }, '21537817');
-    expect(authWarning).toContain('"21537817" looks like an internal device ID');
-    expect(authWarning).not.toContain('Not running as Cloud Admin');
+  it('joins messages from an array body (validation-error lists)', () => {
+    expect(extractApiErrorMessage([{ field: 'name', message: 'must not be blank' }])).toBe('must not be blank');
+    expect(extractApiErrorMessage([{ message: 'a' }, { message: 'b' }])).toBe('a; b');
+    expect(extractApiErrorMessage({ data: [{ message: 'nested list' }] })).toBe('nested list');
+    expect(extractApiErrorMessage([], 'fallback')).toBe('fallback');
   });
 });

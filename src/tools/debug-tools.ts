@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getDevicesByQuery, getDevice } from '../api/devices.js';
 import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
 import { getAccessInfo } from '../api/access-level.js';
-import { isKnownNotCloudAdmin, describeLevel, type AccessInfo } from '../utils/access-level.js';
+import { isKnownNotCloudAdmin, type AccessInfo } from '../utils/access-level.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import type { Device } from '../types/digital-ai.js';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
@@ -14,6 +14,17 @@ function resolveSerial(d: Device): string {
 
 function deviceLabel(d: Device): string {
   return `${d.deviceName} (${d.deviceOs} ${d.osVersion})`;
+}
+
+/** Short role name for inline use — `describeLevel` carries its own parentheses and a v2-403 remark that is noise here. */
+function shortLevelLabel(info: AccessInfo): string {
+  switch (info.level) {
+    case 'cloud-admin': return 'Cloud Admin';
+    case 'project-admin': return 'Project Admin';
+    case 'project-user': return 'Project User';
+    case 'project-limited': return 'project-level (limited)';
+    default: return info.role ?? 'unknown';
+  }
 }
 
 /**
@@ -31,7 +42,7 @@ export function remoteDebugAuthWarning(
 
   const reasons: string[] = [];
   if (belowCloudAdmin) {
-    reasons.push(`Not running as Cloud Admin (detected: ${describeLevel(info)}) — the device serial may be an internal ID.`);
+    reasons.push(`Not running as Cloud Admin (detected: ${shortLevelLabel(info)}) — the device serial may be an internal ID.`);
   }
   if (serialLooksLikeInternalId) {
     reasons.push(`"${serial}" looks like an internal device ID, not an ADB/UDID serial — rdb will likely reject it.`);
@@ -93,7 +104,8 @@ export function registerDebugTools(server: McpServer): void {
     'AUTH NOTE: rdb serial number resolution requires Cloud Admin credentials. If the active profile is a\n' +
     '  project-level role (Project Admin or User), device serial lookup may fall back to the internal numeric device ID,\n' +
     '  which rdb rejects ("validation error / Failed to reserve device"). If this happens, switch to your\n' +
-    '  Cloud Admin profile first: switch_environment("default") → get_remote_debug_command → switch back.\n\n' +
+    '  Cloud Admin profile first: switch_environment("cloud admin") → get_remote_debug_command → switch back.\n' +
+    '  ("cloud admin" is a role alias resolved from the API — the profile literally named "default" may be a project key.)\n\n' +
     'Discovery → codification workflow:\n' +
     '  Use rdb to connect and discover element selectors, then call get_test_boilerplate\n' +
     '  with those identifiers to generate a reusable script. The rdb connection can stay\n' +

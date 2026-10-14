@@ -353,7 +353,7 @@ DAI_PROFILE_STAGING_KEY=...your-staging-key...
 Then ask your AI:
 - *"What environments are configured?"* → `list_environments`
 - *"Switch to QA"* → `switch_environment("qa")`
-- *"Switch back to Cloud Admin"* → `switch_environment("default")`
+- *"Switch back to Cloud Admin"* → `switch_environment("cloud admin")` (a role alias — resolves to whichever profile the API reports as Cloud Admin, even if it is not the one named `default`)
 
 The switch takes effect immediately — no restart needed.
 
