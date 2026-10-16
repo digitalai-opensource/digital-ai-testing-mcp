@@ -1,8 +1,8 @@
 import { getActiveAccessKey, getActiveUrl, getActiveAuthScheme } from '../api/client.js';
 
-// Mirror of buildUploadCommand for the DOWNLOAD direction. The MCP server runs
-// in Docker/remote, so a file it writes lands on the server's filesystem, not
-// the caller's. These tools emit a curl / Invoke-WebRequest command the user
+// Mirror of buildUploadCommand for the DOWNLOAD direction. When the MCP server
+// runs in Docker/remote (MCP_DEPLOYMENT_MODE != local), a file it writes lands
+// on the server's filesystem, not the caller's. These tools emit a curl / Invoke-WebRequest command the user
 // runs locally, so the binary (e.g. a session .mp4 or the attachment ZIP)
 // downloads straight to THEIR machine — bypassing the filesystem boundary the
 // same way the upload-command tools do.
@@ -12,7 +12,7 @@ export interface DownloadCommandSpec {
   path: string;
   /** Local path the user saves to, used verbatim in the generated command. */
   localPath: string;
-  /** Platform of the machine that will RUN the command (cannot be inferred — MCP runs in Docker). */
+  /** Platform of the machine that will RUN the command (cannot be inferred — under Docker/remote the server's OS is not the caller's). */
   localPlatform: 'windows' | 'macos' | 'linux';
   /** Optional advisory lines inserted before the command blocks. */
   notes?: string[];

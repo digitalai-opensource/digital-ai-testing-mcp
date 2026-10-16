@@ -1,5 +1,5 @@
 /**
- * Transaction tool handlers against a stub reporter (tests/transactions.test.ts covers the live API itself).
+ * Transaction tool handlers against a stub reporter (tests/api/transactions.test.ts covers the live API itself).
  *  - deviceOs arrives as "IOS"/"ANDROID" for recent records → normalised once at the API boundary (UAT #20)
  *  - every transaction JSON carries Speed Index semantics — it is a composite score, not a duration
  *  - groups without a Speed Index sort strictly last in the performance summary

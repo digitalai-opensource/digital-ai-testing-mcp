@@ -26,11 +26,10 @@ export function buildUsageReportPath(reportType: UsageReportType, params: UsageR
   return `/api/v2/configuration/get-CSV-reports/${projectSegment}/${userSegment}/${startMs}/${endMs}/${encodeURIComponent(caps.wireValue)}`;
 }
 
-/** Fetches the raw CSV bytes without writing anything to disk. */
 /**
- * Wall-clock cap on one usage-report fetch. The platform generates the CSV on request and streams it: measured live
- * 2026-10-14, one unfiltered month of Device Reservations was ~12 MB / ~40k rows and took 50–200 s depending on load
- * (three of them in one agent session blew a 10-minute budget). axios's idle timeout never fires on a streaming
+ * Wall-clock cap on one usage-report fetch (USAGE_REPORT_TIMEOUT_MS overrides). Measured live 2026-10-14: one
+ * unfiltered month of Device Reservations was ~12 MB / ~40k rows; the platform had it ready in ~4 s and the remaining
+ * 1–4 minutes was transfer (three of them in one agent session blew a 10-minute budget). axios's idle timeout never fires on a streaming
  * response, so without this cap a tool call can block for as long as the platform keeps sending.
  */
 export const DEFAULT_USAGE_REPORT_TIMEOUT_MS = 240_000;
@@ -58,6 +57,10 @@ export interface FetchUsageReportOptions {
 const SECTION_BREAK = /\r?\n\r?\n/;
 const SINGLE_SECTION_PROBE_BYTES = 1_000_000; // no blank line in the first MB → a single-section report; read it all
 
+/**
+ * Streams the raw CSV bytes into memory without writing anything to disk, under the wall-clock cap above. With
+ * `stopAfterFirstSection`, may return only the first section (`stoppedAfterFirstSection: true`).
+ */
 export async function fetchUsageReportCsv(
   reportType: UsageReportType,
   params: UsageReportRequest,

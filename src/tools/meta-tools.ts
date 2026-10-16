@@ -19,7 +19,7 @@ export const REGISTERED_TOOLS = [
   'assign_user_to_projects', 'unassign_user_from_projects',
   'get_user_tags', 'set_user_tags',
   // Devices
-  'list_devices', 'get_device_detail', 'edit_device', 'release_device',
+  'list_devices', 'list_virtual_device_templates', 'get_device_detail', 'edit_device', 'release_device',
   'reboot_device', 'reset_device_usb', 'start_device_web_control',
   'open_mobile_studio', 'create_mobile_manual_test', 'download_ios_app_container',
   'get_ios_app_container_download_command',
@@ -88,7 +88,7 @@ export const REGISTERED_TOOLS = [
   'list_regions', 'get_region_topology',
   // NV Servers (v2, Cloud Admin only)
   'list_nv_servers', 'get_nv_server',
-  // Sessions / Storage / License (Cloud Admin only)
+  // Sessions / License (Cloud Admin only); Storage (Cloud Admin = all projects, Project Admin = own project)
   'list_active_sessions', 'get_reporter_project_storage', 'get_license_info',
   // Project admin (v2, Project Admin or higher)
   'get_project_admin_settings',

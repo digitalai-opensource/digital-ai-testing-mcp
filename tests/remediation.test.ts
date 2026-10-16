@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   isDebugMode, redact, classifyOutcome, instrumentHandler, startRemediationSession, getRecordedEvents, saveNote,
-  debugInstructions, debugStatusLine, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject,
+  debugInstructions, debugStatusLine, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject, locateStartFolder,
   ensureRemediationDir, getRemediationSession, nudgeFor,
 } from '../src/utils/remediation.js';
 import { registerRemediationTools } from '../src/tools/remediation-tools.js';
@@ -199,15 +199,27 @@ describe('location: the client project, never committed', () => {
     }
   });
 
-  it('falls back to the start folder when it looks like a project, else home; a failing roots call is harmless', async () => {
+  it('falls back to ./remediation in the start folder when it is a project; a failing roots call is harmless', async () => {
     delete process.env.MCP_REMEDIATION_DIR;
     restart(async () => { throw new Error('client has no roots'); });
     const loc = await resolveRemediationLocation();
     // The test runner starts in this repo (it has package.json), so the start folder qualifies.
     assert.deepEqual(loc, { dir: join(process.cwd(), 'remediation'), source: 'start-folder' });
+    assert.notEqual(loc.dir, join(homedir(), 'remediation'));
+  });
+
+  it('a start folder that is not a project (home, a drive root, System32) gets no folder — never ~/remediation', () => {
     assert.equal(looksLikeProject(process.cwd()), true);
     assert.equal(looksLikeProject(homedir()), false);
-    assert.equal(looksLikeProject(mkdtempSync(join(tmpdir(), 'not-a-project-'))), false);
+    const empty = mkdtempSync(join(tmpdir(), 'not-a-project-'));
+    try {
+      assert.equal(looksLikeProject(empty), false);
+      assert.deepEqual(locateStartFolder(empty), { dir: '', source: 'none' });
+      assert.deepEqual(locateStartFolder(homedir()), { dir: '', source: 'none' });
+      assert.deepEqual(locateStartFolder('C:\\'), { dir: '', source: 'none' });
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 
   it('MCP_REMEDIATION_DIR wins, and the folder ignores itself so it can never be committed', async () => {
@@ -249,7 +261,7 @@ describe('notes', () => {
     wastedCalls: 2,
   };
 
-  it('local: appends to ~/remediation/<session>.md with front matter once, redacted', () => {
+  it('local: appends to remediation/<session>.md with front matter once, redacted', () => {
     const first = saveNote(note);
     saveNote({ ...note, category: 'better-path', title: 'Second' });
     assert.ok(first.written);

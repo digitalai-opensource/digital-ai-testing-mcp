@@ -1,5 +1,5 @@
 /**
- * Browser tool handlers against a stub API (tests/browsers.test.ts covers the live API itself).
+ * Browser tool handlers against a stub API (tests/api/browsers.test.ts covers the live API itself).
  *  - a list cut at maxResults must say so in its JSON: total / returned / truncated (UAT #49)
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';

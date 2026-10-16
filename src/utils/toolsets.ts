@@ -14,7 +14,8 @@
  *    the tool's FULL description and parameter guidance in the response, asking the agent to call it again — so the
  *    guidance arrives at the moment of use, before the real call runs.
  *  - Server instructions and prompts are unchanged; every name they mention exists.
- * Unset / "all" registers everything in full — zero behaviour change for existing installs.
+ * Unset / "all" registers everything in full. In every mode, full tools get a strict input schema (unknown parameters
+ * are rejected) and annotations from annotationsFor() — applied here, not in the tool modules.
  */
 import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -166,12 +167,13 @@ export interface ToolsetController {
   signatures(names: string[]): string[];
 }
 
-/**
- * Register every captured tool (full or placeholder), then prompts and resources, onto the real server.
- * Placeholder-to-full restores use RegisteredTool.update(), which emits notifications/tools/list_changed.
- */
 /** Optional callback wrapper (debug mode instruments every tool and placeholder through this). */
 export type ToolWrapper = (name: string, callback: (...a: unknown[]) => unknown, placeholder: boolean) => (...a: unknown[]) => unknown;
+
+/**
+ * Register every captured tool (full or placeholder), then prompts and resources, onto the real server.
+ * Placeholder-to-full restores use RegisteredTool.update(); enable() batches them into one notifications/tools/list_changed.
+ */
 
 export function registerWithToolsets(server: McpServer, captured: Captured, selection: Selection, wrap?: ToolWrapper): ToolsetController {
   const s = server as unknown as { tool: (...a: unknown[]) => RegisteredTool; prompt: (...a: unknown[]) => unknown; resource: (...a: unknown[]) => unknown };

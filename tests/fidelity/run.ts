@@ -12,7 +12,7 @@
  * Transcripts are saved with access keys redacted under fidelity-results/<timestamp>/ (git-ignored).
  *
  * Usage:  npm run test:fidelity -- [--modes all,core] [--only id1,id2] [--runs 1] [--model <name>] [--concurrency 3]
- * Costs real model tokens: ~11 scenarios × 2 modes per run. Requires a logged-in Claude Code CLI and a populated .env.
+ * Costs real model tokens: ~18 scenarios × 2 modes per run. Requires a logged-in Claude Code CLI and a populated .env.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

@@ -303,6 +303,32 @@ function sanitizeReporterFilter(filter: TestFilterField[]): TestFilterField[] {
   );
 }
 
+// Columns the reporter returns on every list record whatever `keys` says (verified live 2026-10-16). Naming the
+// non-text ones in `keys` together with `searchValue` makes the platform answer 400 "Failed to retrieve data", so
+// they are never sent — `keys` only needs to name custom keys (device.name, user, …).
+export const REPORTER_BASE_COLUMNS: ReadonlySet<string> = new Set([
+  'create_time', 'success', 'status_code', 'name', 'start_time', 'attachment_count', 'project_id',
+  'accessibility_report', 'uuid', 'duration', 'attachments_size', 'test_id', 'status', 'has_attachment',
+]);
+
+/** Drop always-returned columns from `keys`; undefined when nothing custom is left (= the default response). */
+export function sanitizeReporterKeys(keys: string[] | undefined): string[] | undefined {
+  if (!keys) return undefined;
+  const custom = keys.filter((k) => !REPORTER_BASE_COLUMNS.has(k));
+  return custom.length > 0 ? custom : undefined;
+}
+
+const COMPARISON_OPERATORS = new Set(['>', '<', '>=', '<=']);
+
+/** The reporter's 400 for a comparison on a text-valued key is opaque — say what to check. */
+export function reporterFilter400Hint(message: string, filter: TestFilterField[] | undefined): string {
+  if (!/\[400\]/.test(message)) return '';
+  const compared = (filter ?? []).filter((f) => COMPARISON_OPERATORS.has(f.operator)).map((f) => f.property);
+  if (compared.length === 0) return '';
+  return ` Hint: comparison operators (>, <, >=, <=) only work on numeric keys; [${[...new Set(compared)].join(', ')}] ` +
+    `may hold text values — the platform answers this 400 in that case. Use '=' or filter client-side.`;
+}
+
 export async function listTests(
   request: TestListRequest,
   projectId?: number,
@@ -313,6 +339,10 @@ export async function listTests(
 
     if (request.filter && request.filter.length > 0) {
       finalRequest = { ...request, filter: sanitizeReporterFilter(request.filter) };
+    }
+    if (request.keys) {
+      // undefined is dropped when the body is serialised, so an all-built-in list sends no keys at all.
+      finalRequest = { ...finalRequest, keys: sanitizeReporterKeys(request.keys) };
     }
 
     const wantsSort = !!(finalRequest.sort && finalRequest.sort.length > 0);
@@ -340,7 +370,8 @@ export async function listTests(
       throw e;
     }
   } catch (e) {
-    throw new Error(`listTests failed: ${(e as Error).message}`);
+    const message = (e as Error).message;
+    throw new Error(`listTests failed: ${message}${reporterFilter400Hint(message, request.filter)}`);
   }
 }
 

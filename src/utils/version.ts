@@ -11,7 +11,7 @@ export function getServerVersion(): string {
   if (process.env.MCP_SERVER_VERSION) return process.env.MCP_SERVER_VERSION;
   if (cached) return cached;
   try {
-    // Resolves from both dist/utils/ (compiled) and src/utils/ (ts-node) to the repo root.
+    // Resolves from both dist/utils/ (compiled) and src/utils/ (tsx) to the repo root.
     const pkgPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: string };
     cached = pkg.version ?? '0.0.0';

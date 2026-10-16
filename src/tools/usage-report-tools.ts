@@ -59,7 +59,7 @@ const CONFIRM_LARGE_DESC =
   'Set true ONLY when the user has explicitly agreed to a large export (up front, or after you told them it may be very ' +
   'large) — never on your own initiative. Otherwise offer to narrow by project/user or shorten the range.';
 
-/** Generation time, not transfer time — the platform builds the CSV on request (measured live 2026-10-14). */
+/** Transfer time, not generation time — the platform has the CSV ready in seconds; moving the bytes takes minutes (measured live 2026-10-14). */
 const FETCH_TIME_NOTE =
   'TIMING: an unfiltered month of Device Reservations or Users Usage is ~12 MB (~40k per-row lines) and takes 1–4 minutes ' +
   'to TRANSFER (generation itself is seconds). summarize_usage_report with a groupBy/sumColumn from the summary section ' +

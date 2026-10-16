@@ -1,7 +1,7 @@
 // Pure statistical helpers for performance comparison reporting.
 // No network, no domain types — operate on plain number arrays so they are
-// trivially unit-testable. All functions ignore nothing implicitly: callers
-// are responsible for filtering out null/NaN before passing values in.
+// trivially unit-testable. The primitives ignore nothing implicitly: callers
+// filter out null/NaN first (summarizeMetric is the exception — it drops them).
 
 /** Arithmetic mean. Returns null for an empty array. */
 export function mean(values: number[]): number | null {

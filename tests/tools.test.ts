@@ -3,7 +3,7 @@
  *
  * Exercises the REGISTERED tool handlers through an in-memory MCP transport —
  * the layer the live API tests never touch. Covers the invariants found broken
- * in code review: destructive guards, Cloud Admin gates, and upload path validation.
+ * in code review: destructive guards, the reporter-delete permission gate, and upload path validation.
  *
  * No live API access: the client is pointed at an unreachable host, and every
  * asserted path returns BEFORE any HTTP call. If a guard regresses to fire
@@ -337,7 +337,7 @@ describe('Upload-command tools emit a runnable command without any API call', ()
     assert.match(text, /api\/v1\/files/);
     assert.match(text, /-F "file=@\/home\/me\/data\.csv"/);
     assert.match(text, /-F "uniqueName=mydata"/);
-    // Project key → both headers present
+    // Short (non-JWT) key → Bearer plus X-API-KEY
     assert.match(text, /X-API-KEY/);
   });
 
@@ -634,8 +634,9 @@ describe('summarize_usage_report validates and guards before fetching, never wri
       groupBy: 'Username',
       localPath: '/tmp/should-be-ignored.csv',
     });
-    // Zod strips unknown keys by default; this just confirms the call doesn't error solely because
-    // localPath was supplied — the guard/validation path is unaffected by an extraneous param.
+    // This harness registers the module directly, so the SDK's default z.object strips the unknown key (production
+    // registration via registerWithToolsets is strict and would reject it). This confirms the call doesn't error
+    // solely because localPath was supplied — the guard/validation path is unaffected by an extraneous param.
     assert.equal(res.isError, true);
     assert.doesNotMatch(textOf(res), /Large export guard triggered/);
   });
@@ -852,7 +853,8 @@ describe('Web inspection tools return isError on unknown handle (no HTTP call ne
   });
 
   it('mobile-only launch_app rejects a non-existent handle with mobile-only message', async () => {
-    // Mobile-only guard fires before requireSession — message distinguishes platform mismatch from missing handle
+    // requireMobileSession defers an unknown handle to the tool's own "no active session" error; it only
+    // returns the mobile-only message for a live browser session
     const res = await callTool('launch_app', { handle: UNKNOWN, activityUrl: 'com.example/.MainActivity' });
     assert.equal(res.isError, true);
   });

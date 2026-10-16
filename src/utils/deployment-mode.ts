@@ -1,8 +1,8 @@
 // Resolves how this MCP server process is being run, so tool descriptions and
 // a handful of behavioral checks (see application-tools.ts's HOST_PATH_UNREACHABLE
 // guard) can give the agent one correct answer instead of an unconditional
-// Docker-only framing. Read once at startup — deployment mode cannot change
-// mid-process, so there is no reason to re-read process.env per call.
+// Docker-only framing. Tool descriptions call it once at registration time;
+// the function itself reads process.env on every call (see below).
 export type DeploymentMode = 'docker' | 'local' | 'http';
 
 /**

@@ -107,7 +107,8 @@ export interface EditDeviceParams {
 
 // NOTE: Device reservation endpoints (under /api/v1/devices/) use a different
 // timestamp format: YYYY-MM-DD-hh-mm-ss (e.g. "2024-01-15-13-30-00")
-// This is DIFFERENT from the /api/v1/device-reservations API which uses ISO 8601.
+// This is DIFFERENT from the /api/v1/device-reservations API, which takes ISO 8601 on create
+// and returns "MM/DD/YYYY HH:mm:ss" (parse with parseApiDate in src/utils/timestamp.ts).
 
 export interface DeviceReservationEntry {
   start: string;
@@ -311,7 +312,7 @@ export interface AutomationProperty {
   id: number;
 }
 
-// Full project detail from GET /api/v2/projects/{id} — Cloud Admin only.
+// Full project detail from GET /api/v2/projects/{id} — Cloud Admin and Project Admin (Project User gets 403).
 // Contains 35+ fields not available in the v1 list endpoint.
 export interface ProjectAdminDetail {
   id: number;
@@ -527,7 +528,7 @@ export interface TestViewListResponse {
 
 export interface ProvisioningProfile {
   applicationPrefix: string;
-  // Format from API: "MM/DD/YYYY HH:mm:ss" — NOT ISO 8601. Parse with parseProvisioningDate().
+  // Format from API: "MM/DD/YYYY HH:mm:ss" — NOT ISO 8601. Parse with parseApiDate().
   expirationDate: string;
   profileUUID: string;
   profileName: string;
@@ -763,7 +764,7 @@ export type ComparisonDimension =
   | 'deviceName'
   | 'projectName'
   | 'name'        // transaction name
-  | 'region'      // derived from deviceName suffix / device record; best-effort
+  | 'region'      // not on the transaction record — accepted as an axis but only reported as an unverifiable 'info' flag
   | 'testId';     // two test scripts purporting to test the same thing
 
 // One metric ("speedIndex", "cpuAvg", …) summarised for both sides plus the delta.
@@ -784,7 +785,7 @@ export interface PerformanceSide {
   label: string;
   transactionIds: number[];
   n: number;
-  excludedIds: number[];          // dropped as outliers / missing the metric
+  excludedIds: number[];          // dropped as outliers on the primary metric
 }
 
 export interface PerformanceComparison {

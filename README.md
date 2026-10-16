@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **202 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **203 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -377,6 +377,7 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `MCP_REMEDIATION_DIR` | Optional | — | Debug mode only: folder to write remediation files to (overrides project detection) |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
+| `INSPECTION_SESSION_TIMEOUT_MS` | Optional | `120000` (`240000` for `@emulator='true'` queries and automotive projection) | How long `start_inspection_session` waits for the platform to allocate a device. Emulators and simulators boot inside that request (an iOS simulator took 154 s live) |
 | `USAGE_REPORT_TIMEOUT_MS` | Optional | `240000` | Wall-clock cap on one usage-report CSV fetch (`download_usage_report` / `summarize_usage_report`). An unfiltered month can be ~12 MB and take minutes to transfer; a fetch that outlives the cap returns an error that says how to narrow it |
 | `ACCESS_PROBE_TIMEOUT_MS` | Optional | `8000` | Timeout for the access-level detection call |
 | `AXE_DEVTOOLS_API_KEY` | Optional | — | Deque Axe DevTools Mobile key used by `includeAxeScan` boilerplate |
@@ -388,7 +389,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ### Toolsets (reducing context size)
 
-All 202 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
+All 203 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
 
 Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
@@ -436,15 +437,16 @@ Debug mode costs extra tokens (the instructions and the notes). Leave it off for
 With the npm install, the server finds the project in this order, and records the step it used as `location:` in each file:
 1. `MCP_REMEDIATION_DIR`, if set (files go directly into that folder);
 2. the workspace folder the AI client reports;
-3. the folder the server was started in, if it looks like a project;
-4. `~/remediation`.
+3. `./remediation` in the folder the server was started in, if that folder is a project (has a `.git`, `package.json`, `pom.xml`, …).
+
+Otherwise nothing is written: events stay in memory and each note is returned to the AI client to save, as in Docker mode. Notes are never written to your home folder, a drive root or a system folder.
 
 The `remediation/` folder contains its own `.gitignore` (`*`), so it is never committed to the project it lives in. There is one file per session; the `<id>` suffix keeps parallel sessions apart, and each file records the machine and user, so files collected from several machines can be merged. Keys, tokens, emails and signed-URL parameters are redacted before anything is written or returned.
 
 <details>
 <summary><strong>Summarizing a batch of notes</strong></summary>
 
-Collect the `remediation/` folders you want to analyse, from one machine or several, and run `npx tsx tests/remediation-intake/digest.ts --dir <folder> --dir <folder>` in a clone of this repository (the npm package doesn't include it). With no `--dir`, it reads `$MCP_REMEDIATION_DIR`, or else `./remediation` and `~/remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
+Collect the `remediation/` folders you want to analyse, from one machine or several, and run `npx tsx tests/remediation-intake/digest.ts --dir <folder> --dir <folder>` in a clone of this repository (the npm package doesn't include it). With no `--dir`, it reads `$MCP_REMEDIATION_DIR`, or else `./remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
 - notes by category, and issues that recur across sessions;
 - per-tool errors, guards, retries, response sizes and latency;
 - every note in a table.
@@ -512,7 +514,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 
 ### All capability areas
 
-202 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+203 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -965,7 +967,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 202; 203 with MCP_DEBUG_MODE=true) and active profile
+1. get_server_info           — confirm tool count (expect 203; 204 with MCP_DEBUG_MODE=true) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -975,7 +977,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 202,
+  "registeredToolCount": 203,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }

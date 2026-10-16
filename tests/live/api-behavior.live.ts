@@ -73,9 +73,6 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     assert.ok('errorDetail' in report, 'detail record missing errorDetail field');
   });
 
-  // FINDING 3 (Cat-1 cleared): /api/v1/applications filters server-side. A bundle
-  // that cannot exist must return zero apps; if it returns the full list, the
-  // server is ignoring the filter and our filter params are decorative.
   // FINDING 6: server-side start_time sort is honored for EVERY role (validated 2026-10-08 for Cloud Admin,
   // ProjectAdmin and User keys — results identical to a full scan). Older notes said project roles were
   // CSRF-blocked; listTests now attempts sort for all roles and only falls back if the platform refuses.
@@ -143,11 +140,41 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     assert.ok(['string'].includes(typeof rca.status));
   });
 
+  // FINDING 3 (Cat-1 cleared): /api/v1/applications filters server-side. A bundle
+  // that cannot exist must return zero apps; if it returns the full list, the
+  // server is ignoring the filter and our filter params are decorative.
   it('applications filter is honored server-side (fake bundle returns none)', async () => {
     const all = await getApplications();
     const filtered = await getApplications({ bundleIdentifier: 'com.nonexistent.zzz999.audit' });
     assert.ok(Array.isArray(all), 'unfiltered applications should be an array');
     assert.equal(filtered.length, 0, 'server ignored bundleIdentifier filter — it returned apps that do not match');
+  });
+
+  // FINDING 12 (2026-10-16): searchValue + a non-text built-in column (start_time, duration, test_id…) in keys makes
+  // the reporter answer 400 "Failed to retrieve data". Built-in columns are always returned, so listTests drops them
+  // from keys. The raw request is sent here to see whether the platform still fails; the MCP call must succeed.
+  it('reporter 400s on searchValue + keys:[start_time]; listTests strips built-in keys so the call works', async () => {
+    const { apiPost } = await import('../../src/api/client.js');
+    await assert.rejects(
+      apiPost('/reporter/api/tests/list', { limit: 1, searchValue: 'Test', keys: ['start_time'] }),
+      /\[400\]/,
+      'platform no longer 400s on searchValue + built-in keys — the keys sanitiser may be unnecessary'
+    );
+    const res = await listTests({ limit: 1, searchValue: 'Test', keys: ['start_time', 'device.name'] });
+    assert.ok(Array.isArray(res.data));
+  });
+
+  // FINDING 13 (2026-10-16): idle emulator/simulator templates are only listed by the portal's
+  // /api/v2/virtual-devices/load (Bearer; any role). list_virtual_device_templates depends on it and on the record
+  // carrying os + deviceModel (the name field differs between platform versions).
+  it('virtual-device templates are listable and carry os + deviceModel', async () => {
+    const { listVirtualDeviceTemplates } = await import('../../src/api/virtual-devices.js');
+    const templates = await listVirtualDeviceTemplates();
+    assert.ok(Array.isArray(templates));
+    for (const t of templates.slice(0, 20)) {
+      assert.ok(t.os === 'iOS' || t.os === 'Android', `unexpected os ${t.os}`);
+      assert.ok(t.templateName || t.model, 'template has neither a name nor a model — deviceQuery cannot target it');
+    }
   });
 });
 

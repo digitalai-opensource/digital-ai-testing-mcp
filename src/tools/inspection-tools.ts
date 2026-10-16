@@ -37,6 +37,7 @@ import {
   findFirstElementId,
   listActiveSessions,
   getPendingReportIds,
+  sweepTimedOutStarts,
   deleteAllTrackedReports,
   automotiveControl,
   AUTOMOTIVE_RESOLUTIONS,
@@ -318,6 +319,8 @@ export function registerInspectionTools(server: McpServer): void {
         .describe(
           "Server-side device query. Default: \"@os='android' and @category='PHONE'\" (or @os='iOS' when platform is ios). " +
           "Add @region, @model, @version as needed. Example: \"@os='android' and @category='PHONE' and @model='Pixel 7'\". " +
+          'Max 255 characters including the region clause (platform limit — longer queries are refused before any call). ' +
+          "With @emulator='true' the start waits up to 240 s (virtual devices boot inside the request). " +
           'Ignored when device is provided.'
         ),
       region: z
@@ -1460,6 +1463,8 @@ export function registerInspectionTools(server: McpServer): void {
         .describe('Must be true to proceed. Safety guard prevents accidental deletion.'),
     },
     async (args) => {
+      // A start the client timed out on may have completed on the platform since — pick up its report first.
+      const swept = await sweepTimedOutStarts();
       const pending = getPendingReportIds();
 
       if (pending.length === 0) {
@@ -1472,6 +1477,7 @@ export function registerInspectionTools(server: McpServer): void {
           ],
         };
       }
+      const sweptNote = swept.length > 0 ? ` (${swept.length} from timed-out starts: ${swept.join(', ')})` : '';
 
       const denied = await checkDeleteAllowed();
       if (denied) {
@@ -1487,7 +1493,7 @@ export function registerInspectionTools(server: McpServer): void {
 
       const guard = checkDestructiveGuard(
         args.confirmDeletion,
-        `Delete ${pending.length} inspection session report${pending.length !== 1 ? 's' : ''} (IDs: ${pending.join(', ')})`
+        `Delete ${pending.length} inspection session report${pending.length !== 1 ? 's' : ''} (IDs: ${pending.join(', ')})${sweptNote}`
       );
       if (guard) return { content: [{ type: 'text' as const, text: guard }] };
 

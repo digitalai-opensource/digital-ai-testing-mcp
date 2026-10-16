@@ -44,6 +44,8 @@
     "test:live": "vitest run --config vitest.live.config.ts",
     "test:users": "vitest run tests/api/users.test.ts",
     "test:devices": "vitest run tests/api/devices.test.ts",
+    "test:device-tools": "vitest run tests/device-tools.test.ts",
+    "test:log-view": "vitest run tests/log-view.test.ts",
     "test:device-groups": "vitest run tests/api/device-groups.test.ts",
     "test:reservations": "vitest run tests/api/reservations.test.ts",
     "test:applications": "vitest run tests/api/applications.test.ts",

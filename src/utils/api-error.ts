@@ -48,7 +48,7 @@ function describe(value: unknown, depth = 0): string | undefined {
   if (isBinary(value)) return describe(decodeBinary(value), depth);
 
   if (Array.isArray(value)) {
-    // Validation-error lists: `[ { field, message }, … ]` — join the messages, else dump the first item.
+    // Validation-error lists: `[ { field, message }, … ]` — join the messages; undefined when none yields one.
     const messages = value.map((item) => describe(item, depth + 1)).filter((m): m is string => !!m);
     return messages.length ? truncate(messages.join('; ')) : undefined;
   }

@@ -22,7 +22,7 @@ export function validateOutputPath(localPath: string): string | null {
 
 // Filenames that are credentials by convention. Uploading these to the cloud
 // repository would publish them to every project member — the server's own
-// .env holds the Cloud Admin credential.
+// .env holds the platform access key(s) for every configured profile.
 const SENSITIVE_FILENAME_RE = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\..*)?)$/i;
 
 /**

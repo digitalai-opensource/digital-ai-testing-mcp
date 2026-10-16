@@ -1,16 +1,18 @@
 /**
- * Reporting tool handlers against a stub reporter (tests/reporting.test.ts covers the live API itself).
+ * Reporting tool handlers against a stub reporter (tests/api/reporting.test.ts covers the live API itself).
  * Regression targets, all from live UAT runs:
  *  - get_distinct_test_key_values / get_grouped_test_reports fold device.os case variants (ANDROID/Android/IOS/iOS)
  *  - get_grouped_test_reports adds totalRecords (the platform's count is the number of groups)
  *  - get_daily_execution_trend names the missing range and suggests a maxRecords value when capped
  *  - get_test_report no longer invents status_code/project_id = 0 and counts attachment files
  *  - list_active_test_executions ignores Incomplete records older than maxAgeHours
+ *  - list_test_reports never sends always-returned columns in keys (searchValue + keys:[start_time] → platform 400)
+ *    and explains the opaque 400 a comparison filter on a text key produces
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { registerReportingTools } from '../src/tools/reporting-tools.js';
-import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
+import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 const HOUR = 3_600_000;
 const NOW = Date.now();
@@ -48,6 +50,9 @@ beforeAll(async () => {
       return { count: 4, data: [{ 'device.os': 'ANDROID' }, { 'device.os': 'Android' }, { 'device.os': 'IOS' }, { 'device.os': 'iOS' }] };
     }
     if (req.path === '/reporter/api/tests/list') {
+      if ((req.json.filter ?? []).some((f: { operator: string }) => f.operator === '>')) {
+        return reply(400, { status: 'ERROR', message: 'Failed to retrieve data. Please check log for details.' });
+      }
       return listFixture === 'trend'
         ? { count: null, data: trendRows(req.json.page ?? 1) }
         : { count: INCOMPLETE.length, data: INCOMPLETE };
@@ -140,5 +145,27 @@ describe('list_active_test_executions', () => {
     } finally {
       listFixture = 'trend';
     }
+  });
+});
+
+describe('list_test_reports keys', () => {
+  const lastListBody = () => api.requests.filter((r) => r.path === '/reporter/api/tests/list').at(-1)!.json;
+
+  it('sends only custom keys — built-in columns are always returned and break searchValue', async () => {
+    await tools.call('list_test_reports', { searchValue: 't1', keys: ['name', 'status', 'start_time', 'duration', 'device.name'], limit: 5 });
+    assert.deepEqual(lastListBody().keys, ['device.name']);
+    await tools.call('list_test_reports', { searchValue: 't1', keys: ['start_time', 'duration'], limit: 5 });
+    assert.equal('keys' in lastListBody(), false);
+  });
+
+  it('applies the same rule on the startDate scan path', async () => {
+    await tools.call('list_test_reports', { searchValue: 't1', keys: ['start_time', 'user'], startDate: new Date(NOW - HOUR).toISOString(), limit: 5 });
+    assert.deepEqual(lastListBody().keys, ['user']);
+  });
+
+  it('explains the opaque 400 a comparison filter produces', async () => {
+    const { res, text } = await tools.call('list_test_reports', { filter: [{ property: 'loadSeq', operator: '>', value: 8 }] });
+    assert.equal(res.isError, true);
+    assert.match(text, /comparison operators .* only work on numeric keys; \[loadSeq\]/);
   });
 });

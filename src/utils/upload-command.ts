@@ -1,8 +1,8 @@
 import { getActiveAccessKey, getActiveUrl, getActiveAuthScheme } from '../api/client.js';
 
 // Shared builder for "run this on your own machine" multipart-upload commands.
-// The MCP server typically runs in Docker, so it cannot read a file from the
-// caller's filesystem. These tools emit a curl / PowerShell command the user
+// When the MCP server runs in Docker/remote (MCP_DEPLOYMENT_MODE != local), it
+// cannot read a file from the caller's filesystem. These tools emit a curl / PowerShell command the user
 // runs locally, so the binary never has to pass through the container.
 // Mirrors the auth + plaintext-key-warning behavior of get_application_upload_command.
 
@@ -13,7 +13,7 @@ export interface UploadCommandSpec {
   files: Array<[string, string]>;
   /** Multipart scalar fields: [formFieldName, value]. */
   fields: Array<[string, string]>;
-  /** Platform of the machine that will RUN the command (cannot be inferred — MCP runs in Docker). */
+  /** Platform of the machine that will RUN the command (cannot be inferred — under Docker/remote the server's OS is not the caller's). */
   localPlatform: 'windows' | 'macos' | 'linux';
   /** Optional extra advisory lines inserted before the command blocks. */
   notes?: string[];

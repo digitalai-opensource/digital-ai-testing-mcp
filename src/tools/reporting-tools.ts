@@ -36,6 +36,7 @@ import {
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import { commandPayload } from '../utils/command-payload.js';
 import { parseReportRef } from '../utils/report-ref.js';
+import { selectLogLines, DEFAULT_LOG_CONTEXT, DEFAULT_LOG_MAX_CHARS } from '../utils/log-view.js';
 import { countsFromPivotRow, tallyStatuses, passRate, statusOutcome, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
 
 export function registerReportingTools(server: McpServer): void {
@@ -330,7 +331,7 @@ export function registerReportingTools(server: McpServer): void {
         .array(z.string())
         .optional()
         .describe(
-          'Key names to include in the response, e.g. ["device.os", "browser"]. Omit to return all keys.'
+          'Custom key names to add to each record, e.g. ["device.os", "browser"]. Built-in columns (name, status, start_time, duration, test_id, uuid, …) are always returned — do not list them. Omit to return all keys.'
         ),
       returnTotalCount: z
         .boolean()
@@ -900,6 +901,8 @@ export function registerReportingTools(server: McpServer): void {
     'Retrieve log content from a test execution directly as text — no file download required. ' +
     'Fetches the attachment ZIP and extracts the requested log in memory, returning the tail. ' +
     'Use this to diagnose test failures when get_test_report shows cause/errorDetail but you need the full Appium trace. ' +
+    'Appium log lines are long (a few hundred lines can be 80k+ characters): try `contains` first (e.g. the failing ' +
+    'locator, "Exception", "error") — it returns only matching lines with context. Output is capped at maxChars, keeping the end. ' +
     'Requires the test execution UUID (uuid field from get_test_report or list_test_reports).',
     {
       uuid: z.string().describe('Test execution UUID (uuid field from get_test_report or list_test_reports).'),
@@ -913,17 +916,39 @@ export function registerReportingTools(server: McpServer): void {
         .int()
         .optional()
         .default(200)
-        .describe('Number of lines to return from the END of the log. Default: 200.'),
+        .describe('Number of lines to return from the END of the log. With contains: the number of MATCHES from the end (their context lines are extra). Default: 200.'),
+      contains: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Case-insensitive substring. Returns only matching lines plus `context` lines either side ("--" separates groups).'),
+      context: z
+        .number()
+        .int()
+        .min(0)
+        .max(50)
+        .optional()
+        .default(DEFAULT_LOG_CONTEXT)
+        .describe(`Lines of context around each contains match. Default: ${DEFAULT_LOG_CONTEXT}.`),
+      maxChars: z
+        .number()
+        .int()
+        .min(1000)
+        .max(200_000)
+        .optional()
+        .default(DEFAULT_LOG_MAX_CHARS)
+        .describe(`Hard ceiling on returned characters; whole lines are kept from the end. Default: ${DEFAULT_LOG_MAX_CHARS}.`),
     },
-    async ({ uuid, logType, maxLines }) => {
+    async ({ uuid, logType, maxLines, contains, context, maxChars }) => {
       try {
-        const { filename, content, totalLines } = await extractAttachmentLog(uuid, logType ?? 'appium');
-        const tail = content.split('\n').slice(-(maxLines ?? 200));
-        const truncated = totalLines > (maxLines ?? 200);
-        const header = truncated
-          ? `[${filename} — showing last ${maxLines ?? 200} of ${totalLines} lines]\n\n`
-          : `[${filename} — ${totalLines} lines]\n\n`;
-        return { content: [{ type: 'text', text: header + tail.join('\n') }] };
+        const { filename, content } = await extractAttachmentLog(uuid, logType ?? 'appium');
+        const view = selectLogLines(content, { maxLines: maxLines ?? 200, contains, context, maxChars });
+        const parts = [`${filename} — ${view.totalLines} lines`];
+        if (contains !== undefined) parts.push(`${view.matches} line(s) contain "${contains}"`);
+        parts.push(view.truncated ? `showing the last ${view.shownLines}` : `showing ${view.shownLines}`);
+        if (view.charCapped) parts.push(`cut at maxChars=${maxChars ?? DEFAULT_LOG_MAX_CHARS} — narrow with contains or lower maxLines`);
+        const header = `[${parts.join(' — ')}]\n\n`;
+        return { content: [{ type: 'text', text: header + view.text }] };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -1009,9 +1034,9 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ name, projectId, projectName, outputFormat }) => {
       try {
-        // listTestsSortedDesc guarantees newest-first for every role — if sort is refused, a plain sorted
-        // listTests call would silently
-        // return an arbitrary record instead of the latest.
+        // listTestsSortedDesc returns newest-first for every role (server sort, or a capped client-side scan + sort
+        // if the platform refuses it) — a plain sorted listTests call would silently return an arbitrary record
+        // instead of the latest when sort is refused.
         const result = await listTestsSortedDesc(
           { limit: 1, page: 1, searchValue: name },
           projectId,

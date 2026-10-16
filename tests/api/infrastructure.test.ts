@@ -11,8 +11,7 @@ import {
 
 // v2 API and reporter endpoints — these require Cloud Admin access (either key format: a Cloud Admin
 // may hold an eyJ... key or a short aut_1_... key). If the test environment holds a project-level role
-// these will throw; that is expected
-// and the tests are designed to handle it gracefully.
+// the platform answers 401/403; tryOrSkip turns that into a visible skip instead of a failure.
 
 async function tryOrSkip<T>(fn: () => Promise<T>, label: string): Promise<T | null> {
   try {

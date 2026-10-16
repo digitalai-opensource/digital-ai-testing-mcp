@@ -19,6 +19,7 @@ import { registerTestViewTools } from './tools/test-view-tools.js';
 import { registerResources } from './tools/resources.js';
 import { registerPrompts } from './tools/prompt-tools.js';
 import { registerWorkflowTools } from './tools/workflow-tools.js';
+import { staleBuildRemedy } from './utils/locality.js';
 import { registerBoilerplateTools } from './tools/boilerplate-tools.js';
 import { registerAgentTools } from './tools/agent-tools.js';
 import { registerRegionTools } from './tools/region-tools.js';
@@ -94,8 +95,8 @@ const debugMode = isDebugMode();
 const server = new McpServer({ name, version }, // Debug block goes FIRST: clients truncate long instructions, and at the end it was the part that got cut (2026-10-10).
   { instructions: (debugMode ? debugInstructions() : '') + SERVER_INSTRUCTIONS });
 
-// Capture every module first, then register through the toolset layer (src/utils/toolsets.ts). With MCP_TOOLSETS
-// unset this registers everything in full, exactly as before; with it set, tools outside the chosen toolsets become
+// Capture every module first, then register through the toolset layer (src/utils/toolsets.ts), which also applies
+// strict input schemas and annotations. With MCP_TOOLSETS unset this registers everything in full; with it set, tools outside the chosen toolsets become
 // self-loading placeholders — every name still exists, so no description, prompt or instruction points at a missing tool.
 let toolsetController: ToolsetController | undefined;
 const modules: Array<[string, RegisterFn]> = [
@@ -172,7 +173,7 @@ if (!toolsetSelection.all) {
 console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools${debugMode ? " + record_remediation_note" : ""} + 2 resources + 7 prompts).`);
 
 // Startup parity check: verify all workflow dependency tools are actually registered.
-// A missing tool here means a module failed to load — the image needs to be rebuilt.
+// A missing tool here means a module failed to load — the build/image is stale and needs rebuilding.
 const workflowReadiness = computeWorkflowReadiness(server);
 const degradedWorkflows = Object.entries(workflowReadiness).filter(([, s]) => !s.ready);
 if (degradedWorkflows.length > 0) {
@@ -181,7 +182,7 @@ if (degradedWorkflows.length > 0) {
     if (!status.workflowPresent) missing.unshift(`${wf} (workflow tool itself)`);
     console.error(`[${name}] ⚠️  DEGRADED: ${wf} — missing: ${missing.join(', ')}`);
   }
-  console.error(`[${name}] Rebuild the image to restore full workflow capability: docker build -t digital-ai-testing-mcp:latest .`);
+  console.error(`[${name}] To restore full workflow capability: ${staleBuildRemedy()}`);
 } else {
   console.error(`[${name}] Workflow readiness: all workflows ready ✓`);
 }

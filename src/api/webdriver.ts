@@ -4,6 +4,7 @@ import { deleteTests, listTests } from './reporting.js';
 import { getMyAccountInfo } from './users.js';
 import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
+import { isEmulatorQuery } from '../utils/device-query.js';
 
 // In-process session registry — cleared on MCP server restart
 const sessionRegistry = new Map<string, InspectionSession>();
@@ -50,6 +51,31 @@ export type AutomotiveResolution = (typeof AUTOMOTIVE_RESOLUTIONS)[number];
 export const INSTRUMENT_CLUSTER_CONTENT = ['Instruction Card', 'Map', 'Navigation App'] as const;
 export type InstrumentClusterContent = (typeof INSTRUMENT_CLUSTER_CONTENT)[number];
 
+/** The platform rejects longer device queries ("Device query length restricted to 255", seen live 2026-10-16). */
+export const DEVICE_QUERY_MAX_LENGTH = 255;
+
+/** Same wording as the platform, plus the length, so the caller can shorten it without a round trip. */
+export function deviceQueryLengthError(query: string): string | null {
+  return query.length > DEVICE_QUERY_MAX_LENGTH
+    ? `Device query length restricted to ${DEVICE_QUERY_MAX_LENGTH} characters (this one is ${query.length}, including any region clause). Shorten it — e.g. drop redundant clauses or match a shorter part of the name with contains().`
+    : null;
+}
+
+const DEFAULT_SESSION_CREATE_TIMEOUT_MS = 120_000;
+const LONG_SESSION_CREATE_TIMEOUT_MS = 240_000;
+
+/**
+ * How long to wait for POST /session. Emulators/simulators boot (and install the app) inside the request: a Java test
+ * took 60–130 s for an iOS simulator while the 120 s default timed out (debug-mode intake 2026-10-16). A projection
+ * session needs the platform's own failure to arrive (see below). INSPECTION_SESSION_TIMEOUT_MS overrides both.
+ */
+export function sessionCreateTimeoutMs(query: string, automotiveProjection: boolean, env: NodeJS.ProcessEnv = process.env): number {
+  const override = Number(env.INSPECTION_SESSION_TIMEOUT_MS);
+  if (Number.isFinite(override) && override > 0) return override;
+  if (automotiveProjection || isEmulatorQuery(query)) return LONG_SESSION_CREATE_TIMEOUT_MS;
+  return DEFAULT_SESSION_CREATE_TIMEOUT_MS;
+}
+
 export async function createInspectionSession(
   opts: InspectionSessionOptions
 ): Promise<InspectionSession> {
@@ -57,15 +83,6 @@ export async function createInspectionSession(
   // active profile's credential so canDeleteReport is derived from the same credential.
   const accessKey = getActiveAccessKey();
   if (!accessKey) throw new Error('DIGITAL_AI_ACCESS_KEY not configured');
-
-  // Capture the active profile's project — the session's report is created in
-  // this project's reporter instance and any later delete must scope to it.
-  let projectName: string | undefined;
-  try {
-    projectName = (await getMyAccountInfo()).project?.name;
-  } catch {
-    // Non-fatal — deletes fall back to the default reporter scope
-  }
 
   const platform = opts.platform ?? 'android';
   let query =
@@ -76,6 +93,17 @@ export async function createInspectionSession(
   // Only the default is narrowed; an explicit query or a pinned device stays the caller's choice.
   if (!opts.deviceQuery && opts.automotiveProjection && platform === 'android') query = `${query} and @version>='10.0'`;
   if (opts.region) query = `${query} and @region='${opts.region}'`;
+  const tooLong = deviceQueryLengthError(query);
+  if (tooLong) throw new Error(tooLong);
+
+  // Capture the active profile's project — the session's report is created in
+  // this project's reporter instance and any later delete must scope to it.
+  let projectName: string | undefined;
+  try {
+    projectName = (await getMyAccountInfo()).project?.name;
+  } catch {
+    // Non-fatal — deletes fall back to the default reporter scope
+  }
 
   const desiredCapabilities: Record<string, unknown> = {
     'digitalai:accessKey': accessKey,
@@ -112,18 +140,32 @@ export async function createInspectionSession(
   const testName = desiredCapabilities['digitalai:testName'] as string;
   const requestedAt = Date.now();
   let res;
+  let timeout = DEFAULT_SESSION_CREATE_TIMEOUT_MS;
   try {
     // A projection session can take longer than the client default: the platform's projection start has its own 60 s
     // deadline on the device host, and a failed CarPlay start reached the reporter at 125.8 s (live 2026-10-14) — past
     // the 120 s default, so the client timed out first, never saw the platform's reason, and the failed-start cleanup
     // below never ran. Wait long enough to receive the platform's answer.
-    const timeout = opts.automotiveProjection ? 240_000 : 120_000;
+    timeout = sessionCreateTimeoutMs(query, !!opts.automotiveProjection);
     res = await client.post('/session', {
       desiredCapabilities,
       capabilities: { alwaysMatch, firstMatch: [{}] },
     }, { timeout });
   } catch (e) {
     const detail = describeWdError(e);
+    // Our own client gave up, but the platform did not: it may still be booting an emulator/simulator and will create
+    // the session (and its report) seconds or minutes later, unknown to this process. Nothing exists to clean up yet,
+    // so the start is remembered and cleanup_inspection_sessions sweeps whatever it left (sweepTimedOutStarts).
+    if (/timeout of \d+ms exceeded/i.test(detail)) {
+      timedOutStarts.push({ testName, projectName, requestedAt });
+      throw new Error(
+        `Session creation failed: no answer from the platform within ${Math.round(timeout / 1000)} s. ` +
+        `Emulators/simulators boot and install the app inside this request and can take 60–130 s or more; ` +
+        `set INSPECTION_SESSION_TIMEOUT_MS (ms) in the MCP server's environment to wait longer. ` +
+        `The platform may still finish this start: the session would then hold the device unattended until its idle ` +
+        `timeout (~4 min) and leave a report "${testName}" — run cleanup_inspection_sessions afterwards to delete it.`
+      );
+    }
     // A start that fails after a device was allocated still leaves an "Error" report (UAT 2026-10-10: five of them).
     const leftover = await cleanUpFailedSessionReport(testName, projectName, requestedAt);
     // Automotive projection failures have specific causes the generic advice below doesn't cover (UAT 2026-10-10).
@@ -324,7 +366,7 @@ export interface FindElementsOptions {
 }
 
 /**
- * Attribute enrichment costs 7–8 requests per element. Done one element at a time with no cap, 48 iOS home-screen
+ * Attribute enrichment costs 7–9 requests per element. Done one element at a time with no cap, 48 iOS home-screen
  * icons took 80–160 s (measured live 2026-10-09) — past the ~60 s MCP client timeout. So: a cap, a time budget, and
  * bounded parallelism (iOS kept low — hammering WebDriverAgent has crashed sessions before). Elements beyond the cap
  * or budget are still returned, with `enriched: false` and null attributes.
@@ -446,7 +488,7 @@ export async function findElements(
 // Lightweight single-element lookup: one round trip via the singular /element
 // route, no attribute enrichment. Returns null when nothing matches ("no such
 // element" 404). Used by internal helpers (e.g. press_back's nav-bar lookup)
-// where the full findElements enrichment (~9 requests/element) is wasteful.
+// where the full findElements enrichment (7–9 requests/element) is wasteful.
 export async function findFirstElementId(
   handle: string,
   using: string,
@@ -779,9 +821,10 @@ export async function launchApp(
   const client = makeClient();
   const sid = session.gridSessionId;
 
-  // The Digital.ai Grid (proprietary JWP proxy) rejects EVERYTHING except
-  // seetest:client.* execute commands — legacy /appium/device/* routes return
-  // 500/404 and `mobile:` commands fail with "missing 'client.' prefix".
+  // For app launch the Digital.ai Grid (proprietary JWP proxy) accepts only
+  // seetest:client.* execute commands — the legacy start_activity / activate_app
+  // routes return 500/404 (other /appium/device/* routes such as press_keycode do
+  // work there) and `mobile:` commands fail with "missing 'client.' prefix".
   // Confirmed live: seetest:client.launch(activityURL, instrument, stopIfRunning)
   // with exactly 3 args is the working mechanism on the Grid. Standalone Appium
   // agents need `mobile:` commands (Appium 2/3) or the legacy routes (Appium 1.x),
@@ -1838,6 +1881,34 @@ export function listActiveSessions(): InspectionSession[] {
 
 export function getPendingReportIds(): number[] {
   return [...allReports.keys()];
+}
+
+/** Session starts the client gave up on (POST /session timeout) — the platform may have completed them later. */
+const timedOutStarts: Array<{ testName: string; projectName: string | undefined; requestedAt: number }> = [];
+
+/**
+ * Register the reports that timed-out starts created after the client stopped waiting, so cleanup_inspection_sessions
+ * can delete them. Any status counts (the session may still be running or have idled out). A start whose report
+ * has not appeared stays pending for the next sweep. Returns the newly tracked report IDs. Never throws.
+ */
+export async function sweepTimedOutStarts(): Promise<number[]> {
+  const found: number[] = [];
+  for (const start of [...timedOutStarts]) {
+    try {
+      const batch = await listTests({ limit: 10, filter: [{ property: 'name', operator: '=', value: start.testName }] }, undefined, start.projectName);
+      const ids = (batch.data ?? [])
+        .filter((r) => new Date(r.start_time).getTime() >= start.requestedAt - 15_000 && !allReports.has(r.test_id))
+        .map((r) => r.test_id);
+      for (const id of ids) {
+        allReports.set(id, start.projectName);
+        found.push(id);
+      }
+      if (ids.length > 0) timedOutStarts.splice(timedOutStarts.indexOf(start), 1);
+    } catch {
+      // Reporter unreachable — try again on the next sweep.
+    }
+  }
+  return found;
 }
 
 export async function deleteAllTrackedReports(): Promise<{ deleted: number[]; failed: number[] }> {

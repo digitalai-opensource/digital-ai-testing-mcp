@@ -190,7 +190,7 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   const webPlaceholder = content.match(/#YOUR_SELECTOR|\.your-class|\[data-testid="placeholder"\]|\[data-testid='placeholder'\]|YOUR_ELEMENT_ID|YOUR_CSS_SELECTOR/gi);
   if (webPlaceholder) add('high', 'placeholder CSS selectors', `Unreplaced placeholder CSS selector(s): ${[...new Set(webPlaceholder)].slice(0, 4).join(', ')}`);
 
-  // 5. Soft signal: no inspection session ran in this process — can't be a hard fail
+  // 6. Soft signal: no inspection session ran in this process — can't be a hard fail
   // (selectors may be source-derived or captured in a since-closed session), but worth surfacing.
   if (listActiveSessions().length === 0) {
     add('info', 'no live inspection session', 'No inspection session is active in this MCP process. If the selectors here were not captured from an inspection or taken from authoritative app source, they are guesses — re-verify before delivering.');
@@ -928,7 +928,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         // leave as raw value if URL parsing fails
       }
 
-      // Auto-detect server mode via my-account-info — works for all user roles with Bearer Token.
+      // Auto-detect server mode via my-account-info (project.isAppiumOss) — works for all user roles.
       // undefined = lookup failed. Templates fall back to Grid (the conservative choice), but the orchestration
       // decision must not then claim the project IS Grid — it reports that the mode could not be determined.
       let detectedAppiumOss: boolean | undefined;
@@ -1459,14 +1459,14 @@ export function registerBoilerplateTools(server: McpServer): void {
       const gridUrl = `${baseUrl}/wd/hub`;
 
       // Decide whether to include shadow DOM helper.
-      // For 'auto', check if the live session detected shadow roots.
+      // For 'auto', approximate: include it when any live browser session is open.
       let includeShadowHelper = false;
       if (shadowDomSupport === 'always') {
         includeShadowHelper = true;
       } else if (shadowDomSupport === 'auto') {
         const browserSession = listActiveSessions().find((s) => s.platform === 'web');
         // We can't detect shadow DOM without the session's DOM result, so 'auto' includes
-        // the helper if the user had any browser session open (they likely encountered SPAs).
+        // the helper if a browser session is open in this process (they likely encountered SPAs).
         includeShadowHelper = !!browserSession;
       }
 
@@ -1674,7 +1674,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `}`,
         ].join('\n');
 
-        // Build script (Maven + Gradle)
+        // Build script (Maven pom.xml only — no Gradle file is emitted for web tests)
         const pom = [
           `<project>`,
           `  <modelVersion>4.0.0</modelVersion>`,

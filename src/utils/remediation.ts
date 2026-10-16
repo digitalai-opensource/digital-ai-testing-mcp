@@ -11,10 +11,12 @@
  *     up, a better path, unclear guidance). Local: appended to <project>/remediation/<session>.md. Docker: the note
  *     text is returned for the agent to save in remediation/ of the project it is working in.
  * <project> = the CLIENT's project (the folder the agent works in), so notes sit next to the app/tests they are about:
- * MCP_REMEDIATION_DIR → the client's workspace roots (MCP roots/list) → the folder the server was started in, if it
- * looks like a project → ~/remediation. The folder gets its own ".gitignore" containing "*" so it never ends up in the
+ * MCP_REMEDIATION_DIR → the client's workspace roots (MCP roots/list) → ./remediation in the folder the server was
+ * started in, if that looks like a project → nowhere (in memory, notes returned — as under Docker). Never the home
+ * folder, a drive root or a system folder. The folder gets its own ".gitignore" containing "*" so it never ends up in the
  * customer's repo. Files carry the machine and user so batches from several machines can be merged and attributed.
- *  3. NUDGES — one line appended to an error or guard response, prompting a note at the moment it matters.
+ *  3. NUDGES — one line placed FIRST in an error or guard response (a `_debugMode` field in JSON, else a leading text
+ *     item), prompting a note at the moment it matters.
  * Everything written or returned is redacted (keys, JWTs, emails, signed-URL parameters).
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
@@ -60,7 +62,8 @@ interface SessionInfo {
   location?: RemediationLocation;
 }
 
-export type LocationSource = 'env' | 'client-roots' | 'start-folder' | 'home';
+/** 'none': no project folder to write to — events stay in memory and notes are returned, as under Docker. */
+export type LocationSource = 'env' | 'client-roots' | 'start-folder' | 'none';
 export interface RemediationLocation {
   dir: string;
   source: LocationSource;
@@ -89,7 +92,11 @@ const PROJECT_MARKERS = [
   'pyproject.toml', 'requirements.txt', 'Package.swift', 'go.mod', '.claude', '.mcp.json', '.vscode',
 ];
 
-/** A folder counts as a project if it has a typical marker — never the home folder or a filesystem root. */
+/**
+ * A folder counts as a project if it has a typical marker — never the home folder or a filesystem root. Clients that
+ * send no roots start stdio servers from odd places (C:\Windows\System32, a drive root, ~): writing there would fail
+ * or litter, so those get no folder at all rather than a fallback.
+ */
 export function looksLikeProject(dir: string): boolean {
   try {
     if (!dir || dir === homedir() || /^([A-Za-z]:)?[\\/]?$/.test(dir) || !statSync(dir).isDirectory()) return false;
@@ -100,16 +107,21 @@ export function looksLikeProject(dir: string): boolean {
   }
 }
 
+/** ./remediation in the start folder when it is a project; otherwise nowhere ('none'). Never the home folder. */
+export function locateStartFolder(cwd: string): RemediationLocation {
+  return looksLikeProject(cwd) ? { dir: join(cwd, 'remediation'), source: 'start-folder' } : { dir: '', source: 'none' };
+}
+
 /** Synchronous best guess — used until (or instead of) the roots-aware resolution. */
 function locateWithoutRoots(): RemediationLocation {
   if (process.env.MCP_REMEDIATION_DIR) return { dir: process.env.MCP_REMEDIATION_DIR, source: 'env' };
-  if (looksLikeProject(process.cwd())) return { dir: join(process.cwd(), 'remediation'), source: 'start-folder' };
-  return { dir: join(homedir(), 'remediation'), source: 'home' };
+  return locateStartFolder(process.cwd());
 }
 
 /**
  * Where this session's files go, resolved once (the client's roots are only available after it has connected):
- * MCP_REMEDIATION_DIR → first client workspace root → the server's start folder if it is a project → ~/remediation.
+ * MCP_REMEDIATION_DIR → first client workspace root → ./remediation in the server's start folder if it is a project
+ * → none (in-memory, notes returned to the agent).
  */
 export async function resolveRemediationLocation(): Promise<RemediationLocation> {
   if (session?.location) return session.location;
@@ -148,7 +160,7 @@ export function ensureRemediationDir(dir: string = remediationDir()): void {
 
 /** Only when the server's filesystem is the user's machine (npm/local install). */
 export function canWriteLocally(): boolean {
-  return getDeploymentMode() === 'local';
+  return getDeploymentMode() === 'local' && (session?.location ?? locateWithoutRoots()).source !== 'none';
 }
 
 // ── Redaction ────────────────────────────────────────────────────────────────
@@ -375,7 +387,7 @@ export function withNudge<T extends { content?: Array<{ type: string; text?: str
 
 type Handler = (...a: unknown[]) => unknown;
 
-/** Wrap a tool callback: time it, log the event, append a nudge on error/guard. Never changes the tool's own result. */
+/** Wrap a tool callback: time it, log the event, prepend a nudge on error/guard (withNudge). A successful result is returned unchanged. */
 export function instrumentHandler(tool: string, callback: Handler, opts: { placeholder?: boolean } = {}): Handler {
   return async (...a: unknown[]) => {
     // Debug-mode bookkeeping must never turn a working tool into a failing one: every step around the real call is
@@ -434,7 +446,7 @@ export function noteFileHeader(): string {
     `client: ${m.client}`,
     `machine: ${m.machine}`,
     `user: ${m.user}`,
-    `location: ${m.location}  # env | client-roots | start-folder | home`,
+    `location: ${m.location}  # env | client-roots | start-folder`,
     'debugMode: true  # debug sessions spend extra tokens on notes — exclude them from token baselines',
     canWriteLocally() ? `eventsLog: ${m.session}.events.jsonl` : 'eventsLog: none (server not on this machine) — see "Server-observed events" in each note',
     '---',
@@ -469,7 +481,7 @@ export function formatNote(note: RemediationNote, now: Date = new Date()): strin
   return lines.join('\n') + '\n\n';
 }
 
-/** Local: append to ~/remediation/<session>.md. Otherwise: return the text for the agent to save. */
+/** Local: append to <remediationDir()>/<session>.md. Otherwise: return the text for the agent to save. */
 export function saveNote(note: RemediationNote): { written: string | null; markdown: string; fileName: string } {
   const fileName = `${session?.id ?? remediationStamp(new Date())}.md`;
   const entry = formatNote(note);
@@ -478,15 +490,21 @@ export function saveNote(note: RemediationNote): { written: string | null; markd
     notesWritten++;
     return { written: null, markdown, fileName };
   }
-  ensureRemediationDir();
   const path = join(remediationDir(), fileName);
-  appendFileSync(path, markdown);
+  try {
+    ensureRemediationDir();
+    appendFileSync(path, markdown);
+  } catch {
+    // Read-only project folder or similar: hand the note back rather than fail the tool.
+    notesWritten++;
+    return { written: null, markdown, fileName };
+  }
   notesWritten++;
   writeEventLine({ type: 'note', at: new Date().toISOString(), category: note.category, title: redact(note.title) });
   return { written: path, markdown, fileName };
 }
 
-/** Instructions block appended to the server instructions when debug mode is on (kept short — it costs tokens). */
+/** Instructions block placed BEFORE the server instructions when debug mode is on (kept short — it costs tokens). */
 export function debugInstructions(): string {
   const where = canWriteLocally()
     ? 'The server saves each note in a remediation/ folder of the project you are working in.'

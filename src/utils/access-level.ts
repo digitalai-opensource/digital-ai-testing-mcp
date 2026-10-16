@@ -26,7 +26,7 @@ export interface AccessInfo {
   role?: string;
   /** The credential's own project (my-account-info `project.name`) — the scope reporter calls hit by default. */
   projectName?: string;
-  /** `role`: mapped from my-account-info. `probe`: role unrecognised, decided by a Cloud-Admin-only endpoint. */
+  /** `role`: mapped from my-account-info. `probe`: role unrecognised, decided by a Cloud-Admin-only endpoint. `unresolved`: neither answered. */
   source: 'role' | 'probe' | 'unresolved';
 }
 

@@ -120,7 +120,8 @@ export interface WorkflowReadinessResult {
 
 /** Returns the names of all tools currently registered on the server instance.
  *  Uses _registeredTools (plain object, keys = tool names) which is populated
- *  synchronously as each server.tool() call fires at startup. */
+ *  synchronously as registerWithToolsets calls registerTool() at startup —
+ *  toolset placeholders count, since they are registered under the real name. */
 export function getLiveToolNames(server: McpServer): string[] {
   const rt = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
   return rt ? Object.keys(rt) : [];

@@ -1,4 +1,5 @@
 import { getDevicesByQuery, getAllDevices } from '../api/devices.js';
+import { escapeDeviceQueryValue } from './device-query.js';
 
 export interface ResolvedDevice {
   id: string;
@@ -25,7 +26,7 @@ export async function resolveDevice(ref: string): Promise<ResolvedDevice> {
     return { id: ref.trim(), deviceName: `device#${ref.trim()}`, udid: '', displayStatus: 'unknown', agentName: '', region: '' };
   }
 
-  const escaped = ref.replace(/'/g, "\\'");
+  const escaped = escapeDeviceQueryValue(ref);
 
   // Try server-side serial number lookup first (fast single-query).
   try {

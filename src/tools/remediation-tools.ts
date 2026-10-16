@@ -40,7 +40,7 @@ export function registerRemediationTools(server: McpServer): void {
           content: [{
             type: 'text',
             text:
-              `📝 Remediation note (${args.category}). The MCP server is not on the user's machine, so it cannot save this itself.\n` +
+              `📝 Remediation note (${args.category}). The MCP server could not save this itself (it is not on the user's machine, or has no writable project folder).\n` +
               `If you can write files, APPEND the markdown below to remediation/${fileName} in the root of the project you are working in. ` +
               `If the remediation/ folder is new, also create remediation/.gitignore containing a single line "*" so it is never committed. ` +
               `If you cannot write files, skip it — do not paste it into the conversation unless the user asks. Then continue with the user's task.\n\n` +

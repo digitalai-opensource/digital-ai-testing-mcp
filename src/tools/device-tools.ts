@@ -19,6 +19,8 @@ import {
   removeAllDeviceTags,
   getDeviceCaCertificates,
 } from '../api/devices.js';
+import { listVirtualDeviceTemplates } from '../api/virtual-devices.js';
+import { isEmulatorQuery } from '../utils/device-query.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
@@ -75,7 +77,8 @@ export function registerDeviceTools(server: McpServer): void {
           "@name (exact device display name), " +
           "@model (exact model code or display name), " +
           "@modelName (exact human-readable model name), " +
-          "@emulator ('true'/'false'). " +
+          "@emulator ('true'/'false') — idle emulator/simulator TEMPLATES are not devices and are never listed; they only appear while a session runs. " +
+          "Session device queries are limited to 255 characters by the platform. " +
           "BROKEN fields (silently return 0 results — do not use in query): " +
           "@manufacturer, @tag, @deviceName, @id, @udid, @status, @agentName, @region+manufacturer combined. " +
           "For manufacturer, tag, model substring, or region filtering prefer the dedicated params below — those apply client-side and always work."
@@ -156,8 +159,58 @@ export function registerDeviceTools(server: McpServer): void {
         const header = filterDesc
           ? `Found ${paged.total} device(s) matching [${filterDesc}]:\n\n`
           : `Found ${paged.total} device(s):\n\n`;
-        const humanText = appendTruncationNotice(header + formatDeviceList(paged.items), paged);
-        return respond(outputFormat, withPaging(structured, paged), humanText);
+        // Idle emulator/simulator templates are not devices — the commonest reason an emulator query finds nothing.
+        const templateHint = paged.total === 0 && isEmulatorQuery(query)
+          ? 'Idle emulator/simulator templates are not listed here (they become devices only while a session runs). Use list_virtual_device_templates to see them.'
+          : undefined;
+        const humanText = appendTruncationNotice(header + formatDeviceList(paged.items), paged) + (templateHint ? `\n\n${templateHint}` : '');
+        return respond(outputFormat, { ...withPaging(structured, paged), ...(templateHint && { note: templateHint }) }, humanText);
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'list_virtual_device_templates',
+    'Lists the emulator/simulator TEMPLATES available on the platform (the portal\'s Virtual Devices page) — the only way to see them: ' +
+    'idle templates are not devices, so list_devices, list_agents and get_agent_devices never show them. ' +
+    'Each entry carries a ready deviceQuery for start_inspection_session or a test\'s digitalai:deviceQuery. ' +
+    'Region and serving agent are NOT available from the platform — to check a region, start a session with @region added to the query. ' +
+    'templateName is null on platform versions that do not expose it; the deviceQuery then targets @model. Works for every role.',
+    {
+      os: osTypeTitle().optional().describe("Filter by OS: 'Android' or 'iOS'."),
+      status: z
+        .enum(['AVAILABLE', 'UNAVAILABLE', 'all'])
+        .optional()
+        .default('all')
+        .describe("Filter by template status. Default: 'all'."),
+      nameContains: z
+        .string()
+        .optional()
+        .describe('Case-insensitive substring matched against templateName and model, e.g. "iPhone 17", "galaxy".'),
+      maxResults: z.number().int().min(1).max(500).optional().default(100).describe('Maximum templates to return (default 100).'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ os, status, nameContains, maxResults, outputFormat }) => {
+      try {
+        let templates = await listVirtualDeviceTemplates();
+        if (os) templates = templates.filter((t) => t.os === os);
+        if (status && status !== 'all') templates = templates.filter((t) => t.status === status);
+        if (nameContains) {
+          const q = nameContains.toLowerCase();
+          templates = templates.filter((t) => (t.templateName ?? '').toLowerCase().includes(q) || (t.model ?? '').toLowerCase().includes(q));
+        }
+        templates.sort((a, b) => a.os.localeCompare(b.os) || String(a.templateName ?? a.model).localeCompare(String(b.templateName ?? b.model)) || String(b.osVersion).localeCompare(String(a.osVersion), undefined, { numeric: true }));
+        const paged = applyMaxResults(templates, maxResults);
+        const lines = paged.items.map((t) =>
+          `- ${t.templateName ?? t.model ?? '(unnamed)'} — ${t.os} ${t.osVersion ?? '?'}, ${t.category ?? '?'}, ${t.status ?? '?'}\n  deviceQuery: ${t.deviceQuery}`
+        );
+        const humanText = appendTruncationNotice(
+          `Found ${paged.total} virtual device template(s). Region/agent are not available — add @region to the query and start a session to check one.\n\n` + lines.join('\n'),
+          paged
+        );
+        return respond(outputFormat, withPaging({ templates: paged.items }, paged), humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

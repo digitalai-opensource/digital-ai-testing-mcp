@@ -1,5 +1,5 @@
 /**
- * Test-view tool handlers against a stub reporter (tests/test-views.test.ts covers the live API itself).
+ * Test-view tool handlers against a stub reporter (tests/api/test-views.test.ts covers the live API itself).
  *  - get_test_view says "not found" instead of a bare 404
  *  - create/update/delete return structured output; the delete guard names the view
  */

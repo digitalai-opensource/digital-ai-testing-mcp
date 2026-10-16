@@ -1,5 +1,6 @@
 // Domain compute for the performance-comparison tools. Pure functions over a
-// Transaction[] that the caller has already fetched (via listTransactions) —
+// Transaction[] that the caller has already fetched (gatherPool in
+// performance-tools.ts: getTransaction for explicit IDs, listTransactions for filters) —
 // no network here, so this whole module is unit-testable with fixture arrays.
 
 import type {
@@ -36,7 +37,7 @@ export interface SideSelector {
   filter?: TransactionFilter;
 }
 
-/** Resolve a side selector to concrete transactions from the full fetched list. */
+/** Resolve a side selector to concrete transactions from the fetched pool (IDs absent from it are dropped). */
 export function resolveSide(allTxns: Transaction[], sel: SideSelector): Transaction[] {
   if (sel.transactionIds && sel.transactionIds.length > 0) {
     // Preserve caller order so excluded/missing IDs are easy to spot.

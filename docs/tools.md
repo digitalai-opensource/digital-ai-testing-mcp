@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 202 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 203 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (access level is detected from the API — either key format works); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -40,7 +40,8 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 
 | Tool | What it does | Filters / Sort | Admin Required? |
 |---|---|---|---|
-| `list_devices` | List devices with status, OS, model, and agent | `query` (@-syntax), `os`, `region`, `model`; sortBy/sortOrder | Any |
+| `list_devices` | List devices with status, OS, model, and agent. Idle emulator/simulator templates are not devices and never appear here | `query` (@-syntax), `os`, `region`, `model`; sortBy/sortOrder | Any |
+| `list_virtual_device_templates` | List emulator/simulator templates (the portal's Virtual Devices page), each with a ready `deviceQuery`. Region/agent are not exposed by the platform — check a region by starting a session with `@region` | `os`, `status`, `nameContains` | Any |
 | `get_device_detail` | Full device profile including groups and status history | — | Cloud Admin |
 | `edit_device` | Update device name, notes, or category | — | Cloud Admin |
 | `find_available_device` | Find the first available device matching OS, tags, or version | — | Any |
@@ -60,7 +61,7 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 | `remove_all_device_tags` | Remove all tags. Requires `confirmDeletion: true`. | — | Cloud Admin / Project Admin |
 | `get_device_ca_certificates` | List CA certificates on an Android device | — | Cloud Admin |
 
-**Device query syntax** (`list_devices` `query` parameter — server-side filtering):
+**Device query syntax** (`list_devices` `query` parameter — server-side filtering). Session device queries are limited to 255 characters by the platform; `start_inspection_session` refuses a longer one (including its `region` clause) before calling it:
 
 ```
 @os='android'            @os='iOS'          (case-insensitive)
@@ -225,7 +226,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `list_test_reports` | Search, filter, sort, and paginate test reports. Filters include `status` (all six statuses), `accessibility_report` (JSON boolean `true`/`false` — the string `"true"` is rejected; `true` = runs with an Axe accessibility scan), `rca.status` (e.g. `COMPLETED` for reports with a Root Cause Analysis), `user`, `device.os`; use `startDate`/`endDate` for date ranges. See [Test reporting schema](#test-reporting-schema). | Any |
+| `list_test_reports` | Search, filter, sort, and paginate test reports. Filters include `status` (all six statuses), `accessibility_report` (JSON boolean `true`/`false` — the string `"true"` is rejected; `true` = runs with an Axe accessibility scan), `rca.status` (e.g. `COMPLETED` for reports with a Root Cause Analysis), `user`, `device.os`; use `startDate`/`endDate` for date ranges. `keys` only needs custom keys — built-in columns (`name`, `status`, `start_time`, `duration`, …) are always returned and are dropped from the request (with `searchValue` they make the platform answer 400). See [Test reporting schema](#test-reporting-schema). | Any |
 | `get_test_report` | Full test execution report by UUID (preferred), numeric test ID, or report URL | Any |
 | `get_test_by_report_id` | Report by `report_api_id` (returned when starting a session) | Any |
 | `find_latest_test_for_name` | Most recent run record for a test by name | Any |
@@ -244,7 +245,7 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `download_test_attachments` | Download test attachments as a ZIP file (writes to the MCP server's filesystem) | Any |
 | `download_test_video` | Download only the session video (.mp4), whole or by byte range (`startByte`/`endByte`, `lastBytes`); `infoOnly: true` returns the size without downloading. Accepts a UUID, numeric id or report URL. Writes to the MCP server's filesystem; requires `localPath` unless `infoOnly`. | Any |
 | `get_test_attachments_download_command` | Generate a curl/PowerShell command to download the attachment ZIP (session video .mp4 + logs), or with `artifact: "video"` only the .mp4, to the user's local machine — use when the server is Docker/remote | Any |
-| `get_test_log` | Retrieve log content (Appium/device/ws) from a test directly as text — no file download; ideal for diagnosing failures | Any |
+| `get_test_log` | Retrieve log content (Appium/device/ws) from a test directly as text — no file download; ideal for diagnosing failures. Appium log lines are long, so use `contains` (matching lines plus `context` lines) before raising `maxLines`; output is capped at `maxChars` (default 40,000), keeping the end | Any |
 | `delete_test_reports` | Permanently delete test records by ID list | Cloud Admin † |
 | `delete_test_reports_before_date` | Delete all test records started before a given date | Cloud Admin † |
 | `delete_test_reports_by_name` | Find and delete test records matching an exact name or name substring; previews matches before deleting | Cloud Admin † |

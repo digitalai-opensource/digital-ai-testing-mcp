@@ -161,7 +161,7 @@ export function getActiveAccessKey(): string {
 }
 
 // ─── Retry for read operations ────────────────────────────────────────────────
-// Multi-page scans (listTestsSortedDesc, delete_test_reports_before_date) make
+// Multi-page scans (listTestsSortedDesc's fallback scan, delete_test_reports_before_date) make
 // many serial calls; one transient failure should not discard the whole scan.
 // Only reads are retried — GETs are idempotent, and the reporter's POST-based
 // list/aggregate endpoints below are reads despite the verb. Mutating POSTs
@@ -241,9 +241,9 @@ export async function apiPutForm<T>(path: string, form: FormData): Promise<T> {
 }
 
 /**
- * Binary GET. `signal` adds a WALL-CLOCK deadline: axios's `timeout` is an idle timeout, so a response that keeps
- * streaming (a usage-report CSV generated row by row for minutes) never trips it. An aborted request throws
- * `Error("aborted")`; callers turn that into an actionable message.
+ * Binary GET, retried on transient failures. Optional `signal` adds a WALL-CLOCK deadline: axios's `timeout` is an
+ * idle timeout, so a response that keeps streaming for minutes never trips it. An aborted request surfaces as
+ * `Digital.ai API Error [unknown]: canceled` (not retried — see CANCELED_RE). Usage-report CSVs use apiDownloadStream.
  */
 export async function apiDownload(path: string, opts: { signal?: AbortSignal } = {}): Promise<Buffer> {
   const res = await withRetry(() => getClient().get<Buffer>(path, { responseType: 'arraybuffer', signal: opts.signal }));
