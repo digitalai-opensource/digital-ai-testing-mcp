@@ -22,7 +22,7 @@ The Digital.ai reporter API routes certain filter properties through CSRF-protec
 
 Confirmed working filter properties: `status`, `name` (with `contains`), `has_attachment`, `success` (boolean), `test_id`, `project_id`, `device.os` (case-sensitive), `duration`, `attachment_count`, `attachments_size`, `status_code`, `accessibility_report` (JSON boolean — the string `"true"` is rejected), `rca.status`. `status` takes the six values Passed, Failed, Error, Incomplete, Skipped and Healed; `success` is false for Healed runs, so filter on `status` rather than `success` when counting passes.
 
-**Sort** (`start_time` and other fields) is attempted for every role. If the platform refuses it for a credential, the server automatically retries without it and tools that need newest-first results (`find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, `list_active_test_executions`) fall back to scanning up to 5,000 records and sorting client-side — correct results, but slower on large report sets.
+**Sort** (`start_time` and other fields) is attempted for every role. If the platform refuses it for a credential, the server automatically retries without it and tools that need newest-first results (`find_latest_test_for_name`, `get_test_stability_report`, `get_project_test_summary`, and `list_active_test_executions` when it falls back to Reporter) fall back to scanning up to 5,000 records and sorting client-side — correct results, but slower on large report sets.
 
 ## 5. Region Management
 
@@ -106,7 +106,7 @@ The agent itself is currently a **1.0-SNAPSHOT** build. It is not shipped with t
 
 ## 18. Appium Grid Projects Support Fewer Commands than Appium Server
 
-Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locator `-ios predicate string` (use xpath or accessibility id); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom, alerts and geolocation reset; and clipboard and app-state queries on iOS devices. There is no launch-by-package command on the Grid, so `launch_app` on an Android Grid session needs the launch activity (`mainActivity` from `get_application_info`). The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
+Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locator `-ios predicate string` (use xpath or accessibility id); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom, alerts and geolocation reset; clipboard and app-state queries on iOS devices; and audio play/record (`audio_control`, see limitation 31). Robot Framework mobile tests are generated for Appium Server projects only (see limitation 32). There is no launch-by-package command on the Grid, so `launch_app` on an Android Grid session needs the launch activity (`mainActivity` from `get_application_info`). The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
 
 ## 19. `find_elements` Details Only the First 20 Matches
 
@@ -114,7 +114,7 @@ To stay inside the MCP client's ~60 s call timeout, `find_elements` fetches attr
 
 ## 20. Debug-Mode Notes Need a Client That Can Write Files (Docker)
 
-With `MCP_DEBUG_MODE=true` under Docker, the server cannot write to your project. The event log is kept in server memory and each note is returned to the AI to save in a `remediation/` folder at the root of the project it is working in. Clients without file-writing tools (for example Claude Desktop without a filesystem tool) cannot save them, so the notes are skipped. The npm install writes both files directly.
+With `MCP_DEBUG_MODE=true` under Docker, the server cannot write to your project. The event log is kept in server memory and each note is returned to the AI to save in a `remediation/` folder at the root of the project it is working in. Clients without file-writing tools (for example Claude Desktop without a filesystem tool) cannot save them, so the notes are skipped. The npm install writes both files directly into the project the AI client is working in (or the folder the server was started in, when that is a project); if it finds no project folder, it keeps the event log in memory and returns the notes as described above.
 
 ## 21. Usage Reports: 2-Year Retention, Large Exports
 
@@ -154,3 +154,23 @@ The platform API has no way to disable or lock a user account. Removing access f
 ## 29. iOS Inspection Sessions Differ from Android
 
 iOS has no Back button: `press_back` taps the navigation bar's back button and falls back to a left-edge swipe (on the Grid a synthetic edge swipe does not trigger the system back gesture). App data cannot be cleared on iOS (`app_control` `clear_data` is Android-only) — uninstall and reinstall instead. On Appium Grid iOS devices, clipboard and `query_state` are also unavailable (see limitation 18).
+
+## 30. Emulator and Simulator Templates Have No Region Data
+
+`list_virtual_device_templates` lists the emulator/simulator templates the platform can start. Idle templates are not devices, so `list_devices`, `list_agents` and `get_agent_devices` never show them — a virtual device appears in those lists only while a session runs on it. The platform does not report which region or agent serves a template; to target a region, add `@region` to the template's `deviceQuery` and start a session. Virtual devices boot inside the session request, so a session on an `@emulator='true'` query can take two minutes or more to start (the server waits up to 240 seconds for such queries; set `INSPECTION_SESSION_TIMEOUT_MS` in the server environment to change it).
+
+## 31. Audio Play/Record Needs an Audio Line and Appium Server
+
+`audio_control` works only on devices that have an audio line configured — find one with `find_available_device(requireAudioLine: true)`; other devices fail with "Audio line is not configured". It is available on Appium Server projects only (the Appium Grid cannot run the stop commands). A recording made while the device played no sound is empty (a header-only WAV file, reported as `headerOnly`). One `play` call with `durationSeconds` plays for at most 45 seconds so it finishes inside the client's call timeout; for a longer clip call `play`, then `stop_play`.
+
+## 32. Robot Framework Templates: Scope
+
+The Robot Framework option of `get_test_boilerplate` (`language: 'robot'`, AppiumLibrary) is for Appium Server projects only and cannot be combined with `includePerformanceTransactions`, `includeAxeScan` or `automotiveProjection`. For web tests, `get_web_test_boilerplate` with `language: 'robot'` (SeleniumLibrary) does not support Opera and has no shadow-DOM query helper.
+
+## 33. Device Queries Are Limited to 255 Characters
+
+The platform refuses session device queries longer than 255 characters. `start_inspection_session` counts the whole query, including the `@region` clause it adds, and refuses an over-long query before contacting the platform. Keep queries short — prefer `@serialNumber` or `@name` for one specific device over a long list of `or` alternatives.
+
+## 34. No Generated Template for Two-Phone Call and SMS Tests
+
+Tests in which one device calls or messages another (voice calls, SMS, MMS) have no `get_test_boilerplate` template. Start from the reference project at https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests; both devices need SIM cards, and calls and SMS must be enabled for the project (`set_telephony_status`, Cloud Admin).

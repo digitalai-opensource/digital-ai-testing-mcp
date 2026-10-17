@@ -5,7 +5,8 @@
  *  - get_grouped_test_reports adds totalRecords (the platform's count is the number of groups)
  *  - get_daily_execution_trend names the missing range and suggests a maxRecords value when capped
  *  - get_test_report no longer invents status_code/project_id = 0 and counts attachment files
- *  - list_active_test_executions ignores Incomplete records older than maxAgeHours
+ *  - list_active_test_executions ignores Incomplete records older than maxAgeHours (fallback path)
+ *  - list_active_test_executions reads the platform's running test requests, passing through allow-listed fields only
  *  - list_test_reports never sends always-returned columns in keys (searchValue + keys:[start_time] → platform 400)
  *    and explains the opaque 400 a comparison filter on a text key produces
  */
@@ -17,7 +18,8 @@ import { startStubApi, connectTools, accountInfo, reply, type StubApi, type Tool
 const HOUR = 3_600_000;
 const NOW = Date.now();
 let spacingMs = HOUR; // gap between consecutive runs in the fake reporter
-let listFixture: 'trend' | 'incomplete' = 'trend';
+let listFixture: 'trend' | 'incomplete' | 'failures' | 'failures-no-keys' = 'trend';
+let runningFixture: unknown = undefined; // undefined → 404 → list_active_test_executions falls back to the reporter heuristic
 
 // One run per `spacingMs`, newest first — 100 hourly records cover ~4 days of a 14-day window.
 const trendRows = (page: number) =>
@@ -28,6 +30,11 @@ const trendRows = (page: number) =>
 const INCOMPLETE = [
   { test_id: 1, uuid: 'u1', name: 'running', status: 'Incomplete', duration: null, start_time: new Date(NOW - HOUR).toISOString(), project_id: 2 },
   { test_id: 2, uuid: 'u2', name: 'abandoned', status: 'Incomplete', duration: null, start_time: new Date(NOW - 72 * HOUR).toISOString(), project_id: 2 },
+];
+const FAILURES = [
+  { test_id: 501, name: 'login', status: 'Failed', start_time: new Date(NOW - HOUR).toISOString(), errorClassification: 'element_not_found', errorCategory: 'assertion' },
+  { test_id: 502, name: 'login', status: 'Failed', start_time: new Date(NOW - 2 * HOUR).toISOString(), errorClassification: 'element_not_found', errorCategory: 'assertion' },
+  { test_id: 503, name: 'pay', status: 'Failed', start_time: new Date(NOW - 3 * HOUR).toISOString(), errorClassification: 'application_crash', errorCategory: 'application' },
 ];
 const GROUPED_BY_OS_STATUS = [
   { 'device.os': 'ANDROID', status: 'Error', _count_: 22 }, { 'device.os': 'Android', status: 'Error', _count_: 100 },
@@ -40,6 +47,7 @@ let tools: ToolClient;
 beforeAll(async () => {
   api = await startStubApi((req) => {
     if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
+    if (req.path === '/api/v2/test-requests/running') return runningFixture;
     if (req.path === '/reporter/api/tests/grouped') {
       const groupBy: string[] = req.json.groupBy ?? [];
       return groupBy.includes('device.os')
@@ -53,9 +61,18 @@ beforeAll(async () => {
       if ((req.json.filter ?? []).some((f: { operator: string }) => f.operator === '>')) {
         return reply(400, { status: 'ERROR', message: 'Failed to retrieve data. Please check log for details.' });
       }
+      if (listFixture === 'failures' || listFixture === 'failures-no-keys') {
+        const withKeys = listFixture === 'failures' && (req.json.keys ?? []).includes('errorClassification');
+        return { count: null, data: FAILURES.map((r) => (withKeys ? r : { test_id: r.test_id, name: r.name, status: r.status, start_time: r.start_time })) };
+      }
       return listFixture === 'trend'
         ? { count: null, data: trendRows(req.json.page ?? 1) }
         : { count: INCOMPLETE.length, data: INCOMPLETE };
+    }
+    const detail = req.path.match(/^\/reporter\/api\/tests\/(50[123])$/);
+    if (detail) {
+      const r = FAILURES.find((x) => String(x.test_id) === detail[1])!;
+      return { id: r.test_id, name: r.name, status: r.status, startTime: r.start_time, keyValuePairs: { errorClassification: r.errorClassification, errorCategory: r.errorCategory } };
     }
     if (req.path === '/reporter/api/tests/742904') {
       return {
@@ -167,5 +184,108 @@ describe('list_test_reports keys', () => {
     const { res, text } = await tools.call('list_test_reports', { filter: [{ property: 'loadSeq', operator: '>', value: 8 }] });
     assert.equal(res.isError, true);
     assert.match(text, /comparison operators .* only work on numeric keys; \[loadSeq\]/);
+  });
+});
+
+describe('list_active_test_executions — platform live list', () => {
+  const RUNNING = {
+    totalRunningTestRequest: 7, // counts every running request on the platform — never reported
+    runningTestRequests: [
+      { id: 1, name: 'checkout', status: 'Running', projectName: 'Default', projectId: 2, username: 'a@b.c', deviceName: 'Pixel 7', deviceOs: 'Android', deviceOsVersion: '14', executionType: 'Appium Server', appiumServerVersion: '3.5.2', searchQuery: "@os='android'", sessionId: 'CLOUD-SID:1', createdAt: NOW - 60_000, startedAt: NOW - 50_000, accessKey: 'aut_1_SHOULD_NOT_LEAK', wifiPassword: 'nope' },
+      { id: 2, name: 'login', status: 'Running', projectName: 'POC', projectId: 9, startedAt: NOW - 10_000 },
+    ],
+  };
+
+  it('lists the running requests with allow-listed fields only', async () => {
+    runningFixture = RUNNING;
+    try {
+      const j = await tools.callJson('list_active_test_executions', {});
+      assert.equal(j.source, 'running-test-requests');
+      assert.equal(j.count, 2);
+      assert.equal(j.total, 2, 'the platform-wide totalRunningTestRequest is not the caller\'s count');
+      const first = (j.executions as Array<Record<string, unknown>>)[0];
+      assert.equal(first.deviceQuery, "@os='android'");
+      assert.equal(first.appiumServerVersion, '3.5.2');
+      assert.equal(first.startedAt, new Date(NOW - 50_000).toISOString());
+      assert.doesNotMatch(JSON.stringify(j), /SHOULD_NOT_LEAK|wifiPassword|accessKey/);
+    } finally {
+      runningFixture = undefined;
+    }
+  });
+
+  it('projectName / projectId scope the list', async () => {
+    runningFixture = RUNNING;
+    try {
+      const byName = await tools.callJson('list_active_test_executions', { projectName: 'poc' });
+      assert.deepEqual((byName.executions as Array<{ name: string }>).map((e) => e.name), ['login']);
+      const byId = await tools.callJson('list_active_test_executions', { projectId: 2 });
+      assert.deepEqual((byId.executions as Array<{ name: string }>).map((e) => e.name), ['checkout']);
+    } finally {
+      runningFixture = undefined;
+    }
+  });
+
+  it('a 200 without the list (other envelope / HTML) falls back instead of reporting an empty farm', async () => {
+    runningFixture = { somethingElse: true };
+    listFixture = 'incomplete';
+    try {
+      const j = await tools.callJson('list_active_test_executions', {});
+      assert.equal(j.source, 'reporter-heuristic');
+    } finally {
+      runningFixture = undefined;
+      listFixture = 'trend';
+    }
+  });
+
+  it('a projectId sent as a string still matches the projectId filter', async () => {
+    runningFixture = { runningTestRequests: [{ id: 9, name: 'string-id', status: 'Running', projectId: '9', startedAt: NOW }] };
+    try {
+      const j = await tools.callJson('list_active_test_executions', { projectId: 9 });
+      assert.deepEqual((j.executions as Array<{ name: string }>).map((e) => e.name), ['string-id']);
+    } finally {
+      runningFixture = undefined;
+    }
+  });
+
+  it('falls back to the reporter heuristic when the live list is unavailable, and says so', async () => {
+    listFixture = 'incomplete';
+    try {
+      const j = await tools.callJson('list_active_test_executions', {});
+      assert.equal(j.source, 'reporter-heuristic');
+    } finally {
+      listFixture = 'trend';
+    }
+  });
+});
+
+describe('summarize_test_failures', () => {
+  const buckets = (j: Record<string, unknown>) => Object.fromEntries((j.buckets as Array<{ key: string; count: number }>).map((b) => [b.key, b.count]));
+
+  it('reads the classification from the list in one request — no per-report fetches', async () => {
+    listFixture = 'failures';
+    api.requests.length = 0;
+    try {
+      const j = await tools.callJson('summarize_test_failures', {});
+      assert.deepEqual(buckets(j), { element_not_found: 2, application_crash: 1 });
+      assert.equal(j.detailsFetched, 0);
+      const list = api.requests.filter((r) => r.path === '/reporter/api/tests/list');
+      assert.deepEqual(list[0].json.keys, ['errorClassification', 'errorCategory']);
+      assert.equal(api.requests.some((r) => /^\/reporter\/api\/tests\/\d+$/.test(r.path)), false);
+      assert.deepEqual(buckets(await tools.callJson('summarize_test_failures', { groupBy: 'errorCategory' })), { assertion: 2, application: 1 });
+    } finally {
+      listFixture = 'trend';
+    }
+  });
+
+  it('falls back to per-report fetches when the platform ignores the keys', async () => {
+    listFixture = 'failures-no-keys';
+    api.requests.length = 0;
+    try {
+      const j = await tools.callJson('summarize_test_failures', {});
+      assert.deepEqual(buckets(j), { element_not_found: 2, application_crash: 1 });
+      assert.equal(j.detailsFetched, 3);
+    } finally {
+      listFixture = 'trend';
+    }
   });
 });

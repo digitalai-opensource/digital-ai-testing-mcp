@@ -20,13 +20,15 @@ The server defends against this in two ways that travel with it automatically:
   context before it acts.
 - **Structural tool behavior** — `get_test_boilerplate` and `generate_maestro_flow` return *no code*
   for a real app unless a live inspection session exists (or you explicitly confirm verified
-  selectors); `get_web_test_boilerplate` does the same for a real URL without a live browser
+  selectors) — the built-in ExperiBank demo, requested with no app ID, package or bundle ID, is
+  returned directly because its steps are already verified; `get_web_test_boilerplate` does the same for a real URL without a live browser
   session; and `validate_test_script` returns an error when it detects placeholder selectors
   (including unfilled CSS selectors), the scaffold fail-guard, or placeholder credentials.
 
 Consequential actions are guarded the same way: deletes, releases and cancellations need
 `confirmDeletion: true` (without it the tool returns a preview), public report links need
-`confirmPublicShare: true`, and unfiltered usage exports over 31 days need `confirmLargeExport: true`.
+`confirmPublicShare: true`, unfiltered usage exports over 31 days need `confirmLargeExport: true`, and
+`find_unhealthy_devices` only previews the devices it would tag until it gets `confirmTagging: true`.
 Upload tools refuse credential files (`.env*`, SSH private keys) whatever the request says.
 
 Two gaps remain that **no MCP server can close on its own**:
@@ -106,8 +108,8 @@ or writing any code.
 
 ## Consequential actions on the Digital.ai platform
 
-- Never set `confirmDeletion`, `confirmPublicShare` or `confirmLargeExport` to
-  true unless the user explicitly agreed in this conversation. Call without it
+- Never set `confirmDeletion`, `confirmPublicShare`, `confirmLargeExport` or
+  `confirmTagging` to true unless the user explicitly agreed in this conversation. Call without it
   first and show the user the preview the tool returns.
 - These have no built-in confirmation — ask before calling them: `reboot_device`,
   `reset_device_usb`, `create_reservation` / `reserve_device_for_duration` (they
@@ -169,6 +171,12 @@ access key it uses (Project User / Project Admin / Cloud Admin). The server dete
 the API — not from the key's format — and `list_environments` shows it for each profile. Give an
 agent the least-privileged profile that covers its task.
 
+**Tool annotations.** Every tool carries MCP `readOnlyHint` / `destructiveHint` annotations, so a
+client that honours them can auto-approve reads and warn before deletes, releases and cancellations.
+Read-only means the tool only reads or only generates text (the `get_*_command` tools return a
+command; running it is up to you). `find_unhealthy_devices` is deliberately not marked read-only,
+because it can tag devices. Unknown parameters are rejected rather than ignored.
+
 **`MCP_TOOLSETS` limits context, not capability.** Tools outside the loaded toolsets still appear
 and load themselves when called, so toolsets are not an access control.
 
@@ -181,8 +189,9 @@ states which applies.
 **`MCP_DEBUG_MODE=true`** adds instructions asking the agent to record notes about errors,
 corrections and wasted calls, and logs every tool call (duration, response size, outcome,
 summarised arguments). Keys, tokens, emails and signed-URL parameters are redacted. With the npm
-install, files go to a `remediation/` folder in your project with its own `.gitignore`; under
-Docker, notes are returned to the agent to save there. Leave it off outside evaluations, and
+install, files go to a `remediation/` folder in your project with its own `.gitignore` (never your
+home folder); under Docker, or when the server cannot tell which folder is your project, notes are
+returned to the agent to save there. Leave it off outside evaluations, and
 review the folder before sharing it. See [Debug mode](../README.md#debug-mode-remediation-notes).
 
 ---

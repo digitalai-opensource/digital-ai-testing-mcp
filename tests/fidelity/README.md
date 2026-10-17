@@ -27,7 +27,7 @@ npm run test:fidelity -- --rescore fidelity-results/<timestamp>   # re-score sav
 | `--rescore <dir>` | — | Re-score the saved transcripts in `fidelity-results/<timestamp>/` with the current scenarios and scorer. No model calls, no cost; writes `report-rescored.md` there |
 
 Requires a logged-in Claude Code CLI (`claude`) and a populated `.env`. `FIDELITY_CLAUDE_BIN` overrides the CLI path.
-**It spends real model tokens**: roughly 18 scenarios × 2 modes per run (36 sessions), and each report shows the total cost.
+**It spends real model tokens**: roughly 26 scenarios × 2 modes per run (52 sessions), and each report shows the total cost.
 
 ## How a run is isolated
 

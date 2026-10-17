@@ -36,7 +36,7 @@ import {
 } from '../api/test-orchestrator.js';
 
 type Platform = 'android' | 'ios';
-type Language = 'java-junit5' | 'java-testng' | 'nodejs' | 'python';
+type Language = 'java-junit5' | 'java-testng' | 'nodejs' | 'python' | 'robot';
 type ProjectType = 'standalone-gradle' | 'standalone-maven' | 'android-gradle-submodule';
 
 interface BoilerplateFile {
@@ -64,12 +64,14 @@ const LANGUAGE_SUBDIR: Record<Platform, Record<Language, string>> = {
     'java-testng': 'java TestNG',
     'nodejs':      'NodeJS (WebDriver)',
     'python':      'Python',
+    'robot':       'Robot Framework',
   },
   ios: {
     'java-junit5': 'java-JUnit5',
     'java-testng': 'java-TestNG',
     'nodejs':      'NodeJS (WebDriver)',
     'python':      'Python',
+    'robot':       'Robot Framework',
   },
 };
 
@@ -113,7 +115,9 @@ function getFilesForVariant(
       return [
         { filename: 'package.json',   diskName: isAppiumOss ? 'package-oss.json' : 'package.json', lang: 'json' },
         { filename: 'wdio.conf.js',   diskName: isAppiumOss ? 'wdio-oss.conf.js' : 'wdio.conf.js', lang: 'javascript' },
-        { filename: `${testBase}.js`, diskName: `${testBase}.js`,                                   lang: 'javascript' },
+        // Full path: wdio.conf.js loads ./test/specs/<Test>.js. A bare filename saved at the project root ran ZERO tests
+        // ("0 spec files", no error) — hit while running the generated project live, 2026-10-16.
+        { filename: `test/specs/${testBase}.js`, diskName: `${testBase}.js`,                        lang: 'javascript' },
         { filename: 'setup-steps.sh', diskName: shellDisk,                                          lang: 'sh', isInstructions: true },
       ];
     }
@@ -125,6 +129,13 @@ function getFilesForVariant(
         { filename: 'requirements.txt', diskName: `pip${pipSuffix}${pipExt}`,     lang: 'text' },
       ];
     }
+    case 'robot':
+      // Appium Server only — the handler refuses Grid projects before this point.
+      return [
+        { filename: `tests/${testBase}.robot`,     diskName: `${testBase}-oss.robot`, lang: 'robotframework' },
+        { filename: 'tests/DigitalAiReport.py',    diskName: 'DigitalAiReport.py',    lang: 'python' },
+        { filename: 'requirements.txt',            diskName: 'pip-oss.txt',           lang: 'text' },
+      ];
   }
 }
 
@@ -299,6 +310,106 @@ function appendAutomotiveCheck(language: Language, indent: string): string {
   ].join('\n');
 }
 
+/**
+ * Wrap the test steps so the platform report carries the real outcome (verified live 2026-10-16):
+ *  - a session with no WebDriver errors is reported Passed even when the test failed on its own assertion — so the
+ *    catch block sets Failed with the error message (seetest:client.setReportStatus works on Grid and Appium Server);
+ *  - on Appium Server the steps sit in a named steps group. The Grid cannot run stopStepsGroup (its execute parser
+ *    rejects 0-argument seetest commands), so Grid templates get the status only.
+ * Arguments are passed separately, never inside the script string (the inline form fails silently).
+ */
+function wrapWithReporting(language: Language, indent: string, core: string, isAppiumOss: boolean): string {
+  // Robot templates report through their own Test Teardown (Report Test Outcome) and steps-group keywords.
+  if (language === 'robot') return core;
+  const inner = core.split('\n').map((l) => (l.trim() ? `    ${l}` : l)).join('\n');
+  const group = 'Test steps';
+  if (language === 'java-junit5' || language === 'java-testng') {
+    return [
+      `${indent}// Report the real outcome: without this a failed assertion still shows as Passed in the platform report.`,
+      `${indent}try {`,
+      ...(isAppiumOss ? [`${indent}    driver.executeScript("seetest:client.startStepsGroup", "${group}");`] : []),
+      inner,
+      ...(isAppiumOss ? [`${indent}    driver.executeScript("seetest:client.stopStepsGroup");`] : []),
+      `${indent}    driver.executeScript("seetest:client.setReportStatus", "Passed", "All steps completed");`,
+      `${indent}} catch (RuntimeException | AssertionError e) {`,
+      `${indent}    try { driver.executeScript("seetest:client.setReportStatus", "Failed", String.valueOf(e.getMessage())); } catch (RuntimeException ignored) {}`,
+      `${indent}    throw e;`,
+      `${indent}}`,
+    ].join('\n');
+  }
+  if (language === 'python') {
+    return [
+      `${indent}# Report the real outcome: without this a failed assertion still shows as Passed in the platform report.`,
+      `${indent}try:`,
+      ...(isAppiumOss ? [`${indent}    self.driver.execute_script("seetest:client.startStepsGroup", "${group}")`] : []),
+      inner,
+      ...(isAppiumOss ? [`${indent}    self.driver.execute_script("seetest:client.stopStepsGroup")`] : []),
+      `${indent}    self.driver.execute_script("seetest:client.setReportStatus", "Passed", "All steps completed")`,
+      `${indent}except Exception as e:`,
+      `${indent}    try:`,
+      `${indent}        self.driver.execute_script("seetest:client.setReportStatus", "Failed", str(e)[:500])`,
+      `${indent}    except Exception:`,
+      `${indent}        pass`,
+      `${indent}    raise`,
+    ].join('\n');
+  }
+  return [
+    `${indent}// Report the real outcome: without this a failed assertion still shows as Passed in the platform report.`,
+    `${indent}try {`,
+    ...(isAppiumOss ? [`${indent}    await browser.execute('seetest:client.startStepsGroup', '${group}');`] : []),
+    inner,
+    ...(isAppiumOss ? [`${indent}    await browser.execute('seetest:client.stopStepsGroup');`] : []),
+    `${indent}    await browser.execute('seetest:client.setReportStatus', 'Passed', 'All steps completed');`,
+    `${indent}} catch (e) {`,
+    `${indent}    await browser.execute('seetest:client.setReportStatus', 'Failed', String(e && e.message).slice(0, 500)).catch(() => {});`,
+    `${indent}    throw e;`,
+    `${indent}}`,
+  ].join('\n');
+}
+
+/** Report-key names and values end up inside generated source — keep them to a safe character set. */
+export const REPORT_KEY_NAME_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,49}$/;
+/** Single spaces only: two or more separate cells in Robot Framework and would split the &{CAPABILITIES} row. */
+export const REPORT_KEY_VALUE_RE = /^(?=.{1,100}$)[A-Za-z0-9_.:/@+-]+(?: [A-Za-z0-9_.:/@+-]+)*$/;
+/**
+ * digitalai:* capabilities the templates or other parameters already set — a report key with one of these names would
+ * be a second capability that silently overrides the first (the later entry wins).
+ */
+export const RESERVED_REPORT_KEYS = new Set([
+  'accessKey', 'testName', 'deviceQuery', 'appiumVersion', 'newSessionWaitTimeout', 'automotiveProjection',
+  'instrumentCluster', 'instrumentApp', 'reportTestId', 'reportUrl', 'releaseDevice', 'report.disable',
+].map((k) => k.toLowerCase()));
+
+/**
+ * Add capabilities next to the existing ones, for every language and both server modes (the same anchors the Axe
+ * option uses: the driver construction line for Java/Python, the deviceQuery entry in the wdio config for Node).
+ * Values are strings or numbers; names must already be valid capability names.
+ */
+function injectCapabilities(content: string, language: Language, isAppiumOss: boolean, caps: Record<string, string | number>): string {
+  const entries = Object.entries(caps);
+  if (entries.length === 0) return content;
+  const lit = (v: string | number, q: '"' | "'") => (typeof v === 'number' ? String(v) : `${q}${v}${q}`);
+  if (language === 'robot') {
+    // &{CAPABILITIES} dictionary rows; numbers as ${n} so Robot passes an int, not a string.
+    return content.replace(/(\n(\.\.\. +)digitalai:deviceQuery=[^\n]*)/, (m, _line, cont) =>
+      m + entries.map(([k, v]) => `\n${cont}${k}=${typeof v === 'number' ? `\${${v}}` : v}`).join(''));
+  }
+  if (language === 'java-junit5' || language === 'java-testng') {
+    const obj = isAppiumOss ? 'options' : 'dc';
+    return content.replace(/\n( +)(driver = new (?:Android|iOS)Driver)/, (_m, sp, line) =>
+      '\n' + entries.map(([k, v]) => `${sp}${obj}.setCapability("${k}", ${lit(v, '"')});\n`).join('') + `${sp}${line}`);
+  }
+  if (language === 'python') {
+    const viaOptions = content.includes('options=options');
+    return content.replace(/\n( +)(self\.driver = webdriver\.Remote\()/, (_m, sp, line) =>
+      '\n' + entries.map(([k, v]) => viaOptions
+        ? `${sp}options.set_capability('${k}', ${lit(v, "'")})\n`
+        : `${sp}desired_caps['${k}'] = ${lit(v, "'")}\n`).join('') + `${sp}${line}`);
+  }
+  return content.replace(/('digitalai:deviceQuery': [^\n]+)/, (m) =>
+    m + entries.map(([k, v]) => `\n        '${k}': ${lit(v, "'")},`).join(''));
+}
+
 // The cleared-body placeholder is a deliberate ANTI-fabrication guard (v38).
 // Three properties matter: (1) a loud banner so the scaffold is never mistaken
 // for a finished test; (2) an EXECUTABLE fail/raise as the first statement so a
@@ -318,11 +429,13 @@ function failGuard(language: Language, indent: string): string {
       return `${indent}raise NotImplementedError("${msg}")`;
     case 'nodejs':
       return `${indent}throw new Error('${msg}');`;
+    case 'robot':
+      return `${indent}Fail    ${msg}`;
   }
 }
 
 function buildPlaceholder(language: Language, platform: Platform, indent: string): string {
-  const c = language === 'python' ? '#' : '//';
+  const c = language === 'python' || language === 'robot' ? '#' : '//';
   const idTerm = platform === 'android' ? 'resource-id' : 'accessibility id';
   const banner = [
     `${indent}${c} ============================================================================`,
@@ -339,7 +452,16 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
 
   // Example shapes use <…> tokens so they read as obviously-unfilled, never as real selectors.
   let examples: string[];
-  if (platform === 'android') {
+  if (language === 'robot') {
+    const id = platform === 'android' ? 'id=<resource-id from get_element_tree>' : "xpath=//*[@name='<accessibility id from get_element_tree>']";
+    const field = platform === 'android' ? 'id=<resource-id>' : "xpath=//*[@name='<accessibility id>']";
+    examples = [
+      `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
+      `${indent}${c}   Click Element    ${id}`,
+      `${indent}${c}   Input Text    ${field}    <value the user gave you>`,
+      `${indent}${c}   Page Should Contain Text    <visible text>`,
+    ];
+  } else if (platform === 'android') {
     if (language === 'java-junit5' || language === 'java-testng') {
       examples = [
         `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
@@ -421,6 +543,10 @@ function substitute(
     isAppiumOss?: boolean;
     /** Appium Server only — the caller drops it for Grid projects. */
     automotiveProjection?: AutomotiveResolution;
+    /** Wrap the steps so the platform report shows the real outcome (and a steps group on Appium Server). */
+    reportStatus?: boolean;
+    /** Extra capabilities (appiumVersion, newSessionWaitTimeout, report keys), already validated. */
+    extraCaps?: Record<string, string | number>;
   }
 ): string {
   let result = content;
@@ -430,35 +556,20 @@ function substitute(
   if (DEMO_STEP_PATTERN.test(result)) {
     const indentMatch = result.match(/([^\S\n]*)(?:\/\/|#) \[BEGIN_DEMO_STEPS\]/);
     const indent = indentMatch?.[1] ?? '        ';
+    // Layers, innermost first: steps (or the placeholder) → Axe scan / automotive check → performance transaction →
+    // report status / steps group.
+    const decorate = (core: string): string => {
+      let content = core;
+      if (vars.axeScan) content += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
+      if (vars.automotiveProjection) content += '\n' + appendAutomotiveCheck(language, indent);
+      if (vars.performanceTransactions) content = wrapWithPerformanceTransaction(language, indent, content);
+      if (vars.reportStatus) content = wrapWithReporting(language, indent, content, !!vars.isAppiumOss);
+      return content;
+    };
     if (vars.clearTestBody) {
-      let placeholder = buildPlaceholder(language, platform, indent);
-      if (vars.axeScan) {
-        placeholder += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
-      }
-      if (vars.automotiveProjection) {
-        placeholder += '\n' + appendAutomotiveCheck(language, indent);
-      }
-      if (vars.performanceTransactions) {
-        placeholder = wrapWithPerformanceTransaction(language, indent, placeholder);
-      }
-      result = result.replace(DEMO_STEP_PATTERN, placeholder);
-    } else if (vars.performanceTransactions || vars.axeScan || vars.automotiveProjection) {
-      result = result.replace(DEMO_INNER_PATTERN, (inner) => {
-        let content = inner;
-        if (vars.axeScan) {
-          content += '\n' + appendAxeScan(language, indent, vars.axeApiKey ?? '');
-        }
-        if (vars.automotiveProjection) {
-          content += '\n' + appendAutomotiveCheck(language, indent);
-        }
-        return vars.performanceTransactions
-          ? wrapWithPerformanceTransaction(language, indent, content)
-          : content;
-      });
-      result = result.replace(/[^\S\n]*(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n/, '');
-      result = result.replace(/\n[^\S\n]*(?:\/\/|#) \[END_DEMO_STEPS\]/, '');
+      result = result.replace(DEMO_STEP_PATTERN, () => decorate(buildPlaceholder(language, platform, indent)));
     } else {
-      // Strip markers, keep content unchanged.
+      result = result.replace(DEMO_INNER_PATTERN, (inner) => decorate(inner));
       result = result.replace(/[^\S\n]*(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n/, '');
       result = result.replace(/\n[^\S\n]*(?:\/\/|#) \[END_DEMO_STEPS\]/, '');
     }
@@ -499,7 +610,7 @@ function substitute(
         /\n( +)(driver = new (?:Android|iOS)Driver)/,
         (_m, sp, line) =>
           `\n${sp}${obj}.setCapability("appium:automationName", "${automationName}");\n` +
-          `${sp}${obj}.setCapability("appiumVersion", "2.16.2");\n` +
+          `${sp}${obj}.setCapability("${vars.isAppiumOss ? 'digitalai:appiumVersion' : 'appiumVersion'}", "2.16.2");\n` +
           `${sp}${line}`
       );
     } else if (language === 'python') {
@@ -508,7 +619,7 @@ function substitute(
           /\n( +)(self\.driver = webdriver\.Remote\()/,
           (_m, sp, line) =>
             `\n${sp}options.set_capability('appium:automationName', '${automationName}')\n` +
-            `${sp}options.set_capability('appiumVersion', '2.16.2')\n` +
+            `${sp}options.set_capability('digitalai:appiumVersion', '2.16.2')\n` +
             `${sp}${line}`
         );
       } else {
@@ -524,7 +635,7 @@ function substitute(
       result = result.replace(
         /('digitalai:deviceQuery': [^\n]+)/,
         (match) =>
-          `${match}\n        'appium:automationName': '${automationName}',\n        'appiumVersion': '2.16.2',`
+          `${match}\n        'appium:automationName': '${automationName}',\n        '${vars.isAppiumOss ? 'digitalai:appiumVersion' : 'appiumVersion'}': '2.16.2',`
       );
     }
   }
@@ -548,6 +659,8 @@ function substitute(
       );
     }
   }
+
+  if (vars.extraCaps) result = injectCapabilities(result, language, !!vars.isAppiumOss, vars.extraCaps);
 
   return result;
 }
@@ -632,6 +745,19 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
           '  • Use appium.webdriver.webelement.WebElement (not selenium\'s) for is_displayed()\n\n' +
           'If you can migrate this project to Appium Server, all of these workarounds go away.\n' +
           'Error "Cant run Appium Grid with Appium client 8+" = W3C format rejected by grid (not a version issue).';
+    case 'robot':
+      return (
+        'Save the files in this layout:\n' +
+        '  requirements.txt        ← project root\n' +
+        '  tests/<Suite>.robot\n' +
+        '  tests/DigitalAiReport.py ← next to the suite (it is imported by relative path)\n\n' +
+        'Then run:\n' +
+        '  pip install -r requirements.txt   (robotframework 7.5 + robotframework-appiumlibrary 3.2.1)\n' +
+        '  robot --outputdir results tests/\n\n' +
+        'The access key is read from DIGITAL_AI_ACCESS_KEY when set; the value after "=" in ${ACCESS_KEY} is the fallback — ' +
+        'remove it before committing. The Test Teardown sets the platform report to Passed / Failed / Skipped from Robot\'s ' +
+        'own result, and the steps run inside a named steps group. Run suites in parallel with pabot (pip install robotframework-pabot).'
+      );
   }
 }
 
@@ -663,6 +789,8 @@ function appNote(
 export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'get_test_boilerplate',
+    'DEMO: called WITHOUT appId / packageName / bundleIdentifier it returns a runnable test for the ExperiBank demo app ' +
+    '(com.experitest.ExperiBank — "SeeTestDemoApp" in the repository) with verified steps — no inspection needed for it. ' +
     'STOP — when you target a real app (appId, packageName, or bundleIdentifier) this tool returns NO code unless ' +
     'a live inspection session exists OR you set confirmSelectorsVerified:true. Without a selector source it blocks ' +
     'with a redirect to start_inspection_session — there is nothing to "fill in later". Do not attempt to work around ' +
@@ -736,13 +864,17 @@ export function registerBoilerplateTools(server: McpServer): void {
     'Reference the outer driver field instead: wait.until(d -> !driver.currentActivity().contains("LoginActivity")). ' +
     'DIAGNOSTIC: If a test suite that previously passed begins failing with NoSuchElementException on elements that other ' +
     'tests in the same run find without issue (session connects and app launches normally), this is a device health signal — ' +
-    'NOT a code or timing issue. Check device health first with get_device_health_summary or list_devices before modifying test code.',
+    'NOT a code or timing issue. Check device health first with get_device_health_summary or list_devices before modifying test code.\n\n' +
+    'TELEPHONY (two-phone calls, SMS, MMS, call audio): there is no template here. Review the reference project ' +
+    'https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests first — it is the working, maintained flow on this ' +
+    'platform (placing and answering calls across dialers, SMS/MMS, audio injection and recording, call-quality scoring) — ' +
+    'and adapt it; use audio_control and find_available_device(requireAudioLine: true) to explore in an inspection session.',
     {
       platform: caseInsensitiveEnum(['android', 'ios'])
         .describe("Target mobile platform: 'android' or 'ios'."),
       language: z
-        .enum(['java-junit5', 'java-testng', 'nodejs', 'python'])
-        .describe("Test framework and language: 'java-junit5', 'java-testng', 'nodejs' (WebDriverIO), or 'python' (Appium)."),
+        .enum(['java-junit5', 'java-testng', 'nodejs', 'python', 'robot'])
+        .describe("Test framework and language: 'java-junit5', 'java-testng', 'nodejs' (WebDriverIO), 'python' (Appium), or 'robot' (Robot Framework + AppiumLibrary — Appium Server projects only; not combinable with includePerformanceTransactions, includeAxeScan or automotiveProjection)."),
       appId: z
         .number()
         .optional()
@@ -825,6 +957,45 @@ export function registerBoilerplateTools(server: McpServer): void {
           'Scan results appear in the Axe DevTools Mobile dashboard. ' +
           'Can be combined with includePerformanceTransactions — the scan runs inside the performance transaction boundary.'
         ),
+      reportStatus: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          'Default true. Wraps the test steps so the platform report shows the REAL outcome: a failure sets the report to ' +
+          'Failed with the error message (without this, a session with no WebDriver errors is reported Passed even when ' +
+          'an assertion failed), and on Appium Server the steps are grouped in a named steps group. ' +
+          'Set false only when the user wants the bare steps.'
+        ),
+      appiumVersion: z
+        .string()
+        .regex(/^\d+\.\d+(\.\d+)?$/, 'Use a version number such as "2.18.0".')
+        .optional()
+        .describe(
+          'Appium Server projects only: pin the Appium version the session runs on (digitalai:appiumVersion). Omit to use ' +
+          'the platform default. An unavailable version fails the session at start with the list of versions the platform ' +
+          'offers. Not combinable with includeAxeScan, which pins 2.16.2 itself.'
+        ),
+      newSessionWaitTimeout: z
+        .number()
+        .int()
+        .min(10)
+        .max(3600)
+        .optional()
+        .describe(
+          'Seconds the platform may wait for a free matching device before failing the session (digitalai:newSessionWaitTimeout). ' +
+          'Without it, a device query that matches nothing or a busy pool keeps the test waiting for 5+ minutes with no ' +
+          'reason; with it the session fails with "No available device matching the query: …". E.g. 300 for CI. ' +
+          'Works on Appium Server and Appium Grid.'
+        ),
+      reportKeys: z
+        .record(z.string().regex(REPORT_KEY_NAME_RE, 'Key names: letters, digits, _ . - (start with a letter).'), z.string().regex(REPORT_KEY_VALUE_RE, 'Values: up to 100 of letters, digits, single spaces and _ . : / @ + -'))
+        .optional()
+        .describe(
+          'Custom report keys, e.g. {"runId": "nightly-42", "build": "1.4.0"}. Each is sent as a digitalai:<key> capability and ' +
+          'stored on the platform report — find the runs later with list_test_reports filter [{property: "runId", operator: "=", ' +
+          'value: "nightly-42"}] (and keys: ["runId"] to see the value). Works on Appium Server and Appium Grid.'
+        ),
       automotiveProjection: z
         .enum(AUTOMOTIVE_RESOLUTIONS)
         .optional()
@@ -870,7 +1041,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
       // ── Inspection gate (v42) ────────────────────────────────────────────────
       // Advisory guards (warning text, a requiresVerifiedSelectors flag, an in-code
       // fail() guard) all lost to task-completion momentum: the agent stripped the
@@ -951,6 +1122,39 @@ export function registerBoilerplateTools(server: McpServer): void {
           : { resolution: automotiveProjection, applied: false, note: detectedAppiumOss === undefined ? 'the project mode could not be determined, and projection is only supported here for Appium Server projects.' : 'this project runs on Appium Grid, which does not support projection commands (verified: the Grid execute layer runs digitalai:automotive.* as JavaScript and every command fails).' };
       }
 
+      // Extra capabilities. appiumVersion is honoured by Appium Server only (verified live: an unavailable version fails
+      // the session with the platform's version list); report keys work on both modes and become report columns.
+      // Robot Framework: Appium Server only (AppiumLibrary 3 sends W3C capabilities, which the Grid rejects), and the
+      // performance / Axe / automotive injections have no Robot form yet.
+      if (language === 'robot') {
+        if (!isAppiumOss) {
+          return { content: [{ type: 'text', text: `Error: Robot Framework boilerplate supports Appium Server projects only — ${detectedAppiumOss === undefined ? 'this project\'s mode could not be determined' : 'this project runs on Appium Grid'}. AppiumLibrary 3 sends W3C capabilities, which the Grid rejects. Use python, java-junit5, java-testng or nodejs, or switch to an Appium Server project.` }], isError: true };
+        }
+        const unsupported = [includePerformanceTransactions && 'includePerformanceTransactions', includeAxeScan && 'includeAxeScan', automotiveProjection && 'automotiveProjection'].filter(Boolean);
+        if (unsupported.length) {
+          return { content: [{ type: 'text', text: `Error: ${unsupported.join(', ')} ${unsupported.length > 1 ? 'are' : 'is'} not available for Robot Framework yet — use python, java-junit5, java-testng or nodejs for that.` }], isError: true };
+        }
+      }
+      if (appiumVersion && includeAxeScan) {
+        return { content: [{ type: 'text', text: 'Error: appiumVersion cannot be combined with includeAxeScan — the Axe driver needs Appium 2.16.2, which includeAxeScan pins itself.' }], isError: true };
+      }
+      const reserved = Object.keys(reportKeys ?? {}).filter((k) => RESERVED_REPORT_KEYS.has(k.toLowerCase()));
+      if (reserved.length) {
+        return { content: [{ type: 'text', text: `Error: reportKeys ${reserved.join(', ')} ${reserved.length > 1 ? 'are' : 'is a'} reserved capability name${reserved.length > 1 ? 's' : ''} (it would override the generated digitalai:${reserved[0]}). Use a different key name, e.g. runId, build, suite.` }], isError: true };
+      }
+      const extraCaps: Record<string, string | number> = {};
+      const capNotes: string[] = [];
+      if (appiumVersion) {
+        if (isAppiumOss) extraCaps['digitalai:appiumVersion'] = appiumVersion;
+        else capNotes.push(`appiumVersion ignored: this project runs on Appium Grid, which does not choose an Appium Server version.`);
+      }
+      if (newSessionWaitTimeout !== undefined) extraCaps['digitalai:newSessionWaitTimeout'] = newSessionWaitTimeout;
+      for (const [k, v] of Object.entries(reportKeys ?? {})) extraCaps[`digitalai:${k}`] = v;
+      if (reportKeys && Object.keys(reportKeys).length > 0) {
+        const [k, v] = Object.entries(reportKeys)[0];
+        capNotes.push(`Report keys set (${Object.keys(reportKeys).join(', ')}). Find these runs with list_test_reports filter [{"property":"${k}","operator":"=","value":"${v}"}], keys ["${k}"].`);
+      }
+
       // Resolve app capabilities from appId if provided.
       let resolvedPackageName = packageName;
       let resolvedMainActivity = mainActivity;
@@ -999,6 +1203,8 @@ export function registerBoilerplateTools(server: McpServer): void {
         axeApiKey: process.env.AXE_DEVTOOLS_API_KEY,
         isAppiumOss,
         automotiveProjection: automotive?.applied ? automotive.resolution : undefined,
+        reportStatus: reportStatus !== false,
+        extraCaps,
       };
 
       const files = getFilesForVariant(platform, language, isAppiumOss, projectType);
@@ -1124,6 +1330,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           files: resolved.map(f => ({ filename: f.filename, content: f.content })),
           orchestration: orchestrationInfo,
           ...(automotive ? { automotive } : {}),
+          ...(capNotes.length ? { capabilityNotes: capNotes } : {}),
           setupNote: setupNote(language, isAppiumOss, projectType),
           appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
           parallelNote: language === 'python'
@@ -1148,6 +1355,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           'java-testng': 'Java TestNG',
           'nodejs':      'NodeJS (WebDriverIO)',
           'python':      'Python (Appium)',
+          'robot':       'Robot Framework (AppiumLibrary)',
         };
 
         const serverModeLabel = isAppiumOss ? 'Appium Server (OSS)' : 'Appium Grid';
@@ -1180,6 +1388,7 @@ export function registerBoilerplateTools(server: McpServer): void {
             ? `> 🚗 **Automotive projection: ON** — ${automotive.note}`
             : `> ⚠️ **Automotive projection requested but not applied:** ${automotive.note} Generated the classic boilerplate instead.`, '');
         }
+        for (const note of capNotes) lines.push(`> **Capabilities:** ${note}`, '');
         if (clearTestBody) {
           lines.push(
             '> ⛔ **NOT A FINISHED TEST.** The test body is a placeholder with a deliberate fail-guard and ' +
@@ -1378,8 +1587,8 @@ export function registerBoilerplateTools(server: McpServer): void {
     'inside Shadow DOM trees (React, Angular, Web Components).',
     {
       language: z
-        .enum(['java-junit5', 'java-testng', 'nodejs', 'python'])
-        .describe('Target language and test framework.'),
+        .enum(['java-junit5', 'java-testng', 'nodejs', 'python', 'robot'])
+        .describe('Target language and test framework. "robot" = Robot Framework + SeleniumLibrary (no shadowQuery helper; Opera unsupported).'),
       testName: z
         .string()
         .optional()
@@ -1481,13 +1690,15 @@ export function registerBoilerplateTools(server: McpServer): void {
             return `${indent}org.testng.Assert.fail("${msg}");`;
           case 'python':
             return `${indent}raise NotImplementedError("${msg}")`;
+          case 'robot':
+            return `${indent}Fail    ${msg}`;
           default:
             return `${indent}throw new Error('${msg}');`;
         }
       }
 
       function webPlaceholderBody(lang: string, indent: string, url: string): string {
-        const c = lang === 'python' ? '#' : '//';
+        const c = lang === 'python' || lang === 'robot' ? '#' : '//';
         const banner = [
           `${indent}${c} ============================================================================`,
           `${indent}${c} ⛔ PLACEHOLDER TEST BODY — NOT A RUNNABLE TEST. This is scaffolding only.`,
@@ -1500,7 +1711,15 @@ export function registerBoilerplateTools(server: McpServer): void {
 
         const nav = url ? `"${url}"` : '"[Enter target URL here]"';
         let examples: string;
-        if (lang === 'java-junit5' || lang === 'java-testng') {
+        if (lang === 'robot') {
+          examples = [
+            `${indent}${c} Example shape — replace <…> with selectors from get_page_dom / find_web_elements:`,
+            `${indent}${c}   Go To    ${url || '[Enter target URL here]'}`,
+            `${indent}${c}   Click Element    css=<CSS selector from find_web_elements>`,
+            `${indent}${c}   Input Text    css=input[name='<name attr>']    <value>`,
+            `${indent}${c}   Page Should Contain    <visible text>`,
+          ].join('\n');
+        } else if (lang === 'java-junit5' || lang === 'java-testng') {
           examples = [
             `${indent}${c} Example shape — replace <…> with selectors from get_page_dom / find_web_elements:`,
             `${indent}${c}   driver.get(${nav});`,
@@ -1628,7 +1847,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         const browserCap = browserCapJava(targetBrowser);
         const browserImp = browserImportsJava(targetBrowser);
         const shadowHelper = includeShadowHelper ? '\n\n' + shadowHelperJava() : '';
-        const placeholder = webPlaceholderBody(language, '        ', targetUrl);
+        const placeholder = wrapWithReporting(language, '        ', webPlaceholderBody(language, '        ', targetUrl), true);
 
         code = [
           `package com.example.tests;`,
@@ -1655,7 +1874,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `    ${isJunit5 ? '' : 'public static '}void setUp() throws MalformedURLException {`,
           `${browserCap}`,
           `        caps.setCapability("digitalai:accessKey", ACCESS_KEY);`,
-          `        caps.setCapability("digitalai:reportName", "${testName}");`,
+          `        caps.setCapability("digitalai:testName", "${testName}");`,
           ``,
           `        driver = new RemoteWebDriver(new URL(GRID_URL), caps);`,
           `        driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(10));`,
@@ -1743,22 +1962,24 @@ export function registerBoilerplateTools(server: McpServer): void {
 
       if (language === 'python') {
         filename = `test_${testName.toLowerCase()}.py`;
+        // Joined with the 8-space body indent — the elements themselves carry none (they used to, which double-indented
+        // the browser-neutral variant into an IndentationError; found running it live 2026-10-16).
         const browserCap = targetBrowser
           ? `caps["browserName"] = "${targetBrowser}"`
           : [
               `# BROWSER-NEUTRAL: reads browser name from BROWSER env var at runtime.`,
-              `        browser_name = os.environ.get("BROWSER", "chrome")`,
-              `        caps["browserName"] = browser_name`,
+              `browser_name = os.environ.get("BROWSER", "chrome")`,
+              `caps["browserName"] = browser_name`,
             ].join('\n        ');
         const shadowHelper = includeShadowHelper ? '\n\n' + shadowHelperPython() : '';
-        const placeholder = webPlaceholderBody(language, '        ', targetUrl);
+        const placeholder = wrapWithReporting(language, '        ', webPlaceholderBody(language, '        ', targetUrl), true);
 
         code = [
           `import os`,
           `import unittest`,
           `from selenium import webdriver`,
           `from selenium.webdriver.common.by import By`,
-          `from selenium.webdriver.remote.webdriver import WebDriver`,
+          `from selenium.webdriver.common.options import ArgOptions`,
           ``,
           ``,
           `class ${testClass}(unittest.TestCase):`,
@@ -1770,12 +1991,13 @@ export function registerBoilerplateTools(server: McpServer): void {
           `        caps = {}`,
           `        ${browserCap}`,
           `        caps["digitalai:accessKey"] = self.ACCESS_KEY`,
-          `        caps["digitalai:reportName"] = "${testName}"`,
+          `        caps["digitalai:testName"] = "${testName}"`,
           ``,
-          `        self.driver = webdriver.Remote(`,
-          `            command_executor=self.GRID_URL,`,
-          `            desired_capabilities=caps`,
-          `        )`,
+          `        # Selenium 4.10+ removed desired_capabilities — capabilities go through an Options object.`,
+          `        options = ArgOptions()`,
+          `        for name, value in caps.items():`,
+          `            options.set_capability(name, value)`,
+          `        self.driver = webdriver.Remote(command_executor=self.GRID_URL, options=options)`,
           `        self.driver.implicitly_wait(10)`,
           `        self.driver.maximize_window()`,
           ``,
@@ -1827,10 +2049,85 @@ export function registerBoilerplateTools(server: McpServer): void {
         return respond(args.outputFormat, structured, humanText);
       }
 
+      if (language === 'robot') {
+        // SeleniumLibrary names browsers differently from the grid: it builds EdgeOptions for "edge" (browserName
+        // "MicrosoftEdge" on the wire). Opera has no SeleniumLibrary driver.
+        const slBrowser = targetBrowser === 'MicrosoftEdge' ? 'edge' : targetBrowser;
+        if (slBrowser === 'opera') {
+          return { content: [{ type: 'text', text: 'Error: SeleniumLibrary cannot drive Opera — choose chrome, firefox, MicrosoftEdge or safari for Robot Framework.' }], isError: true };
+        }
+        const suiteFile = `tests/${testName.replace(/[^\w-]/g, '_')}.robot`;
+        const body = webPlaceholderBody(language, '    ', targetUrl);
+        const suite = [
+          `*** Settings ***`,
+          `Documentation     ${testName} — web test on the Digital.ai Selenium Grid, generated by the Digital.ai Testing MCP.`,
+          `...               Run:  pip install -r requirements.txt  then  robot ${suiteFile}`,
+          `Library           SeleniumLibrary    timeout=10`,
+          `Library           DigitalAiWebReport.py`,
+          `Test Setup        Open Cloud Browser`,
+          `Test Teardown     Close Cloud Browser`,
+          ``,
+          `*** Variables ***`,
+          `\${GRID_URL}       ${gridUrl}`,
+          `# The DIGITAL_AI_ACCESS_KEY environment variable wins; the value after "=" is the fallback. Remove it before committing.`,
+          `\${ACCESS_KEY}     %{DIGITAL_AI_ACCESS_KEY=${accessKey}}`,
+          slBrowser
+            ? `\${BROWSER}        ${slBrowser}`
+            : `# BROWSER-NEUTRAL: set BROWSER=chrome / firefox / edge / safari (SeleniumLibrary names) at run time.\n\${BROWSER}        %{BROWSER=chrome}`,
+          `\${TEST_NAME}      ${testName}`,
+          ``,
+          `*** Test Cases ***`,
+          `${testName}`,
+          `    Start Steps Group    Test steps`,
+          body,
+          `    Stop Steps Group`,
+          ``,
+          `*** Keywords ***`,
+          `Open Cloud Browser`,
+          `    Open Browser    about:blank    \${BROWSER}    remote_url=\${GRID_URL}`,
+          `    ...    options=set_capability("digitalai:accessKey", "\${ACCESS_KEY}");set_capability("digitalai:testName", "\${TEST_NAME}")`,
+          ``,
+          `Close Cloud Browser`,
+          `    # Report the real outcome: without this a failed step or assertion can still show as Passed in the platform report.`,
+          `    Run Keyword And Ignore Error    Report Test Outcome    \${TEST STATUS}    \${TEST MESSAGE}`,
+          `    Close Browser`,
+        ].join('\n');
+        const library = readFileSync(join(BOILERPLATE_DIR, 'Web', 'Robot Framework', 'DigitalAiWebReport.py'), 'utf-8').replace(/\r\n/g, '\n');
+        const requirements = 'robotframework==7.5\nrobotframework-seleniumlibrary==6.9.0';
+        const structured = {
+          language,
+          testName,
+          targetBrowser: targetBrowser ?? 'browser-neutral (env var BROWSER)',
+          shadowDomSupportIncluded: false,
+          files: [
+            { filename: suiteFile, language: 'robotframework', content: suite },
+            { filename: 'tests/DigitalAiWebReport.py', language: 'python', content: library },
+            { filename: 'requirements.txt', language: 'text', content: requirements },
+          ],
+          guidance: [
+            'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
+            'pip install -r requirements.txt, then robot --outputdir results tests/',
+            'The Test Teardown sets the platform report to Passed / Failed / Skipped from Robot\'s own result.',
+            `Grid URL: ${gridUrl}`,
+          ],
+        };
+        const humanText = [
+          `Generated: ${suiteFile}, tests/DigitalAiWebReport.py, requirements.txt`,
+          `Browser: ${targetBrowser ?? 'neutral (BROWSER env var)'}`,
+          '',
+          '```robotframework', suite, '```',
+          '',
+          '```python', library, '```',
+          '',
+          '```text', requirements, '```',
+        ].join('\n');
+        return respond(args.outputFormat, structured, humanText);
+      }
+
       // Node.js / WebdriverIO
       filename = `test.${testName.toLowerCase()}.js`;
       const shadowHelper = includeShadowHelper ? '\n\n' + shadowHelperNodejs() : '';
-      const placeholder = webPlaceholderBody(language, '    ', targetUrl);
+      const placeholder = wrapWithReporting(language, '    ', webPlaceholderBody(language, '    ', targetUrl), true);
       const browserCapNode = targetBrowser
         ? `browserName: '${targetBrowser}'`
         : [
@@ -1848,7 +2145,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         `    capabilities: [{`,
         `        ${browserCapNode},`,
         `        'digitalai:accessKey': '${accessKey}',`,
-        `        'digitalai:reportName': '${testName}',`,
+        `        'digitalai:testName': '${testName}',`,
         `    }],`,
         `    framework: 'mocha',`,
         `    reporters: ['spec'],`,

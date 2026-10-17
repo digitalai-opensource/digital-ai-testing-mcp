@@ -854,4 +854,6 @@ export interface InspectionSession {
   // automotive_control start/stop. Undefined = never requested.
   automotiveMode?: 'capability' | 'command';
   automotiveRunning?: boolean;
+  /** Repository name of the audio recording in progress (audio_control record_start → record_stop). */
+  audioRecording?: string;
 }

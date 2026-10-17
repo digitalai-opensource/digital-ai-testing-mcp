@@ -15,8 +15,8 @@ exports.config = {
         'appium:appPackage': 'com.experitest.ExperiBank',
         'appium:appActivity': '.LoginActivity',
         'digitalai:deviceQuery': "@os='android' and @category='[Enter PHONE/TABLET here]'",
-        'autoDismissAlerts': true,
-        'autoGrantPermissions': true,
+        'appium:autoDismissAlerts': true,
+        'appium:autoGrantPermissions': true,
         // System-level overlays (charging dialog, USB prompt) are NOT caught by autoDismissAlerts.
         // To clear them, run in an afterTest hook: browser.execute('mobile: shell', [{command:'am',args:['broadcast','-a','android.intent.action.CLOSE_SYSTEM_DIALOGS']}])
     }],

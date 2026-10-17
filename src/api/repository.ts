@@ -4,15 +4,30 @@ import FormData from 'form-data';
 import { apiGet, apiDelete, apiPostForm, apiDownload } from './client.js';
 import type { ApiResponse, RepositoryFile, RepositoryFileFilters } from '../types/digital-ai.js';
 
+/**
+ * GET /api/v1/files ignores uniqueName / projectName / projectId (verified live 2026-10-16: a made-up value of each
+ * still returned all 210 files), so every filter is applied here. Both name matches are exact, case-insensitive.
+ */
+export function filterRepositoryFiles(files: RepositoryFile[], filters: { projectName?: string; uniqueName?: string }): RepositoryFile[] {
+  const eq = (a: string | null | undefined, b: string) => (a ?? '').toLowerCase() === b.toLowerCase();
+  return files.filter((f) =>
+    (!filters.uniqueName || eq(f.uniqueName, filters.uniqueName)) &&
+    (!filters.projectName || eq(f.projectName, filters.projectName))
+  );
+}
+
 export async function listFiles(filters?: RepositoryFileFilters): Promise<RepositoryFile[]> {
   try {
-    const params: Record<string, unknown> = {};
-    if (filters?.projectId) params['projectId'] = filters.projectId;
-    if (filters?.projectName) params['projectName'] = filters.projectName;
-    if (filters?.uniqueName) params['uniqueName'] = filters.uniqueName;
-
-    const res = await apiGet<ApiResponse<RepositoryFile[]>>('/api/v1/files', params);
-    return res.data;
+    const res = await apiGet<ApiResponse<RepositoryFile[]>>('/api/v1/files');
+    let projectName = filters?.projectName;
+    if (filters?.projectId && !projectName) {
+      // File records carry the project NAME only — resolve the id through the projects the caller can see.
+      const projects = await apiGet<Array<{ id: number | string; name: string }>>('/api/v1/projects');
+      const match = (Array.isArray(projects) ? projects : []).find((p) => String(p.id) === String(filters.projectId));
+      if (!match) throw new Error(`project ${filters.projectId} is not visible to this credential — use projectName`);
+      projectName = match.name;
+    }
+    return filterRepositoryFiles(res.data ?? [], { projectName, uniqueName: filters?.uniqueName });
   } catch (e) {
     throw new Error(`listFiles failed: ${(e as Error).message}`);
   }

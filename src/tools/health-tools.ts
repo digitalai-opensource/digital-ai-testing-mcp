@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getAllDevices } from '../api/devices.js';
+import { registerUnhealthyDevicesTool } from './device-health-tool.js';
 import { getApplications } from '../api/applications.js';
 import { getCurrentAndFutureReservations } from '../api/reservations.js';
 import { getAllProvisioningProfiles } from '../api/provisioning-profiles.js';
@@ -11,6 +12,9 @@ import { applyMaxResults, withPaging } from '../utils/pagination.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 
 export function registerHealthTools(server: McpServer): void {
+  // Reporter-based device health lives in its own file but belongs to this module (and the devices toolset).
+  registerUnhealthyDevicesTool(server);
+
   server.tool(
     'get_environment_summary',
     'Returns a high-level environment dashboard: device counts by status (available/reserved/offline) and OS, total reservation count, and application repository totals. Use this for a "what is the state of the farm?" overview — it shows counts and totals only, not individual reservation details. To list full reservation records with user, device, and time details, use list_reservations instead.',

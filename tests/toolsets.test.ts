@@ -280,4 +280,12 @@ describe('tool annotations cover every guarded tool', () => {
     assert.deepEqual(guarded.filter((n) => !DESTRUCTIVE_TOOL_RE.test(n)), []);
     assert.deepEqual(guarded.filter((n) => annotationsFor(n).destructiveHint !== true), []);
   });
+
+  it('a read-only-looking name with a write mode is not marked read-only, and the fidelity eval denies it', async () => {
+    // find_unhealthy_devices tags devices when confirmTagging is true — a readOnlyHint would let clients auto-approve it.
+    assert.equal(annotationsFor('find_unhealthy_devices').readOnlyHint, false);
+    const { SAFE_TOOLS } = await import('./fidelity/safety.js');
+    assert.equal(SAFE_TOOLS.includes('find_unhealthy_devices'), false);
+    assert.equal(SAFE_TOOLS.includes('find_available_device'), true);
+  });
 });

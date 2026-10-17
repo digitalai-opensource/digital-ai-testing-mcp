@@ -16,8 +16,14 @@ export const READ_ONLY_TOOL_RE = /^(list_|get_|find_|check_|summarize_|compare_|
  */
 export const DESTRUCTIVE_TOOL_RE = /^(delete_|release_|cancel_|uninstall_|remove_|unassign_|cleanup_)/;
 
+/**
+ * Read-only by name, but with an opt-in mode that changes the tenant — so NOT read-only: no readOnlyHint, and the
+ * fidelity eval denies them (the attempt is still recorded). find_unhealthy_devices tags devices with confirmTagging.
+ */
+export const WRITES_DESPITE_NAME = new Set(['find_unhealthy_devices']);
+
 export function isReadOnlyTool(name: string): boolean {
-  return READ_ONLY_TOOL_RE.test(name);
+  return READ_ONLY_TOOL_RE.test(name) && !WRITES_DESPITE_NAME.has(name);
 }
 
 export function annotationsFor(name: string, opts: { placeholder?: boolean } = {}): ToolAnnotations {

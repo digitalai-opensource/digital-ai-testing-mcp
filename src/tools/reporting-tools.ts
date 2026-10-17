@@ -37,6 +37,7 @@ import { outputFormatParam, respond } from '../utils/output-format.js';
 import { commandPayload } from '../utils/command-payload.js';
 import { parseReportRef } from '../utils/report-ref.js';
 import { selectLogLines, DEFAULT_LOG_CONTEXT, DEFAULT_LOG_MAX_CHARS } from '../utils/log-view.js';
+import { getRunningTestRequests, type RunningTestRequest } from '../api/test-requests.js';
 import { countsFromPivotRow, tallyStatuses, passRate, statusOutcome, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
 
 export function registerReportingTools(server: McpServer): void {
@@ -961,8 +962,7 @@ export function registerReportingTools(server: McpServer): void {
     'summarize_test_failures',
     'Answer "why are my tests failing?" in one call: buckets failed tests by error classification and returns the breakdown (e.g. "44 failures: 38 element_not_found, 6 timeout"). ' +
     'Use this instead of fanning out get_test_report manually across many failures. ' +
-    'SLOW: the reporter list endpoint does not carry error classification, so this fetches the single-record report for each failed test (N+1) — bounded by maxReports. ' +
-    'groupBy "name" needs no per-test fetch (name is on the list record) and is fast. ' +
+    'Fast: the classification is read straight from the report list (200 failures in ~1.5 s). ' +
     'Scope with startDate/endDate (client-side window), projectName/projectId, and nameFilter (substring on test name).',
     {
       startDate: z.string().optional().describe('ISO 8601 start of window, e.g. "2026-06-01T00:00:00Z". Omit for all-time (bounded by maxReports).'),
@@ -971,7 +971,7 @@ export function registerReportingTools(server: McpServer): void {
         .enum(['errorClassification', 'errorCategory', 'name'])
         .optional()
         .default('errorClassification')
-        .describe("Dimension to bucket by. 'errorClassification' (default, e.g. element_not_found) and 'errorCategory' (e.g. assertion) require per-test fetches; 'name' is fast (no fetch)."),
+        .describe("Dimension to bucket by: 'errorClassification' (default, e.g. element_not_found), 'errorCategory' (e.g. assertion, device, network), or 'name'."),
       nameFilter: z.string().optional().describe('Only include failures whose test name contains this substring (e.g. "Login").'),
       maxReports: z.number().int().min(1).max(1000).optional().default(200).describe('Cap on failures analyzed (fan-out bound). Default 200. capped:true in the result means more failures exist beyond this.'),
       projectId: z.number().int().optional().describe('Scope to a project by numeric ID.'),
@@ -1213,7 +1213,10 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'list_active_test_executions',
-    'Returns currently-running test executions. Active tests appear in the reporter as Incomplete status with no duration value. This tool encapsulates that heuristic so you don\'t need to compose list_test_reports filters manually. Useful for answering "what is running right now?"',
+    'Returns currently-running test executions — answers "what is running right now?". Reads the platform\'s live list of ' +
+    'running test requests (name, project, device, user, start time, execution type, Appium version, device query). ' +
+    'If that list is unavailable it falls back to the reporter heuristic (Incomplete reports with no duration, within ' +
+    'maxAgeHours); the response says which source was used. Each role sees the runs it may see.',
     {
       limit: z
         .number()
@@ -1229,14 +1232,47 @@ export function registerReportingTools(server: McpServer): void {
         .max(168)
         .optional()
         .default(12)
-        .describe('Ignore Incomplete records that started longer ago than this — they are abandoned or never-finalised runs, not running ones (default 12; test runs time out after 4 h by default).'),
+        .describe('Fallback (reporter heuristic) only: ignore Incomplete records that started longer ago than this — they are abandoned or never-finalised runs, not running ones (default 12; test runs time out after 4 h by default).'),
       projectId: z.number().int().optional().describe('Scope to this project ID.'),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
     async ({ limit, maxAgeHours, projectId, projectName, outputFormat }) => {
+      // Primary source: the platform's live list. Anything wrong with it (older platform, network) → the heuristic below.
+      let live: RunningTestRequest[] | null = null;
+      let liveError: string | undefined;
       try {
-        // Active executions are Incomplete records with null duration.
+        live = await getRunningTestRequests();
+      } catch (e) {
+        liveError = (e as Error).message;
+      }
+      if (live) {
+        const scoped = live.filter((r) =>
+          (projectName === undefined || (r.projectName ?? '').toLowerCase() === projectName.toLowerCase()) &&
+          (projectId === undefined || r.projectId === projectId));
+        const shown = scoped.slice(0, limit ?? 50);
+        const structured = { source: 'running-test-requests', count: shown.length, total: scoped.length, executions: shown };
+        if (shown.length === 0) {
+          return respond(outputFormat, structured, `No test executions are running${projectName || projectId ? ' in that project' : ''} (platform's live list).`);
+        }
+        const now = Date.now();
+        const lines = [`🔴 Running test executions (${shown.length}${scoped.length > shown.length ? ` of ${scoped.length}` : ''}) — platform's live list:\n`];
+        for (const r of shown) {
+          const since = r.startedAt ?? r.createdAt;
+          const elapsed = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) : null;
+          lines.push(
+            `  • ${r.name}   [${r.status}${r.executionType ? `, ${r.executionType}` : ''}]`,
+            `    Project: ${r.projectName ?? '?'}   User: ${r.username ?? '?'}`,
+            `    Device: ${r.deviceName ?? r.browser ?? '?'}${r.deviceOs ? ` (${r.deviceOs} ${r.deviceOsVersion ?? ''})` : ''}${r.appiumServerVersion ? `   Appium ${r.appiumServerVersion}` : ''}`,
+            `    Started: ${since ?? '?'}${elapsed !== null ? `   Elapsed: ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : ''}`,
+            ''
+          );
+        }
+        return respond(outputFormat, structured, lines.join('\n'));
+      }
+
+      try {
+        // Fallback: active executions are Incomplete records with null duration.
         // We fetch more than needed since not all Incomplete records are still running.
         const result = await listTestsSortedDesc(
           {
@@ -1260,11 +1296,13 @@ export function registerReportingTools(server: McpServer): void {
           ? ` ${staleExcluded} older Incomplete record(s) were ignored as stale (started more than ${maxAgeHours ?? 12} h ago — abandoned or never finalised).`
           : '';
 
+        const fallbackNote = ` (The platform's live list was unavailable — ${liveError} — so this is the reporter heuristic.)`;
         if (active.length === 0) {
-          return respond(outputFormat, { count: 0, executions: [], staleExcluded, maxAgeHours: maxAgeHours ?? 12 }, `No active test executions found.${staleNote}`);
+          return respond(outputFormat, { source: 'reporter-heuristic', count: 0, executions: [], staleExcluded, maxAgeHours: maxAgeHours ?? 12 }, `No active test executions found.${staleNote}${fallbackNote}`);
         }
 
         const structured = {
+          source: 'reporter-heuristic',
           staleExcluded,
           maxAgeHours: maxAgeHours ?? 12,
           count: active.length,
@@ -1291,7 +1329,7 @@ export function registerReportingTools(server: McpServer): void {
             ''
           );
         }
-        lines.push(`Note: "active" is inferred from Incomplete status + null duration within the last ${maxAgeHours ?? 12} h. A test that finished very recently may appear here until the reporter updates.${staleNote}`);
+        lines.push(`Note: "active" is inferred from Incomplete status + null duration within the last ${maxAgeHours ?? 12} h. A test that finished very recently may appear here until the reporter updates.${staleNote}${fallbackNote}`);
         return respond(outputFormat, structured, lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

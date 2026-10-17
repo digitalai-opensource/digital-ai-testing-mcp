@@ -22,7 +22,7 @@
  */
 
 export type OrchestrationMode = 'auto' | 'on' | 'off';
-type Language = 'java-junit5' | 'java-testng' | 'nodejs' | 'python';
+type Language = 'java-junit5' | 'java-testng' | 'nodejs' | 'python' | 'robot';
 
 export const AGENT_PROJECT_PATH = 'lib/smart-agent.jar';
 export const CONFIG_TEMPLATE_PATH = 'orchestrator/config.template.yml';
@@ -58,7 +58,8 @@ export function decideOrchestration(opts: {
   }
   const notApplied = (reason: string): OrchestrationDecision => ({ enabled: false, reason, requestedButNotApplied: mode === 'on' });
   if (language !== 'java-junit5' && language !== 'java-testng') {
-    return notApplied('Test Orchestrator is a Java agent — it supports JUnit 5 and TestNG only, not ' + (language === 'python' ? 'Python' : 'NodeJS/WebdriverIO') + '.');
+    const label = language === 'python' ? 'Python' : language === 'robot' ? 'Robot Framework' : 'NodeJS/WebdriverIO';
+    return notApplied(`Test Orchestrator is a Java agent — it supports JUnit 5 and TestNG only, not ${label}.`);
   }
   if (isAppiumOss === undefined) {
     return notApplied(

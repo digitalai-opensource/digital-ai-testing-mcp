@@ -40,6 +40,7 @@ import {
   sweepTimedOutStarts,
   deleteAllTrackedReports,
   automotiveControl,
+  audioControl,
   AUTOMOTIVE_RESOLUTIONS,
   INSTRUMENT_CLUSTER_CONTENT,
   getForegroundActivity,
@@ -51,6 +52,7 @@ import { getActiveUrl } from '../api/client.js';
 import { checkDeleteAllowed } from '../api/access-level.js';
 import { resolveDevice } from '../utils/device-resolver.js';
 import { getAllDevices } from '../api/devices.js';
+import { listFiles } from '../api/repository.js';
 import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
 import { readFileSync, writeFileSync } from 'fs';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
@@ -648,6 +650,43 @@ export function registerInspectionTools(server: McpServer): void {
         const content: Array<{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string }> = [];
         if (out.image) content.push({ type: 'image' as const, data: out.image.data, mimeType: out.image.mimeType });
         content.push({ type: 'text' as const, text: out.dump ? `${out.message}\n\n${out.dump}` : out.message });
+        return { content };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── audio_control ─────────────────────────────────────────────────────────
+  server.tool(
+    'audio_control',
+    'Play audio into, or record audio from, the device in an inspection session — for voice assistants, calls, media and ' +
+    'speech features. Actions: "play" (a repository audio file into the device\'s audio INPUT; with durationSeconds it plays, ' +
+    'waits and stops), "stop_play", "record_start" (captures the device\'s audio OUTPUT into a new repository file), ' +
+    '"record_stop" (returns the saved file; download_repository_file fetches it). ' +
+    'Needs a device with an audio line — pick one with find_available_device(requireAudioLine: true); others fail with ' +
+    '"Audio line is not configured". A recording is EMPTY (header only, reported as headerOnly) when the device played no ' +
+    'sound while recording. Appium Server projects only (the Grid cannot run the stop commands). ' +
+    'For a two-phone call / SMS / MMS test, start from the reference project https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      action: z.enum(['play', 'stop_play', 'record_start', 'record_stop']).describe('What to do.'),
+      file: z.string().optional().describe('play only: uniqueName of an audio file in the project repository (list_repository_files), e.g. "greeting.wav".'),
+      // The call sleeps for the duration — keep it inside the ~60 s MCP client timeout.
+      durationSeconds: z.number().int().min(1).max(45).optional().describe('play only: play for this long (max 45 s, so the call finishes inside the client timeout), then stop. For longer clips call play, then stop_play.'),
+      recordingName: z
+        .string()
+        .regex(/^[\w.-]{1,100}$/, 'Letters, digits, _ . - only.')
+        .optional()
+        .describe('record_start only: repository name for the recording. Default: a unique mcp-recording-<handle>-<time>.wav.'),
+    },
+    async (args) => {
+      try {
+        const out = await audioControl(args.handle, args.action, { file: args.file, durationSeconds: args.durationSeconds, recordingName: args.recordingName }, {
+          findRepositoryFile: async (uniqueName, projectName) => (await listFiles({ uniqueName, projectName }))[0],
+        });
+        const content = [{ type: 'text' as const, text: out.message }];
+        if (out.recording) content.push({ type: 'text' as const, text: JSON.stringify({ recording: out.recording }) });
         return { content };
       } catch (e) {
         return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }], isError: true };

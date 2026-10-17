@@ -9,7 +9,7 @@ import { describe, it, beforeAll, afterAll, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 import { registerInspectionTools } from '../src/tools/inspection-tools.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
-import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_QUERY_MAX_LENGTH } from '../src/api/webdriver.js';
+import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_QUERY_MAX_LENGTH, newSessionWaitSeconds } from '../src/api/webdriver.js';
 import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
 
 let foreground = '.makePaymentView';
@@ -93,6 +93,18 @@ describe('session start limits', () => {
     assert.equal(sessionCreateTimeoutMs("@os='android'", true, {}), 240_000);
     assert.equal(sessionCreateTimeoutMs("@os='android'", false, { INSPECTION_SESSION_TIMEOUT_MS: '300000' }), 300_000);
     assert.equal(sessionCreateTimeoutMs("@os='android'", false, { INSPECTION_SESSION_TIMEOUT_MS: 'nope' }), 120_000);
+  });
+
+  it('asks the platform to give up 15 s before the client does, so its reason arrives first', async () => {
+    assert.equal(newSessionWaitSeconds(120_000), 105);
+    assert.equal(newSessionWaitSeconds(240_000), 225);
+    assert.equal(newSessionWaitSeconds(5_000), 10, 'never below 10 s');
+    api.requests.length = 0;
+    const j = await start({ platform: 'android' });
+    assert.ok(j.handle);
+    const sent = api.requests.find((r) => r.path === '/wd/hub/session' && r.method === 'POST')!.json;
+    assert.equal(sent.desiredCapabilities['digitalai:newSessionWaitTimeout'], 105);
+    assert.equal(sent.capabilities.alwaysMatch['digitalai:newSessionWaitTimeout'], 105);
   });
 
   it('refuses a device query over 255 characters before any session request', async () => {

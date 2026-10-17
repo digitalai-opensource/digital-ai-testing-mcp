@@ -29,6 +29,8 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "Show me a summary of the environment"
 - "How is the device farm distributed across regions? Which regions have the most availability?"
 - "Are there any agents reporting warnings or running low on devices?"
+- "Which devices failed far more tests than the rest in the last 24 hours? Is it the device or the tests?" *(find_unhealthy_devices — per-device fail ratio, the share of infrastructure errors, top causes, and tests that fail only on that device)*
+- "Tag the devices that look unhealthy as 'dirty' — show me the list first" *(find_unhealthy_devices with `tag` previews; it tags only with `confirmTagging: true`, Cloud Admin or Project Admin)*
 
 ---
 
@@ -46,6 +48,8 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "Reset the USB connection on device 9 before trying to reboot it"
 - "Open a manual web control session for device 23"
 - "Open Mobile Studio for any available Android device"
+- "Which emulator and simulator templates can we start?" *(list_virtual_device_templates — idle templates are not devices, so list_devices never shows them; each entry carries a ready device query)*
+- "Find an available phone with an audio line" *(find_available_device with requireAudioLine — needed for audio playback and recording)*
 - "Are there any devices stuck in 'In Use' for more than 4 hours? Preview what would be released."
 - "Release all orphaned sessions that have been in use for more than 6 hours"
 
@@ -199,7 +203,7 @@ Natural language prompts you can use with your AI Agent when this MCP server is 
 - "Connect to the QA project key so I can run tests without full admin access"
 - "What access level am I currently connected with — Cloud Admin, Project Admin, or Project User?"
 - "Load the performance tools" *(only relevant when the server runs with `MCP_TOOLSETS` — tools outside the loaded toolsets also load themselves on first use)*
-- "That guidance sent us the wrong way — record a remediation note" *(only when the server runs with `MCP_DEBUG_MODE=true`; notes go to a `remediation/` folder at your project's root — written by the server with the npm install, saved by the agent under Docker)*
+- "That guidance sent us the wrong way — record a remediation note" *(only when the server runs with `MCP_DEBUG_MODE=true`; notes go to a `remediation/` folder at your project's root — written by the server with the npm install, returned for the agent to save under Docker or when the server cannot tell which folder is your project)*
 
 ---
 
@@ -227,7 +231,11 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Generate a Java JUnit5 boilerplate scoped as a Gradle submodule so I can add it to our existing Android Studio project"
 - "Generate a standalone Maven test for our iOS app, bundle ID com.mycompany.iosapp"
 - "Generate a TestNG test for the Android app with package com.mycompany.android and main activity .MainActivity"
-- "Generate test scripts for our app in all 4 supported languages — JUnit5, TestNG, NodeJS, and Python — so the team can use whichever framework they prefer"
+- "Generate test scripts for our app in all 5 supported languages — JUnit5, TestNG, NodeJS, Python, and Robot Framework — so the team can use whichever framework they prefer" *(Robot Framework needs an Appium Server project)*
+- "Generate a Robot Framework test for the ExperiBank demo on Android" *(Robot Framework + AppiumLibrary; Appium Server projects only, and not combined with performance transactions, Axe or projection)*
+- "Generate a JUnit5 test that tags each run with our build number and suite name, so I can find those runs in the reporter later" *(reportKeys — custom report columns you can filter on in list_test_reports)*
+- "Generate a test for an Android emulator from one of our templates" *(list_virtual_device_templates gives the device query; emulator sessions can take a few minutes to start)*
+- "Generate a test where one phone calls another and checks the call connects" *(no template for two-phone calls or SMS — the agent points you to the reference project https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests)*
 - "Generate both an Android and an iOS test script for app IDs 456 (Android) and 789 (iOS) using Java JUnit5"
 - "Generate a Python test for app 456 with performance transactions enabled so CPU and memory get recorded" *(starts NV throttling — the generated code brackets the test body, not app launch)*
 - "Generate a JUnit5 test with an Axe accessibility scan included" *(reads `AXE_DEVTOOLS_API_KEY` from the MCP environment — a placeholder is inserted if it is unset; pins Appium 2.16.2 because the Axe driver is unavailable on Appium Server 3.3.0+)*
@@ -260,6 +268,8 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Open the deep link myapp://orders/42 and verify it lands on the order detail screen"
 - "Stop the session but keep the report — I want the session video for the bug ticket" *(keepReport: true, then download_test_video — or download_test_attachments for video plus logs)*
 - "Start an inspection session and give me the live view URL so I can watch while you work"
+- "Start an inspection session on an Android emulator and show me its screen" *(the agent takes the device query from list_virtual_device_templates)*
+- "Play greeting.wav from the repository into the phone, then record what the app says back and give me the file" *(audio_control play / record_start / record_stop — needs a device with an audio line and an Appium Server project; a recording with no sound is reported as empty)*
 - "Start an iOS inspection session on an iPhone, launch our app by bundle ID, and map the login screen's elements"
 - "On the iPhone session, navigate into Settings → General and come back using the nav-bar back button"
 - "On the iPhone session, find the Login button with an iOS predicate" *(`-ios predicate string` works on Appium Server projects only; on an Appium Grid project the agent uses xpath or accessibility id)*
@@ -309,6 +319,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Generate a Java JUnit5 Selenium test from what we just discovered — selectors are verified from the live session"
 - "Generate a browser-neutral Python Selenium test so it runs on Chrome, Firefox, and Safari without changes"
 - "Generate a NodeJS WebDriverIO test targeting Safari specifically"
+- "Generate a Robot Framework web test for the login flow we just captured" *(Robot Framework + SeleniumLibrary; Opera is not supported)*
 
 ---
 
@@ -388,7 +399,8 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Find and delete all test reports named '[MCP Probe] smoke-test' from the 'Mobile QA' project"
 - "Clean up all probe/debug test reports from last week — names contain '[MCP'"
 - "Get a test summary for the QA project — what are the most commonly failing tests?"
-- "What tests are running right now?"
+- "What tests are running right now?" *(list_active_test_executions reads the platform's live list of running tests)*
+- "Show me all runs from build 4.2.1" *(works when the tests set a `build` report key — for example generated with reportKeys)*
 - "Here's a report link — https://<tenant>/reporter/video-report/<uuid> — what failed?" *(report URLs and UUIDs work directly; UUIDs are unique across projects, numeric test IDs are not)*
 - "How many tests ended in Error versus Failed this month?" *(Error = the test ended abnormally — crash, infrastructure, session ended early)*
 - "What's our pass rate this week?" *(pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error); Skipped and Incomplete are excluded)*
@@ -400,7 +412,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 
 ## Root Cause Analysis (Why Tests Are Failing)
 
-> **The chain:** `list_test_reports` (find the failures) → `summarize_test_failures` (classify them all in one call) → `get_test_report` (per-test cause, error category, and stack trace) → `get_test_log` (full Appium/device log returned inline as text — no download) → `get_test_attachments_download_command` (a curl/PowerShell command to pull the session video + logs onto your own machine). The reporter *list* never carries the failure cause — only the single-record report does — so summarization fetches each failed report (N+1, bounded by `maxReports`); `groupBy: "name"` skips that fan-out.
+> **The chain:** `list_test_reports` (find the failures) → `summarize_test_failures` (classify them all in one call) → `get_test_report` (per-test cause, error category, and stack trace) → `get_test_log` (full Appium/device log returned inline as text — no download) → `get_test_attachments_download_command` (a curl/PowerShell command to pull the session video + logs onto your own machine). `summarize_test_failures` reads the error classification straight from the report list, so a breakdown of a few hundred failures takes seconds (bounded by `maxReports`). If the failures cluster on a few devices, `find_unhealthy_devices` tells you whether the device is the problem.
 
 - "Why are my tests failing? Give me a breakdown by error type."
 - "Summarize the failures in the Mobile QA project — what's the dominant cause?"
@@ -409,6 +421,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Group this week's failures by test name — which test is failing the most?"
 - "Test 69 failed — what was the actual cause and error category?"
 - "Show me the full Appium log for test UUID abc-456 so I can see exactly where it failed"
+- "Search the Appium log of the failed Login test for 'NoSuchElement' and show me the lines around it" *(get_test_log with `contains` returns only matching lines with context — long logs are capped, so search first)*
 - "Get the device logcat for the failed Login test"
 - "I'm running the MCP in Docker — give me a command to download test 69's session video to my Mac"
 - "Pull the attachment ZIP (video + logs) for the failed run onto my local machine"
@@ -426,6 +439,7 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Show me the pass rate and trend for the 'Payment Processing' test over the last 20 runs"
 - "Are there any tests that fail on Android but pass on iOS? Flag anything with more than a 20-point pass rate gap."
 - "Which tests behave differently on one platform vs. the other?"
+- "'Checkout' is flaky — does it fail only on one particular device?" *(find_unhealthy_devices lists tests that fail only on a given device)*
 - "What is the distribution of test statuses — Passed, Healed, Failed, Error, Incomplete and Skipped?"
 
 ---

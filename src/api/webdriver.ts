@@ -76,6 +76,16 @@ export function sessionCreateTimeoutMs(query: string, automotiveProjection: bool
   return DEFAULT_SESSION_CREATE_TIMEOUT_MS;
 }
 
+/**
+ * digitalai:newSessionWaitTimeout (seconds) — how long the platform waits for a matching free device. Without it the
+ * platform kept an unmatchable query waiting 5+ minutes, so our client timed out with no reason; with it the platform
+ * answers "No available device matching the query: …" (verified live 2026-10-16, Grid and Appium Server). It is set
+ * 15 s under the client timeout so the platform's answer always arrives first.
+ */
+export function newSessionWaitSeconds(clientTimeoutMs: number): number {
+  return Math.max(10, Math.floor(clientTimeoutMs / 1000) - 15);
+}
+
 export async function createInspectionSession(
   opts: InspectionSessionOptions
 ): Promise<InspectionSession> {
@@ -122,6 +132,8 @@ export async function createInspectionSession(
   }
   if (opts.automotiveProjection) desiredCapabilities['digitalai:automotiveProjection'] = opts.automotiveProjection;
   if (opts.instrumentCluster) desiredCapabilities['digitalai:instrumentCluster'] = opts.instrumentCluster;
+  const timeout = sessionCreateTimeoutMs(query, !!opts.automotiveProjection);
+  desiredCapabilities['digitalai:newSessionWaitTimeout'] = newSessionWaitSeconds(timeout);
 
   // Dual-protocol session request: the proprietary Grid (JWP) reads
   // desiredCapabilities; standard Appium Server (W3C) reads capabilities.alwaysMatch
@@ -140,13 +152,11 @@ export async function createInspectionSession(
   const testName = desiredCapabilities['digitalai:testName'] as string;
   const requestedAt = Date.now();
   let res;
-  let timeout = DEFAULT_SESSION_CREATE_TIMEOUT_MS;
   try {
     // A projection session can take longer than the client default: the platform's projection start has its own 60 s
     // deadline on the device host, and a failed CarPlay start reached the reporter at 125.8 s (live 2026-10-14) — past
     // the 120 s default, so the client timed out first, never saw the platform's reason, and the failed-start cleanup
-    // below never ran. Wait long enough to receive the platform's answer.
-    timeout = sessionCreateTimeoutMs(query, !!opts.automotiveProjection);
+    // below never ran. `timeout` (sessionCreateTimeoutMs, above) waits long enough to receive the platform's answer.
     res = await client.post('/session', {
       desiredCapabilities,
       capabilities: { alwaysMatch, firstMatch: [{}] },
@@ -998,6 +1008,90 @@ function execScript(
 // targets — the head unit IS the device, driven with the normal inspection tools; these commands fail there.
 
 export type AutomotiveAction = 'start' | 'stop' | 'screenshot' | 'tap' | 'dump';
+
+// ─── Audio (play into / record from the device's audio line) ───────────────────
+// seetest:client.startAudioPlay / stopAudioPlay / startAudioRecording / stopAudioRecording, verified live 2026-10-16 on
+// an Appium Server Android phone whose audio line is configured (device.bluetooth.state = PAIRED):
+//  - play takes "cloud:<repository uniqueName>" of an uploaded audio file; it feeds the device's audio INPUT
+//  - recording captures the device's audio OUTPUT into a NEW repository file "cloud:<name>"; when the device plays
+//    nothing the file is a 44-byte header-only WAV (seen live — and in older call-test recordings)
+//  - a device without an audio line fails every command: "Audio line is not configured for device: <udid>"
+//  - digitalai:instrumentApp was not needed for the commands to run (the SIM-call use case sets it for call audio)
+//  - waitForAudioPlayEnd returns immediately (UseCase-SIM-Card-Tests), so "play for N seconds" sleeps here instead
+// Both stop commands take no arguments, which the Grid execute parser rejects — Appium Server sessions only.
+
+export type AudioAction = 'play' | 'stop_play' | 'record_start' | 'record_stop';
+export const WAV_HEADER_ONLY_BYTES = 44;
+
+const cloudRef = (name: string) => (name.startsWith('cloud:') ? name : `cloud:${name}`);
+const bareName = (name: string) => name.replace(/^cloud:/, '');
+
+export async function audioControl(
+  handle: string,
+  action: AudioAction,
+  opts: { file?: string; durationSeconds?: number; recordingName?: string } = {},
+  deps: {
+    /** Looked up in the session's project — "cloud:<name>" resolves within that project. */
+    findRepositoryFile: (uniqueName: string, projectName?: string) => Promise<{ id: number; uniqueName: string; size: number } | undefined>;
+    sleep?: (ms: number) => Promise<void>;
+  }
+): Promise<{ message: string; recording?: { id: number | null; name: string; size: number | null; headerOnly: boolean } }> {
+  const session = requireSession(handle);
+  if (session.platform === 'web') throw new Error('audio_control needs a mobile inspection session, not a browser session.');
+  if (session.sessionFormat === 'jwp') {
+    throw new Error('audio_control is not available on Appium Grid sessions: stopAudioPlay / stopAudioRecording take no arguments, which the Grid cannot run, so playback and recording could be started but never stopped. Use an Appium Server project.');
+  }
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const client = makeClient();
+  const run = (script: string, args: unknown[] = []) => execScript(client, session, script, args, 60_000);
+  try {
+    switch (action) {
+      case 'play': {
+        if (!opts.file) throw new Error('play needs file: the repository uniqueName of an audio file (see list_repository_files).');
+        const found = await deps.findRepositoryFile(bareName(opts.file), session.projectName);
+        if (!found) throw new Error(`No repository file named "${bareName(opts.file)}" — upload it with upload_repository_file, or pick one from list_repository_files.`);
+        await run('seetest:client.startAudioPlay', [cloudRef(found.uniqueName)]);
+        if (!opts.durationSeconds) {
+          return { message: `Playing "${found.uniqueName}" into the device's audio input. Call stop_play when done (the platform's own "wait for end" does not block).` };
+        }
+        await sleep(opts.durationSeconds * 1000);
+        await run('seetest:client.stopAudioPlay');
+        return { message: `Played "${found.uniqueName}" for ${opts.durationSeconds} s, then stopped.` };
+      }
+      case 'stop_play':
+        await run('seetest:client.stopAudioPlay');
+        return { message: 'Playback stopped.' };
+      case 'record_start': {
+        if (session.audioRecording) throw new Error(`A recording ("${session.audioRecording}") is already running — record_stop it first.`);
+        const name = bareName(opts.recordingName ?? `mcp-recording-${session.handle}-${Date.now()}.wav`);
+        await run('seetest:client.startAudioRecording', [cloudRef(name)]);
+        session.audioRecording = name;
+        return { message: `Recording the device's audio output to repository file "${name}". Call record_stop to finish.` };
+      }
+      case 'record_stop': {
+        const name = session.audioRecording;
+        await run('seetest:client.stopAudioRecording');
+        session.audioRecording = undefined;
+        if (!name) return { message: 'Recording stopped (it was not started through audio_control, so the file name is unknown — check list_repository_files).' };
+        let file: { id: number; uniqueName: string; size: number } | undefined;
+        // The file can take a moment to be indexed — up to 5 lookups, sleeping only BETWEEN them.
+        for (let i = 0; i < 5; i++) {
+          if (i > 0) await sleep(2000);
+          file = await deps.findRepositoryFile(name, session.projectName);
+          if (file) break;
+        }
+        const headerOnly = !!file && file.size <= WAV_HEADER_ONLY_BYTES;
+        const where = file ? `saved as repository file "${name}" (id ${file.id}, ${file.size} bytes) — download_repository_file to fetch it` : `not found in the repository yet under "${name}" — check list_repository_files shortly`;
+        return {
+          message: `Recording stopped, ${where}.` + (headerOnly ? ' ⚠️ The recording is EMPTY (header only): the device played no sound while recording. Recording captures the device\'s audio OUTPUT — start the media/call that produces sound before record_start.' : ''),
+          recording: { id: file?.id ?? null, name, size: file?.size ?? null, headerOnly },
+        };
+      }
+    }
+  } catch (e) {
+    throw new Error(`audio ${action} failed: ${describeWdError(e)}${/Audio line is not configured/i.test(describeWdError(e)) ? ' — this device has no audio line. Pick one with find_available_device(requireAudioLine: true).' : ''}`);
+  }
+}
 
 export async function automotiveControl(
   handle: string,

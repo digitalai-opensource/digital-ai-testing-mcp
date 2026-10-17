@@ -198,3 +198,122 @@ describe('scenario and safety definitions', () => {
     assert.ok(SAFE_TOOLS.includes('get_project_test_summary') && SAFE_TOOLS.includes('find_latest_test_for_name'));
   });
 });
+
+describe('noFabricatedCode — allowGeneratedWrites (robot-framework-test)', () => {
+  // Saving the generator's verified demo is correct; anything the agent added or changed is not.
+  const GENERATED = [
+    '*** Settings ***',
+    'Library           AppiumLibrary    timeout=10',
+    '${ACCESS_KEY}       %{DIGITAL_AI_ACCESS_KEY=aut_1_abcdefghijklmnopqrstuv}',
+    '*** Test Cases ***',
+    'Quick Start Android Native Demo',
+    '    Input Text       id=com.experitest.ExperiBank:id/usernameTextField    company',
+    '    Click Element    id=com.experitest.ExperiBank:id/loginButton',
+  ].join('\n');
+  const SCAFFOLD = ['*** Test Cases ***', 'My Test', '    Fail    Replace this placeholder body with real element selectors captured from a live inspection'].join('\n');
+  const write = (content: string, tool = 'Write') => {
+    const id = `toolu_w${++n}`;
+    return { id, line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: tool, input: { file_path: 'tests/x.robot', content } }] } }) };
+  };
+  const NO_WRITE_TOOL = '<tool_use_error>Error: No such tool available: Write. Write is disabled for this session</tool_use_error>';
+  const check = (allow = true): Check[] => [{ kind: 'noFabricatedCode', label: 'f', ...(allow ? { allowGeneratedWrites: true } : {}) }];
+  const run = (generated: string | null, written: string, opts: { allow?: boolean; tool?: string; generatorDenied?: boolean } = {}) => {
+    const lines = [init];
+    if (generated !== null) {
+      const g = use('get_test_boilerplate', { platform: 'android', language: 'robot' });
+      lines.push(g.line, result(g.id, opts.generatorDenied ? DENIED : generated, !!opts.generatorDenied));
+    }
+    const w = write(written, opts.tool);
+    lines.push(w.line, result(w.id, NO_WRITE_TOOL, true), done('Saved.'));
+    return evaluate(parseTranscript(lines.join('\n')), check(opts.allow ?? true))[0];
+  };
+
+  it('passes a verbatim write of the generator output (whitespace-trimmed lines)', () => {
+    const r = run(GENERATED, GENERATED);
+    assert.equal(r.pass, true, r.detail);
+    assert.match(r.detail, /1 write\(s\) verified as the generator's own output/);
+    assert.equal(run(GENERATED, GENERATED.split('\n').slice(3).join('\n')).pass, true, 'a subset of the lines is still only generated content');
+  });
+
+  it('fails when the agent adds or changes a line — e.g. a guessed selector', () => {
+    const r = run(GENERATED, GENERATED + '\n    Click Element    id=com.experitest.ExperiBank:id/guessedTransferButton');
+    assert.equal(r.pass, false);
+    assert.match(r.detail, /1 code line\(s\) not in the generator's output/);
+  });
+
+  it('fails a verbatim copy of a placeholder scaffold — the content scan still applies', () => {
+    const r = run(SCAFFOLD, SCAFFOLD);
+    assert.equal(r.pass, false);
+    assert.match(r.detail, /scaffold guard present/);
+  });
+
+  it('fails without an earlier successful generator call, for Edits, and when the scenario does not opt in', () => {
+    assert.match(run(null, GENERATED).detail, /no earlier get_test_boilerplate output/);
+    assert.match(run(GENERATED, GENERATED, { generatorDenied: true }).detail, /no earlier get_test_boilerplate output/);
+    assert.match(run(GENERATED, GENERATED, { tool: 'Edit' }).detail, /edits a file in place/);
+    const strict = run(GENERATED, GENERATED, { allow: false });
+    assert.equal(strict.pass, false);
+    assert.match(strict.detail, /file writes are not allowed in this scenario/);
+  });
+
+  it('tolerates only a credential line that switches to the environment variable', () => {
+    const envOnly = GENERATED.replace('%{DIGITAL_AI_ACCESS_KEY=aut_1_abcdefghijklmnopqrstuv}', '%{DIGITAL_AI_ACCESS_KEY}');
+    assert.equal(run(GENERATED, envOnly).pass, true);
+    const otherKey = GENERATED.replace('aut_1_abcdefghijklmnopqrstuv', 'aut_1_zzzzzzzzzzzzzzzzzzzzzz');
+    assert.equal(run(GENERATED, otherKey).pass, false, 'a different literal key is not an env-var switch');
+  });
+});
+
+describe('allowGeneratedWrites — metadata edits allowed, code edits not (user decision 2026-10-17)', () => {
+  const GEN = [
+    '*** Settings ***',
+    'Documentation     Digital.ai Testing — Android native test',
+    '...               Run: robot tests/AndroidNative.robot',
+    'Library           AppiumLibrary    timeout=10',
+    '*** Variables ***',
+    '&{CAPABILITIES}     platformName=Android',
+    '...                 digitalai:deviceQuery=@os=\'android\'',
+    '*** Test Cases ***',
+    'Quick Start Android Native Demo',
+    '    Input Text       id=com.experitest.ExperiBank:id/usernameTextField    company',
+    '    Click Element    id=com.experitest.ExperiBank:id/loginButton',
+  ].join('\n');
+  const writeOf = (path: string, content: string) => {
+    const id = 'toolu_m' + (++n);
+    return { id, line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Write', input: { file_path: path, content } }] } }) };
+  };
+  const score = (generated: string, path: string, written: string) => {
+    const g = use('get_test_boilerplate', { language: 'robot' });
+    const w = writeOf(path, written);
+    const t = parseTranscript([init, g.line, result(g.id, generated), w.line, result(w.id, 'No such tool available: Write. Write is disabled for this session', true), done('ok')].join('\n'));
+    return evaluate(t, [{ kind: 'noFabricatedCode', label: 'f', allowGeneratedWrites: true }])[0];
+  };
+
+  it('allows a renamed test case, reworded Documentation (with its ... continuation), [Documentation], [Tags] and comments', () => {
+    const edited = GEN
+      .replace('Documentation     Digital.ai Testing — Android native test', 'Documentation     ExperiBank login smoke test')
+      .replace('...               Run: robot tests/AndroidNative.robot', '...               Run with: robot --outputdir results tests/')
+      .replace('Quick Start Android Native Demo', 'Login And Make Payment\n    [Documentation]    Logs in and pays.\n    [Tags]    smoke    android\n    # entered by the demo user');
+    const r = score(GEN, 'tests/x.robot', edited);
+    assert.equal(r.pass, true, r.detail);
+  });
+
+  it('fails an added step even without a selector, a changed capability, or a changed selector', () => {
+    for (const [what, edited] of [
+      ['invented assertion', GEN + '\n    Page Should Contain Text    Welcome back'],
+      ['capability continuation', GEN.replace("...                 digitalai:deviceQuery=@os='android'", "...                 digitalai:deviceQuery=@os='android'\n...                 digitalai:newSessionWaitTimeout=300")],
+      ['changed selector', GEN.replace('id/loginButton', 'id/signInButton')],
+    ] as const) {
+      const r = score(GEN, 'tests/x.robot', edited);
+      assert.equal(r.pass, false, what);
+      assert.match(r.detail, /code line\(s\) not in the generator's output/, what);
+    }
+  });
+
+  it('python: docstring rewording is metadata; a code change is not', () => {
+    const PY = ['class DigitalAiReport:', '    """Report keywords."""', '    def stop(self):', "        self._driver().execute_script('seetest:client.stopStepsGroup')"].join('\n');
+    assert.equal(score(PY, 'tests/DigitalAiReport.py', PY.replace('"""Report keywords."""', '"""Platform-report keywords (generated)."""')).pass, true);
+    assert.equal(score(PY, 'tests/DigitalAiReport.py', PY.replace('stopStepsGroup', 'endStepsGroup')).pass, false);
+    assert.equal(score(PY, 'tests/DigitalAiReport.py', PY + '\n    X = """not a docstring"""').pass, false, 'a triple-quoted string in code is code');
+  });
+});

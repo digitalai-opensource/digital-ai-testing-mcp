@@ -142,7 +142,9 @@ export const SCENARIOS: Scenario[] = [
     prompt:
       'My Appium login test keeps failing with NoSuchElementException on one specific device, but the same test passes on other devices. What should I do?',
     checks: [
-      { kind: 'calledAny', tools: ['get_device_health_summary', 'list_devices', 'get_device_detail', 'get_test_report', 'list_test_reports', 'summarize_test_failures'], label: 'looks at device health or the failing runs' },
+      { kind: 'calledAny', tools: ['find_unhealthy_devices', 'get_device_health_summary', 'list_devices', 'get_device_detail', 'get_test_report', 'list_test_reports', 'summarize_test_failures'], label: 'looks at device health or the failing runs' },
+      // find_unhealthy_devices is denied in the eval (it can tag devices) — the attempt still counts.
+      { kind: 'calledAny', tools: ['find_unhealthy_devices'], label: 'uses the per-device failure analysis', soft: true },
       { kind: 'textNotMatches', re: /^(?![\s\S]*device)[\s\S]*increase (the )?implicit/i, label: 'does not lead with "increase the implicit wait"', soft: true },
     ],
   },
@@ -209,7 +211,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'why-failing',
     title: 'Why are tests failing — breakdown by error type',
-    guards: 'Root-cause chain — the list lacks failure causes, so classify with the summary tool, not by paging (examples.md)',
+    guards: 'Root-cause chain — classify with the summary tool (one list request carries the classification), not by paging reports (examples.md)',
     prompt: 'Why are my tests failing this week? Give me a breakdown by error type.',
     checks: [
       { kind: 'calledAny', tools: ['summarize_test_failures', 'get_grouped_test_reports'], label: 'classifies failures with an aggregate tool' },
@@ -280,6 +282,98 @@ export const SCENARIOS: Scenario[] = [
     checks: [
       { kind: 'calledAny', tools: ['switch_environment', 'list_environments'], label: 'uses profile switching' },
       { kind: 'notCalled', tools: ['create_project', 'update_project_settings', 'assign_user_to_project', 'assign_user_to_projects'], label: 'does not modify projects or users' },
+    ],
+  },
+  // ── Repo-scan features (2026-10-16) ──
+  {
+    id: 'telephony-two-phone',
+    title: 'Two-phone call test',
+    guards: 'No telephony template — point to the maintained reference project instead of inventing a call flow',
+    // The SIM-card devices that project uses are in this tenant, so finding audio-capable devices is a meaningful step.
+    prompt: 'Write an automated test where one of our Android phones calls another one and we check that the audio the caller plays is heard on the receiving phone.',
+    checks: [
+      { kind: 'textMatches', re: /UseCase-SIM-Card-Tests/i, label: 'points to the SIM-card reference project' },
+      { kind: 'noFabricatedCode', label: 'no fabricated selectors or placeholder credentials in delivered code' },
+      { kind: 'calledWhere', tool: 'find_available_device', where: (i) => yes(i.requireAudioLine), label: 'looks for devices with an audio line', soft: true },
+    ],
+  },
+  {
+    id: 'emulator-templates',
+    title: 'Which emulator templates are available',
+    guards: 'Idle emulator/simulator templates are not devices — list_devices returns 0 for them (3 remediation notes, 13 wasted calls)',
+    prompt: 'Which Android emulator templates are available for us to run tests on?',
+    checks: [
+      { kind: 'calledAny', tools: ['list_virtual_device_templates'], label: 'lists the virtual-device templates' },
+      { kind: 'textNotMatches', re: /there are no (android )?emulator|no (android )?emulators? (are )?available/i, label: 'does not conclude there are none from the device list', soft: true, ignoreNegated: true },
+    ],
+  },
+  {
+    id: 'running-now',
+    title: 'What is running right now',
+    guards: 'Live list of running test requests, not a guess from Incomplete reports',
+    prompt: 'What tests are running on the device cloud right now?',
+    checks: [
+      { kind: 'calledAny', tools: ['list_active_test_executions'], label: 'reads the running executions' },
+    ],
+  },
+  {
+    id: 'robot-framework-test',
+    title: 'Robot Framework test for the demo app',
+    guards: 'Robot Framework support (Appium Server projects) instead of hand-writing a .robot file',
+    prompt: 'Generate a Robot Framework test for the ExperiBank demo app on Android.',
+    checks: [
+      { kind: 'calledWhere', tool: 'get_test_boilerplate', where: (i) => i.language === 'robot', label: 'generates it with the Robot Framework language option' },
+      // Saving the generated demo (verified steps) is the correct outcome here, so writes are allowed — but ONLY when every
+      // line is the generator's own output and passes the fabrication scan (3 of 4 runs on 2026-10-17 tried to save it).
+      { kind: 'noFabricatedCode', label: 'no fabricated code — files written only as the generator produced them', allowGeneratedWrites: true },
+      { kind: 'noCallWhere', tool: 'get_test_boilerplate', where: (i) => yes(i.confirmSelectorsVerified), label: 'never claims selectors are verified' },
+    ],
+  },
+  {
+    id: 'audio-play-record',
+    title: 'Play audio into a phone and record it',
+    guards: 'Audio needs a device with an audio line; play/record go through an inspection session',
+    prompt: 'On one of our phones, play a greeting audio clip and record what the phone plays back so I can listen to it later.',
+    checks: [
+      {
+        kind: 'either', label: 'engages the audio capability on a suitable device',
+        checks: [
+          { kind: 'calledWhere', tool: 'find_available_device', where: (i) => yes(i.requireAudioLine), label: 'looks for a device with an audio line' },
+          { kind: 'calledAny', tools: ['audio_control'], label: 'tries the audio controls' },
+        ],
+      },
+      { kind: 'noFabricatedCode', label: 'no fabricated code' },
+    ],
+  },
+  {
+    id: 'log-exception',
+    title: 'Find the exception in a test log',
+    guards: 'get_test_log responses averaged ~66k characters — search the log instead of pulling thousands of lines',
+    prompt: 'Find the exception in the Appium log of my most recent failed test.',
+    checks: [
+      { kind: 'calledAny', tools: ['get_test_log'], label: 'reads the test log' },
+      { kind: 'calledWhere', tool: 'get_test_log', where: (i) => typeof i.contains === 'string' && i.contains.length > 0, label: 'searches the log (contains)', soft: true },
+      { kind: 'noCallWhere', tool: 'get_test_log', where: (i) => Number(i.maxLines) > 1000, label: 'does not pull more than 1000 lines', soft: true },
+    ],
+  },
+  {
+    id: 'tag-dirty-devices',
+    title: 'Tag the devices that make tests fail',
+    guards: 'Device tagging is opt-in — find the devices from evidence, preview before tagging',
+    prompt: 'Some of our devices keep failing tests that pass on other devices. Find them and tag them as dirty.',
+    checks: [
+      { kind: 'calledAny', tools: ['find_unhealthy_devices'], label: 'finds the devices from reporter evidence' },
+      { kind: 'noCallWhere', tool: 'find_unhealthy_devices', where: (i) => yes(i.confirmTagging), label: 'does not confirm the tagging without a preview', soft: true },
+      { kind: 'notCalled', tools: ['add_device_tag'], label: 'does not tag devices by hand without evidence', soft: true },
+    ],
+  },
+  {
+    id: 'findable-runs',
+    title: 'Generated tests whose runs can be found by build',
+    guards: 'Custom report keys (digitalai:<key>) instead of encoding the build in the test name',
+    prompt: 'Generate a Python Appium test for the ExperiBank demo app on Android, set up so that I can later find all the runs from a given nightly build number.',
+    checks: [
+      { kind: 'calledWhere', tool: 'get_test_boilerplate', where: (i) => !!i.reportKeys && typeof i.reportKeys === 'object' && Object.keys(i.reportKeys as object).length > 0, label: 'adds a report key for the build' },
     ],
   },
 ];

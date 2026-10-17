@@ -49,6 +49,12 @@ function defaultPreferRegions(): string[] | undefined {
   }
 }
 
+/** Returned by find_available_device(requireAudioLine) — the working call/SMS flow on this platform. */
+export const TELEPHONY_REFERENCE =
+  'Telephony (two-phone call / SMS / MMS / call audio): there is no template in this MCP — the maintained reference ' +
+  'implementation is https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests. Tell the user about it and adapt it ' +
+  'rather than designing the call flow from scratch.';
+
 const MODE_MAP: Record<string, 0 | 1 | 2 | 3> = {
   manual: 0,
   view: 1,
@@ -757,9 +763,13 @@ export function registerDeviceTools(server: McpServer): void {
           'Pass [] to disable the default and treat all regions equally. ' +
           'The response includes regionPreferenceApplied to confirm which case applied.'
         ),
+      requireAudioLine: z
+        .boolean()
+        .optional()
+        .describe('Only devices with a configured audio line (device bluetooth state PAIRED) — required for audio_control play/record; other devices fail with "Audio line is not configured". For two-phone call / SMS tests, start from https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests.'),
       outputFormat: outputFormatParam,
     },
-    async ({ os, osVersion, manufacturer, model, tags, category, preferRegions, outputFormat }) => {
+    async ({ os, osVersion, manufacturer, model, tags, category, preferRegions, requireAudioLine, outputFormat }) => {
       try {
         // No explicit preference → derive from the active cloud URL. An explicit [] opts out.
         const effectiveRegions = preferRegions ?? defaultPreferRegions();
@@ -781,11 +791,12 @@ export function registerDeviceTools(server: McpServer): void {
           if (tags && !tags.every(t => d.tags.map(dt => dt.toLowerCase()).includes(t.toLowerCase()))) return false;
           if (model && !d.deviceName.toLowerCase().includes(model.toLowerCase()) &&
               !(d.modelName ?? '').toLowerCase().includes(model.toLowerCase())) return false;
+          if (requireAudioLine && d.bluetooth?.state !== 'PAIRED') return false;
           return true;
         });
 
         if (filtered.length === 0) {
-          return respond(outputFormat, { found: false, matchingCount: 0 }, 'No devices match the specified criteria.');
+          return respond(outputFormat, { found: false, matchingCount: 0, ...(requireAudioLine ? { telephonyReference: TELEPHONY_REFERENCE } : {}) }, 'No devices match the specified criteria.' + (requireAudioLine ? `\n${TELEPHONY_REFERENCE}` : ''));
         }
 
         const available = filtered.filter(
@@ -821,11 +832,15 @@ export function registerDeviceTools(server: McpServer): void {
               region: d.region,
               agentName: d.agentName,
               tags: d.tags,
+              audioLine: d.bluetooth?.state === 'PAIRED' ? d.bluetooth.adapterName : null,
             },
             alternativesAvailable: available.length - 1,
             regionPreferenceApplied,
             preferredRegionUsed,
             preferRegionsDefaulted: regionsDefaulted,
+            // A pointer in the RESULT, not just the description: in fidelity runs agents searching for audio devices
+            // planned call tests from scratch and never mentioned the reference project the instructions name.
+            ...(requireAudioLine ? { telephonyReference: TELEPHONY_REFERENCE } : {}),
           };
           const regionNote = effectiveRegions && effectiveRegions.length > 0 && !regionPreferenceApplied
             ? `\n⚠️  None of the preferred regions (${effectiveRegions.join(', ')}${regionsDefaulted ? ', cloud default' : ''}) had available devices — returned device is from region: ${d.region}`
@@ -839,7 +854,9 @@ export function registerDeviceTools(server: McpServer): void {
             `  Region:       ${d.region}`,
             `  Agent:        ${d.agentName}`,
             `  Tags:         ${d.tags.length > 0 ? d.tags.join(', ') : 'none'}`,
+            `  Audio line:   ${d.bluetooth?.state === 'PAIRED' ? `${d.bluetooth.adapterName} (audio_control ready)` : 'none'}`,
             available.length > 1 ? `\n${available.length - 1} other matching device(s) also available.` : '',
+            requireAudioLine ? `\n${TELEPHONY_REFERENCE}` : '',
             regionNote,
           ].filter(Boolean).join('\n');
           return respond(outputFormat, structured, humanText);
@@ -856,8 +873,8 @@ export function registerDeviceTools(server: McpServer): void {
           .join('\n');
         return respond(
           outputFormat,
-          { found: false, matchingCount: filtered.length, statusBreakdown: statusCounts },
-          `No available devices match the criteria. ${filtered.length} matching device(s) found:\n${breakdown}`
+          { found: false, matchingCount: filtered.length, statusBreakdown: statusCounts, ...(requireAudioLine ? { telephonyReference: TELEPHONY_REFERENCE } : {}) },
+          `No available devices match the criteria. ${filtered.length} matching device(s) found:\n${breakdown}` + (requireAudioLine ? `\n${TELEPHONY_REFERENCE}` : '')
         );
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

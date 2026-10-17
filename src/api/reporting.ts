@@ -450,11 +450,11 @@ export function bucketFailures(
   return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
-// Summarize WHY tests failed by bucketing them on a dimension. The reporter LIST
-// endpoint does not carry errorClassification/errorCategory (confirmed live), so
-// bucketing on those requires a single-record fetch per failed test (N+1). The
-// fan-out is bounded by maxReports; groupBy:'name' needs no detail (name is on the
-// list record) and skips the fan-out entirely.
+// Summarize WHY tests failed by bucketing them on a dimension. The reporter LIST omits errorClassification /
+// errorCategory by default but returns them when asked through `keys` — verified live 2026-10-16: identical to the
+// single-record fetch for 120 of 120 Failed reports, and 1.5 s instead of 12.5 s for 200 failures. The old per-report
+// fetch (N+1) remains only as a fallback for a platform that ignores the keys (the property is then absent from every
+// record, rather than present and null).
 export async function summarizeTestFailures(opts: {
   startDate?: string;
   endDate?: string;
@@ -477,6 +477,7 @@ export async function summarizeTestFailures(opts: {
     const startTs = opts.startDate ? new Date(opts.startDate).getTime() : 0;
     const endTs = opts.endDate ? new Date(opts.endDate).getTime() : Date.now();
 
+    const needsDetail = groupBy === 'errorClassification' || groupBy === 'errorCategory';
     const collected: TestReport[] = [];
     let page = 1;
     let scanned = 0;
@@ -491,6 +492,7 @@ export async function summarizeTestFailures(opts: {
           page,
           returnTotalCount: false,
           filter,
+          ...(needsDetail && { keys: ['errorClassification', 'errorCategory'] }),
           ...(wantSort && { sort: [{ property: 'start_time', descending: true }] }),
         },
         opts.projectId,
@@ -521,13 +523,14 @@ export async function summarizeTestFailures(opts: {
       page++;
     }
 
-    // Only errorClassification/errorCategory require the per-test detail fetch.
-    // Tolerate per-report failures (a deleted/unreadable report must not abort the
-    // whole summary) — skip and count them, mirroring bulk_install_to_group.
-    const needsDetail = groupBy === 'errorClassification' || groupBy === 'errorCategory';
+    // The list carries the classification when the platform honoured `keys`. Only if it did not (the property is
+    // missing from every record) fall back to the per-test detail fetch. Tolerate per-report failures there (a
+    // deleted/unreadable report must not abort the whole summary) — skip and count them, mirroring bulk_install_to_group.
+    const listHasClassification = collected.some((r) => groupBy in r);
     let classified = collected;
     let fetchFailures = 0;
-    if (needsDetail) {
+    const fallback = needsDetail && collected.length > 0 && !listHasClassification;
+    if (fallback) {
       classified = [];
       for (const summary of collected) {
         try {
@@ -540,7 +543,7 @@ export async function summarizeTestFailures(opts: {
 
     return {
       totalFailures: collected.length,
-      detailsFetched: needsDetail ? classified.length : 0,
+      detailsFetched: fallback ? classified.length : 0,
       fetchFailures,
       capped: collected.length >= maxReports,
       groupBy,

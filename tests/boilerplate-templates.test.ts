@@ -65,6 +65,26 @@ describe('TestNG templates use one session per test method', () => {
   }
 });
 
+describe('WebdriverIO Appium Server configs', () => {
+  // Found live 2026-10-16: wdio 9 refuses to start a session when a capability is neither W3C-standard nor
+  // vendor-prefixed — the Android config's bare autoDismissAlerts / autoGrantPermissions failed every run.
+  const W3C = new Set(['platformName', 'browserName', 'browserVersion', 'acceptInsecureCerts', 'pageLoadStrategy', 'proxy', 'setWindowRect', 'timeouts', 'strictFileInteractability', 'unhandledPromptBehavior']);
+  const confs = all.filter((p) => /wdio-oss\.conf\.js$/.test(p));
+
+  it('found both Appium Server wdio configs', () => {
+    assert.equal(confs.length, 2, confs.map(rel).join(', '));
+  });
+
+  it('every capability is W3C-standard or vendor-prefixed', () => {
+    for (const p of confs) {
+      const caps = readFileSync(p, 'utf-8').match(/capabilities:\s*\[\{([\s\S]*?)\}\]/)![1];
+      const keys = [...caps.matchAll(/^\s*'?([\w:.-]+)'?\s*:/gm)].map((m) => m[1]);
+      assert.ok(keys.length > 3, rel(p));
+      for (const k of keys) assert.ok(W3C.has(k) || k.includes(':'), `${rel(p)}: unprefixed capability "${k}"`);
+    }
+  });
+});
+
 describe('adaptGradleForProjectType', () => {
   const sample = readFileSync(junit5Gradle[0], 'utf8');
 

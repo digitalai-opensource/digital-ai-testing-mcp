@@ -30,9 +30,9 @@ export function registerRepositoryTools(server: McpServer): void {
     'list_repository_files',
     'Lists files in the Digital.ai file repository. You can filter by project name or unique name. Each file has a numeric ID — use that ID for downloads, updates, and deletes.',
     {
-      projectId: z.string().optional().describe('Filter by project ID.'),
-      projectName: z.string().optional().describe('Filter by project name.'),
-      uniqueName: z.string().optional().describe('Filter by unique name alias.'),
+      projectId: z.string().optional().describe('Filter by project ID (resolved to its name — must be a project this credential can see).'),
+      projectName: z.string().optional().describe('Filter by project name (exact, case-insensitive).'),
+      uniqueName: z.string().optional().describe('Filter by unique name alias (exact, case-insensitive) — e.g. the name used as cloud:<uniqueName>.'),
       maxResults: z
         .number()
         .optional()

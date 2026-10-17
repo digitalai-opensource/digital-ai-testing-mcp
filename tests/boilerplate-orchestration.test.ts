@@ -245,6 +245,132 @@ describe('get_test_boilerplate — automotiveProjection (Android Auto / CarPlay)
   });
 });
 
+describe('get_test_boilerplate — reportStatus (report the real outcome)', () => {
+  // Verified live 2026-10-16: a session with no WebDriver errors is reported Passed even when the test failed on its own
+  // assertion; with the wrapper the report is Failed with the assertion message as the cause (Grid and Appium Server).
+  // stopStepsGroup is a 0-argument seetest command the Grid cannot run, so Grid gets the status only.
+  const test = (g: Gen) => g.files.find((f) => /\.(java|py)$|Native\.js$/.test(f.filename) && !/conf/.test(f.filename))!.content;
+
+  it('Appium Server: every language wraps the steps in a steps group and sets Passed/Failed', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const language of ['java-junit5', 'java-testng', 'python', 'nodejs']) {
+      for (const platform of ['android', 'ios']) {
+        const t = test((await gen({ platform, language, orchestration: 'off' })).json);
+        assert.match(t, /seetest:client\.startStepsGroup['"], ['"]Test steps/, `${platform}/${language}: group start`);
+        assert.match(t, /seetest:client\.stopStepsGroup/, `${platform}/${language}: group stop`);
+        assert.match(t, /seetest:client\.setReportStatus['"], ['"]Passed/, `${platform}/${language}: Passed`);
+        assert.match(t, /seetest:client\.setReportStatus['"], ['"]Failed/, `${platform}/${language}: Failed`);
+        // Arguments are passed separately — the inline form fails silently.
+        assert.doesNotMatch(t, /seetest:client\.\w+\(/, `${platform}/${language}: inline arguments`);
+      }
+    }
+  });
+
+  it('Appium Grid: status only — no steps group', async () => {
+    account.isAppiumOss = false; account.fail = false;
+    for (const language of ['java-junit5', 'python', 'nodejs']) {
+      const t = test((await gen({ platform: 'android', language })).json);
+      assert.match(t, /seetest:client\.setReportStatus/, language);
+      assert.doesNotMatch(t, /StepsGroup/, `${language}: the Grid cannot run stopStepsGroup`);
+    }
+    account.isAppiumOss = true;
+  });
+
+  it('wraps the custom-app placeholder too, so an unfilled scaffold reports Failed', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const t = test((await gen({ platform: 'android', language: 'python', confirmSelectorsVerified: true, packageName: 'com.acme.app', mainActivity: '.Main' })).json);
+    assert.ok(t.indexOf('setReportStatus", "Failed"') > t.indexOf('PLACEHOLDER TEST BODY'), 'the catch follows the placeholder body');
+    assert.match(t, /try:\n[\s\S]*raise NotImplementedError[\s\S]*except Exception as e:/);
+  });
+
+  it('is the outermost layer: performance transaction and Axe scan sit inside it', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const t = test((await gen({ platform: 'android', language: 'java-junit5', includePerformanceTransactions: true, includeAxeScan: true, orchestration: 'off' })).json);
+    // Match the calls, not the explanatory comments above them.
+    const at = (s: string) => t.indexOf(s);
+    const start = at('executeScript("seetest:client.startPerformanceTransaction"');
+    const end = at('executeScript("seetest:client.endPerformanceTransaction"');
+    assert.ok(at('try {') < start && start < end && end < at('"Passed"'));
+    assert.ok(start < at('executeScript("mobile: axeScan"') && at('executeScript("mobile: axeScan"') < end);
+  });
+
+  it('reportStatus: false leaves the bare steps', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const t = test((await gen({ platform: 'android', language: 'python', reportStatus: false })).json);
+    assert.doesNotMatch(t, /setReportStatus|StepsGroup/);
+  });
+});
+
+describe('get_test_boilerplate — appiumVersion and reportKeys', () => {
+  // Verified live 2026-10-16: digitalai:appiumVersion picks the Appium Server version (an unavailable one fails the
+  // session with the platform's list); a digitalai:<key> capability lands on the report and filters list_test_reports
+  // on Appium Server AND Grid.
+  const test = (g: Gen) => g.files.map((f) => f.content).join('\n');
+
+  it('Appium Server: both are injected in every language', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const language of ['java-junit5', 'java-testng', 'python', 'nodejs']) {
+      const { json, human } = await gen({ platform: 'android', language, appiumVersion: '2.18.0', reportKeys: { runId: 'nightly-42' }, orchestration: 'off' });
+      const t = test(json);
+      assert.match(t, /digitalai:appiumVersion['"],? ?:? ?['"]2\.18\.0/, language);
+      assert.match(t, /digitalai:runId['"],? ?:? ?['"]nightly-42/, language);
+      assert.match(human, /"property":"runId","operator":"=","value":"nightly-42"/, language);
+    }
+  });
+
+  it('newSessionWaitTimeout is a number capability in every language and both modes', async () => {
+    for (const oss of [true, false]) {
+      account.isAppiumOss = oss; account.fail = false;
+      for (const language of ['java-junit5', 'python', 'nodejs']) {
+        const t = test((await gen({ platform: 'android', language, newSessionWaitTimeout: 300, orchestration: 'off' })).json);
+        assert.match(t, /digitalai:newSessionWaitTimeout['"](?:, |\] = |: )300\b/, `${oss ? 'oss' : 'grid'}/${language}`);
+      }
+    }
+    account.isAppiumOss = true;
+  });
+
+  it('Appium Grid: report keys are injected; appiumVersion is ignored with a note', async () => {
+    account.isAppiumOss = false; account.fail = false;
+    for (const language of ['java-junit5', 'python', 'nodejs']) {
+      const { json } = await gen({ platform: 'android', language, appiumVersion: '2.18.0', reportKeys: { runId: 'r1' } });
+      const t = test(json);
+      assert.match(t, /digitalai:runId/, language);
+      assert.doesNotMatch(t, /digitalai:appiumVersion/, language);
+      assert.match(String((json as unknown as { capabilityNotes: string[] }).capabilityNotes), /appiumVersion ignored/);
+    }
+    account.isAppiumOss = true;
+  });
+
+  it('rejects unsafe report keys and appiumVersion with includeAxeScan', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const bad of [{ 'bad key': 'x' }, { ok: 'x"); System.exit(1); //' }, { ok: '' }]) {
+      const r = await call('get_test_boilerplate', { platform: 'android', language: 'python', reportKeys: bad });
+      assert.equal(r.isError, true, JSON.stringify(bad));
+    }
+    for (const bad of [{ build: 'rc  1' }, { build: ' rc' }]) {
+      const r = await call('get_test_boilerplate', { platform: 'android', language: 'robot', reportKeys: bad });
+      assert.equal(r.isError, true, `double/leading space must be refused: ${JSON.stringify(bad)}`);
+    }
+    for (const reserved of ['deviceQuery', 'accessKey', 'AppiumVersion', 'testName']) {
+      const r = await call('get_test_boilerplate', { platform: 'android', language: 'python', reportKeys: { [reserved]: 'x' } });
+      assert.equal(r.isError, true, reserved);
+      assert.match(r.content[0].text ?? '', /reserved capability name/, reserved);
+    }
+    const r = await call('get_test_boilerplate', { platform: 'android', language: 'python', appiumVersion: '2.18.0', includeAxeScan: true });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0].text ?? '', /cannot be combined with includeAxeScan/);
+  });
+
+  it('Axe on Appium Server pins the version with the digitalai: name (a bare name breaks wdio 9)', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const language of ['java-junit5', 'python', 'nodejs']) {
+      const t = test((await gen({ platform: 'android', language, includeAxeScan: true, orchestration: 'off' })).json);
+      assert.match(t, /digitalai:appiumVersion['"],? ?:? ?['"]2\.16\.2/, language);
+      assert.doesNotMatch(t, /['"]appiumVersion['"]/, language);
+    }
+  });
+});
+
 describe('get_test_boilerplate — template line endings never disable the step markers', () => {
   // Regression: on a Windows checkout (core.autocrlf) the NodeJS templates are CRLF and the "\n"-only marker patterns
   // never matched — a custom-app NodeJS boilerplate shipped ExperiBank's demo steps with the package swapped in.
@@ -267,5 +393,121 @@ describe('get_web_test_boilerplate — file naming', () => {
     const names = j.files.map((f) => f.filename);
     assert.ok(names.some((n) => /ExampleWebTest.java$/.test(n)), names.join(', '));
     assert.ok(!names.some((n) => /TestTest/.test(n)), names.join(', '));
+  });
+});
+
+describe('get_test_boilerplate — Robot Framework (Appium Server only)', () => {
+  // Verified live 2026-10-16 (robotframework 7.5 + AppiumLibrary 3.2.1): Android and iOS demo suites passed; a suite with
+  // a failing step reported Failed with Robot's message as the cause; report keys / newSessionWaitTimeout were honoured.
+  const suite = (g: Gen) => g.files.find((f) => f.filename.endsWith('.robot'))!.content;
+
+  it('Android and iOS: suite + reporting library + pinned requirements, outcome reported from the teardown', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const platform of ['android', 'ios']) {
+      const { json, human } = await gen({ platform, language: 'robot' });
+      assert.deepEqual(json.files.map((f) => f.filename).sort(), ['requirements.txt', `tests/${platform === 'android' ? 'AndroidNative' : 'iOSNative'}.robot`, 'tests/DigitalAiReport.py'].sort());
+      const s = suite(json);
+      assert.match(s, /Library\s+AppiumLibrary/);
+      assert.match(s, /Test Teardown\s+Close Cloud Session/);
+      assert.match(s, /Report Test Outcome\s+\$\{TEST STATUS\}\s+\$\{TEST MESSAGE\}/);
+      assert.match(s, /Start Steps Group\s+Test steps/);
+      assert.match(s, /%\{DIGITAL_AI_ACCESS_KEY=aut_1_harness_key\}/, 'env var wins, key is the fallback');
+      assert.doesNotMatch(s, /\[Enter |BEGIN_DEMO_STEPS/);
+      assert.match(json.files.find((f) => f.filename === 'requirements.txt')!.content, /robotframework==7\.5\nrobotframework-appiumlibrary==3\.2\.1/);
+      assert.match(json.files.find((f) => f.filename === 'tests/DigitalAiReport.py')!.content, /execute_script\('seetest:client\.setReportStatus', mapped,/);
+      assert.match(human, /robot --outputdir results tests\//);
+    }
+  });
+
+  it('refuses Appium Grid projects and the options that have no Robot form', async () => {
+    account.isAppiumOss = false; account.fail = false;
+    const grid = await call('get_test_boilerplate', { platform: 'android', language: 'robot' });
+    assert.equal(grid.isError, true);
+    assert.match(grid.content[0].text ?? '', /Appium Server projects only — this project runs on Appium Grid/);
+    account.isAppiumOss = true;
+    for (const opt of [{ includeAxeScan: true }, { includePerformanceTransactions: true }, { automotiveProjection: '800x480' }]) {
+      const r = await call('get_test_boilerplate', { platform: 'android', language: 'robot', ...opt });
+      assert.equal(r.isError, true, JSON.stringify(opt));
+      assert.match(r.content[0].text ?? '', /not available for Robot Framework yet/);
+    }
+  });
+
+  it('injects extra capabilities as dictionary rows (numbers as ${n})', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const s = suite((await gen({ platform: 'android', language: 'robot', newSessionWaitTimeout: 300, appiumVersion: '2.18.0', reportKeys: { runId: 'r1' } })).json);
+    assert.match(s, /\n\.\.\. +digitalai:deviceQuery=[^\n]*\n\.\.\. +digitalai:appiumVersion=2\.18\.0\n\.\.\. +digitalai:newSessionWaitTimeout=\$\{300\}\n\.\.\. +digitalai:runId=r1\n/);
+  });
+
+  it('a custom app gets the Robot placeholder with a Fail guard that validate_test_script flags', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const s = suite((await gen({ platform: 'android', language: 'robot', confirmSelectorsVerified: true, packageName: 'com.acme.app', mainActivity: '.Main' })).json);
+    assert.match(s, /^    Fail    Replace this placeholder body/m);
+    assert.match(s, /#   Click Element    id=<resource-id from get_element_tree>/);
+    assert.doesNotMatch(s, /usernameTextField/);
+    const v = await call('validate_test_script', { scriptContent: s, fileName: 'AndroidNative.robot', outputFormat: 'json' });
+    assert.equal(v.isError, true);
+    assert.match(v.content.map((c) => c.text ?? '').join(''), /scaffold guard present/);
+  });
+});
+
+describe('get_web_test_boilerplate — fixes found running the templates live (2026-10-16)', () => {
+  const webGen = async (args: Record<string, unknown>) => {
+    const res = await call('get_web_test_boilerplate', { testName: 'Checkout', outputFormat: 'json', ...args });
+    return { res, json: JSON.parse(res.content.map((c) => c.text ?? '').join('')) as { files: Array<{ filename: string; content: string }> } };
+  };
+  const source = (j: { files: Array<{ filename: string; content: string }> }) => j.files.map((f) => f.content).join('\n');
+
+  it('names the report with digitalai:testName (digitalai:reportName is ignored by the platform)', async () => {
+    for (const language of ['java-junit5', 'python', 'nodejs']) {
+      const s = source((await webGen({ language })).json);
+      assert.match(s, /digitalai:testName/, language);
+      assert.doesNotMatch(s, /digitalai:reportName/, language);
+    }
+  });
+
+  it('python: Selenium 4 options (no desired_capabilities) and no double-indented browser lines', async () => {
+    const s = source((await webGen({ language: 'python' })).json);
+    assert.doesNotMatch(s, /desired_capabilities=/);
+    assert.match(s, /options = ArgOptions\(\)/);
+    assert.match(s, /\n {8}browser_name = os\.environ\.get\("BROWSER", "chrome"\)\n {8}caps\["browserName"\] = browser_name\n/);
+  });
+
+  it('every web language reports the real outcome', async () => {
+    for (const language of ['java-junit5', 'python', 'nodejs']) {
+      const s = source((await webGen({ language })).json);
+      assert.match(s, /seetest:client\.setReportStatus['"], ['"]Failed/, language);
+      assert.match(s, /seetest:client\.startStepsGroup/, language);
+    }
+  });
+
+  it('robot: SeleniumLibrary suite with the report library; Edge maps to "edge"; Opera is refused', async () => {
+    const { json } = await webGen({ language: 'robot' });
+    assert.deepEqual(json.files.map((f) => f.filename), ['tests/Checkout.robot', 'tests/DigitalAiWebReport.py', 'requirements.txt']);
+    const s = json.files[0].content;
+    assert.match(s, /Library\s+SeleniumLibrary/);
+    assert.match(s, /set_capability\("digitalai:testName", "\$\{TEST_NAME\}"\)/);
+    assert.match(s, /\$\{BROWSER\}\s+%\{BROWSER=chrome\}/);
+    assert.match(s, /^    Fail    Replace this placeholder/m);
+    assert.match(source((await webGen({ language: 'robot', targetBrowser: 'edge' })).json), /\$\{BROWSER\}\s+edge\n/);
+    const r = await call('get_web_test_boilerplate', { language: 'robot', targetBrowser: 'opera' });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0].text ?? '', /cannot drive Opera/);
+  });
+});
+
+describe('get_test_boilerplate — NodeJS spec path matches wdio.conf.js', () => {
+  // Regression (live run 2026-10-16): the spec was returned as a bare "AndroidNative.js"; saved at the project root,
+  // WebdriverIO found "0 spec files" and ran nothing, without an error.
+  it('every platform × server mode returns the spec at the path its config loads', async () => {
+    for (const oss of [true, false]) {
+      account.isAppiumOss = oss; account.fail = false;
+      for (const platform of ['android', 'ios']) {
+        const { json } = await gen({ platform, language: 'nodejs' });
+        const conf = json.files.find((f) => f.filename === 'wdio.conf.js')!.content;
+        const spec = conf.match(/specs:\s*\['\.\/([^']+)'\]/)![1];
+        assert.ok(json.files.some((f) => f.filename === spec), `${oss ? 'oss' : 'grid'}/${platform}: no file at ${spec} — got ${json.files.map((f) => f.filename).join(', ')}`);
+      }
+    }
+    account.isAppiumOss = true;
   });
 });

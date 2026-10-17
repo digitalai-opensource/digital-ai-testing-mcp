@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **203 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **205 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -389,7 +389,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ### Toolsets (reducing context size)
 
-All 203 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
+All 205 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
 
 Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
@@ -443,19 +443,7 @@ Otherwise nothing is written: events stay in memory and each note is returned to
 
 The `remediation/` folder contains its own `.gitignore` (`*`), so it is never committed to the project it lives in. There is one file per session; the `<id>` suffix keeps parallel sessions apart, and each file records the machine and user, so files collected from several machines can be merged. Keys, tokens, emails and signed-URL parameters are redacted before anything is written or returned.
 
-<details>
-<summary><strong>Summarizing a batch of notes</strong></summary>
-
-Collect the `remediation/` folders you want to analyse, from one machine or several, and run `npx tsx tests/remediation-intake/digest.ts --dir <folder> --dir <folder>` in a clone of this repository (the npm package doesn't include it). With no `--dir`, it reads `$MCP_REMEDIATION_DIR`, or else `./remediation`. It condenses every unprocessed file into one summary, so the development agent reads a few KB instead of every raw note:
-- notes by category, and issues that recur across sessions;
-- per-tool errors, guards, retries, response sizes and latency;
-- every note in a table.
-
-Useful options:
-- `--out <file>` writes the summary to a file; `--since YYYY-MM-DD` limits it to recent sessions; `--json` gives machine-readable output.
-- `--archive <session…>` or `--archive-all` moves handled files into `processed/<date>/` inside the folder they came from. Nothing is deleted.
-
-</details>
+To share notes, send the `remediation/` folder (or several, from different machines) to the MCP maintainers — they are analysed in batches with internal tooling that is not part of this repository.
 
 [↑ Back to top](#table-of-contents)
 
@@ -496,7 +484,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 
 An inspection session opens a live connection to a real device or browser so the AI can see the screen and interact with it — useful for exploring an app and capturing real element IDs before writing a test.
 
-- **Mobile** ([tools](docs/tools.md#mobile-inspection-sessions)) — Android and iOS, on both Appium Grid and Appium Server projects: screenshots, element discovery, the full gesture set, keys, app/device control, Android Auto / CarPlay projection and mock biometric authentication. The session shares a watch-only live view URL so you can follow along. iOS behaves differently in a few places ([limitation 29](docs/limitations.md#29-ios-inspection-sessions-differ-from-android)), and Appium Grid projects support fewer commands ([limitation 18](docs/limitations.md#18-appium-grid-projects-support-fewer-commands-than-appium-server)).
+- **Mobile** ([tools](docs/tools.md#mobile-inspection-sessions)) — Android and iOS, on both Appium Grid and Appium Server projects: screenshots, element discovery, the full gesture set, keys, app/device control, Android Auto / CarPlay projection, audio play/record on devices with an audio line, and mock biometric authentication. The session shares a watch-only live view URL so you can follow along. iOS behaves differently in a few places ([limitation 29](docs/limitations.md#29-ios-inspection-sessions-differ-from-android)), and Appium Grid projects support fewer commands ([limitation 18](docs/limitations.md#18-appium-grid-projects-support-fewer-commands-than-appium-server)).
 - **Browser** ([tools](docs/tools.md#web-inspection-sessions)) — navigate, discover elements (including inside Shadow DOM), verify CSS selectors and generate browser-neutral Selenium scripts.
 - **Remote debug** ([tools](docs/tools.md#remote-debug)) — `get_remote_debug_command` makes a cloud device appear as if it were plugged into your machine (over ADB for Android, usbmuxd for iOS), so Android Studio, Xcode and command-line ADB can use it — for example for shell commands or file push. Install the app **before** connecting (see [Troubleshooting](#common-symptoms)).
 
@@ -514,11 +502,11 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 
 ### All capability areas
 
-203 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+205 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
-| [Devices](docs/tools.md#devices) | 19 | List/query devices, find available, release, reboot, tags, Mobile Studio |
+| [Devices](docs/tools.md#devices) | 21 | List/query devices, find available (incl. devices with an audio line), release, reboot, tags, Mobile Studio, emulator/simulator templates, devices that make tests fail |
 | [Device Groups](docs/tools.md#device-groups) | 9 | Create groups, move devices, control project access |
 | [Reservations](docs/tools.md#reservations) | 5 | Reserve devices, check availability windows |
 | [Applications](docs/tools.md#applications) | 15 | Upload, generate local upload/download commands, install/uninstall, find the latest build |
@@ -539,9 +527,9 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 | [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(Cloud Admin)* |
 | [Server, Environments & Toolsets](docs/tools.md#server-environments--toolsets) | 6 | Server info, connectivity and workflow readiness checks, named connection profiles and runtime switching, toolset loading (plus `record_remediation_note` in debug mode) |
 | [Workflows](docs/tools.md#workflows) | 6 | POC and project lifecycle orchestration |
-| [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | Ready-to-run Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python), Test Orchestrator agent install; validate scripts before delivery |
+| [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | Ready-to-run Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python, Robot Framework) that report the real outcome, Test Orchestrator agent install; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud Android or iOS device as if it were attached locally (ADB / usbmuxd) |
-| [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 24 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, Android Auto / CarPlay projection, mock biometric authentication |
+| [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 25 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, Android Auto / CarPlay projection, audio play/record, mock biometric authentication |
 | [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 8 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
 | [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation |
 | [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with a User Tag column, 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
@@ -597,7 +585,7 @@ Generates a complete, pre-configured Appium test project. The Digital.ai server 
 | Parameter | Values | Default |
 |---|---|---|
 | `platform` | `android` \| `ios` | _(required)_ |
-| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` | _(required)_ |
+| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Appium Server projects only) | _(required)_ |
 | `appId` | Numeric app ID from `list_applications` | Recommended |
 | `deviceCategory` | `PHONE` \| `TABLET` | `PHONE` |
 | `testName` | Any string | `"My First Mobile Test"` |
@@ -612,17 +600,22 @@ Generates a complete, pre-configured Appium test project. The Digital.ai server 
 | `orchestration` | `auto` \| `on` \| `off` | `auto` |
 | `orchestrationMaxRetries` | `0`–`5` | `2` (`0` for placeholder or performance tests) |
 | `automotiveProjection` | Android Auto / CarPlay resolution | _(optional)_ |
+| `reportStatus` | `true` \| `false` — the platform report shows the real outcome (a failed assertion is reported Failed with its message); steps grouped on Appium Server | `true` |
+| `appiumVersion` | Appium Server version, e.g. `"2.18.0"` (Appium Server projects; not with `includeAxeScan`) | platform default |
+| `newSessionWaitTimeout` | Seconds (10–3600) to wait for a free matching device before failing with the platform's reason | _(optional)_ |
+| `reportKeys` | Custom report columns, e.g. `{"build": "1.4.0"}` — find the runs later with a `list_test_reports` filter | _(optional)_ |
 | `outputFormat` | `json` \| `human` | `json` |
 
 </details>
 
-**Generated files.** `projectType` controls the Java output layout only (it is ignored for Node.js and Python): `standalone-gradle` produces `src/test/java/` with both `build.gradle` and `pom.xml`; `standalone-maven` produces `pom.xml` only; `android-gradle-submodule` puts the files under `e2e-tests/` (with `e2e-tests/build.gradle`) for embedding in an existing Android Studio project.
+**Generated files.** `projectType` controls the Java output layout only (it is ignored for Node.js, Python and Robot Framework): `standalone-gradle` produces `src/test/java/` with both `build.gradle` and `pom.xml`; `standalone-maven` produces `pom.xml` only; `android-gradle-submodule` puts the files under `e2e-tests/` (with `e2e-tests/build.gradle`) for embedding in an existing Android Studio project.
 
 | Language | Files |
 |---|---|
 | `java-junit5` / `java-testng` | `src/test/java/LocalAndroidTest.java` or `LocaliOSTest.java` + build file(s) per `projectType`; orchestrated projects add `orchestrator/config.template.yml`, `orchestrator/.gitignore` and `lib/.gitignore` |
-| `nodejs` | `package.json` + `wdio.conf.js` + `AndroidNative.js` / `iOSNative.js` + `setup-steps.sh` (WebdriverIO 7.40 for Appium Grid projects, WebdriverIO 9 for Appium Server) |
+| `nodejs` | `package.json` + `wdio.conf.js` + `test/specs/AndroidNative.js` / `test/specs/iOSNative.js` + `setup-steps.sh` (WebdriverIO 7.40 for Appium Grid projects, WebdriverIO 9 for Appium Server) |
 | `python` | `AndroidNative.py` / `iOSNative.py` + `requirements.txt` |
+| `robot` | `tests/AndroidNative.robot` / `tests/iOSNative.robot` + `tests/DigitalAiReport.py` (report keywords) + `requirements.txt` (Robot Framework 7.5, AppiumLibrary 3.2.1). Appium Server projects only; not combinable with `includePerformanceTransactions`, `includeAxeScan` or `automotiveProjection` |
 
 All boilerplate uses the ExperiBank demo app as its starting point. ExperiBank is available on most farm devices, so you can verify connectivity before switching to your own app.
 
@@ -634,7 +627,7 @@ Both flags can be combined — the Axe scan runs inside the performance transact
 
 #### Test Orchestrator (default for Java on Appium Server)
 
-For **Java (JUnit 5 / TestNG) on an Appium Server project**, the generated project is set up for the **Digital.ai Test Orchestrator** (the Smart Agent): failed tests are retried automatically, each attempt is reported separately, the real pass/fail is synced to Reporter, and runs are grouped by Build ID — with no change to the test code. Appium Grid, Python and Node.js projects get the classic boilerplate. Pass `orchestration: "off"` to get the classic boilerplate for Java too.
+For **Java (JUnit 5 / TestNG) on an Appium Server project**, the generated project is set up for the **Digital.ai Test Orchestrator** (the Smart Agent): failed tests are retried automatically, each attempt is reported separately, the real pass/fail is synced to Reporter, and runs are grouped by Build ID — with no change to the test code. Everything else (Appium Grid projects, Python, Node.js and Robot Framework) gets the classic boilerplate. Pass `orchestration: "off"` to get the classic boilerplate for Java too.
 
 1. **`get_test_boilerplate`** adds conditional agent wiring to `build.gradle` / `pom.xml`, an `orchestrator/config.template.yml` (retries default to 2; 0 for placeholder or performance tests), plus `orchestrator/.gitignore` and `lib/.gitignore` so the rendered key and the agent JAR can never be committed. No root `.gitignore` is written (it would overwrite yours).
 2. **`install_test_orchestrator_agent(projectDir)`** downloads the agent on demand, verifies its SHA-256 and places it at `lib/smart-agent.jar`. Under Docker it returns a download command (bash and PowerShell) that does the same and deletes the file on a checksum mismatch. If the download fails, the response gives the URL, the checksum and the target path for a manual install.
@@ -660,7 +653,7 @@ Generates a complete, pre-configured Selenium test project for browser testing. 
 
 > **Inspection gate:** when you target a real URL (`url` provided), this tool returns **no code** — just a structured `{ status: "blocked", reason: "no_verified_selectors" }` error — UNLESS a live browser inspection session exists in the MCP server, or you set `confirmSelectorsVerified: true` (for selectors captured in a prior `start_browser_inspection_session` session). This mirrors the mobile gate.
 
-**Browser-neutral by default:** when `targetBrowser` is omitted, the generated script reads the browser name at runtime from the `BROWSER` environment variable, so the same script runs on Chrome, Firefox, Microsoft Edge, Safari and Opera without changes — just change the variable or your CI matrix. Specify `targetBrowser` only when you need browser-specific options (e.g. Safari-only session setup).
+**Browser-neutral by default:** when `targetBrowser` is omitted, the generated script reads the browser name at runtime from the `BROWSER` environment variable, so the same script runs on Chrome, Firefox, Microsoft Edge, Safari and Opera without changes (Robot Framework: every browser except Opera, which SeleniumLibrary cannot drive) — just change the variable or your CI matrix. Specify `targetBrowser` only when you need browser-specific options (e.g. Safari-only session setup).
 
 **Shadow DOM support:** with `always`, the generated script includes a `shadowQuery(host, cssSelector)` helper; with `auto` (the default), it is included only while a browser inspection session is open in the MCP server; `never` omits it. The helper reaches into shadow roots using `executeScript`. Use it for apps built with Web Components, Lit, Polymer or other shadow-DOM frameworks. `get_page_dom` detects shadow DOM automatically during inspection and reports `hasShadowDom: true` when present.
 
@@ -669,7 +662,7 @@ Generates a complete, pre-configured Selenium test project for browser testing. 
 
 | Parameter | Values | Default |
 |---|---|---|
-| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` | _(required)_ |
+| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Robot Framework + SeleniumLibrary) | _(required)_ |
 | `url` | URL of the page being tested | _(optional)_ |
 | `testName` | Any string | `"WebTest"` |
 | `targetBrowser` | `chrome` \| `firefox` \| `MicrosoftEdge` \| `safari` \| `opera` (names as `list_available_browsers` returns them; `edge` is accepted for `MicrosoftEdge`) | _(optional)_ |
@@ -967,7 +960,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 203; 204 with MCP_DEBUG_MODE=true) and active profile
+1. get_server_info           — confirm tool count (expect 205; 206 with MCP_DEBUG_MODE=true) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -977,7 +970,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 203,
+  "registeredToolCount": 205,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
@@ -1107,6 +1100,8 @@ npm run lint
 
 ```bash
 npm run test                  # all tests (includes the live suites)
+npm run test:offline          # offline suites only — what CI runs; needs no .env
+npm run test:api              # live API suites (requires .env)
 npm run test:tools            # tool-layer guard/gate regression tests (offline)
 npm run test:devices          # device management
 npm run test:users            # user management
@@ -1126,7 +1121,6 @@ npm run test:analytics        # analytics tools
 npm run test:infrastructure   # agents / regions / NV servers / sessions
 npm run test:live             # live API-behavior probes (requires .env; not part of npm test)
 npm run test:fidelity         # agent tool-choice evaluation (builds first; spends model tokens)
-npx tsx tests/remediation-intake/digest.ts   # summarize debug-mode remediation notes
 ```
 
 See `package.json` for the full list of scripts.

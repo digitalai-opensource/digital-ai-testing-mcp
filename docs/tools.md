@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 203 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 205 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (access level is detected from the API — either key format works); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -8,7 +8,7 @@ Complete per-tool reference for the Digital.ai Testing MCP Server — all 203 to
 - Destructive tools require `confirmDeletion: true` — see [Safety Guards](../README.md#safety-guards).
 - **"Writes to the MCP server's filesystem" / "use when the server is Docker/remote" / volume-mount notes** apply to the Docker deployment path (Options B/C). If the server is installed via the [npm package](../README.md#option-a--install-via-npm-recommended) (Option A) and run directly on your own machine, its filesystem *is* your filesystem — these caveats and the `*_upload_command`/`*_download_command` workarounds don't apply; use the direct `upload_*`/`download_*` tools with local paths. See [limitations.md #15](limitations.md#15-local-file-io-runs-on-the-mcp-servers-filesystem-not-yours).
 
-**Parameters are strict.** Every tool rejects a parameter it does not declare (`Unrecognized key: "search"`) instead of silently ignoring it, and its published schema says `additionalProperties: false` — so a misspelled or invented parameter is an immediate error, never a confident answer to a different question. Tools also carry MCP annotations (`readOnlyHint` for `list_*`/`get_*`/`find_*`/… and the command generators, `destructiveHint` for `delete_*`/`release_*`/`cancel_*`/`uninstall_*`) for clients that use them to decide what needs approval.
+**Parameters are strict.** Every tool rejects a parameter it does not declare (`Unrecognized key: "search"`) instead of silently ignoring it, and its published schema says `additionalProperties: false` — so a misspelled or invented parameter is an immediate error, never a confident answer to a different question. Tools also carry MCP annotations (`readOnlyHint` for `list_*`/`get_*`/`find_*`/… and the command generators — except `find_unhealthy_devices`, which can tag devices; `destructiveHint` for `delete_*`/`release_*`/`cancel_*`/`uninstall_*`/`remove_*`/`unassign_*`/`cleanup_*`) for clients that use them to decide what needs approval.
 
 **Toolsets (`MCP_TOOLSETS`)** — when the server runs with `MCP_TOOLSETS`, tools outside the selected toolsets load themselves on first call (see `enable_toolset`); that first call runs nothing and is itself annotated read-only. Toolset → sections:
 - `devices` — Devices, Device Groups, Reservations, Health & Diagnostics, Agents, Regions
@@ -26,7 +26,7 @@ Complete per-tool reference for the Digital.ai Testing MCP Server — all 203 to
 | Tool | What it does | Filters / Sort | Admin Required? |
 |---|---|---|---|
 | `list_users` | List the user accounts you can see — every user for a Cloud Admin, the project's own users for a Project Admin | firstName, lastName, email, authenticationType, isCloudAdmin, tag; sortBy/sortOrder | Cloud Admin / Project Admin (own project's users) |
-| `create_user` | Create a new user account | — | Cloud Admin |
+| `create_user` | Create a new user account | — | Cloud Admin / Project Admin (creating an `Admin`-role user: Cloud Admin) |
 | `delete_user` | Permanently delete a user account. Requires `confirmDeletion: true`. | — | Cloud Admin |
 | `get_my_account_info` | Show the account tied to the active API key | — | Any |
 | `assign_user_to_projects` | Grant user access to one or more projects | — | Cloud Admin |
@@ -44,7 +44,7 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 | `list_virtual_device_templates` | List emulator/simulator templates (the portal's Virtual Devices page), each with a ready `deviceQuery`. Region/agent are not exposed by the platform — check a region by starting a session with `@region` | `os`, `status`, `nameContains` | Any |
 | `get_device_detail` | Full device profile including groups and status history | — | Cloud Admin |
 | `edit_device` | Update device name, notes, or category | — | Cloud Admin |
-| `find_available_device` | Find the first available device matching OS, tags, or version | — | Any |
+| `find_available_device` | Find the first available device matching OS, tags, or version. `requireAudioLine` keeps only devices with an audio line (needed by `audio_control`); the result shows each device's audio line | — | Any |
 | `release_device` | Release a reserved or stuck device. Requires `confirmDeletion: true`. | — | Any |
 | `release_orphaned_sessions` | Find and release devices stuck in "In Use" beyond a configurable time threshold. Previews without `confirmDeletion: true` (or with `dryRun: true`). | — | Any |
 | `reboot_device` | Remote reboot | — | Cloud Admin |
@@ -55,6 +55,7 @@ Device tools accept a **flexible device identifier**: numeric device ID, serial 
 | `download_ios_app_container` | Download an iOS app data container (writes to the MCP server's filesystem) | — | Cloud Admin |
 | `get_ios_app_container_download_command` | Generate a curl/PowerShell command to download the iOS app container to the user's local machine — use when the server is Docker/remote | — | Cloud Admin |
 | `get_device_health_summary` | Device farm health overview | — | Any |
+| `find_unhealthy_devices` | Devices that are "Available" but making tests fail: per-device fail ratio over the last `lookbackHours` of reporter runs, the share the platform classified as device/environment/network/framework failures, top causes, and tests that fail on this device but pass on another. Optional `tag` (e.g. `dirty`) previews; `tag` + `confirmTagging: true` tags the flagged devices | — | Any (tagging: Cloud Admin, Project Admin) |
 | `get_device_tags` | List all tags on a device | — | Any |
 | `add_device_tag` | Add a tag to a device | — | Cloud Admin / Project Admin |
 | `remove_device_tag` | Remove a specific tag. Requires `confirmDeletion: true`. | — | Cloud Admin / Project Admin |
@@ -130,7 +131,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `list_repository_files` | List files in the repository | Any |
+| `list_repository_files` | List files in the repository. `uniqueName` / `projectName` / `projectId` filter client-side (the platform ignores them) | Any |
 | `get_repository_file_info` | Get file details by ID | Any |
 | `upload_repository_file` | Upload a file (reads from the MCP server's filesystem) | Any |
 | `get_repository_upload_command` | Generate a curl/PowerShell command to upload a file from the user's local machine — use when the server runs in Docker/remote and cannot read the local file | Any |
@@ -157,7 +158,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 | `list_project_users` | List users in a project | username, role; sortBy/sortOrder | Cloud Admin / Project Admin |
 | `assign_user_to_project` | Add a user to a project with a role | — | Cloud Admin |
 | `remove_user_from_project` | Remove a user from a project. Requires `confirmDeletion: true`. | — | Cloud Admin |
-| `get_project_tokens` | Get token configuration | — | Cloud Admin / Project Admin |
+| `get_project_tokens` | Get token configuration | — | Cloud Admin |
 | `set_project_tokens` | Update token mode | — | Cloud Admin |
 | `get_project_settings` | Cleanup flags, queued-test / browser limits, automation memory, notes | — | Cloud Admin / Project Admin |
 | `get_project_admin_settings` | Full project configuration via v2 API — 35+ fields in one call: per-type license limits, cleanup flags, reservation policies, feature flags, user/app counts | — | Cloud Admin / Project Admin |
@@ -235,10 +236,10 @@ Test statuses: the reporter has six — Passed, Failed, Error, Incomplete, Skipp
 | `get_cross_platform_divergence` | Tests passing on one OS but failing on the other, with configurable minimum run count and divergence threshold | Any |
 | `get_daily_execution_trend` | Execution counts and pass rates bucketed by day or week. Stops at `lookbackDays` or `maxRecords` (default 5,000; max 25,000), whichever comes first. | Any |
 | `get_project_test_summary` | All-time counts for all six statuses (Passed, Failed, Error, Incomplete, Skipped, Healed) and the top failing/erroring tests in a time window. Includes a per-device-pool breakdown (`byDevicePool`: totals, pass rate, failed, error) for mobile automation on platform 26.7+. Pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error). | Any |
-| `summarize_test_failures` | "Why are my tests failing?" — buckets failed tests by error classification/category (or name) in one call (e.g. "44 failures: 42 element_not_found"). Fetches per-test detail (N+1, capped by `maxReports`). | Any |
+| `summarize_test_failures` | "Why are my tests failing?" — buckets failed tests by error classification/category (or name) in one call (e.g. "44 failures: 42 element_not_found"). One list request reads the classification for every failure (200 in ~2 s, 1,000 in ~4 s); `maxReports` caps how many are analysed. | Any |
 | `get_failure_rate_by_app_version` | Pass/fail breakdown grouped by app version | Any |
 | `get_distinct_test_key_values` | Discover all distinct values recorded for a report metadata key | Any |
-| `list_active_test_executions` | Currently-running test executions (Incomplete status with null duration) | Any |
+| `list_active_test_executions` | Currently-running test executions from the platform's live list of running test requests (name, project, device, user, start time, execution type, Appium version). Falls back to the reporter heuristic (Incomplete reports with no duration) when that list is unavailable; `source` says which | Any |
 | `list_test_attachments` | Attachment metadata for a test by UUID or numeric ID | Any |
 | `share_test_report` | Public, no-login link to a report (page, data, video); expires 14 days after the first share (sharing again returns the same link and does not extend it), revoked only by deleting the report. Requires `confirmPublicShare: true` (otherwise previews) | Any (project must allow sharing) |
 | `get_root_cause_analysis` | Read the platform's AI Root Cause Analysis for a failed report: hypothesis, evidence log lines, status and attempts used, plus the reporter's error classification. Read-only; explains why an analysis cannot run (Appium Server tests only, 3 failed attempts per test). Accepts `uuid` (preferred), `reportUrl` or `testId`. Find analysed reports with `list_test_reports` filter `rca.status = COMPLETED`. | Any |
@@ -268,7 +269,7 @@ Report fields use **snake_case** to match the API response:
 | `project_id` | number | Owning project |
 | `has_attachment` | string | `"Y"` or `"N"` |
 
-**Diagnostic fields — `get_test_report` (single record) only, NOT present on `list_test_reports`:**
+**Diagnostic fields — returned by `get_test_report` (single record); NOT present on `list_test_reports` records by default (`errorCategory` / `errorClassification` are returned on list records when requested in `keys`):**
 
 | Field | Type | Description |
 |---|---|---|
@@ -278,7 +279,7 @@ Report fields use **snake_case** to match the API response:
 | `errorDetail` | string | Full error object including stack trace |
 | `subTestCount` / `failedSubTestCount` | number | Sub-test totals for merged reports |
 
-To diagnose a failure, list with `list_test_reports`, then call `get_test_report(testId)` per test — the list view does not carry the diagnostic fields (the backend omits them there).
+To diagnose one failure, list with `list_test_reports`, then call `get_test_report` for that test (the list view does not carry `cause` / `errorDetail`). To see why many tests failed, use `summarize_test_failures` — it reads the classification for every failure in one list request.
 
 **Confirmed working filter properties:** `status`, `name` (with `contains` for substring match), `user` (email, exact match), `has_attachment`, `success` (boolean), `accessibility_report` (JSON boolean, not the string `"true"`), `test_id`, `project_id`, `device.os` (case-sensitive: `"Android"` / `"iOS"`), `duration`, `attachment_count`, `attachments_size`, `status_code`, `rca.status`. Operators: `=`, `>`, `<`, `>=`, `<=`, `contains`.
 
@@ -381,8 +382,8 @@ Six tools cover POC and general project lifecycle management. See the [Workflow 
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `get_test_boilerplate` | Generate a complete, pre-configured Appium test project for Android or iOS (`java-junit5`, `java-testng`, `python`, `nodejs`). For a real app (`appId` / `packageName` / `bundleIdentifier`) it returns no code unless a live inspection session exists or `confirmSelectorsVerified: true` — set that only when real selectors were captured elsewhere (rdb/UIAutomator dump, `open_mobile_studio` including its iOS Test Recorder, or authoritative app source). Options: `region`, `includePerformanceTransactions`, `includeAxeScan` (Deque Axe DevTools scan; pins Appium Server 2.16.2 — Axe is unavailable on ≥3.3.0), `automotiveProjection` (Appium Server projects; Android Auto / CarPlay projection and a head-unit screenshot step), `orchestration` (Test Orchestrator, default on for Java on Appium Server). See [Creating Tests](../README.md#creating-tests). | Any |
-| `get_web_test_boilerplate` | Generate a Selenium WebDriver test script for web browser automation. Browser-neutral by default (reads `BROWSER` env var at runtime — `chrome` / `firefox` / `MicrosoftEdge` / `safari` / `opera` without code changes). Pass `targetBrowser` (same names; `edge` is accepted for `MicrosoftEdge`) for browser-specific setup (ChromeOptions etc.). Pass `shadowDomSupport: "always"` to include a `shadowQuery()` helper for Web Components. Gate: if `url` is provided, requires a live browser session or `confirmSelectorsVerified: true`. Supports `java-junit5`, `java-testng`, `python`, and `nodejs`. | Any |
+| `get_test_boilerplate` | Generate a complete, pre-configured Appium test project for Android or iOS (`java-junit5`, `java-testng`, `python`, `nodejs`, and `robot` — Robot Framework + AppiumLibrary, Appium Server projects only). Optional capabilities: `appiumVersion` (Appium Server version; an unavailable one fails the session with the platform's list), `newSessionWaitTimeout` (seconds to wait for a free matching device, then fail with "No available device matching the query" instead of waiting indefinitely), `reportKeys` (custom report columns, e.g. a run id — find the runs later with a `list_test_reports` filter). By default (`reportStatus`) the steps are wrapped so the platform report shows the real outcome — a failed assertion is reported Failed with its message (otherwise a run with no WebDriver errors shows Passed) — and, on Appium Server, grouped in a steps group (the Grid cannot close a steps group, so it gets the status only). For a real app (`appId` / `packageName` / `bundleIdentifier`) it returns no code unless a live inspection session exists or `confirmSelectorsVerified: true` — set that only when real selectors were captured elsewhere (rdb/UIAutomator dump, `open_mobile_studio` including its iOS Test Recorder, or authoritative app source). Options: `region`, `includePerformanceTransactions`, `includeAxeScan` (Deque Axe DevTools scan; pins Appium Server 2.16.2 — Axe is unavailable on ≥3.3.0), `automotiveProjection` (Appium Server projects; Android Auto / CarPlay projection and a head-unit screenshot step), `orchestration` (Test Orchestrator, default on for Java on Appium Server). See [Creating Tests](../README.md#creating-tests). | Any |
+| `get_web_test_boilerplate` | Generate a Selenium WebDriver test script for web browser automation (`java-junit5`, `java-testng`, `python`, `nodejs`, or `robot` — Robot Framework + SeleniumLibrary; no `shadowQuery()` helper and no Opera). The report is named from the test name and shows the real outcome (Passed / Failed with the error). Browser-neutral by default (reads `BROWSER` env var at runtime — `chrome` / `firefox` / `MicrosoftEdge` / `safari` / `opera` without code changes). Pass `targetBrowser` (same names; `edge` is accepted for `MicrosoftEdge`) for browser-specific setup (ChromeOptions etc.). Pass `shadowDomSupport: "always"` to include a `shadowQuery()` helper for Web Components. Gate: if `url` is provided, requires a live browser session or `confirmSelectorsVerified: true`. | Any |
 | `install_test_orchestrator_agent` | Download the Digital.ai Test Orchestrator agent on demand, verify its SHA-256, and install it into a generated project at `lib/smart-agent.jar`. Under the npm install it writes the file directly; under Docker it returns a bash/PowerShell download command that verifies the file and deletes it on a mismatch. Source: the pinned sample-repository download, or `TEST_ORCHESTRATOR_JAR_URL` + `TEST_ORCHESTRATOR_JAR_SHA256` when configured. If the download fails, the response explains how to install it manually. See [Test Orchestrator](../README.md#test-orchestrator-default-for-java-on-appium-server). | Any |
 | `validate_test_script` | Delivery backstop that scans any test script (generated or hand-written) for unreplaced `<…>` placeholder selectors, CSS placeholder selectors (`#YOUR_SELECTOR`, `.your-class`, etc.), the scaffold fail-guard, placeholder credentials, and known fabricated resource IDs. Returns `isError` with a `fail` verdict when any high-severity pattern is found — a non-functional test cannot be delivered as finished. | Any |
 
@@ -432,19 +433,20 @@ Network checks are especially important before NV-dependent tests (`startPerform
 
 ### Mobile Inspection Sessions
 
-24 tools for AI-driven interactive mobile test building. An inspection session opens a live WebDriver connection to a real Android or iOS device (`platform: "ios"`), giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
+25 tools for AI-driven interactive mobile test building. An inspection session opens a live WebDriver connection to a real Android or iOS device (`platform: "ios"`), giving the AI agent full visibility into the current screen state and the ability to interact with elements — all without requiring a local Appium installation.
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
 | `start_inspection_session` | Reserve an Android or iOS (`platform: "ios"`) device and open a live WebDriver session. Pin a specific device with `device` (e.g. the one you installed the app on), or route with `deviceQuery` / `region`. Returns a session handle plus a watch-only `viewUrl` so the operator can follow the session in a browser. Device allocation takes 20–90 s. With `automotiveProjection` and no device or query, only Android 10+ devices are considered. If a start fails after a device was allocated, the leftover report is deleted (or named, if your role may not delete reports). | Any |
 | `stop_inspection_session` | Release the device and delete the probe report from the reporter (when your role may delete reports — see † below; otherwise the report is kept). `keepReport: true` preserves it — the platform-recorded session video is then retrievable via `download_test_attachments`. Always call this when done. | Any |
 | `take_inspection_screenshot` | Capture a screenshot that the AI can see directly — not base64 text, but an actual image visible to Agent. Use after each interaction to verify UI state. | Any |
-| `automotive_control` | Android Auto / CarPlay projection in an inspection session: `start`/`stop` projection, `screenshot` the head unit (CarPlay `cluster` display too), `tap` in head-unit coordinates, `dump` (CarPlay only). Prefer `start_inspection_session(automotiveProjection)` — mid-session start is not supported on every device. Projection needs a device attached to an Apple Silicon device host. Android Automotive OS emulators are not projection targets: use `deviceQuery "@os='android' and @emulator='true' and @model='automotive_1024p_landscape'"` (`@emulator='true'` is required) and the normal inspection tools. CarPlay (iOS): the first connection on a phone shows an iOS consent dialog ("Allow CarPlay with 'CarPlay Simulator' while phone is locked?") — `take_inspection_screenshot`, tap Allow, retry in a new session; the platform allows one `start` per session even after a failed one; a "deadline exceeded" after that is the device host's projection service not responding (report the host). | Any |
+| `automotive_control` | Android Auto / CarPlay projection in an inspection session: `start`/`stop` projection, `screenshot` the head unit (CarPlay `cluster` display too), `tap` in head-unit coordinates, `dump` (CarPlay only). Prefer `start_inspection_session(automotiveProjection)` — mid-session start is not supported on every device. Projection needs a device attached to an Apple Silicon device host. Android Automotive OS emulators are not projection targets: use `deviceQuery "@os='android' and @emulator='true' and @model='automotive_1024p_landscape'"` (`@emulator='true'` is required) and the normal inspection tools. CarPlay (iOS): the first connection on a phone shows an iOS consent dialog ("Allow CarPlay with 'CarPlay Simulator' while phone is locked?") — `take_inspection_screenshot`, tap Allow, retry in a new session; the platform allows one `start` per session even after a failed one; a "deadline exceeded" after that is the device host's projection service not responding (report the host). Not supported on Appium Grid projects. | Any |
+| `audio_control` | Play audio into, or record audio from, the device in an inspection session: `play` a repository audio file into the device's audio input (`durationSeconds` plays, waits and stops), `stop_play`, `record_start` (captures the device's audio output into a new repository file), `record_stop` (returns the file; flags a header-only recording when the device played nothing). Needs a device with an audio line (`find_available_device(requireAudioLine: true)`). Appium Server projects only | Any |
 | `get_element_tree` | Get the full UI hierarchy as a formatted element table. Shows resource-id, content-desc, text, and clickability for all elements on screen. | Any |
 | `find_elements` | Find elements by strategy — `xpath`, `id`, `accessibility id`, `class name`, or `-ios predicate string` (iOS on Appium Server projects only; the Appium Grid rejects it) — and return element IDs and attributes for tap/type. Attributes are fetched for the first `maxResults` matches (default 20); the rest are listed by ID only — narrow the selector rather than raising it. | Any |
-| `tap_element` | Tap a UI element by its element ID. | Any |
-| `type_into_element` | Type text into an input field. | Any |
-| `clear_element` | Clear an input field before typing new content. | Any |
+| `tap_element` | Tap a UI element — target it directly with `strategy` + `selector` (one call), or pass an `elementId` from `find_elements`. | Any |
+| `type_into_element` | Type text into an input field — target it with `strategy` + `selector` or an `elementId`. | Any |
+| `clear_element` | Clear an input field before typing new content — target it with `strategy` + `selector` or an `elementId`. | Any |
 | `swipe_screen` | Swipe/scroll by direction (`up`/`down`/`left`/`right`) or explicit coordinates. Scroll lists, open the app drawer, dismiss overlays. Auto-selects W3C actions or JWP touch per agent. | Any |
 | `scroll_to_element` | Scroll until an element becomes visible — swipes repeatedly, stops when found or when the screen stops changing (end of content). Returns the element ID ready for tap/type. | Any |
 | `long_press` | Press-and-hold an element or coordinate — context menus, hold-to-record buttons. | Any |
@@ -454,7 +456,7 @@ Network checks are especially important before NV-dependent tests (`startPerform
 | `press_key` | Press a key: ENTER (submit forms/search), HOME, APP_SWITCH, volume, or a raw Android keycode; iOS supports HOME, VOLUME_UP, VOLUME_DOWN, POWER. | Any |
 | `hide_keyboard` | Hide the on-screen keyboard if open — safer than press_back when the keyboard covers an element. | Any |
 | `launch_app` | Launch an installed app — the equivalent of tapping its icon. Android: package + activity (from `get_application_info.mainActivity`; effectively required on Grid). iOS: bundle ID. | Any |
-| `press_back` | Press the Android Back button — close dialogs, navigate back. On iOS, taps the navigation-bar back button. | Any |
+| `press_back` | Press the Android Back button — close dialogs, navigate back. On iOS, taps the navigation-bar back button, falling back to a left-edge back swipe when there is none. | Any |
 | `app_control` | App lifecycle: `terminate`, `clear_data` (reset to first launch), `query_state`, `deep_link` (jump straight to a screen). Grid limits: query_state is foreground-only, deep_link best-effort. | Any |
 | `device_control` | Device-level actions: orientation get/set, clipboard get/set, geolocation set/reset, alert accept/dismiss, file push/pull. Grid limits: alerts and reset_geolocation are Appium Server only. | Any |
 | `mock_authentication` | Pre-stage a mock biometric answer (Touch ID / Face ID / fingerprint) for the next auth dialog — `reply`: `success` / `failed` / `cancel` / `clear` (remove the mock after the test); optional `delay` ms. Call it BEFORE the action that triggers the prompt. Requires an instrumented app (uploaded with instrument=true); does not work for system apps or third-party auth libraries. | Any |
@@ -495,7 +497,7 @@ get_test_boilerplate(...)                           → generate the test script
 - iOS specifics: locate elements by `name`/`label`/`value` (`accessibility id`, `name`, or xpath like `//*[@label='...']`); launch apps by bundle ID (no activity); `press_back` taps the nav-bar back button; clear-app-data and Grid-device clipboard are unavailable.
 - Session reports are created in the Digital.ai reporter automatically. `stop_inspection_session` deletes them. If the MCP server restarts before you call stop, run `cleanup_inspection_sessions` to delete orphaned reports.
 - The session connects to `{BASE_URL}/wd/hub` — the same Grid endpoint used by all Appium tests.
-- `viewUrl` in the start response is a read-only browser URL — share it with the user so they can watch the session live. Do NOT offer or open the debug URL (`/3`) — the device is already reserved by the WebDriver session and a second interactive connection will conflict and error. `cloudViewLink` is the equivalent Mobile Studio link (also watch-only while the session is active).
+- `viewUrl` in the start response is a read-only browser URL — share it with the user so they can watch the session live. Do NOT offer or open the debug URL (`/3`) — the device is already reserved by the WebDriver session and a second interactive connection will conflict and error. Do not share `cloudViewLink` (the Mobile Studio link) either — a second connection to the same device conflicts and errors.
 - The `collaborative_test_creation` prompt packages this entire flow as a guided, narrated workflow.
 
 ### Web Inspection Sessions
@@ -509,7 +511,7 @@ get_test_boilerplate(...)                           → generate the test script
 | `start_browser_inspection_session` | Open a browser on the Digital.ai Selenium Grid. Prompts for browser choice if `inspectionBrowser` is omitted — always call `list_available_browsers` first. `inspectionBrowser` takes the names `list_available_browsers` returns — `chrome`, `firefox`, `MicrosoftEdge`, `safari`, `opera` — with case-insensitive aliases such as `Chrome` / `edge` normalised. Returns a session handle. Returns JSON by default (`handle`, `browserName`, `browserVersion`, `reportUrl`). | Any |
 | `stop_browser_inspection_session` | Close the browser and delete the probe report (when your role may delete reports — see † below; otherwise the report is kept). `keepReport: true` preserves the session video for retrieval via `download_test_attachments`. Always call when done. | Any |
 | `navigate_to` | Navigate to a URL. Waits for `document.readyState === "complete"` (up to 30 s). | Any |
-| `get_page_dom` | Extract interactive elements from the rendered DOM. Automatic shadow DOM detection: uses a recursive JS walker (depth ≤ 3) for React/Angular/Vue pages, standard DOM for others. Returns element tags, IDs, data-testid, aria-label, role, text, and shadow subtrees. | Any |
+| `get_page_dom` | Extract interactive elements from the rendered DOM on every page; when shadow roots are present (React/Angular/Vue, Web Components) the walker also descends into them, up to 3 levels deep (`hasShadowDom: true`). Returns element tags, IDs, names, data-testid, aria-label, role, text, and hrefs. `shadowMode: "never"` returns only the rendered HTML (fastest); `includeRawHtml: true` adds the full HTML. | Any |
 | `browser_action` | Browser navigation: `back`, `forward`, `refresh`, or `get_current_url`. | Any |
 | `find_web_elements` | Find elements by CSS selector, XPath, id, name, link text, partial link text, or tag name. CSS is the recommended strategy for web: `"#email"`, `"[data-testid='submit']"`, `"input[name='email']"`. Returns element IDs for use with `tap_element` / `type_into_element`. | Any |
 | `list_browser_inspection_sessions` | List all active browser inspection sessions in the current server process. | Any |
