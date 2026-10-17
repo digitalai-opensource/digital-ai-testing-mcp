@@ -181,7 +181,8 @@ export function registerTransactionTools(server: McpServer): void {
     'Results are sorted by avgSpeedIndex descending so the worst-performing group appears first. ' +
     'avgSpeedIndex is a composite visual-progress score (area above the progressive-render curve), NOT elapsed time. ' +
     'Compare it directionally (lower is better) but do not interpret a delta as a shift in render-completion time. ' +
-    'Accepts the same filters as list_transactions to scope the analysis. ' +
+    'Accepts the same filters as list_transactions to scope the analysis. Returns the top 20 groups by default (topN); ' +
+    'minCount drops groups with too few runs to compare. ' +
     'All access levels — project keys see only their own project\'s transactions.',
     {
       groupBy: z
@@ -196,9 +197,14 @@ export function registerTransactionTools(server: McpServer): void {
       networkProfile: z.string().optional().describe('Scope to a specific network profile.'),
       startDate: z.string().optional().describe('ISO 8601 start of date range.'),
       endDate: z.string().optional().describe('ISO 8601 end of date range.'),
+      // Uncapped, groupBy name/appVersion returned 70–90 groups — the largest responses in the 2026-10-16 UAT.
+      topN: z.number().int().min(1).max(500).optional().default(20)
+        .describe('Return at most this many groups (default 20) — the worst Speed Index first. totalGroups / truncated say whether more exist.'),
+      minCount: z.number().int().min(1).optional().default(1)
+        .describe('Leave out groups with fewer runs than this (e.g. 2 to drop single-sample groups). Default 1.'),
       outputFormat: outputFormatParam,
     },
-    async ({ groupBy, appName, appVersion, transactionName, deviceOs, deviceName, networkProfile, startDate, endDate, outputFormat }) => {
+    async ({ groupBy, appName, appVersion, transactionName, deviceOs, deviceName, networkProfile, startDate, endDate, topN, minCount, outputFormat }) => {
       try {
         let txs = await listTransactions();
 
@@ -276,7 +282,15 @@ export function registerTransactionTools(server: McpServer): void {
             return b.avgSpeedIndex - a.avgSpeedIndex;
           });
 
-        const structured = { groupBy, totalTransactions: txs.length, groups: aggregated };
+        const eligible = aggregated.filter((g) => g.count >= (minCount ?? 1));
+        const shown = eligible.slice(0, topN ?? 20);
+        const truncated = eligible.length > shown.length;
+        const belowMinCount = aggregated.length - eligible.length;
+        const structured = {
+          groupBy, totalTransactions: txs.length, totalGroups: aggregated.length, truncated,
+          ...(belowMinCount > 0 ? { groupsBelowMinCount: belowMinCount } : {}),
+          groups: shown,
+        };
 
         // Human-readable output
         const label: Record<string, string> = {
@@ -285,10 +299,11 @@ export function registerTransactionTools(server: McpServer): void {
           deviceName: 'Device Name', networkProfile: 'Network Profile',
         };
         const lines = [
-          `📊 Performance Summary by ${label[groupBy]} (${txs.length} transactions across ${aggregated.length} groups)`,
+          `📊 Performance Summary by ${label[groupBy]} (${txs.length} transactions across ${aggregated.length} groups` +
+            `${truncated || belowMinCount ? `; showing ${shown.length}` : ''})`,
           `   Sorted by avg Speed Index (highest = slowest rendering first)\n`,
         ];
-        for (const g of aggregated) {
+        for (const g of shown) {
           const si = g.avgSpeedIndex != null ? `${g.avgSpeedIndex.toFixed(0)} SI` : 'n/a';
           const siRange = g.minSpeedIndex != null && g.maxSpeedIndex != null
             ? ` [${g.minSpeedIndex}–${g.maxSpeedIndex} SI]` : '';
@@ -299,6 +314,8 @@ export function registerTransactionTools(server: McpServer): void {
           lines.push(`    Speed Index: ${si}${siRange} | Duration: ${dur} | CPU: ${cpu} | Mem: ${mem}`);
         }
 
+        if (truncated) lines.push(`\n…${eligible.length - shown.length} more group(s) not shown — raise topN, narrow the filters, or set minCount to drop single-run groups.`);
+        if (belowMinCount) lines.push(`${belowMinCount} group(s) with fewer than ${minCount} runs left out (minCount).`);
         return respond(outputFormat, { ...structured, metricSemantics: METRIC_SEMANTICS }, lines.join('\n'));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

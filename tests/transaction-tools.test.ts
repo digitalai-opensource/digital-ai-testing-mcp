@@ -71,3 +71,27 @@ describe('Speed Index semantics', () => {
     assert.ok(order.findIndex(([n]) => n === 'Checkout') < order.length - 1, 'a real 0 sorts before null');
   });
 });
+
+describe('get_transaction_performance_summary size controls (UAT 2026-10-16: 70–90 groups uncapped)', () => {
+  it('topN caps the groups and reports totalGroups / truncated', async () => {
+    const j = await tools.callJson('get_transaction_performance_summary', { groupBy: 'name', topN: 1 });
+    assert.equal(j.totalGroups, 3);
+    assert.equal(j.truncated, true);
+    assert.equal((j.groups as unknown[]).length, 1);
+  });
+
+  it('minCount drops thin groups and counts them; the default shows everything untruncated', async () => {
+    const j = await tools.callJson('get_transaction_performance_summary', { groupBy: 'name', minCount: 2 });
+    assert.deepEqual((j.groups as Array<{ name: string }>).map((g) => g.name), ['Login']);
+    assert.equal(j.groupsBelowMinCount, 2);
+    const all = await tools.callJson('get_transaction_performance_summary', { groupBy: 'name' });
+    assert.equal(all.truncated, false);
+    assert.equal(all.groupsBelowMinCount, undefined);
+  });
+
+  it('the text output says how many groups were left out', async () => {
+    const { text } = await tools.call('get_transaction_performance_summary', { groupBy: 'name', topN: 1, outputFormat: 'human' });
+    assert.match(text, /showing 1\)/);
+    assert.match(text, /2 more group\(s\) not shown/);
+  });
+});

@@ -132,7 +132,7 @@ export const TOOL_COUNT = REGISTERED_TOOLS.length - DEBUG_ONLY_TOOLS.length;
 // Short descriptions per tool module; counts come from the registrations themselves (src/utils/tool-catalog.ts).
 const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['users', 'Users', 'list, create, delete, assign, tag'],
-  ['devices', 'Devices', 'list, detail, control, tag, find available, release orphaned sessions'],
+  ['devices', 'Devices', 'list, detail, control, tag, find available, release orphaned sessions, emulator/simulator templates'],
   ['device-groups', 'Device Groups', 'list, create, edit, delete, assign'],
   ['reservations', 'Reservations', 'list, create, reserve now, delete, availability window'],
   ['applications', 'Applications', 'list, upload, install, uninstall, bulk install, plugins, language files'],
@@ -141,7 +141,7 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['browsers', 'Browsers', 'list, Selenium session, manual session'],
   ['projects', 'Projects', 'list, create, delete, users, tokens, settings, admin settings'],
   ['backup', 'Backup', 'create'],
-  ['health', 'Health & Platform', 'environment summary, iOS readiness, agent status, active sessions, storage, license, utilization'],
+  ['health', 'Health & Platform', 'environment summary, devices that make tests fail, iOS readiness, agent status, active sessions, storage, license, utilization'],
   ['agents', 'Agents', 'list, devices (Cloud Admin)'],
   ['regions', 'Regions', 'list, topology (Cloud Admin)'],
   ['nv-servers', 'NV Servers', 'list, detail (Cloud Admin)'],
@@ -153,7 +153,7 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['usage-reports', 'Usage Reports', 'summarize, download, download command (Cloud Admin)'],
   ['boilerplate', 'Boilerplate', 'Appium/Selenium test projects, Test Orchestrator agent, validate_test_script'],
   ['test-runs', 'Test Runs', 'Espresso/XCUITest/Maestro runs, status, cancel, command, Maestro flow generation'],
-  ['inspection', 'Mobile Inspection', 'live sessions: element tree, find, tap, type, gestures, keys, app/device control, Android Auto / CarPlay'],
+  ['inspection', 'Mobile Inspection', 'live sessions: element tree, find, tap, type, gestures, keys, app/device control, Android Auto / CarPlay, audio'],
   ['web-inspection', 'Browser Inspection', 'live browser sessions: DOM, find, navigate, actions'],
   ['debug', 'Remote Debug', 'get_remote_debug_command'],
   ['workflows', 'Workflows', 'POC and project setup / teardown (Cloud Admin)'],
@@ -161,6 +161,16 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['toolsets', 'Toolsets', 'enable_toolset'],
   ['remediation', 'Debug Mode', 'record_remediation_note'],
 ];
+
+/**
+ * Tools this server actually registered (the live catalog), so debug mode counts record_remediation_note — the static
+ * TOOL_COUNT excludes it and get_server_info said 205 while the client listed 206 (UAT 2026-10-16).
+ * Falls back to TOOL_COUNT before the catalog is set (unit tests that register modules directly).
+ */
+export function registeredToolCount(): number {
+  const catalog = getToolCatalog();
+  return catalog.size > 0 ? [...catalog.values()].reduce((n, tools) => n + tools.length, 0) : TOOL_COUNT;
+}
 
 export function capabilityLines(): string[] {
   const catalog = getToolCatalog();
@@ -212,14 +222,16 @@ export function registerMetaTools(server: McpServer): void {
         `Request timeout:  ${requestTimeout}ms`,
         `Upload timeout:   ${uploadTimeout}ms`,
         '',
-        `Registered tools: ${TOOL_COUNT} tools + 2 resources + 7 prompts`,
+        `Registered tools: ${registeredToolCount()} tools + 2 resources + 7 prompts`,
         '',
         'Capability domains:',
         ...capabilityLines(),
         '',
-        '── High-value analytics (35 of 50 industry-standard queries fully supported) ──',
+        '── High-value analytics (one or two calls each) ──',
         '  Functional quality:',
-        '    • Overall pass rate + top failing tests for a date window  →  get_project_test_summary',
+        '    • Overall pass rate (all-time) + top failing tests         →  get_project_test_summary',
+        '    • Pass rate for a date window (sum the daily buckets)      →  get_daily_execution_trend',
+        '    • Why tests fail, by error type                            →  summarize_test_failures',
         '    • Pass/fail breakdown by OS, app version, device model     →  get_grouped_test_reports',
         '    • Execution history + stability trend for a named test     →  get_test_stability_report',
         '    • Tests failing on Android but passing on iOS (or reverse) →  get_cross_platform_divergence',
@@ -239,13 +251,15 @@ export function registerMetaTools(server: McpServer): void {
         '    • App versions that have appeared in test history          →  get_failure_rate_by_app_version',
         '  Infrastructure:',
         '    • Device farm health (Available / Offline / Error counts)  →  get_device_health_summary',
+        '    • Devices that make tests fail (pass elsewhere)            →  find_unhealthy_devices',
+        '    • What is running right now                                →  list_active_test_executions',
         '    • Orphaned sessions (In Use > N hours)                     →  release_orphaned_sessions',
         '    • Agent health + device counts by region                   →  list_agents',
         '    • Region topology (NV servers, Selenium agents, signers)   →  get_region_topology',
         '    • License usage vs purchased limits                        →  get_license_utilization',
         '    • Per-project storage usage and quota proximity            →  get_reporter_project_storage',
         '    • Active browser/Selenium sessions by user and project     →  list_active_sessions',
-        '  See docs/analytics-gap-analysis.md for the full 50-item capability map.',
+        '  See docs/tools.md for every tool, its parameters and access requirements.',
         '',
         'If a tool you expect is missing, the running build is stale.',
         staleBuildRemedy(),

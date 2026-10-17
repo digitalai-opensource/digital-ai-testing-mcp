@@ -629,29 +629,57 @@ export async function deleteTests(
   }
 }
 
+export type AttachmentLogType = 'appium' | 'device' | 'ws';
+
+const LOG_MATCHERS: Record<AttachmentLogType, (name: string) => boolean> = {
+  appium: (n) => n.includes('appium-server') || n.includes('appium'),
+  device: (n) => n.includes('device') && !n.includes('ws') && !n.includes('tcp'),
+  ws: (n) => n.includes('ws_on_device') || n.includes('tcp_to_ws'),
+};
+
+/** Which logType value selects this file (null for a log no type matches). */
+export function logTypeOf(entryName: string): AttachmentLogType | null {
+  const n = entryName.toLowerCase();
+  return (Object.keys(LOG_MATCHERS) as AttachmentLogType[]).find((t) => LOG_MATCHERS[t](n)) ?? null;
+}
+
+/**
+ * The requested log, or — when it is absent and the report has exactly ONE log — that log, with `fellBackFrom` set so
+ * the caller says so. UAT 2026-10-16: many reports carry only device.log, and the old error ("No appium log found …
+ * Available log files: device.log") cost four calls before the agent retried with logType "device".
+ */
 export async function extractAttachmentLog(
   uuid: string,
-  logType: 'appium' | 'device' | 'ws'
-): Promise<{ filename: string; content: string; totalLines: number }> {
+  logType: AttachmentLogType
+): Promise<{ filename: string; content: string; totalLines: number; fellBackFrom?: AttachmentLogType }> {
   try {
     const data = await apiDownload(`/reporter/api/reports/${uuid}/attachments`);
     const zip = new AdmZip(data);
     const logEntries = zip.getEntries().filter((e) => !e.isDirectory && e.entryName.endsWith('.log'));
 
-    const matchers: Record<string, (name: string) => boolean> = {
-      appium: (n) => n.includes('appium-server') || n.includes('appium'),
-      device: (n) => n.includes('device') && !n.includes('ws') && !n.includes('tcp'),
-      ws: (n) => n.includes('ws_on_device') || n.includes('tcp_to_ws'),
-    };
-    const entry = logEntries.find((e) => matchers[logType](e.entryName.toLowerCase()));
-
+    let entry = logEntries.find((e) => LOG_MATCHERS[logType](e.entryName.toLowerCase()));
+    let fellBackFrom: AttachmentLogType | undefined;
+    if (!entry && logEntries.length === 1) {
+      entry = logEntries[0];
+      fellBackFrom = logType;
+    }
     if (!entry) {
-      const available = logEntries.map((e) => e.entryName).join(', ');
-      throw new Error(`No ${logType} log found in attachments ZIP. Available log files: ${available || 'none'}`);
+      if (logEntries.length === 0) {
+        throw new Error(
+          'This report has no log files attached. Browser (Selenium) reports carry no Appium or device log; for a ' +
+          'mobile report, check list_test_attachments for what was recorded (video, screenshots).'
+        );
+      }
+      const retries = logEntries.map((e) => ({ file: e.entryName, type: logTypeOf(e.entryName) }));
+      const options = [...new Set(retries.map((r) => r.type).filter(Boolean))];
+      throw new Error(
+        `No ${logType} log in this report. It has: ${retries.map((r) => r.file).join(', ')}.` +
+        (options.length ? ` Retry with logType: ${options.map((o) => `"${o}"`).join(' or ')}.` : '')
+      );
     }
 
     const content = entry.getData().toString('utf8');
-    return { filename: entry.entryName, content, totalLines: content.split('\n').length };
+    return { filename: entry.entryName, content, totalLines: content.split('\n').length, ...(fellBackFrom ? { fellBackFrom } : {}) };
   } catch (e) {
     throw new Error(`extractAttachmentLog failed: ${(e as Error).message}`);
   }

@@ -12,6 +12,7 @@
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
+import AdmZip from 'adm-zip';
 import { registerReportingTools } from '../src/tools/reporting-tools.js';
 import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
@@ -40,6 +41,18 @@ const GROUPED_BY_OS_STATUS = [
   { 'device.os': 'ANDROID', status: 'Error', _count_: 22 }, { 'device.os': 'Android', status: 'Error', _count_: 100 },
   { 'device.os': 'Android', status: 'Passed', _count_: 900 }, { 'device.os': 'IOS', status: 'Passed', _count_: 5 }, { 'device.os': null, status: 'Passed', _count_: 7 },
 ];
+
+// Attachment ZIPs by report UUID: only a device log (common on mobile), none (browser reports), and two logs.
+const zipOf = (files: Record<string, string>) => {
+  const z = new AdmZip();
+  for (const [name, text] of Object.entries(files)) z.addFile(name, Buffer.from(text));
+  return z.toBuffer();
+};
+const ATTACHMENT_ZIPS: Record<string, Buffer> = {
+  'only-device': zipOf({ 'device.log': 'boot\nE/App: crash\n', 'video.mp4': 'x' }),
+  'no-logs': zipOf({ 'screenshot.png': 'x' }),
+  'two-logs': zipOf({ 'device.log': 'd\n', 'ws_on_device.log': 'w\n' }),
+};
 
 let api: StubApi;
 let tools: ToolClient;
@@ -74,6 +87,8 @@ beforeAll(async () => {
       const r = FAILURES.find((x) => String(x.test_id) === detail[1])!;
       return { id: r.test_id, name: r.name, status: r.status, startTime: r.start_time, keyValuePairs: { errorClassification: r.errorClassification, errorCategory: r.errorCategory } };
     }
+    const zipFor = req.path.match(/^\/reporter\/api\/reports\/([\w-]+)\/attachments$/);
+    if (zipFor && ATTACHMENT_ZIPS[zipFor[1]]) return reply(200, [ATTACHMENT_ZIPS[zipFor[1]]]);
     if (req.path === '/reporter/api/tests/742904') {
       return {
         uuid: '3ed64d18-1146-4e95-9e67-cc7c20a4d559', id: 742904, name: 'health_check', startTime: new Date(NOW).toISOString(),
@@ -287,5 +302,26 @@ describe('summarize_test_failures', () => {
     } finally {
       listFixture = 'trend';
     }
+  });
+});
+
+describe('get_test_log when the requested log is missing (UAT 2026-10-16)', () => {
+  it('returns the only log a report has and says it fell back', async () => {
+    const { res, text } = await tools.call('get_test_log', { uuid: 'only-device' });
+    assert.notEqual(res.isError, true, text);
+    assert.match(text, /^\[no appium log in this report — showing its only log instead — device\.log/);
+    assert.match(text, /E\/App: crash/);
+  });
+
+  it('says a report with no logs has none (browser reports) instead of listing nothing', async () => {
+    const { res, text } = await tools.call('get_test_log', { uuid: 'no-logs' });
+    assert.equal(res.isError, true);
+    assert.match(text, /no log files attached/);
+  });
+
+  it('with several other logs, names them and the logType values to retry with', async () => {
+    const { res, text } = await tools.call('get_test_log', { uuid: 'two-logs' });
+    assert.equal(res.isError, true);
+    assert.match(text, /No appium log in this report\. It has: device\.log, ws_on_device\.log\. Retry with logType: "device" or "ws"\./);
   });
 });

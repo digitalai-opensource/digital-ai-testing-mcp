@@ -911,7 +911,7 @@ export function registerReportingTools(server: McpServer): void {
         .enum(['appium', 'device', 'ws'])
         .optional()
         .default('appium')
-        .describe("Which log file to extract: 'appium' (default) — Appium server log with test steps and errors; 'device' — on-device logcat; 'ws' — WebSocket/network bridge log."),
+        .describe("Which log file to extract: 'appium' (default) — Appium server log with test steps and errors; 'device' — on-device logcat; 'ws' — WebSocket/network bridge log. If the report has only one log, that one is returned (the header says so); browser reports have none."),
       maxLines: z
         .number()
         .int()
@@ -942,9 +942,10 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ uuid, logType, maxLines, contains, context, maxChars }) => {
       try {
-        const { filename, content } = await extractAttachmentLog(uuid, logType ?? 'appium');
+        const { filename, content, fellBackFrom } = await extractAttachmentLog(uuid, logType ?? 'appium');
         const view = selectLogLines(content, { maxLines: maxLines ?? 200, contains, context, maxChars });
         const parts = [`${filename} — ${view.totalLines} lines`];
+        if (fellBackFrom) parts.unshift(`no ${fellBackFrom} log in this report — showing its only log instead`);
         if (contains !== undefined) parts.push(`${view.matches} line(s) contain "${contains}"`);
         parts.push(view.truncated ? `showing the last ${view.shownLines}` : `showing ${view.shownLines}`);
         if (view.charCapped) parts.push(`cut at maxChars=${maxChars ?? DEFAULT_LOG_MAX_CHARS} — narrow with contains or lower maxLines`);

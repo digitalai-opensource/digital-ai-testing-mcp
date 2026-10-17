@@ -196,7 +196,13 @@ var extractDOM = function(root, depth) {
   var nodes = root.querySelectorAll('*');
   for (var i = 0; i < nodes.length; i++) {
     var el = nodes[i];
-    if (skipTags[el.tagName]) continue;
+    // SVG elements keep lowercase tagNames ("path"), so compare upper-cased — the skip never applied to them before.
+    if (skipTags[el.tagName.toUpperCase()]) continue;
+    // Decorative content: SVG internals and aria-hidden subtrees, unless the element itself is actionable
+    // (UAT 2026-10-16: an icon's <path id="q"> was the first "interactive element" on example.com).
+    var tabindex = el.getAttribute('tabindex');
+    var actionable = el.getAttribute('role') || el.hasAttribute('onclick') || (tabindex !== null && tabindex !== '-1');
+    if (!actionable && el.closest && (el.closest('svg') || el.closest('[aria-hidden="true"]'))) continue;
     var node = {
       tag: el.tagName.toLowerCase(),
       id: el.id || undefined,
