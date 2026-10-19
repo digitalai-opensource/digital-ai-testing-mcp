@@ -13,24 +13,18 @@ updates:
       # support TS 7.0"), so `npm run lint` fails. Remove once it ships TS 7 support.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-    labels:
-      - "dependencies"
-      - "npm"
+    labels: []                 # no labels — nothing filters or automates on them
 
   # Docker — watches FROM lines in the Dockerfile
   - package-ecosystem: "docker"
     directory: "/"             # where the Dockerfile lives
     schedule:
       interval: "weekly"
-    labels:
-      - "dependencies"
-      - "docker"
+    labels: []
 
   # GitHub Actions — watches uses: lines in all workflow files
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    labels:
-      - "dependencies"
-      - "github-actions"
+    labels: []
