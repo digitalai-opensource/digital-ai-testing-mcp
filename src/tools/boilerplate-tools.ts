@@ -226,7 +226,8 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   if (sleeps) add('warn', 'fixed sleeps', `${sleeps.length} fixed sleep(s) (${[...new Set(sleeps.map((x) => x.trim()))].slice(0, 3).join(', ')}). Replace with an explicit wait on the element the next step needs (WebDriverWait / waitForDisplayed / Wait Until Element Is Visible).`);
 
   // Only XPath literals (quoted, or Robot's xpath=…) — a bare `//` would also match every Java/JS line comment with [N].
-  const indexXpath = content.match(/(?<=['"`]|xpath=)\/\/[^'"`\n]*\[\d+\][^'"`\n]*/g);
+  // `\(*` also catches the grouped form "(//android.widget.EditText)[1]" (remediation 2026-10-19).
+  const indexXpath = content.match(/(?<=['"`]|xpath=)\(*\/\/[^'"`\n]*\[\d+\][^'"`\n]*/g);
   if (indexXpath) add('warn', 'index-based XPath', `Positional XPath (${[...new Set(indexXpath)].slice(0, 3).join(', ')}) breaks when siblings move or a header appears. Prefer accessibility id / resource-id, then an attribute match (@text, @label, @content-desc).`);
 
   const sharedDriver = content.match(/\bstatic\s+(?:final\s+)?(?:Android|IOS|Appium|Remote|Web)Driver\b[^\n;]*\bdriver\b|@Before(?:All|Suite|Class)\b[\s\S]{0,400}?driver\s*=\s*new\s+(?:Android|IOS|Appium)Driver|def setUpClass[\s\S]{0,400}?webdriver\.Remote\(/g);

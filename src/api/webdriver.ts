@@ -170,12 +170,24 @@ export async function createInspectionSession(
     // so the start is remembered and cleanup_inspection_sessions sweeps whatever it left (sweepTimedOutStarts).
     if (/timeout of \d+ms exceeded/i.test(detail)) {
       timedOutStarts.push({ testName, projectName, requestedAt });
+      const timeouts = (timedOutQueries.get(query) ?? 0) + 1;
+      timedOutQueries.set(query, timeouts);
+      // The old text only said "wait longer", so the agent repeated the identical start for another 240 s; the platform
+      // then answered at ~516 s with "Failed to boot emulator" (debug-mode intake 2026-10-19). Say the start can still
+      // fail and steer away from an identical retry.
+      const emulator = isEmulatorQuery(query);
       throw new Error(
+        (timeouts > 1 ? `This query has now timed out ${timeouts} times in this session — do not retry it unchanged. ` : '') +
         `Session creation failed: no answer from the platform within ${Math.round(timeout / 1000)} s. ` +
-        `Emulators/simulators boot and install the app inside this request and can take 60–130 s or more; ` +
-        `set INSPECTION_SESSION_TIMEOUT_MS (ms) in the MCP server's environment to wait longer. ` +
+        (emulator
+          ? `Emulators/simulators boot and install the app inside this request and can take 60–130 s or more, but one ` +
+            `that has not answered by now may also fail to boot (seen live: "Failed to boot emulator" after ~8.5 min). ` +
+            `Rather than repeating the same query, try another emulator model or OS version (list_virtual_device_templates) or a real device. `
+          : `The platform may still be waiting on the device or fail the start; rather than repeating the same query, widen it or pick another device. `) +
+        `To wait longer instead, set INSPECTION_SESSION_TIMEOUT_MS (ms) in the MCP server's environment. ` +
         `The platform may still finish this start: the session would then hold the device unattended until its idle ` +
-        `timeout (~4 min) and leave a report "${testName}" — run cleanup_inspection_sessions afterwards to delete it.`
+        `timeout (~4 min) and leave a report "${testName}" (its status and cause show the platform's final outcome — ` +
+        `find_latest_test_for_name) — run cleanup_inspection_sessions afterwards to delete it.`
       );
     }
     // A start that fails after a device was allocated still leaves an "Error" report (UAT 2026-10-10: five of them).
@@ -2627,6 +2639,8 @@ export function getPendingReportIds(): number[] {
 
 /** Session starts the client gave up on (POST /session timeout) — the platform may have completed them later. */
 const timedOutStarts: Array<{ testName: string; projectName: string | undefined; requestedAt: number }> = [];
+/** Client-side timeouts per device query in this process — a repeat gets an explicit "don't retry unchanged". */
+const timedOutQueries = new Map<string, number>();
 
 /**
  * Register the reports that timed-out starts created after the client stopped waiting, so cleanup_inspection_sessions

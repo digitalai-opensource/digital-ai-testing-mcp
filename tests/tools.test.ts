@@ -915,6 +915,13 @@ describe('validate_test_script warns (never blocks) on flakiness patterns — re
     assert.ok(['fixed sleeps', 'index-based XPath', 'shared driver'].every((l) => labels(json).includes(l)), labels(json).join(','));
   });
 
+  it('grouped index XPath (//tag)[n] is flagged; a grouped XPath without a position is not', async () => {
+    const { json } = await run('driver.findElement(By.xpath("(//android.widget.EditText)[2]")).sendKeys("x");');
+    assert.ok(labels(json).includes('index-based XPath'), labels(json).join(','));
+    const ok = await run('driver.findElement(By.xpath("(//*[@text=\'OK\'])")).click();');
+    assert.ok(!labels(ok.json).includes('index-based XPath'), labels(ok.json).join(','));
+  });
+
   it('iOS //*[@name=] XPath is flagged only when no accessibility-id strategy is used', async () => {
     const { json } = await run("driver = new IOSDriver(url, new XCUITestOptions());\ndriver.findElement(By.xpath(\"//*[@name='loginButton']\")).click();");
     assert.ok(labels(json).includes('XPath for iOS names'));

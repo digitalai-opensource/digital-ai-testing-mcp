@@ -144,4 +144,22 @@ describe('session start limits', () => {
       delete process.env.INSPECTION_SESSION_TIMEOUT_MS;
     }
   });
+
+  it('an emulator timeout says the boot may still fail, and a repeat of the same query is told not to retry unchanged', async () => {
+    process.env.INSPECTION_SESSION_TIMEOUT_MS = '100';
+    try {
+      setAccessLevelOverrideForTests('cloud-admin');
+      const deviceQuery = "@os='android' and @emulator='true' and @name='SLOW_EMU'";
+      const first = await tools.call('start_inspection_session', { deviceQuery });
+      assert.equal(first.res.isError, true);
+      assert.match(first.text, /may also fail to boot/);
+      assert.match(first.text, /list_virtual_device_templates/);
+      assert.doesNotMatch(first.text, /timed out \d+ times/);
+      assert.doesNotMatch(first.text, /find_available_device/, 'emulators are not listed by find_available_device');
+      const second = await tools.call('start_inspection_session', { deviceQuery });
+      assert.match(second.text, /^.*timed out 2 times in this session — do not retry it unchanged/);
+    } finally {
+      delete process.env.INSPECTION_SESSION_TIMEOUT_MS;
+    }
+  });
 });
