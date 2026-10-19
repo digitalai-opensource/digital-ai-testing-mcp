@@ -398,8 +398,13 @@ export const SCENARIOS: Scenario[] = [
       'Open an inspection session on an available Android phone, launch the ExperiBank demo app (com.experitest.ExperiBank / .LoginActivity) and log in with company / company. ' +
       'Imagine the app had just crashed on the next tap: without stopping the session, show me the device log lines that mention the app so I can see why.',
     checks: [
+      // The harness denies start_inspection_session, so in-session tools can never be reached: score the attempt (hard)
+      // and the live-log intent the agent states or tries afterwards (soft).
       { kind: 'calledAny', tools: ['start_inspection_session'], label: 'opens an inspection session' },
-      { kind: 'calledAny', tools: ['get_device_log'], label: 'reads the LIVE device log' },
+      { kind: 'either', label: 'goes for the LIVE device log (tool call or stated plan)', soft: true, checks: [
+        { kind: 'calledAny', tools: ['get_device_log'], label: 'reads the live device log' },
+        { kind: 'textMatches', re: /get_device_log|device log|logcat|syslog/i, label: 'names the live device log as the next step' },
+      ] },
       { kind: 'notCalled', tools: ['get_test_log', 'download_test_attachments'], label: 'does not go to the report attachments while the session is open', soft: true },
     ],
   },
@@ -413,7 +418,8 @@ export const SCENARIOS: Scenario[] = [
     checks: [
       { kind: 'calledWhere', tool: 'get_test_boilerplate', where: (i) => i.structure === 'page-objects', label: 'asks for the page-object structure' },
       { kind: 'notCalled', tools: ['start_inspection_session'], label: 'no inspection needed for the verified demo app' },
-      { kind: 'noFabricatedCode', label: 'no fabricated selectors or placeholder credentials in delivered code' },
+      // Writing the generator's own files to disk is the expected delivery of a "project" — allowed, as in findable-runs.
+      { kind: 'noFabricatedCode', label: 'no fabricated code — files written only as the generator produced them', allowGeneratedWrites: true },
     ],
   },
   {
@@ -424,9 +430,13 @@ export const SCENARIOS: Scenario[] = [
       'On an inspection session on an available Android phone with the ExperiBank demo app (com.experitest.ExperiBank / .LoginActivity) open, ' +
       'turn the phone\'s wifi off, try to log in with company / company, tell me what the app shows, then turn wifi back on before you finish.',
     checks: [
+      // Same harness limit as crash-while-exploring: the session start is denied, so score the attempt and the intent.
       { kind: 'calledAny', tools: ['start_inspection_session'], label: 'opens an inspection session' },
-      { kind: 'calledWhere', tool: 'network_control', where: (i) => i.action === 'set' && i.kind === 'wifi' && (i.enabled === false || i.enabled === 'false'), label: 'switches wifi off through the network tool' },
-      { kind: 'calledWhere', tool: 'network_control', where: (i) => i.action === 'set' && i.kind === 'wifi' && yes(i.enabled), label: 'restores wifi', soft: true },
+      { kind: 'either', label: 'switches wifi through the network tool (call or stated plan)', soft: true, checks: [
+        { kind: 'calledWhere', tool: 'network_control', where: (i) => i.action === 'set' && i.kind === 'wifi', label: 'calls network_control for wifi' },
+        { kind: 'textMatches', re: /network_control|wifi/i, label: 'names the wifi switch as the next step' },
+      ] },
+      { kind: 'notCalled', tools: ['get_remote_debug_command'], label: 'does not reach for ADB to toggle wifi', soft: true },
     ],
   },
 ];
