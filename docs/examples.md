@@ -240,6 +240,8 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Generate a Python test for app 456 with performance transactions enabled so CPU and memory get recorded" *(starts NV throttling — the generated code brackets the test body, not app launch)*
 - "Generate a JUnit5 test with an Axe accessibility scan included" *(reads `AXE_DEVTOOLS_API_KEY` from the MCP environment — a placeholder is inserted if it is unset; pins Appium 2.16.2 because the Axe driver is unavailable on Appium Server 3.3.0+)*
 - "Switch to the QA project profile, then generate the boilerplate — I want the script to carry the project-scoped key, not the admin key"
+- "Generate the Android test as page objects — one class per screen — so the team can grow the suite" *(`structure: "page-objects"`; Java on Appium Server projects and Node.js; one screen class serves Android and iOS)*
+- "How do I run the generated tests in parallel across devices?" *(the response's `parallelNote` gives the per-framework switch and the license/device checks to make first)*
 
 ---
 
@@ -278,6 +280,18 @@ Before generating boilerplate, find an available device first so the correct OS 
 - "Create a login test for our app" *(specific intent + source in the workspace → the agent builds it autonomously, verifying selectors with a silent inspection session)*
 - "Login, tap Transfer, pick account 43x, set $50.00, tap Transfer Now — make that a test" *(step-level detail → autonomous, no collaboration needed)*
 - "I want a test for app X" *(vague → the agent starts the interactive experience, or asks which mode you want)*
+- "This screen is a webview — switch into it and find the submit button with a CSS selector" *(webview_context list/switch/native; css selector finds and the HTML tree inside; Appium Server projects)*
+- "Send the app to the background for five seconds and check it resumes on the same screen" *(app_control background)*
+- "Install build 2.3 from the repository onto this device without leaving the session" *(app_control install with a `cloud:` reference; Appium Server)*
+- "Show me the last 50 logcat lines mentioning our package — the app just crashed" *(get_device_log with `contains`; iOS reads the syslog)*
+- "Record the device log while I reproduce the bug, then give me the file" *(session_capture device_log start/stop → a repository file)*
+- "Turn wifi off, try the sync screen, then turn it back on" *(network_control set; Android)*
+- "Put the device on a 3G profile while I browse the catalogue" *(network_control set_conditions — needs an ONLINE, tunneled NV server in the region)*
+- "Inject this cheque image so the deposit screen's camera returns it" *(inject_camera_image; the app must be an instrumented build)*
+- "What device is this, what's its battery and screen scale, and is it in dark mode?" *(device_control device_info)*
+- "Switch the phone to dark mode and screenshot the login screen" *(device_control set_appearance)*
+- "Run an accessibility audit on this iOS screen" *(device_control accessibility_audit — XCTest's built-in audit; Android uses includeAxeScan in the generated test)*
+- "Which buttons does this alert have? Press 'Allow Once'" *(device_control: read the alert text and buttons, then accept it by buttonLabel on iOS)*
 - "What inspection sessions are still open? Stop them all."
 - "Clean up any leftover inspection reports from sessions that didn't shut down cleanly" *(requires Cloud Admin, or a project-level key whose project has `allowUsersDeleteTests` enabled — see [Limitations](limitations.md#16-deleting-test-reports-depends-on-a-per-project-setting))*
 

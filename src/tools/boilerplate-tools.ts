@@ -38,6 +38,8 @@ import {
 type Platform = 'android' | 'ios';
 type Language = 'java-junit5' | 'java-testng' | 'nodejs' | 'python' | 'robot';
 type ProjectType = 'standalone-gradle' | 'standalone-maven' | 'android-gradle-submodule';
+/** 'flat' = one test method with inline steps; 'page-objects' = one class per screen + a test that reads as the flow. */
+type Structure = 'flat' | 'page-objects';
 
 interface BoilerplateFile {
   /** Display name shown in output headings and JSON keys. */
@@ -48,6 +50,8 @@ interface BoilerplateFile {
   lang: string;
   /** True when this is a setup-instructions prose file, not runnable source. */
   isInstructions?: boolean;
+  /** Read from resources/boilerplate/shared/<sharedDir>/ instead of the platform/language folder. */
+  sharedDir?: string;
 }
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -79,33 +83,47 @@ function getFilesForVariant(
   platform: Platform,
   language: Language,
   isAppiumOss: boolean,
-  projectType?: ProjectType
+  projectType?: ProjectType,
+  structure: Structure = 'flat',
+  placeholder = false
 ): BoilerplateFile[] {
   const testBase = platform === 'android' ? 'AndroidNative' : 'iOSNative';
   const ossSuffix = isAppiumOss ? '-oss' : '';
+  // Page objects: Java needs java-client 11 / Selenium 4 (Appium Server templates); Node works on both modes.
+  const po = structure === 'page-objects' && (language === 'nodejs' || ((language === 'java-junit5' || language === 'java-testng') && isAppiumOss));
+  const javaScreens = (dir: string): BoilerplateFile[] =>
+    (placeholder ? ['BaseScreen', 'AppScreen'] : ['BaseScreen', 'LoginScreen', 'DashboardScreen', 'PaymentScreen'])
+      .map((c) => ({ filename: `${dir}${c}.java`, diskName: `${c}.java`, lang: 'java', sharedDir: 'java-screens' }));
+  const nodeScreens = (): BoilerplateFile[] =>
+    (placeholder ? ['AppScreen', 'PlaceholderScreen'] : ['AppScreen', 'LoginScreen', 'DashboardScreen', 'PaymentScreen'])
+      .map((c) => ({ filename: `test/screenobjects/${c}.js`, diskName: `${c}.js`, lang: 'javascript', sharedDir: 'node-screens' }));
 
   switch (language) {
     case 'java-junit5':
     case 'java-testng': {
       const javaClass = platform === 'android' ? 'LocalAndroidTest' : 'LocaliOSTest';
       const javaPath = `src/test/java/${javaClass}.java`;
+      const testDisk = `${testBase}${ossSuffix}${po ? '-po' : ''}.java`;
       if (projectType === 'android-gradle-submodule') {
         return [
-          { filename: `e2e-tests/${javaPath}`,   diskName: `${testBase}${ossSuffix}.java`, lang: 'java' },
-          { filename: 'e2e-tests/build.gradle',  diskName: `gradle${ossSuffix}`,           lang: 'groovy' },
+          { filename: `e2e-tests/${javaPath}`,   diskName: testDisk,             lang: 'java' },
+          ...(po ? javaScreens('e2e-tests/src/test/java/') : []),
+          { filename: 'e2e-tests/build.gradle',  diskName: `gradle${ossSuffix}`, lang: 'groovy' },
         ];
       }
       if (projectType === 'standalone-maven') {
         return [
-          { filename: javaPath,   diskName: `${testBase}${ossSuffix}.java`, lang: 'java' },
-          { filename: 'pom.xml',  diskName: `maven${ossSuffix}`,            lang: 'xml' },
+          { filename: javaPath,   diskName: testDisk,            lang: 'java' },
+          ...(po ? javaScreens('src/test/java/') : []),
+          { filename: 'pom.xml',  diskName: `maven${ossSuffix}`, lang: 'xml' },
         ];
       }
       // standalone-gradle (default) — also return pom.xml so users have both options
       return [
-        { filename: javaPath,       diskName: `${testBase}${ossSuffix}.java`, lang: 'java' },
-        { filename: 'build.gradle', diskName: `gradle${ossSuffix}`,           lang: 'groovy' },
-        { filename: 'pom.xml',      diskName: `maven${ossSuffix}`,            lang: 'xml' },
+        { filename: javaPath,       diskName: testDisk,             lang: 'java' },
+        ...(po ? javaScreens('src/test/java/') : []),
+        { filename: 'build.gradle', diskName: `gradle${ossSuffix}`, lang: 'groovy' },
+        { filename: 'pom.xml',      diskName: `maven${ossSuffix}`,  lang: 'xml' },
       ];
     }
     case 'nodejs': {
@@ -117,7 +135,8 @@ function getFilesForVariant(
         { filename: 'wdio.conf.js',   diskName: isAppiumOss ? 'wdio-oss.conf.js' : 'wdio.conf.js', lang: 'javascript' },
         // Full path: wdio.conf.js loads ./test/specs/<Test>.js. A bare filename saved at the project root ran ZERO tests
         // ("0 spec files", no error) — hit while running the generated project live, 2026-10-16.
-        { filename: `test/specs/${testBase}.js`, diskName: `${testBase}.js`,                        lang: 'javascript' },
+        { filename: `test/specs/${testBase}.js`, diskName: `${testBase}${po ? '-po' : ''}.js`,      lang: 'javascript' },
+        ...(po ? nodeScreens() : []),
         { filename: 'setup-steps.sh', diskName: shellDisk,                                          lang: 'sh', isInstructions: true },
       ];
     }
@@ -341,9 +360,9 @@ function appendAutomotiveCheck(language: Language, indent: string): string {
  * Wrap the test steps so the platform report carries the real outcome (verified live 2026-10-16):
  *  - a session with no WebDriver errors is reported Passed even when the test failed on its own assertion — so the
  *    catch block sets Failed with the error message (seetest:client.setReportStatus works on Grid and Appium Server);
- *  - on Appium Server the steps sit in a named steps group. The Grid cannot run stopStepsGroup (its execute parser
- *    rejects 0-argument seetest commands), so Grid templates get the status only.
- * Arguments are passed separately, never inside the script string (the inline form fails silently).
+ *  - the steps sit in a named steps group on both modes. The Grid parses arguments out of the script string, so its
+ *    0-argument stop is written inline — "seetest:client.stopStepsGroup()" (verified live 2026-10-19); Appium Server
+ *    takes the bare command name. Commands WITH arguments pass them separately on both modes.
  */
 function wrapWithReporting(language: Language, indent: string, core: string, isAppiumOss: boolean): string {
   // Robot templates report through their own Test Teardown (Report Test Outcome) and steps-group keywords.
@@ -354,9 +373,10 @@ function wrapWithReporting(language: Language, indent: string, core: string, isA
     return [
       `${indent}// Report the real outcome: without this a failed assertion still shows as Passed in the platform report.`,
       `${indent}try {`,
-      ...(isAppiumOss ? [`${indent}    driver.executeScript("seetest:client.startStepsGroup", "${group}");`] : []),
+      `${indent}    driver.executeScript("seetest:client.startStepsGroup", "${group}");`,
       inner,
-      ...(isAppiumOss ? [`${indent}    driver.executeScript("seetest:client.stopStepsGroup");`] : []),
+      // The Grid parses arguments out of the script string, so a 0-arg command is written inline there.
+      isAppiumOss ? `${indent}    driver.executeScript("seetest:client.stopStepsGroup");` : `${indent}    driver.executeScript("seetest:client.stopStepsGroup()");`,
       `${indent}    driver.executeScript("seetest:client.setReportStatus", "Passed", "All steps completed");`,
       `${indent}} catch (RuntimeException | AssertionError e) {`,
       `${indent}    try { driver.executeScript("seetest:client.setReportStatus", "Failed", String.valueOf(e.getMessage())); } catch (RuntimeException ignored) {}`,
@@ -368,9 +388,9 @@ function wrapWithReporting(language: Language, indent: string, core: string, isA
     return [
       `${indent}# Report the real outcome: without this a failed assertion still shows as Passed in the platform report.`,
       `${indent}try:`,
-      ...(isAppiumOss ? [`${indent}    self.driver.execute_script("seetest:client.startStepsGroup", "${group}")`] : []),
+      `${indent}    self.driver.execute_script("seetest:client.startStepsGroup", "${group}")`,
       inner,
-      ...(isAppiumOss ? [`${indent}    self.driver.execute_script("seetest:client.stopStepsGroup")`] : []),
+      isAppiumOss ? `${indent}    self.driver.execute_script("seetest:client.stopStepsGroup")` : `${indent}    self.driver.execute_script("seetest:client.stopStepsGroup()")`,
       `${indent}    self.driver.execute_script("seetest:client.setReportStatus", "Passed", "All steps completed")`,
       `${indent}except Exception as e:`,
       `${indent}    try:`,
@@ -383,9 +403,9 @@ function wrapWithReporting(language: Language, indent: string, core: string, isA
   return [
     `${indent}// Report the real outcome: without this a failed assertion still shows as Passed in the platform report.`,
     `${indent}try {`,
-    ...(isAppiumOss ? [`${indent}    await browser.execute('seetest:client.startStepsGroup', '${group}');`] : []),
+    `${indent}    await browser.execute('seetest:client.startStepsGroup', '${group}');`,
     inner,
-    ...(isAppiumOss ? [`${indent}    await browser.execute('seetest:client.stopStepsGroup');`] : []),
+    isAppiumOss ? `${indent}    await browser.execute('seetest:client.stopStepsGroup');` : `${indent}    await browser.execute('seetest:client.stopStepsGroup()');`,
     `${indent}    await browser.execute('seetest:client.setReportStatus', 'Passed', 'All steps completed');`,
     `${indent}} catch (e) {`,
     `${indent}    await browser.execute('seetest:client.setReportStatus', 'Failed', String(e && e.message).slice(0, 500)).catch(() => {});`,
@@ -461,8 +481,22 @@ function failGuard(language: Language, indent: string): string {
   }
 }
 
-function buildPlaceholder(language: Language, platform: Platform, indent: string, isAppiumOss = true): string {
+function buildPlaceholder(language: Language, platform: Platform, indent: string, isAppiumOss = true, pageObjects = false): string {
   const c = language === 'python' || language === 'robot' ? '#' : '//';
+  if (pageObjects) {
+    const screen = language === 'nodejs' ? 'PlaceholderScreen' : 'AppScreen';
+    const lines = [
+      `${indent}${c} ⛔ PLACEHOLDER TEST BODY — NOT A RUNNABLE TEST. ${screen} holds <…> locators that are NOT real.`,
+      `${indent}${c} Replace them with values discovered LIVE (start_inspection_session -> get_element_tree / find_elements),`,
+      `${indent}${c} one screen class per screen, then write the flow here. NEVER guess a locator; NEVER invent credentials.`,
+      failGuard(language, indent),
+      `${indent}${c} Example shape only — every <…> inside ${screen} must be replaced first:`,
+      language === 'nodejs'
+        ? `${indent}${c}   const screen = new ${screen}(); await screen.enterValue('<value the user gave you>'); await screen.tapPrimaryButton();`
+        : `${indent}${c}   new ${screen}(driver).enterValue("<value the user gave you>").tapPrimaryButton();`,
+    ];
+    return lines.join('\n');
+  }
   const idTerm = platform === 'android' ? 'resource-id' : 'accessibility id';
   const banner = [
     `${indent}${c} ============================================================================`,
@@ -491,7 +525,7 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
       `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
       `${indent}${c}   Wait And Click    ${id}`,
       `${indent}${c}   Wait And Input    ${field}    <value the user gave you>`,
-      `${indent}${c}   Wait Until Page Contains    <visible text>    20s`,
+      `${indent}${c}   Expect Text    <visible text>    visible    timeout=20s`,
     ];
   } else if (platform === 'android') {
     if (language === 'java-junit5' || language === 'java-testng') {
@@ -544,8 +578,8 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
   return [...banner, failGuard(language, indent), ...examples].join('\n');
 }
 
-function readBoilerplateFile(platform: Platform, language: Language, diskName: string): string {
-  const dir = join(BOILERPLATE_DIR, PLATFORM_DIR[platform], LANGUAGE_SUBDIR[platform][language]);
+function readBoilerplateFile(platform: Platform, language: Language, diskName: string, sharedDir?: string): string {
+  const dir = sharedDir ? join(BOILERPLATE_DIR, 'shared', sharedDir) : join(BOILERPLATE_DIR, PLATFORM_DIR[platform], LANGUAGE_SUBDIR[platform][language]);
   // Normalize to LF: the marker/injection patterns (DEMO_STEP_PATTERN etc.) match "\n" only. Git stores the templates
   // with LF, but a Windows checkout with core.autocrlf materializes some as CRLF — and then, for those files, the
   // custom-app placeholder never replaced the ExperiBank demo steps (the anti-fabrication guard silently did nothing)
@@ -579,6 +613,8 @@ function substitute(
     reportStatus?: boolean;
     /** Extra capabilities (appiumVersion, newSessionWaitTimeout, report keys), already validated. */
     extraCaps?: Record<string, string | number>;
+    /** The test is the page-object variant (placeholder refers to the screen class). */
+    pageObjects?: boolean;
   }
 ): string {
   let result = content;
@@ -599,7 +635,7 @@ function substitute(
       return content;
     };
     if (vars.clearTestBody) {
-      result = result.replace(DEMO_STEP_PATTERN, () => decorate(buildPlaceholder(language, platform, indent, vars.isAppiumOss !== false)));
+      result = result.replace(DEMO_STEP_PATTERN, () => decorate(buildPlaceholder(language, platform, indent, vars.isAppiumOss !== false, vars.pageObjects === true)));
     } else {
       result = result.replace(DEMO_INNER_PATTERN, (inner) => decorate(inner));
       result = result.replace(/[^\S\n]*(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n/, '');
@@ -695,6 +731,27 @@ function substitute(
   if (vars.extraCaps) result = injectCapabilities(result, language, !!vars.isAppiumOss, vars.extraCaps);
 
   return result;
+}
+
+/**
+ * Every template already creates one session per test method (setUp/tearDown, @BeforeEach/@AfterEach, @BeforeMethod,
+ * a wdio session per spec, Robot Test Setup/Teardown) — the shape that survives parallel runs. A static or
+ * suite-level driver is the most common cause of intermittent parallel failures (validate_test_script warns on it).
+ */
+function parallelNote(language: Language, isAppiumOss: boolean): string {
+  const cap = 'Check the project\'s concurrency limit first (get_project_admin_settings → maxDevelopmentLicense) and that enough matching devices are free (find_available_device): a worker that finds no device waits for newSessionWaitTimeout and then fails.';
+  switch (language) {
+    case 'python':
+      return `Each test method has its own setUp/tearDown session — no code changes needed. pip install pytest-xdist, then: pytest -n auto -v (one worker per test). ${cap}`;
+    case 'java-junit5':
+      return `Each @Test has its own @BeforeEach/@AfterEach session. Enable JUnit 5 parallelism with src/test/resources/junit-platform.properties: junit.jupiter.execution.parallel.enabled=true, junit.jupiter.execution.parallel.mode.default=concurrent, junit.jupiter.execution.parallel.config.strategy=fixed, junit.jupiter.execution.parallel.config.fixed.parallelism=<workers>. Never make the driver static. ${cap}`;
+    case 'java-testng':
+      return `Each @Test has its own @BeforeMethod/@AfterMethod session. Run methods in parallel with a TestNG suite file (<suite parallel="methods" thread-count="<workers>">) or Surefire's <parallel>methods</parallel> + <threadCount>; the driver must stay an instance field (one per thread). ${cap}`;
+    case 'nodejs':
+      return `WebdriverIO runs spec files in parallel: raise maxInstances in wdio.conf.js (one session per spec file) and split tests across spec files${isAppiumOss ? '' : ' (wdio 7 on the Grid behaves the same)'}. ${cap}`;
+    case 'robot':
+      return `pip install robotframework-pabot, then: pabot --processes <workers> --outputdir results tests/ (one session per suite file). ${cap}`;
+  }
 }
 
 function setupNote(language: Language, isAppiumOss: boolean, projectType?: ProjectType): string {
@@ -939,6 +996,17 @@ export function registerBoilerplateTools(server: McpServer): void {
         .string()
         .optional()
         .describe('(iOS only) App bundle identifier, e.g. com.mycompany.app. Pre-fills the bundleId capability. Prefer appId — providing bundleIdentifier also clears the demo test body and inserts guided placeholders.'),
+      structure: z
+        .enum(['flat', 'page-objects'])
+        .optional()
+        .describe(
+          "Test layout. 'flat' (default): one test method with inline steps. 'page-objects': one class per screen " +
+          '(BaseScreen with the explicit-wait helpers and a per-platform locator chooser, so ONE screen class serves ' +
+          'Android and iOS) plus a test that reads as the user flow — the shape to use once a suite grows past one ' +
+          'test. Available for java-junit5 / java-testng on Appium Server projects and for nodejs (both modes); other ' +
+          'combinations fall back to flat with a note. With a real app the screen class is a placeholder with <…> ' +
+          'locators that validate_test_script flags until they are replaced from a live inspection.'
+        ),
       projectType: z
         .enum(['standalone-gradle', 'standalone-maven', 'android-gradle-submodule'])
         .optional()
@@ -997,7 +1065,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         .describe(
           'Default true. Wraps the test steps so the platform report shows the REAL outcome: a failure sets the report to ' +
           'Failed with the error message (without this, a session with no WebDriver errors is reported Passed even when ' +
-          'an assertion failed), and on Appium Server the steps are grouped in a named steps group. ' +
+          'an assertion failed), and the steps are grouped in a named steps group (on the Grid the 0-argument group stop is written inline, "seetest:client.stopStepsGroup()"). ' +
           'Set false only when the user wants the bare steps.'
         ),
       appiumVersion: z
@@ -1074,7 +1142,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, structure, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
       // ── Inspection gate (v42) ────────────────────────────────────────────────
       // Advisory guards (warning text, a requiresVerifiedSelectors flag, an in-code
       // fail() guard) all lost to task-completion momentum: the agent stripped the
@@ -1219,6 +1287,13 @@ export function registerBoilerplateTools(server: McpServer): void {
       const clearTestBody = Boolean(
         platform === 'android' ? resolvedPackageName : resolvedBundleIdentifier
       );
+      const pageObjectsRequested = structure === 'page-objects';
+      const pageObjectsApplied = pageObjectsRequested && (language === 'nodejs' || ((language === 'java-junit5' || language === 'java-testng') && isAppiumOss));
+      const structureNote = pageObjectsRequested && !pageObjectsApplied
+        ? (language === 'python' || language === 'robot'
+          ? `structure: "page-objects" is available for Java (Appium Server) and nodejs only — ${language} is generated flat.`
+          : 'structure: "page-objects" needs an Appium Server project for Java (java-client 11 / Selenium 4); this Grid project is generated flat.')
+        : undefined;
 
       const vars = {
         accessKey,
@@ -1238,9 +1313,10 @@ export function registerBoilerplateTools(server: McpServer): void {
         automotiveProjection: automotive?.applied ? automotive.resolution : undefined,
         reportStatus: reportStatus !== false,
         extraCaps,
+        pageObjects: pageObjectsApplied,
       };
 
-      const files = getFilesForVariant(platform, language, isAppiumOss, projectType);
+      const files = getFilesForVariant(platform, language, isAppiumOss, projectType, pageObjectsApplied ? 'page-objects' : 'flat', clearTestBody);
 
       // Grid scripts carry non-obvious workarounds (pinned clients, JWP capability
       // format, element wrappers). Once the file leaves this response, the
@@ -1268,7 +1344,7 @@ export function registerBoilerplateTools(server: McpServer): void {
 
       try {
         const resolved = files.map(f => {
-          const raw = readBoilerplateFile(platform, language, f.diskName);
+          const raw = readBoilerplateFile(platform, language, f.diskName, f.sharedDir);
           const substituted = substitute(raw, language, platform, vars);
           const content = f.diskName.startsWith('gradle')
             ? adaptGradleForProjectType(substituted, projectType)
@@ -1360,15 +1436,15 @@ export function registerBoilerplateTools(server: McpServer): void {
             : "deviceQuery is region-unscoped. Sessions may route to devices in any region, including devices that have been offline for extended periods. Call find_available_device first to get a healthy region, then re-call get_test_boilerplate with that region value.",
           testName,
           projectType: projectType ?? 'standalone-gradle',
+          structure: pageObjectsApplied ? 'page-objects' : 'flat',
+          ...(structureNote ? { structureNote } : {}),
           files: resolved.map(f => ({ filename: f.filename, content: f.content })),
           orchestration: orchestrationInfo,
           ...(automotive ? { automotive } : {}),
           ...(capNotes.length ? { capabilityNotes: capNotes } : {}),
           setupNote: setupNote(language, isAppiumOss, projectType),
           appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
-          parallelNote: language === 'python'
-            ? 'Device farms support parallel test execution. Each test method already has its own setUp/tearDown session — no code changes needed. Install pytest-xdist (pip install pytest-xdist) and run: pytest -n auto -v. Check maxDevelopmentLicense via get_project_admin_settings to confirm your concurrency limit before scaling workers.'
-            : null,
+          parallelNote: parallelNote(language, isAppiumOss),
           credentialWarning: '⚠️ SECURITY: The access key embedded in these files is a live credential. Move it to an environment variable (DIGITAL_AI_ACCESS_KEY) and reference it from code before committing to source control.',
           // v38: when a custom app is targeted the test body is a placeholder, NOT a finished test.
           requiresVerifiedSelectors: clearTestBody,

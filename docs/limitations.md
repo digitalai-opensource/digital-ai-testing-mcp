@@ -106,7 +106,7 @@ The agent itself is currently a **1.0-SNAPSHOT** build. It is not shipped with t
 
 ## 18. Appium Grid Projects Support Fewer Commands than Appium Server
 
-Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locator `-ios predicate string` (use xpath or accessibility id); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom, alerts and geolocation reset; clipboard and app-state queries on iOS devices; and audio play/record (`audio_control`, see limitation 31). Robot Framework mobile tests are generated for Appium Server projects only (see limitation 32). There is no launch-by-package command on the Grid, so `launch_app` on an Android Grid session needs the launch activity (`mainActivity` from `get_application_info`). The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
+Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locators `-ios predicate string` and `-ios class chain` (use accessibility id or xpath); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom and alert routes; clipboard and app-state queries on iOS devices; webview contexts (`webview_context` lists NATIVE_APP only); the app-control extras `background`, `is_installed`, `install`; device diagnostics, appearance switching and the accessibility audit; and audio play/record (`audio_control`, see limitation 31). Zero-argument platform commands (geolocation reset, steps-group stop, HAR and device-log capture stop, webview-cache reset) DO run on the Grid — the server writes them in the Grid's inline form. Robot Framework mobile tests are generated for Appium Server projects only (see limitation 32). There is no launch-by-package command on the Grid, so `launch_app` on an Android Grid session needs the launch activity (`mainActivity` from `get_application_info`). The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
 
 ## 19. `find_elements` Details Only the First 20 Matches
 
@@ -174,3 +174,15 @@ The platform refuses session device queries longer than 255 characters. `start_i
 ## 34. No Generated Template for Two-Phone Call and SMS Tests
 
 Tests in which one device calls or messages another (voice calls, SMS, MMS) have no `get_test_boilerplate` template. Start from the reference project at https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests; both devices need SIM cards, and calls and SMS must be enabled for the project (`set_telephony_status`, Cloud Admin).
+
+## 35. Reports That Hold a Performance Transaction Cannot Be Deleted
+
+Once a session has recorded a performance transaction, the platform refuses to delete its report (a server-side persistence error). `stop_inspection_session` and the delete tools report the reason and the record stays; delete it from the reporter UI after the transaction is no longer needed.
+
+## 36. HAR Capture Records Nothing Under NV Tunneling
+
+`session_capture` with `kind: "har"` writes a HAR into the file repository, but the platform records no HTTP entries while NV tunneling is on for the device — which is every device on a tenant whose NV servers tunnel. The result is a ~290-byte ZIP holding an empty `har.json`; the tool says so. Use a performance transaction for network byte counts.
+
+## 37. Image-Based Locators Are Not Available
+
+The Appium image-comparison plugin is not loaded on the cloud agents, and an element find with the `-image` strategy terminates the agent's Appium process for the rest of the session (every later command fails with a connection error). The inspection tools do not offer the strategy; do not use it from generated tests either.

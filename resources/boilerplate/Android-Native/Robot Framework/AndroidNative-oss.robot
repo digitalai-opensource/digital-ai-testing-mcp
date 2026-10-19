@@ -51,6 +51,12 @@ Wait And Input
     Wait Until Element Is Visible    ${locator}    20s
     Input Text    ${locator}    ${text}
 
+# More AppiumLibrary keywords that fit a device farm (all built in, no extra library):
+#   Expect Text    <text>    visible    timeout=20s      polling assertion (also Expect Element    <locator>    visible)
+#   Scroll Element Into View    <locator>                 reach content below the fold
+#   ${contexts}=    Get Contexts    /    Switch To Context    WEBVIEW_...    /    Switch To Context    NATIVE_APP   (hybrid screens)
+#   Background Application    5                           lifecycle check
+
 Open Cloud Session
     Open Application    ${REMOTE_URL}    &{CAPABILITIES}
 

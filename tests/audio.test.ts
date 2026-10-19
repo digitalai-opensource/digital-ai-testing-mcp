@@ -2,7 +2,7 @@
  * audio_control against a stub Grid + repository. Source: dai-continuous-testing/UseCase-SIM-Card-Tests (repo scan
  * 2026-10-16). Verified live the same day on a Galaxy S24 with an audio line: record_start → play 5 s → record_stop
  * produced a 44-byte header-only WAV (the device played nothing), which the tool flags; a device without an audio line
- * fails with "Audio line is not configured"; the stop commands take no arguments, which the Grid cannot run.
+ * fails with "Audio line is not configured"; the Grid is unverified for audio, so the tool refuses there.
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
@@ -97,11 +97,11 @@ describe('audio_control', () => {
     await tools.call('stop_inspection_session', { handle: h });
   });
 
-  it('refuses Appium Grid sessions (the stop commands cannot run there)', async () => {
+  it('refuses Appium Grid sessions (audio is unverified there)', async () => {
     const h = await session("@os='android' and @name='GRID'");
     const r = await tools.call('audio_control', { handle: h, action: 'record_start' });
     assert.equal(r.res.isError, true);
-    assert.match(r.text, /not available on Appium Grid/);
+    assert.match(r.text, /only been verified on Appium Server/);
     await tools.call('stop_inspection_session', { handle: h });
   });
 });

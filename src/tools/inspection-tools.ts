@@ -54,7 +54,10 @@ import {
   networkConnection,
   setNetworkConditions,
   injectCameraImage,
-  clearWebCache
+  clearWebCache,
+  deviceDiagnostics,
+  setAppearance,
+  accessibilityAudit
 } from '../api/webdriver.js';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -1410,15 +1413,20 @@ export function registerInspectionTools(server: McpServer): void {
     'Device-level controls for an inspection session: orientation (get/set — rotation testing), clipboard (get/set — paste flows), ' +
     'geolocation (set/reset — location-based features), alerts (get_alert reads the text and, on iOS, the button labels; ' +
     'accept/dismiss — system dialogs, Appium Server only; iOS accept/dismiss take buttonLabel to press a specific button), ' +
-    'and file transfer (push_file/pull_file — test fixtures like images for upload flows). ' +
+    'file transfer (push_file/pull_file — test fixtures like images for upload flows), ' +
+    'device_info (one call: model, OS/API level, locale, time zone, battery, screen size/scale, system bars, lock state, ' +
+    'light/dark appearance — Appium Server), set_appearance (style dark|light: iOS appearance / Android night mode — ' +
+    'dark-mode screenshot checks), accessibility_audit (iOS: XCTest\'s built-in audit of the current screen, no extra ' +
+    'dependency; Android: use includeAxeScan in get_test_boilerplate). ' +
     'Grid session limits: alerts and reset_geolocation are not supported, and iOS Grid devices reject clipboard ops ' +
     '(clear errors explain alternatives). iOS file paths may require the @bundleId:container syntax.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z
-        .enum(['get_orientation', 'set_orientation', 'get_clipboard', 'set_clipboard', 'set_geolocation', 'reset_geolocation', 'get_alert', 'accept_alert', 'dismiss_alert', 'push_file', 'pull_file'])
+        .enum(['get_orientation', 'set_orientation', 'get_clipboard', 'set_clipboard', 'set_geolocation', 'reset_geolocation', 'get_alert', 'accept_alert', 'dismiss_alert', 'push_file', 'pull_file', 'device_info', 'set_appearance', 'accessibility_audit'])
         .describe('Device action to perform.'),
       orientation: z.enum(['PORTRAIT', 'LANDSCAPE']).optional().describe('For set_orientation.'),
+      style: z.enum(['dark', 'light']).optional().describe('For set_appearance.'),
       text: z.string().optional().describe('For set_clipboard: the text to place on the clipboard.'),
       buttonLabel: z.string().optional().describe('For accept_alert / dismiss_alert on iOS: the exact button label to press (from get_alert), e.g. "Allow Once".'),
       latitude: z.number().optional().describe('For set_geolocation.'),
@@ -1463,6 +1471,23 @@ export function registerInspectionTools(server: McpServer): void {
           case 'reset_geolocation': {
             await resetGeolocation(args.handle);
             return { content: [{ type: 'text' as const, text: '✅ Simulated location cleared — device uses its real location again.' }] };
+          }
+          case 'device_info': {
+            const d = await deviceDiagnostics(args.handle);
+            return { content: [{ type: 'text' as const, text: Object.entries(d).filter(([, v]) => v !== undefined).map(([k, v]) => `  ${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join('\n') }] };
+          }
+          case 'set_appearance': {
+            if (!args.style) return { content: [{ type: 'text' as const, text: 'Error: set_appearance requires style (dark|light).' }], isError: true };
+            const now = await setAppearance(args.handle, args.style);
+            if (now !== args.style) {
+              return { content: [{ type: 'text' as const, text: `⚠️ Requested ${args.style} but the device reports ${now} afterwards — this device/OS build does not honour the ${requireSession(args.handle).platform === 'ios' ? 'appearance' : 'night-mode (cmd uimode)'} switch (seen on one Android phone live). Toggle dark mode in the device Settings app instead.` }], isError: true };
+            }
+            return { content: [{ type: 'text' as const, text: `✅ Appearance is now ${now}. Take a screenshot to check the themed screen; set it back before stopping the session.` }] };
+          }
+          case 'accessibility_audit': {
+            const findings = await accessibilityAudit(args.handle);
+            const lines = findings.slice(0, 30).map((f, i) => `${i + 1}. ${String(f.type ?? f.auditType ?? 'issue')}: ${String(f.detailedDescription ?? f.compactDescription ?? f.elementDescription ?? '').split('\n')[0].slice(0, 200)}`);
+            return { content: [{ type: 'text' as const, text: findings.length ? `${findings.length} accessibility finding(s) on this screen:\n${lines.join('\n')}${findings.length > 30 ? `\n… ${findings.length - 30} more` : ''}` : 'No accessibility findings on this screen.' }] };
           }
           case 'get_alert': {
             const a = await getAlertInfo(args.handle);
@@ -1674,7 +1699,7 @@ export function registerInspectionTools(server: McpServer): void {
     'download_repository_file / get_repository_file_download_command. The HAR is a ZIP containing har.json. CAVEAT: with ' +
     'NV tunneling on for the device (every device on this tenant) the platform records NO HAR entries — the file comes ' +
     'back ~290 bytes and the response says so; use a performance transaction for network byte counts. Appium Server only ' +
-    '(the stop commands take no arguments, which the Grid rejects). For an unbounded in-session read without a file, use get_device_log.',
+    '(verified on the Grid too). For an unbounded in-session read without a file, use get_device_log.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       kind: z.enum(['har', 'device_log']).describe('What to capture.'),

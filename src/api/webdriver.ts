@@ -1119,9 +1119,15 @@ function execScript(
   timeoutMs = 30_000
 ): Promise<{ data: { value: unknown } }> {
   const path = session.sessionFormat === 'w3c' ? 'execute/sync' : 'execute';
+  // Appium Grid: a seetest:client command with NO arguments must be written inline — "seetest:client.cmd()" — because
+  // the Grid parses arguments out of the script string ("invalid parameters delimiter" for the bare form). Verified
+  // live 2026-10-19: report("x", true), startStepsGroup("g"), stopStepsGroup(), setLocation("37.33","-122.03"),
+  // clearLocation(), addTestProperty("k","v"), hybridClearCache() and getNetworkConnection("wifi") all run inline on the
+  // Grid, so every 0-arg command is reachable there after all (an earlier note said otherwise).
+  const inline = session.sessionFormat === 'jwp' && script.startsWith('seetest:client.') && args.length === 0 && !script.endsWith(')');
   return client.post(
     `/session/${session.gridSessionId}/${path}`,
-    { script, args },
+    inline ? { script: `${script}()`, args: [] } : { script, args },
     { timeout: timeoutMs }
   );
 }
@@ -1148,7 +1154,8 @@ export type AutomotiveAction = 'start' | 'stop' | 'screenshot' | 'tap' | 'dump';
 //  - a device without an audio line fails every command: "Audio line is not configured for device: <udid>"
 //  - digitalai:instrumentApp was not needed for the commands to run (the SIM-call use case sets it for call audio)
 //  - waitForAudioPlayEnd returns immediately (UseCase-SIM-Card-Tests), so "play for N seconds" sleeps here instead
-// Both stop commands take no arguments, which the Grid execute parser rejects — Appium Server sessions only.
+// Both stop commands take no arguments. The Grid runs 0-arg commands in the inline form (execScript), but audio on a
+// Grid session has not been verified live, so the tool still refuses there.
 
 export type AudioAction = 'play' | 'stop_play' | 'record_start' | 'record_stop';
 export const WAV_HEADER_ONLY_BYTES = 44;
@@ -1169,7 +1176,7 @@ export async function audioControl(
   const session = requireSession(handle);
   if (session.platform === 'web') throw new Error('audio_control needs a mobile inspection session, not a browser session.');
   if (session.sessionFormat === 'jwp') {
-    throw new Error('audio_control is not available on Appium Grid sessions: stopAudioPlay / stopAudioRecording take no arguments, which the Grid cannot run, so playback and recording could be started but never stopped. Use an Appium Server project.');
+    throw new Error('audio_control has only been verified on Appium Server sessions — use an Appium Server project (the Grid is unverified for the audio commands).');
   }
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const client = makeClient();
@@ -1332,7 +1339,8 @@ function automotiveError(e: unknown, handle: string): string {
 // These are seetest:client.* commands — the Digital.ai cloud proxy interprets
 // them, not Appium, so they route through execScript on both Grid (/execute)
 // and Appium Server / OSS (/execute/sync). The Grid execute parser cannot
-// express a zero-argument seetest command, so start REQUIRES a network profile.
+// express a zero-argument seetest command in the bare form (the inline "cmd()" form does run there, see execScript), and
+// the platform treats an empty profile as "3G-average" — so start REQUIRES an explicit network profile.
 export async function performanceTransaction(
   handle: string,
   action: 'start' | 'end',
@@ -2063,15 +2071,12 @@ export async function setGeolocation(
 
 export async function resetGeolocation(handle: string): Promise<void> {
   const session = requireSession(handle);
-  if (session.sessionFormat === 'jwp') {
-    // seetest:client.clearLocation exists but the Grid's execute parser cannot
-    // express 0-arg commands — confirmed live.
-    throw new Error(
-      'Geolocation reset is not supported on Appium Grid sessions. ' +
-      'Set explicit coordinates instead, or use an Appium Server (OSS) project session.'
-    );
-  }
   const client = makeClient();
+  if (session.sessionFormat === 'jwp') {
+    // seetest:client.clearLocation() — inline 0-arg form (execScript adds the parentheses on the Grid).
+    await execScript(client, session, 'seetest:client.clearLocation', []);
+    return;
+  }
   const script = session.platform === 'ios' ? 'mobile: resetSimulatedLocation' : 'mobile: resetGeolocation';
   await execScript(client, session, script, [{}]);
 }
@@ -2231,8 +2236,8 @@ export async function mockAuthentication(
 
 // ─── Session capture: HAR + device log into the file repository ──────────────
 // seetest:client.startHarRecording("cloud:<name>.har") / stopHarRecording(), startLoggingDevice("cloud:<name>.log") /
-// stopLoggingDevice() — verified live 2026-10-18 on Appium Server Android + iOS. Both stop commands are 0-arg (Appium
-// Server only). The HAR lands as a ZIP that contains `har.json`; with NV tunneling on (this tenant) the platform
+// stopLoggingDevice() — verified live 2026-10-18 on Appium Server Android + iOS and 2026-10-19 on the Grid (the 0-arg
+// stops run inline there, see execScript). The HAR lands as a ZIP that contains `har.json`; with NV tunneling on (this tenant) the platform
 // records no entries, so the ZIP is ~290 bytes — the tool says so instead of handing over an empty capture.
 
 export type CaptureKind = 'har' | 'device_log';
@@ -2245,9 +2250,6 @@ export async function sessionCapture(
 ): Promise<{ file: string; repositoryFile?: { id: number; size: number }; note?: string }> {
   const session = requireSession(handle);
   const client = makeClient();
-  if (session.sessionFormat === 'jwp') {
-    throw new Error(`${kind === 'har' ? 'HAR' : 'Device-log'} capture is Appium Server only — its stop command takes no arguments, which the Grid execute parser rejects.`);
-  }
   const field = kind === 'har' ? 'harRecording' : 'deviceLogRecording';
   if (action === 'start') {
     if (session[field]) throw new Error(`A ${kind} capture ("${session[field]}") is already running — stop it first.`);
@@ -2355,12 +2357,73 @@ export async function injectCameraImage(handle: string, source: string): Promise
 
 export async function clearWebCache(handle: string): Promise<void> {
   const session = requireSession(handle);
-  if (session.sessionFormat === 'jwp') throw new Error('hybridClearCache takes no arguments — Appium Server sessions only (the Grid execute parser rejects 0-arg commands).');
   try {
     await execScript(makeClient(), session, 'seetest:client.hybridClearCache', [], 60_000);
   } catch (e) {
     throw new Error(sessionAwareError(e, handle));
   }
+}
+
+// ─── Device diagnostics (Appium Server) ──────────────────────────────────────
+// Verified live 2026-10-18/19: Android `mobile: deviceInfo` (apiVersion, brand, model, locale, timeZone, realDisplaySize,
+// displayDensity, carrierName, networks), `batteryInfo` {level, state}, `getSystemBars`, `getDisplayDensity`,
+// `getDeviceTime`, `isLocked`, `getUiMode`/`setUiMode {mode:'night', value:'yes'|'no'}` (dark mode; getNotifications
+// fails to parse on Samsung — not exposed). iOS `deviceInfo` (currentLocale, timeZone, userInterfaceStyle, thermalState,
+// isSimulator, model), `batteryInfo`, `deviceScreenInfo` {statusBarSize, scale, screenSize}, `get/setAppearance
+// {style:'dark'|'light'}`, `performAccessibilityAudit` (XCTest audit — array of findings), `isLocked`.
+// NEVER use the "-image" locator strategy: a single find killed the agent's Appium process on both platforms (every
+// later command "Connection refused"); the image plugin is not loaded on the cloud agents.
+
+export async function deviceDiagnostics(handle: string): Promise<Record<string, unknown>> {
+  const session = requireSession(handle);
+  if (session.sessionFormat !== 'w3c') throw new Error('device_info needs an Appium Server session (mobile: deviceInfo is not available on the Grid) — get_device_detail reads the platform record instead.');
+  const client = makeClient();
+  const call = async (script: string, args: unknown[] = [{}]) => { try { return (await execScript(client, session, script, args, 20_000)).data.value; } catch { return undefined; } };
+  const info = (await call('mobile: deviceInfo')) as Record<string, unknown> | undefined;
+  const battery = (await call('mobile: batteryInfo')) as Record<string, unknown> | undefined;
+  const locked = await call('mobile: isLocked');
+  if (session.platform === 'ios') {
+    const screen = (await call('mobile: deviceScreenInfo')) as Record<string, unknown> | undefined;
+    const appearance = (await call('mobile: getAppearance')) as { style?: string } | undefined;
+    return {
+      platform: 'iOS', model: info?.model, name: info?.name, locale: info?.currentLocale, timeZone: info?.timeZone,
+      isSimulator: info?.isSimulator, thermalState: info?.thermalState, appearance: appearance?.style ?? info?.userInterfaceStyle,
+      battery, screen, locked,
+    };
+  }
+  const bars = await call('mobile: getSystemBars');
+  const density = await call('mobile: getDisplayDensity');
+  const time = await call('mobile: getDeviceTime', [{ format: 'YYYY-MM-DD HH:mm:ss Z' }]);
+  const night = await call('mobile: getUiMode', [{ mode: 'night' }]);
+  return {
+    platform: 'Android', brand: info?.brand, model: info?.model, manufacturer: info?.manufacturer, apiVersion: info?.apiVersion,
+    platformVersion: info?.platformVersion, locale: info?.locale, timeZone: info?.timeZone, carrier: info?.carrierName,
+    realDisplaySize: info?.realDisplaySize, displayDensity: density ?? info?.displayDensity, systemBars: bars,
+    appearance: night === 'yes' ? 'dark' : night === 'no' ? 'light' : undefined, deviceTime: time, battery, locked,
+  };
+}
+
+export async function setAppearance(handle: string, style: 'dark' | 'light'): Promise<string> {
+  const session = requireSession(handle);
+  if (session.sessionFormat !== 'w3c') throw new Error('appearance is Appium Server only (mobile: setAppearance / setUiMode).');
+  const client = makeClient();
+  if (session.platform === 'ios') {
+    await execScript(client, session, 'mobile: setAppearance', [{ style }]);
+    const r = await execScript(client, session, 'mobile: getAppearance', [{}]);
+    return String((r.data.value as { style?: string })?.style ?? style);
+  }
+  await execScript(client, session, 'mobile: setUiMode', [{ mode: 'night', value: style === 'dark' ? 'yes' : 'no' }]);
+  const r = await execScript(client, session, 'mobile: getUiMode', [{ mode: 'night' }]);
+  return r.data.value === 'yes' ? 'dark' : 'light';
+}
+
+export async function accessibilityAudit(handle: string): Promise<Array<Record<string, unknown>>> {
+  const session = requireSession(handle);
+  if (session.platform !== 'ios' || session.sessionFormat !== 'w3c') {
+    throw new Error('accessibility_audit runs XCTest\'s audit on iOS Appium Server sessions only. For Android (or a report-attached scan on either platform) generate the test with includeAxeScan.');
+  }
+  const r = await execScript(makeClient(), session, 'mobile: performAccessibilityAudit', [{}], 60_000);
+  return Array.isArray(r.data.value) ? (r.data.value as Array<Record<string, unknown>>) : [];
 }
 
 // ─── Webview contexts ─────────────────────────────────────────────────────────

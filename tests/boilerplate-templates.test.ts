@@ -31,7 +31,7 @@ const javaDirs = (re: RegExp) => all.filter((p) => re.test(rel(p)));
 
 const gradleFiles = javaDirs(/\/[^/]*(junit5|testng)[^/]*\/gradle(-oss)?$/i);
 const junit5Gradle = gradleFiles.filter((p) => /junit5/i.test(rel(p)));
-const testngJava = javaDirs(/testng[^/]*\/[^/]+\.java$/i);
+const testngJava = javaDirs(/testng[^/]*\/[^/]+\.java$/i).filter((p) => !/-po\.java$/.test(p));
 
 describe('Java Gradle templates', () => {
   it('found all 8 Gradle templates (Grid + Appium Server × JUnit5/TestNG × Android/iOS)', () => {
@@ -134,7 +134,9 @@ describe('Python and Node template fixes (2026-10-17)', () => {
 });
 
 describe('Locators and waits in the templates (release 1, 2026-10-17)', () => {
-  const sources = walk(ROOT).filter((p) => /\.(py|java|js|robot)$/.test(p) && !/Report\.py$|wdio.*\.conf\.js$/.test(p));
+  // Page-object test variants (-po.*) hold no locators or waits themselves — those live in the shared screen classes,
+  // checked separately below.
+  const sources = walk(ROOT).filter((p) => /\.(py|java|js|robot)$/.test(p) && !/Report\.py$|wdio.*\.conf\.js$|-po\.(java|js)$|[\\/]shared[\\/]/.test(p));
 
   it('no iOS template locates by //*[@name=…] XPath — accessibility id is the same match without the tree walk', () => {
     const ios = sources.filter((p) => p.includes('iOS-Native'));
@@ -166,6 +168,35 @@ describe('Locators and waits in the templates (release 1, 2026-10-17)', () => {
       const src = readFileSync(p, 'utf-8');
       if (p.endsWith('-oss.java')) assert.match(src, /AppiumBy\.accessibilityId/, p);
       else assert.match(src, /MobileBy\.AccessibilityId/, p);
+    }
+  });
+});
+
+describe('Page-object screen classes (release 4)', () => {
+  const screens = walk(join(ROOT, 'shared'));
+  const javaScreens = screens.filter((p) => p.endsWith('.java'));
+  const nodeScreens = screens.filter((p) => p.endsWith('.js'));
+
+  it('ships the Java and Node screen sets', () => {
+    assert.deepEqual(javaScreens.map((p) => p.split(/[\\/]/).pop()).sort(), ['AppScreen.java', 'BaseScreen.java', 'DashboardScreen.java', 'LoginScreen.java', 'PaymentScreen.java']);
+    assert.deepEqual(nodeScreens.map((p) => p.split(/[\\/]/).pop()).sort(), ['AppScreen.js', 'DashboardScreen.js', 'LoginScreen.js', 'PaymentScreen.js', 'PlaceholderScreen.js']);
+  });
+
+  it('base screens wait explicitly; demo screens use platform-chosen id / accessibility-id locators', () => {
+    assert.match(readFileSync(javaScreens.find((p) => p.endsWith('BaseScreen.java'))!, 'utf-8'), /WebDriverWait\(driver, Duration\.ofSeconds\(20\)\)/);
+    assert.match(readFileSync(nodeScreens.find((p) => p.endsWith('AppScreen.js'))!, 'utf-8'), /waitForDisplayed\(\)/);
+    for (const p of [...javaScreens, ...nodeScreens]) {
+      const src = readFileSync(p, 'utf-8');
+      assert.doesNotMatch(src, /\/\/\*\[@name=|Thread\.sleep|browser\.pause|implicitly/, p);
+      if (/(Login|Dashboard|Payment)Screen/.test(p)) assert.match(src, /platform\(/, `${p}: locators must be chosen per platform`);
+    }
+  });
+
+  it('placeholder screens carry <…> tokens that validate_test_script flags; demo screens carry none', () => {
+    for (const p of [...javaScreens, ...nodeScreens]) {
+      const src = readFileSync(p, 'utf-8');
+      if (/AppScreen\.java$|PlaceholderScreen\.js$/.test(p)) assert.match(src, /<resource-id from get_element_tree>/, p);
+      else assert.doesNotMatch(src, /<[^>\n]*(resource-id|accessibility id)[^>\n]*>/, p);
     }
   });
 });

@@ -23,6 +23,8 @@ let locked = false;
 let authReply: unknown = { value: { message: null } };
 let alertOpen = true;
 let deleteFails = false;
+let appearance = 'light';
+const gridExecuted: Array<{ script: string; args: unknown[] }> = [];
 const netState: Record<string, boolean> = { wifi: true, bluetooth: false };
 const executed: Array<{ script: string; args: unknown[] }> = [];
 const sessionBodies: Array<Record<string, unknown>> = [];
@@ -33,7 +35,15 @@ beforeAll(async () => {
     if (req.path === '/wd/hub/session' && req.method === 'POST') {
       sessionBodies.push(req.json as Record<string, unknown>);
       const ios = String(req.json.desiredCapabilities?.platformName) === 'iOS';
+      if (String(req.json.desiredCapabilities?.['digitalai:deviceQuery']).includes('GRID')) {
+        return { sessionId: 'CLOUD-SID:grid-1', status: 0, value: { 'digitalai:reportTestId': 23, platformName: 'Android' } };
+      }
       return { value: { sessionId: ios ? 'ios-1' : 'and-1', capabilities: { 'digitalai:reportTestId': ios ? 21 : 22, platformName: ios ? 'iOS' : 'Android', platformVersion: '17' } } };
+    }
+    if (req.path === '/wd/hub/session/CLOUD-SID:grid-1/execute') {
+      gridExecuted.push({ script: String(req.json.script), args: req.json.args as unknown[] });
+      if (/\(\)$/.test(String(req.json.script)) || (req.json.args as unknown[]).length > 0) return { value: { status: true } };
+      return reply(500, { value: { message: "javascript error (javascript error. Cannot parse the command: invalid parameters delimiter '(' or ')'.)" }, status: 17 });
     }
     if (/^\/wd\/hub\/session\/[^/]+\/execute\/sync$/.test(req.path)) {
       const script = String(req.json.script);
@@ -55,6 +65,19 @@ beforeAll(async () => {
       if (script === 'seetest:client.setNetworkConnection') { netState[String(args[0])] = args[1] === true; return { value: { message: null } }; }
       if (script === 'seetest:client.simulateCapture') return reply(404, { value: { error: 'unknown command', message: 'Failed to execute simulateCapture(): application is not instrumented' } });
       if (script === 'seetest:client.endPerformanceTransaction') return { value: { transactionId: 99, transactionName: args[0] } };
+      const ios = req.path.includes('/ios-1/');
+      if (script === 'mobile: deviceInfo') return { value: ios ? { model: 'iPhone', currentLocale: 'en_US', timeZone: 'America/Los_Angeles', isSimulator: false, thermalState: 0, userInterfaceStyle: 'light' } : { brand: 'samsung', model: 'SM-S936U1', manufacturer: 'samsung', apiVersion: '35', platformVersion: '15', locale: 'en_US', timeZone: 'America/New_York', realDisplaySize: '1080x2340', displayDensity: 450 } };
+      if (script === 'mobile: batteryInfo') return { value: { level: 1, state: 5 } };
+      if (script === 'mobile: isLocked') return { value: locked };
+      if (script === 'mobile: deviceScreenInfo') return { value: { statusBarSize: { width: 390, height: 47 }, scale: 3, screenSize: { width: 390, height: 844 } } };
+      if (script === 'mobile: getAppearance') return { value: { style: appearance } };
+      if (script === 'mobile: setAppearance') { appearance = (args[0] as { style: string }).style; return { value: null }; }
+      if (script === 'mobile: getUiMode') return { value: appearance === 'dark' ? 'yes' : 'no' };
+      if (script === 'mobile: setUiMode') { appearance = (args[0] as { value: string }).value === 'yes' ? 'dark' : 'light'; return { value: null }; }
+      if (script === 'mobile: getSystemBars') return { value: { statusBar: { visible: true, x: 0, y: 0, width: 1080, height: 92 } } };
+      if (script === 'mobile: getDisplayDensity') return { value: 450 };
+      if (script === 'mobile: getDeviceTime') return { value: '2026-10-18 20:25:26 -04:00' };
+      if (script === 'mobile: performAccessibilityAudit') return { value: [{ type: 'XCUIAccessibilityAuditTypeContrast', detailedDescription: 'Element has insufficient contrast\nmore', elementDescription: 'StaticText' }] };
       if (script === 'seetest:client.setAuthenticationReply') return authReply;
       return { value: null };
     }
@@ -80,7 +103,7 @@ afterAll(async () => {
   await tools.close();
   await api.close();
 });
-beforeEach(() => { executed.length = 0; sessionBodies.length = 0; locked = false; alertOpen = true; deleteFails = false; netState.bluetooth = false; authReply = { value: { message: null } }; });
+beforeEach(() => { executed.length = 0; sessionBodies.length = 0; locked = false; alertOpen = true; deleteFails = false; appearance = 'light'; gridExecuted.length = 0; netState.bluetooth = false; authReply = { value: { message: null } }; });
 
 async function session(platform: 'ios' | 'android', extra: Record<string, unknown> = {}): Promise<string> {
   return (await tools.callJson('start_inspection_session', { platform, ...extra })).handle as string;
@@ -346,5 +369,75 @@ describe('release-3 session tools (verified live 2026-10-18)', () => {
     const r = await tools.call('stop_inspection_session', { handle: h });
     assert.equal(r.res.isError, undefined, r.text);
     assert.match(r.text, /Report NOT deleted \(test_id=22\): the report holds a performance transaction/);
+  });
+});
+
+describe('device_control diagnostics (release 4, verified live 2026-10-18/19)', () => {
+  it('device_info condenses deviceInfo/battery/screen/bars/density/appearance per platform', async () => {
+    const a = await session('android');
+    let r = await tools.call('device_control', { handle: a, action: 'device_info' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.match(r.text, /model: SM-S936U1/); assert.match(r.text, /apiVersion: 35/); assert.match(r.text, /displayDensity: 450/);
+    assert.match(r.text, /appearance: light/); assert.match(r.text, /systemBars: \{"statusBar"/); assert.match(r.text, /locked: false/);
+    await tools.call('stop_inspection_session', { handle: a });
+    const i = await session('ios');
+    r = await tools.call('device_control', { handle: i, action: 'device_info' });
+    assert.match(r.text, /platform: iOS/); assert.match(r.text, /screen: \{"statusBarSize"/); assert.match(r.text, /isSimulator: false/);
+    await tools.call('stop_inspection_session', { handle: i });
+  });
+
+  it('set_appearance toggles dark mode on both platforms (setAppearance / setUiMode night)', async () => {
+    const a = await session('android');
+    let r = await tools.call('device_control', { handle: a, action: 'set_appearance', style: 'dark' });
+    assert.match(r.text, /Appearance is now dark/);
+    assert.deepEqual(executed.filter((e) => e.script === 'mobile: setUiMode').at(-1)?.args, [{ mode: 'night', value: 'yes' }]);
+    await tools.call('stop_inspection_session', { handle: a });
+    const i = await session('ios');
+    r = await tools.call('device_control', { handle: i, action: 'set_appearance', style: 'dark' });
+    assert.match(r.text, /Appearance is now dark/);
+    assert.deepEqual(executed.filter((e) => e.script === 'mobile: setAppearance').at(-1)?.args, [{ style: 'dark' }]);
+    await tools.call('stop_inspection_session', { handle: i });
+  });
+
+  it('accessibility_audit lists XCTest findings on iOS and points Android to includeAxeScan', async () => {
+    const i = await session('ios');
+    let r = await tools.call('device_control', { handle: i, action: 'accessibility_audit' });
+    assert.match(r.text, /1 accessibility finding\(s\)/);
+    assert.match(r.text, /XCUIAccessibilityAuditTypeContrast: Element has insufficient contrast/);
+    await tools.call('stop_inspection_session', { handle: i });
+    const a = await session('android');
+    r = await tools.call('device_control', { handle: a, action: 'accessibility_audit' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /includeAxeScan/);
+    await tools.call('stop_inspection_session', { handle: a });
+  });
+});
+
+describe('Appium Grid: zero-argument seetest commands run in the inline form (verified live 2026-10-19)', () => {
+  const grid = async () => (await tools.callJson('start_inspection_session', { platform: 'android', deviceQuery: "@os='android' and @name='GRID'" })).handle as string;
+
+  it('reset_geolocation, clear_web_cache and the capture stops send "seetest:client.cmd()"', async () => {
+    const h = await grid();
+    let r = await tools.call('device_control', { handle: h, action: 'reset_geolocation' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.deepEqual(gridExecuted.at(-1), { script: 'seetest:client.clearLocation()', args: [] });
+    r = await tools.call('app_control', { handle: h, action: 'clear_web_cache' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.deepEqual(gridExecuted.at(-1), { script: 'seetest:client.hybridClearCache()', args: [] });
+    await tools.call('session_capture', { handle: h, kind: 'har', action: 'start', name: 'g' });
+    assert.deepEqual(gridExecuted.at(-1), { script: 'seetest:client.startHarRecording', args: ['cloud:g.har'] });
+    r = await tools.call('session_capture', { handle: h, kind: 'har', action: 'stop' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.deepEqual(gridExecuted.at(-1), { script: 'seetest:client.stopHarRecording()', args: [] });
+    await tools.call('stop_inspection_session', { handle: h });
+  });
+
+  it('commands with arguments keep the separate-argument form on the Grid', async () => {
+    const h = await grid();
+    await tools.call('device_control', { handle: h, action: 'set_geolocation', latitude: 37.33, longitude: -122.03 });
+    const last = gridExecuted.at(-1)!;
+    assert.equal(last.script, 'seetest:client.setLocation');
+    assert.equal(last.args.length, 2);
+    await tools.call('stop_inspection_session', { handle: h });
   });
 });

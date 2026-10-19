@@ -6,6 +6,8 @@ exports.config = {
     path: '/wd/hub',
     specs: ['./test/specs/iOSNative.js'],
     exclude: [],
+    // Parallel runs: each spec file gets its own device session — raise this to the number of workers you want
+    // (check the project's maxDevelopmentLicense and free matching devices first) and split tests across spec files.
     maxInstances: 1,
     capabilities: [{
         platformName: 'iOS',

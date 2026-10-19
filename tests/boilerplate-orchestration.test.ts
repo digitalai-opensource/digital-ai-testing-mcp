@@ -248,7 +248,7 @@ describe('get_test_boilerplate — automotiveProjection (Android Auto / CarPlay)
 describe('get_test_boilerplate — reportStatus (report the real outcome)', () => {
   // Verified live 2026-10-16: a session with no WebDriver errors is reported Passed even when the test failed on its own
   // assertion; with the wrapper the report is Failed with the assertion message as the cause (Grid and Appium Server).
-  // stopStepsGroup is a 0-argument seetest command the Grid cannot run, so Grid gets the status only.
+  // The Grid runs 0-argument seetest commands in the inline form ("seetest:client.stopStepsGroup()") — verified 2026-10-19.
   const test = (g: Gen) => g.files.find((f) => /\.(java|py)$|Native\.js$/.test(f.filename) && !/conf/.test(f.filename))!.content;
 
   it('Appium Server: every language wraps the steps in a steps group and sets Passed/Failed', async () => {
@@ -266,12 +266,14 @@ describe('get_test_boilerplate — reportStatus (report the real outcome)', () =
     }
   });
 
-  it('Appium Grid: status only — no steps group', async () => {
+  it('Appium Grid: steps group with the inline 0-arg stop, plus the status', async () => {
     account.isAppiumOss = false; account.fail = false;
     for (const language of ['java-junit5', 'python', 'nodejs']) {
       const t = test((await gen({ platform: 'android', language })).json);
       assert.match(t, /seetest:client\.setReportStatus/, language);
-      assert.doesNotMatch(t, /StepsGroup/, `${language}: the Grid cannot run stopStepsGroup`);
+      assert.match(t, /seetest:client\.startStepsGroup/, `${language}: group start`);
+      assert.match(t, /seetest:client\.stopStepsGroup\(\)/, `${language}: inline 0-arg group stop`);
+      assert.doesNotMatch(t, /stopStepsGroup"\)|stopStepsGroup'\)/, `${language}: the bare form is Appium Server only`);
     }
     account.isAppiumOss = true;
   });
@@ -469,6 +471,54 @@ describe('generated demo tests pass their own validator with no warnings (releas
       }
     }
   }
+});
+
+describe('get_test_boilerplate — structure: "page-objects" (release 4)', () => {
+  it('Java on Appium Server: screens + a test that reads as the flow, clean in validate_test_script', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const g = (await gen({ platform: 'android', language: 'java-junit5', structure: 'page-objects', orchestration: 'off' })).json as Gen & { structure?: string };
+    assert.equal(g.structure, 'page-objects');
+    assert.deepEqual(g.files.map((f) => f.filename).filter((f) => f.endsWith('.java')).sort(), ['src/test/java/BaseScreen.java', 'src/test/java/DashboardScreen.java', 'src/test/java/LocalAndroidTest.java', 'src/test/java/LoginScreen.java', 'src/test/java/PaymentScreen.java']);
+    const test = file(g, 'src/test/java/LocalAndroidTest.java')!.content;
+    assert.match(test, /new LoginScreen\(driver\)\.login\("company", "company"\)/);
+    assert.match(test, /seetest:client\.setReportStatus/);
+    for (const f of g.files.filter((x) => x.filename.endsWith('.java'))) {
+      const v = JSON.parse((await call('validate_test_script', { scriptContent: f.content, outputFormat: 'json' })).content.map((c) => c.text ?? '').join(''));
+      assert.equal(v.verdict, 'pass', f.filename);
+      assert.equal(v.issues.filter((i: { severity: string }) => i.severity === 'warn').length, 0, f.filename);
+    }
+  });
+
+  it('Node (both modes): screenobjects folder + spec requiring LoginScreen', async () => {
+    for (const oss of [true, false]) {
+      account.isAppiumOss = oss; account.fail = false;
+      const g = (await gen({ platform: 'ios', language: 'nodejs', structure: 'page-objects' })).json as Gen & { structure?: string };
+      assert.equal(g.structure, 'page-objects', `oss=${oss}`);
+      assert.ok(file(g, 'test/screenobjects/PaymentScreen.js'), `oss=${oss}`);
+      assert.match(file(g, 'test/specs/iOSNative.js')!.content, /require\('\.\.\/screenobjects\/LoginScreen'\)/);
+    }
+  });
+
+  it('a real app gets a placeholder screen that validate_test_script flags, and the test keeps the fail guard', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const g = (await gen({ platform: 'ios', language: 'java-testng', structure: 'page-objects', confirmSelectorsVerified: true, bundleIdentifier: 'com.acme.app' })).json;
+    assert.ok(file(g, 'src/test/java/AppScreen.java'));
+    assert.ok(!file(g, 'src/test/java/LoginScreen.java'));
+    const test = file(g, 'src/test/java/LocaliOSTest.java')!.content;
+    assert.match(test, /Assertions\.fail|fail\(/);
+    assert.match(test, /new AppScreen\(driver\)\.enterValue/);
+    const v = await call('validate_test_script', { scriptContent: file(g, 'src/test/java/AppScreen.java')!.content, outputFormat: 'json' });
+    assert.equal(v.isError, true);
+  });
+
+  it('falls back to flat with a note for Python/Robot and for Java on the Grid', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    let g = (await gen({ platform: 'android', language: 'python', structure: 'page-objects' })).json as Gen & { structure?: string; structureNote?: string };
+    assert.equal(g.structure, 'flat'); assert.match(g.structureNote ?? '', /python is generated flat/);
+    account.isAppiumOss = false;
+    g = (await gen({ platform: 'android', language: 'java-junit5', structure: 'page-objects', orchestration: 'off' })).json as Gen & { structure?: string; structureNote?: string };
+    assert.equal(g.structure, 'flat'); assert.match(g.structureNote ?? '', /Grid project is generated flat/);
+  });
 });
 
 describe('get_web_test_boilerplate — fixes found running the templates live (2026-10-16)', () => {
