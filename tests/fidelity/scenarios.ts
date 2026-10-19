@@ -376,4 +376,57 @@ export const SCENARIOS: Scenario[] = [
       { kind: 'calledWhere', tool: 'get_test_boilerplate', where: (i) => !!i.reportKeys && typeof i.reportKeys === 'object' && Object.keys(i.reportKeys as object).length > 0, label: 'adds a report key for the build' },
     ],
   },
+  {
+    id: 'hybrid-webview-screen',
+    title: 'A screen that is web content inside the native app',
+    guards: 'release 2 — hybrid screens driven with native locators that cannot see inside the WebView',
+    prompt:
+      'Open an inspection session on an available Android phone with the ExperiBank demo app (package com.experitest.ExperiBank, activity .LoginActivity), ' +
+      'log in with company / company, and then tell me what is on the balance screen. If that screen is a web page inside the app, find its heading ' +
+      'the way a web test would and report the HTML title.',
+    checks: [
+      { kind: 'calledAny', tools: ['start_inspection_session'], label: 'opens an inspection session' },
+      { kind: 'calledAny', tools: ['webview_context'], label: 'checks / switches the WebDriver context for web content', soft: true },
+      { kind: 'notCalled', tools: ['get_test_boilerplate'], label: 'does not generate a test for an exploration request' },
+    ],
+  },
+  {
+    id: 'crash-while-exploring',
+    title: 'App crashed during a live session',
+    guards: 'release 2 — reaching for the after-the-fact report log instead of the live device log',
+    prompt:
+      'Open an inspection session on an available Android phone, launch the ExperiBank demo app (com.experitest.ExperiBank / .LoginActivity) and log in with company / company. ' +
+      'Imagine the app had just crashed on the next tap: without stopping the session, show me the device log lines that mention the app so I can see why.',
+    checks: [
+      { kind: 'calledAny', tools: ['start_inspection_session'], label: 'opens an inspection session' },
+      { kind: 'calledAny', tools: ['get_device_log'], label: 'reads the LIVE device log' },
+      { kind: 'notCalled', tools: ['get_test_log', 'download_test_attachments'], label: 'does not go to the report attachments while the session is open', soft: true },
+    ],
+  },
+  {
+    id: 'page-object-suite',
+    title: 'Generated test as page objects',
+    guards: 'release 4 — flat demo test delivered when the user asked for a maintainable layout',
+    prompt:
+      'Generate a Java JUnit 5 Appium test project for the ExperiBank demo on Android, structured as page objects — one class per screen — ' +
+      'so my team can keep adding screens. Use the Maven layout.',
+    checks: [
+      { kind: 'calledWhere', tool: 'get_test_boilerplate', where: (i) => i.structure === 'page-objects', label: 'asks for the page-object structure' },
+      { kind: 'notCalled', tools: ['start_inspection_session'], label: 'no inspection needed for the verified demo app' },
+      { kind: 'noFabricatedCode', label: 'no fabricated selectors or placeholder credentials in delivered code' },
+    ],
+  },
+  {
+    id: 'offline-mode-check',
+    title: 'Check the app with the network switched off',
+    guards: 'release 3 — toggling connectivity by hand through shell commands or guessing',
+    prompt:
+      'On an inspection session on an available Android phone with the ExperiBank demo app (com.experitest.ExperiBank / .LoginActivity) open, ' +
+      'turn the phone\'s wifi off, try to log in with company / company, tell me what the app shows, then turn wifi back on before you finish.',
+    checks: [
+      { kind: 'calledAny', tools: ['start_inspection_session'], label: 'opens an inspection session' },
+      { kind: 'calledWhere', tool: 'network_control', where: (i) => i.action === 'set' && i.kind === 'wifi' && (i.enabled === false || i.enabled === 'false'), label: 'switches wifi off through the network tool' },
+      { kind: 'calledWhere', tool: 'network_control', where: (i) => i.action === 'set' && i.kind === 'wifi' && yes(i.enabled), label: 'restores wifi', soft: true },
+    ],
+  },
 ];
