@@ -511,6 +511,16 @@ describe('get_test_boilerplate — structure: "page-objects" (release 4)', () =>
     assert.equal(v.isError, true);
   });
 
+  it('Node + real app: the spec requires PlaceholderScreen (LoginScreen is not shipped in placeholder mode)', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const g = (await gen({ platform: 'android', language: 'nodejs', structure: 'page-objects', confirmSelectorsVerified: true, packageName: 'com.acme.app' })).json;
+    assert.ok(file(g, 'test/screenobjects/PlaceholderScreen.js'));
+    assert.ok(!file(g, 'test/screenobjects/LoginScreen.js'));
+    const spec = file(g, 'test/specs/AndroidNative.js')!.content;
+    assert.match(spec, /const PlaceholderScreen = require\('\.\.\/screenobjects\/PlaceholderScreen'\)/);
+    assert.doesNotMatch(spec, /screenobjects\/LoginScreen/);
+  });
+
   it('falls back to flat with a note for Python/Robot and for Java on the Grid', async () => {
     account.isAppiumOss = true; account.fail = false;
     let g = (await gen({ platform: 'android', language: 'python', structure: 'page-objects' })).json as Gen & { structure?: string; structureNote?: string };

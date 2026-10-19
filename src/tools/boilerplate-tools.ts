@@ -225,7 +225,8 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   const sleeps = content.match(/\bThread\.sleep\s*\(|\btime\.sleep\s*\(|\b(?:browser|driver)\.pause\s*\(|^\s*Sleep\s{2,}\d/gim);
   if (sleeps) add('warn', 'fixed sleeps', `${sleeps.length} fixed sleep(s) (${[...new Set(sleeps.map((x) => x.trim()))].slice(0, 3).join(', ')}). Replace with an explicit wait on the element the next step needs (WebDriverWait / waitForDisplayed / Wait Until Element Is Visible).`);
 
-  const indexXpath = content.match(/\/\/[^'"\n]*\[\d+\][^'"\n]*/g);
+  // Only XPath literals (quoted, or Robot's xpath=…) — a bare `//` would also match every Java/JS line comment with [N].
+  const indexXpath = content.match(/(?<=['"`]|xpath=)\/\/[^'"`\n]*\[\d+\][^'"`\n]*/g);
   if (indexXpath) add('warn', 'index-based XPath', `Positional XPath (${[...new Set(indexXpath)].slice(0, 3).join(', ')}) breaks when siblings move or a header appears. Prefer accessibility id / resource-id, then an attribute match (@text, @label, @content-desc).`);
 
   const sharedDriver = content.match(/\bstatic\s+(?:final\s+)?(?:Android|IOS|Appium|Remote|Web)Driver\b[^\n;]*\bdriver\b|@Before(?:All|Suite|Class)\b[\s\S]{0,400}?driver\s*=\s*new\s+(?:Android|IOS|Appium)Driver|def setUpClass[\s\S]{0,400}?webdriver\.Remote\(/g);
@@ -636,6 +637,11 @@ function substitute(
     };
     if (vars.clearTestBody) {
       result = result.replace(DEMO_STEP_PATTERN, () => decorate(buildPlaceholder(language, platform, indent, vars.isAppiumOss !== false, vars.pageObjects === true)));
+      // Node page objects: the placeholder variant ships PlaceholderScreen instead of LoginScreen, so the spec must
+      // require the file that is actually generated (a missing module fails at load, before the fail-guard runs).
+      if (vars.pageObjects && language === 'nodejs') {
+        result = result.replace(/const LoginScreen = require\('\.\.\/screenobjects\/LoginScreen'\);/, "const PlaceholderScreen = require('../screenobjects/PlaceholderScreen');");
+      }
     } else {
       result = result.replace(DEMO_INNER_PATTERN, (inner) => decorate(inner));
       result = result.replace(/[^\S\n]*(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n/, '');

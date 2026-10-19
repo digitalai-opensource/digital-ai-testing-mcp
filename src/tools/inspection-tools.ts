@@ -1375,7 +1375,7 @@ export function registerInspectionTools(server: McpServer): void {
     'is_installed (true/false for packageName), current (what is in the foreground: Android package + activity, iOS bundle id), ' +
     'install (install a repository build mid-session from appRef "cloud:<package or bundle>" / "cloud:uniqueName=<name>" — Appium Server only; ' +
     'this lifts the "install before the session" rule for Appium Server projects), ' +
-    'clear_web_cache (seetest:client.hybridClearCache — drops the cache of the app\'s webviews; Appium Server only). ' +
+    'clear_web_cache (seetest:client.hybridClearCache — drops the cache of the app\'s webviews; both modes). ' +
     'NOTE on Grid sessions: query_state/current report only the foreground activity (Android) or are unavailable (iOS); deep_link is best-effort; ' +
     'background, is_installed and install are Appium Server only. To relaunch after terminate, use launch_app.',
     {
@@ -1698,8 +1698,8 @@ export function registerInspectionTools(server: McpServer): void {
     'start and stop (startLoggingDevice → stopLoggingDevice). stop returns the repository file (id, size) to fetch with ' +
     'download_repository_file / get_repository_file_download_command. The HAR is a ZIP containing har.json. CAVEAT: with ' +
     'NV tunneling on for the device (every device on this tenant) the platform records NO HAR entries — the file comes ' +
-    'back ~290 bytes and the response says so; use a performance transaction for network byte counts. Appium Server only ' +
-    '(verified on the Grid too). For an unbounded in-session read without a file, use get_device_log.',
+    'back ~290 bytes and the response says so; use a performance transaction for network byte counts. Works on Appium ' +
+    'Server and Appium Grid sessions (both verified live). For an unbounded in-session read without a file, use get_device_log.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       kind: z.enum(['har', 'device_log']).describe('What to capture.'),
@@ -1728,7 +1728,7 @@ export function registerInspectionTools(server: McpServer): void {
     'turn it back on before stopping); "set_conditions" applies an NV network profile ("3G-average", "Monitor" = none…) ' +
     'to the device\'s traffic WITHOUT recording a transaction — for exploring an app under a slow network; durationMs 0 ' +
     'keeps it until changed; needs an ONLINE, tunneled NV server in the device\'s region (list_nv_servers) and a Project Admin ' +
-    'or Cloud Admin key. Appium Server sessions.',
+    'or Cloud Admin key. Appium Server and Appium Grid sessions (seetest:client commands run on both).',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z.enum(['get', 'set', 'set_conditions']).describe('get / set a connection, or set_conditions (NV profile).'),

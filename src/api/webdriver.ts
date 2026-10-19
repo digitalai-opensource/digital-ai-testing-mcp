@@ -270,6 +270,20 @@ export async function quitInspectionSession(
   const session = requireSession(handle);
 
   const client = makeClient();
+  // A HAR / device-log capture left running would never be finalised once the session is gone — stop it first
+  // (best-effort: the session may already be dead).
+  for (const [field, script] of [
+    ['harRecording', 'seetest:client.stopHarRecording'],
+    ['deviceLogRecording', 'seetest:client.stopLoggingDevice'],
+  ] as const) {
+    if (!session[field]) continue;
+    try {
+      await execScript(client, session, script, [], 15_000);
+    } catch {
+      // Best-effort
+    }
+    session[field] = undefined;
+  }
   try {
     await client.delete(`/session/${session.gridSessionId}`, { timeout: 30_000 });
   } catch {
@@ -346,7 +360,7 @@ function looksLikeDeadSession(e: unknown): boolean {
   if (!v || (v.error == null && v.message == null)) return true; // bare route 404: nothing to proxy to
   const msg = `${v.error ?? ''} ${v.message ?? ''}`.toLowerCase();
   if (/invalid session id|no such session|session .*(not found|terminated|expired|does not exist|has ended|is not running)/.test(msg)) return true;
-  if (v.error === 'unknown command' && /command|method|route|url=|file url/.test(v.message ?? '')) return false;
+  // 'unknown command' covers both a route the driver lacks and a wrapped seetest:client failure — neither is a dead session.
   return v.error !== 'unknown command' && v.error !== 'no such element' && v.error !== 'no such alert' && v.error !== 'invalid argument';
 }
 
@@ -2303,10 +2317,12 @@ export async function networkConnection(
   enabled?: boolean
 ): Promise<{ kind: NetworkConnectionKind; enabled: boolean }> {
   const session = requireSession(handle);
+  if (enabled != null && session.platform === 'ios') {
+    throw new Error('setNetworkConnection is Android-only (platform docs) — on iOS only the read-back works.');
+  }
   const client = makeClient();
   try {
     if (enabled != null) {
-      if (session.platform === 'ios') throw new Error('setNetworkConnection is Android-only (platform docs) — on iOS only the read-back works.');
       await execScript(client, session, 'seetest:client.setNetworkConnection', [kind, enabled]);
     }
     const r = await execScript(client, session, 'seetest:client.getNetworkConnection', [kind]);
@@ -2453,6 +2469,7 @@ export async function listContexts(handle: string, waitMs = 3000): Promise<Conte
           // Android shape: { webview, info: { 'Android-Package' }, pages: [{ title, url, type }] }
           const pages = (c.pages as Array<Record<string, unknown>> | undefined)?.filter((pg) => pg.type === 'page') ?? [];
           const info = c.info as Record<string, unknown> | undefined;
+          if (!c.webview) continue;
           out.push({ id: String(c.webview), package: info?.['Android-Package'] ? String(info['Android-Package']) : undefined, title: pages[0]?.title ? String(pages[0].title) : undefined, url: pages[0]?.url ? String(pages[0].url) : undefined });
         }
         if (!out.some((c) => c.id === 'NATIVE_APP')) out.unshift({ id: 'NATIVE_APP' });
