@@ -105,17 +105,17 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "adm-zip": "^0.6.0",
     "axios": "^1.19.0",
-    "dotenv": "^18.0.0",
+    "dotenv": "^18.0.8",
     "form-data": "^4.0.6",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "eslint": "^10.8.1",
+    "eslint": "^10.13.0",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.67.0",
-    "vitest": "^5.0.1"
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
   },
   "allowScripts": {
     "esbuild@0.28.1": true
