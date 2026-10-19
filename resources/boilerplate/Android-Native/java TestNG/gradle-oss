@@ -9,5 +9,8 @@ test {
 
 dependencies {
     testImplementation group: 'org.testng', name: 'testng', version: '7.9.0'
-    testImplementation group: 'io.appium', name: 'java-client', version: '8.6.0'
+    // java-client 11 depends on selenium-api only ([4.50.0, 5.0)) and Gradle resolves the LOWEST version in a range —
+    // selenium-java pins the drivers and support classes explicitly
+    testImplementation group: 'io.appium', name: 'java-client', version: '11.0.0'
+    testImplementation group: 'org.seleniumhq.selenium', name: 'selenium-java', version: '4.51.0'
 }

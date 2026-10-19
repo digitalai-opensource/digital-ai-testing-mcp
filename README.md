@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **205 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **210 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -389,7 +389,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ### Toolsets (reducing context size)
 
-All 205 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
+All 210 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
 
 Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
@@ -502,7 +502,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 
 ### All capability areas
 
-205 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+210 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -633,7 +633,7 @@ For **Java (JUnit 5 / TestNG) on an Appium Server project**, the generated proje
 2. **`install_test_orchestrator_agent(projectDir)`** downloads the agent on demand, verifies its SHA-256 and places it at `lib/smart-agent.jar`. Under Docker it returns a download command (bash and PowerShell) that does the same and deletes the file on a checksum mismatch. If the download fails, the response gives the URL, the checksum and the target path for a manual install.
 3. **Set `DIGITAL_AI_ACCESS_KEY` and run `gradle test` / `mvn test`.** The agent attaches only when the JAR is present **and** the key is set; the key is rendered into the git-ignored `orchestrator/rendered/` at build time, never into a tracked file, and Java 17 is required only in that case. Otherwise the project builds and runs exactly like the classic boilerplate (Gradle prints why the agent was not attached). Set `BUILD_ID` to group a CI build's results.
 
-Requirements: a **Java 17 or 21** JDK with a current truststore, JUnit 5 or TestNG 7+, Appium java-client 8–10. See [Limitations](docs/limitations.md#17-test-orchestrator-known-issues) for known issues.
+Requirements: a **Java 17 or 21** JDK with a current truststore, JUnit 5 or TestNG 7+, Appium java-client 8–11 (the generated projects pin 11.0.0). See [Limitations](docs/limitations.md#17-test-orchestrator-known-issues) for known issues.
 
 The agent JAR is **not** shipped with this server. By default it is downloaded from the [Digital.ai Test Orchestrator sample repository](https://github.com/raheekhandigitalai/Digital.ai-Testing-Test-Orchestrator), pinned to a fixed commit and verified by SHA-256 (see `resources/test-orchestrator/agent.json`). To use a different location — for example an internal mirror — set `TEST_ORCHESTRATOR_JAR_URL` **and** `TEST_ORCHESTRATOR_JAR_SHA256` (both required; a URL without a checksum is refused).
 
@@ -960,7 +960,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 205; 206 with MCP_DEBUG_MODE=true) and active profile
+1. get_server_info           — confirm tool count (expect 210; 211 with MCP_DEBUG_MODE=true) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -970,7 +970,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 205,
+  "registeredToolCount": 210,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }

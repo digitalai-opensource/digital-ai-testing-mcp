@@ -888,3 +888,56 @@ describe('upload_application_file HOST_PATH_UNREACHABLE gate is deployment-mode-
     assert.match(textOf(res), /credential-file pattern/);
   });
 });
+
+describe('validate_test_script warns (never blocks) on flakiness patterns — release 1, 2026-10-17', () => {
+  beforeAll(() => {
+    actAs('cloud-admin');
+  });
+  const run = async (scriptContent: string) => {
+    const res = await callTool('validate_test_script', { scriptContent, outputFormat: 'json' });
+    return { res, json: JSON.parse(textOf(res)) as { verdict: string; warningCount: number; issues: Array<{ severity: string; label: string }> } };
+  };
+  const labels = (j: { issues: Array<{ label: string }> }) => j.issues.map((i) => i.label);
+
+  it('fixed sleeps, index XPath and a static driver are warnings — the verdict stays pass', async () => {
+    const { res, json } = await run([
+      'public class T {',
+      '  private static AndroidDriver driver;',
+      '  @Test void t() throws Exception {',
+      '    Thread.sleep(3000);',
+      '    driver.findElement(By.xpath("//android.widget.Button[2]")).click();',
+      '  }',
+      '}',
+    ].join('\n'));
+    assert.notEqual(res.isError, true);
+    assert.equal(json.verdict, 'pass');
+    assert.equal(json.warningCount, 3);
+    assert.ok(['fixed sleeps', 'index-based XPath', 'shared driver'].every((l) => labels(json).includes(l)), labels(json).join(','));
+  });
+
+  it('iOS //*[@name=] XPath is flagged only when no accessibility-id strategy is used', async () => {
+    const { json } = await run("driver = new IOSDriver(url, new XCUITestOptions());\ndriver.findElement(By.xpath(\"//*[@name='loginButton']\")).click();");
+    assert.ok(labels(json).includes('XPath for iOS names'));
+    const ok = await run("driver = new IOSDriver(url, new XCUITestOptions());\nfind(AppiumBy.accessibilityId(\"loginButton\")).click();");
+    assert.ok(!labels(ok.json).includes('XPath for iOS names'));
+  });
+
+  it('implicit + explicit waits together and legacy client APIs are info-level', async () => {
+    const { json } = await run([
+      'self.driver.implicitly_wait(10)',
+      'WebDriverWait(self.driver, 20).until(EC.presence_of_element_located((By.ID, "x")))',
+      'self.driver.start_activity("a", "b")',
+      'TouchAction(self.driver).tap(el).perform()',
+    ].join('\n'));
+    const info = json.issues.filter((i) => i.severity === 'info').map((i) => i.label);
+    assert.ok(info.includes('implicit + explicit waits') && info.includes('legacy client API'), info.join(','));
+    assert.equal(json.warningCount, 0);
+  });
+
+  it('a Robot "Sleep" keyword counts as a fixed sleep; a Wait Until keyword does not', async () => {
+    const a = await run('*** Test Cases ***\nT\n    Sleep    5s\n    Click Element    id=x');
+    assert.ok(labels(a.json).includes('fixed sleeps'));
+    const b = await run('*** Test Cases ***\nT\n    Wait Until Element Is Visible    id=x    20s\n    Click Element    id=x');
+    assert.ok(!labels(b.json).includes('fixed sleeps'));
+  });
+});

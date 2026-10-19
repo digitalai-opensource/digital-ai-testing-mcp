@@ -157,7 +157,7 @@ export function adaptGradleForProjectType(content: string, projectType?: Project
 // scan, no network — unit-testable. High-severity hits mean the script is NOT
 // runnable as-is and must not be delivered as finished.
 export interface ScriptIssue {
-  severity: 'high' | 'info';
+  severity: 'high' | 'warn' | 'info';
   label: string;
   detail: string;
 }
@@ -201,7 +201,34 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   const webPlaceholder = content.match(/#YOUR_SELECTOR|\.your-class|\[data-testid="placeholder"\]|\[data-testid='placeholder'\]|YOUR_ELEMENT_ID|YOUR_CSS_SELECTOR/gi);
   if (webPlaceholder) add('high', 'placeholder CSS selectors', `Unreplaced placeholder CSS selector(s): ${[...new Set(webPlaceholder)].slice(0, 4).join(', ')}`);
 
-  // 6. Soft signal: no inspection session ran in this process — can't be a hard fail
+  // 6. Practices that make a runnable test flaky — warn (never block). Each one was confirmed against the Appium driver
+  //    and client documentation and in live runs on the farm.
+  const sleeps = content.match(/\bThread\.sleep\s*\(|\btime\.sleep\s*\(|\b(?:browser|driver)\.pause\s*\(|^\s*Sleep\s{2,}\d/gim);
+  if (sleeps) add('warn', 'fixed sleeps', `${sleeps.length} fixed sleep(s) (${[...new Set(sleeps.map((x) => x.trim()))].slice(0, 3).join(', ')}). Replace with an explicit wait on the element the next step needs (WebDriverWait / waitForDisplayed / Wait Until Element Is Visible).`);
+
+  const indexXpath = content.match(/\/\/[^'"\n]*\[\d+\][^'"\n]*/g);
+  if (indexXpath) add('warn', 'index-based XPath', `Positional XPath (${[...new Set(indexXpath)].slice(0, 3).join(', ')}) breaks when siblings move or a header appears. Prefer accessibility id / resource-id, then an attribute match (@text, @label, @content-desc).`);
+
+  const sharedDriver = content.match(/\bstatic\s+(?:final\s+)?(?:Android|IOS|Appium|Remote|Web)Driver\b[^\n;]*\bdriver\b|@Before(?:All|Suite|Class)\b[\s\S]{0,400}?driver\s*=\s*new\s+(?:Android|IOS|Appium)Driver|def setUpClass[\s\S]{0,400}?webdriver\.Remote\(/g);
+  if (sharedDriver) add('warn', 'shared driver', 'The driver is static or created once per suite/class. One session per test method (per thread) is the pattern that survives parallel runs — a shared driver is the most common cause of intermittent parallel failures.');
+
+  if (/implicitly_wait\s*\(|implicitlyWait\s*\(|setImplicitWaitTimeout|implicit:\s*\d/.test(content) && /WebDriverWait|waitForDisplayed|waitForExist|Wait Until Element/.test(content)) {
+    add('info', 'implicit + explicit waits', 'Both an implicit wait and explicit waits are set. Every miss then waits implicit + explicit and the real timeout is unpredictable — drop the implicit wait and keep the explicit ones.');
+  }
+
+  const removedApis = content.match(/\bTouchAction\b|\bMobileBy\b|\bAndroidElement\b|\bIOSElement\b|\bMobileElement\b|\.launch_app\s*\(|\.close_app\s*\(|\.reset\s*\(\)|\.start_activity\s*\(|\.launchApp\s*\(|\.closeApp\s*\(|\.resetApp\s*\(|\bdesired_capabilities\s*=|\bDesiredCapabilities\b/g);
+  if (removedApis) {
+    const names = [...new Set(removedApis.map((x) => x.replace(/\s*\(.*$/, '').replace(/^\./, '')))].slice(0, 5).join(', ');
+    add('info', 'legacy client API', `${names}: removed in the current Appium clients (java-client 9+/11, Appium-Python-Client 3+/6). Correct ONLY for an Appium Grid project pinned to java-client 7.x / Appium-Python-Client 2.2.0 (the generated Grid templates); on an Appium Server project use the Options classes, AppiumBy and mobile: commands.`);
+  }
+
+  const iosScript = /XCUITest|bundleId|IOSDriver|platformName['":\s]+['"]?iOS/i.test(content);
+  const nameXpath = content.match(/\/\/\*\[@name=/g);
+  if (iosScript && nameXpath && !/accessibility[ _]?id|AccessibilityId|ACCESSIBILITY_ID|\$\(['"]~/i.test(content)) {
+    add('warn', 'XPath for iOS names', `${nameXpath.length} locator(s) use //*[@name=...] XPath. On iOS "accessibility id" IS the name attribute (identifier, else label) — same match, no tree walk (the driver docs measure XPath as up to 10x slower). Use AppiumBy.accessibilityId / AppiumBy.ACCESSIBILITY_ID / $('~name') / accessibility_id=.`);
+  }
+
+  // 7. Soft signal: no inspection session ran in this process — can't be a hard fail
   // (selectors may be source-derived or captured in a since-closed session), but worth surfacing.
   if (listActiveSessions().length === 0) {
     add('info', 'no live inspection session', 'No inspection session is active in this MCP process. If the selectors here were not captured from an inspection or taken from authoritative app source, they are guesses — re-verify before delivering.');
@@ -434,7 +461,7 @@ function failGuard(language: Language, indent: string): string {
   }
 }
 
-function buildPlaceholder(language: Language, platform: Platform, indent: string): string {
+function buildPlaceholder(language: Language, platform: Platform, indent: string, isAppiumOss = true): string {
   const c = language === 'python' || language === 'robot' ? '#' : '//';
   const idTerm = platform === 'android' ? 'resource-id' : 'accessibility id';
   const banner = [
@@ -444,6 +471,11 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
     `${indent}${c} Replace this entire block with steps built from selectors discovered LIVE:`,
     `${indent}${c}   start_inspection_session -> get_element_tree / find_elements, or open_mobile_studio.`,
     `${indent}${c} NEVER guess a ${idTerm} from the package name or naming conventions.`,
+    ...(platform === 'ios'
+      ? [`${indent}${c} Locator ladder (iOS): accessibility id (= the name attribute: identifier, else label) -> `,
+         `${indent}${c}   -ios predicate string on type/label (Appium Server only) -> attribute XPath last. Never index XPath.`]
+      : [`${indent}${c} Locator ladder (Android): resource-id -> accessibility id (content-desc) -> @text XPath last. Never index XPath.`]),
+    `${indent}${c} Every step goes through the find() helper above: it waits explicitly for the element — never add sleeps.`,
     `${indent}${c} NEVER invent credentials — ask the user for login details.`,
     `${indent}${c} The fail()/raise below is intentional: it stops this scaffold from being mistaken`,
     `${indent}${c} for a passing test until you replace it with verified steps.`,
@@ -453,58 +485,58 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
   // Example shapes use <…> tokens so they read as obviously-unfilled, never as real selectors.
   let examples: string[];
   if (language === 'robot') {
-    const id = platform === 'android' ? 'id=<resource-id from get_element_tree>' : "xpath=//*[@name='<accessibility id from get_element_tree>']";
-    const field = platform === 'android' ? 'id=<resource-id>' : "xpath=//*[@name='<accessibility id>']";
+    const id = platform === 'android' ? 'id=<resource-id from get_element_tree>' : 'accessibility_id=<accessibility id from get_element_tree>';
+    const field = platform === 'android' ? 'id=<resource-id>' : 'accessibility_id=<accessibility id>';
     examples = [
       `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
-      `${indent}${c}   Click Element    ${id}`,
-      `${indent}${c}   Input Text    ${field}    <value the user gave you>`,
-      `${indent}${c}   Page Should Contain Text    <visible text>`,
+      `${indent}${c}   Wait And Click    ${id}`,
+      `${indent}${c}   Wait And Input    ${field}    <value the user gave you>`,
+      `${indent}${c}   Wait Until Page Contains    <visible text>    20s`,
     ];
   } else if (platform === 'android') {
     if (language === 'java-junit5' || language === 'java-testng') {
       examples = [
         `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
-        `${indent}${c}   driver.findElement(By.id("<resource-id from get_element_tree>")).click();`,
-        `${indent}${c}   driver.findElement(By.id("<resource-id>")).sendKeys("<value the user gave you>");`,
-        `${indent}${c}   driver.findElement(By.xpath("//*[@text='<visible text>']")); // assert visible`,
+        `${indent}${c}   find(By.id("<resource-id from get_element_tree>")).click();`,
+        `${indent}${c}   find(By.id("<resource-id>")).sendKeys("<value the user gave you>");`,
+        `${indent}${c}   find(By.xpath("//*[@text='<visible text>']")); // waits until visible = the assertion`,
       ];
     } else if (language === 'nodejs') {
       examples = [
         `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
-        `${indent}${c}   const btn = await $('id=<resource-id from get_element_tree>'); await btn.click();`,
-        `${indent}${c}   const field = await $('//*[@resource-id="<resource-id>"]'); await field.setValue('<value>');`,
-        `${indent}${c}   await expect($('//*[@text="<visible text>"]')).toBeExisting();`,
+        `${indent}${c}   const btn = await find('id=<resource-id from get_element_tree>'); await btn.click();`,
+        `${indent}${c}   const field = await find('id=<resource-id>'); await field.setValue('<value>');`,
+        `${indent}${c}   await expect($('//*[@text="<visible text>"]')).toBeDisplayed();`,
       ];
     } else {
       examples = [
         `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
-        `${indent}${c}   self.driver.find_element(By.ID, "<resource-id from get_element_tree>").click()`,
-        `${indent}${c}   self.driver.find_element(By.ID, "<resource-id>").send_keys('<value>')`,
-        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@text='<visible text>']")  # assert visible`,
+        `${indent}${c}   self.${isAppiumOss ? 'find(By.ID, ' : '_find("'}<resource-id from get_element_tree>${isAppiumOss ? '")' : '")'}.click()`,
+        `${indent}${c}   self.${isAppiumOss ? 'find(By.ID, "' : '_find("'}<resource-id>").send_keys('<value>')`,
+        `${indent}${c}   self.${isAppiumOss ? 'find(By.XPATH, ' : '_find_xpath('}"//*[@text='<visible text>']")  # waits until visible = the assertion`,
       ];
     }
   } else {
     if (language === 'java-junit5' || language === 'java-testng') {
       examples = [
         `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
-        `${indent}${c}   driver.findElement(By.xpath("//*[@name='<accessibility id from get_element_tree>']")).click();`,
-        `${indent}${c}   driver.findElement(By.xpath("//*[@name='<accessibility id>']")).sendKeys("<value the user gave you>");`,
-        `${indent}${c}   driver.findElement(By.xpath("//*[@label='<visible label>']")); // assert visible`,
+        `${indent}${c}   find(${isAppiumOss ? 'AppiumBy.accessibilityId' : 'MobileBy.AccessibilityId'}("<accessibility id from get_element_tree>")).click();`,
+        `${indent}${c}   find(${isAppiumOss ? 'AppiumBy.accessibilityId' : 'MobileBy.AccessibilityId'}("<accessibility id>")).sendKeys("<value the user gave you>");`,
+        `${indent}${c}   find(By.xpath("//*[@label='<visible label>']")); // waits until visible = the assertion`,
       ];
     } else if (language === 'nodejs') {
       examples = [
         `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
-        `${indent}${c}   const btn = await $('//*[@name="<accessibility id from get_element_tree>"]'); await btn.click();`,
-        `${indent}${c}   const field = await $('//*[@name="<accessibility id>"]'); await field.setValue('<value>');`,
-        `${indent}${c}   await expect($('//*[@label="<visible label>"]')).toBeExisting();`,
+        `${indent}${c}   const btn = await find('~<accessibility id from get_element_tree>'); await btn.click();`,
+        `${indent}${c}   const field = await find('~<accessibility id>'); await field.setValue('<value>');`,
+        `${indent}${c}   await expect($('//*[@label="<visible label>"]')).toBeDisplayed();`,
       ];
     } else {
       examples = [
         `${indent}${c} Example shape only — every <…> must be replaced with a value from inspection:`,
-        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@name='<accessibility id from get_element_tree>']").click()`,
-        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@name='<accessibility id>']").send_keys('<value>')`,
-        `${indent}${c}   self.driver.find_element(By.XPATH, "//*[@label='<visible label>']")  # assert visible`,
+        `${indent}${c}   self.${isAppiumOss ? "find(AppiumBy.ACCESSIBILITY_ID, '" : '_find("'}<accessibility id from get_element_tree>${isAppiumOss ? "')" : '")'}.click()`,
+        `${indent}${c}   self.${isAppiumOss ? "find(AppiumBy.ACCESSIBILITY_ID, '" : '_find("'}<accessibility id>${isAppiumOss ? "')" : '")'}.send_keys('<value>')`,
+        `${indent}${c}   self.${isAppiumOss ? 'find(By.XPATH, ' : '_find_xpath('}"//*[@label='<visible label>']")  # waits until visible = the assertion`,
       ];
     }
   }
@@ -567,7 +599,7 @@ function substitute(
       return content;
     };
     if (vars.clearTestBody) {
-      result = result.replace(DEMO_STEP_PATTERN, () => decorate(buildPlaceholder(language, platform, indent)));
+      result = result.replace(DEMO_STEP_PATTERN, () => decorate(buildPlaceholder(language, platform, indent, vars.isAppiumOss !== false)));
     } else {
       result = result.replace(DEMO_INNER_PATTERN, (inner) => decorate(inner));
       result = result.replace(/[^\S\n]*(?:\/\/|#) \[BEGIN_DEMO_STEPS\]\n/, '');
@@ -726,6 +758,7 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
     case 'python':
       return isAppiumOss
         ? 'Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client>=4.0.0), then run: python -m pytest\n\n' +
+          'Waits: every step goes through find(), an explicit WebDriverWait — there is no implicit wait, and adding one would make every miss wait both timeouts.\n\n' +
           'Parallel execution (recommended on device farms — each test gets its own device):\n' +
           '  pip install pytest-xdist\n' +
           '  pytest -n auto -v   # spawns one worker per test method; each creates its own Appium session'
@@ -1299,7 +1332,7 @@ export function registerBoilerplateTools(server: McpServer): void {
               'orchestrator/rendered/, which is git-ignored, never into a tracked file). Otherwise the project builds and runs exactly like the classic boilerplate.',
             runCommands: { gradle: 'gradle test', maven: 'mvn test' },
             buildId: 'Set BUILD_ID (CI usually does) to group a build\'s results in Reporter; defaults to "local".',
-            requirements: 'When attached: Java 17 or 21 JDK; JUnit 5 / TestNG 7+; Appium java-client 8–10 (this boilerplate uses 8.6.0).',
+            requirements: 'When attached: Java 17 or 21 JDK; JUnit 5 / TestNG 7+; Appium java-client 8–11 (this boilerplate uses 11.0.0 + selenium-java 4.51.0 — verified live with the agent 2026-10-18).',
             jdkTrustNote: JDK_TRUST_NOTE,
             gitignore: GITIGNORE_ADVICE,
             logs: 'smart-agent/<run-id>/smartagent-main.log — add smart-agent/ to your .gitignore.',
@@ -1312,7 +1345,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           serverMode: isAppiumOss ? 'oss' : 'grid',
           serverModeNote: isAppiumOss
             ? 'Appium Server (OSS) — standard W3C WebDriver protocol. ' +
-              'Java: java-client 8.x, Java 11+, UiAutomator2Options/XCUITestOptions (no DesiredCapabilities). ' +
+              'Java: java-client 11.x + selenium-java 4.51 (Java 17+), UiAutomator2Options/XCUITestOptions, AppiumBy, URI.create(...).toURL() (no DesiredCapabilities, no MobileBy). ' +
               'Python: appium-python-client 4.x+, AppiumOptions. ' +
               'If you need Grid mode, switch to a Grid-enabled profile and regenerate — the APIs are incompatible.'
             : 'Appium Grid (legacy) — Digital.ai JWP-era protocol, NOT standard Appium Server. ' +
@@ -1530,6 +1563,9 @@ export function registerBoilerplateTools(server: McpServer): void {
     '<…> placeholder selectors, the deliberate scaffold fail-guard, placeholder/fabricated credentials, ' +
     'and resource IDs from a known prior fabrication incident. Returns isError when any high-severity ' +
     'pattern is found — a test that fails this is NOT runnable and must not be delivered as finished. ' +
+    'It also WARNS (never blocks) on flakiness patterns: fixed sleeps, index-based XPath, a static/suite-level ' +
+    'shared driver, implicit + explicit waits mixed, iOS //*[@name=] XPath where accessibility id is the same match, ' +
+    'and client APIs removed from the current Appium clients (correct only for Appium Grid projects). ' +
     'This catches the case the get_test_boilerplate gate cannot: a script you wrote yourself with guessed ' +
     'selectors. A clean result is necessary but not sufficient — it cannot confirm selectors are REAL, only ' +
     'that obvious placeholders are gone; the authoritative source for selectors is still a live inspection.',
@@ -1547,6 +1583,7 @@ export function registerBoilerplateTools(server: McpServer): void {
       const structured = {
         verdict,
         highSeverityCount: high.length,
+        warningCount: issues.filter((i) => i.severity === 'warn').length,
         issues,
         guidance:
           high.length > 0
@@ -1561,7 +1598,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         `${verdict === 'fail' ? '⛔ FAIL' : '✅ PASS'} — validate_test_script${label}`,
         '',
         ...(issues.length
-          ? issues.map((i) => `  ${i.severity === 'high' ? '⛔' : 'ℹ️'} [${i.label}] ${i.detail}`)
+          ? issues.map((i) => `  ${i.severity === 'high' ? '⛔' : i.severity === 'warn' ? '⚠️' : 'ℹ️'} [${i.label}] ${i.detail}`)
           : ['  No issues detected.']),
         '',
         structured.guidance,

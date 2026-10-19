@@ -1,29 +1,35 @@
 describe('LocalAndroidTest', () => {
     it('quickStartAndroidNativeDemo', myTest)
  })
+ // Explicit wait: resolve the element and wait until it is displayed (waitforTimeout in wdio.conf.js) before acting.
+ async function find(selector) {
+   const el = await $(selector);
+   await el.waitForDisplayed();
+   return el;
+ }
  async function myTest() {
    // [BEGIN_DEMO_STEPS]
-   const username = await $('id=com.experitest.ExperiBank:id/usernameTextField');
+   const username = await find('id=com.experitest.ExperiBank:id/usernameTextField');
    await username.setValue('company');
-   const password = await $('id=com.experitest.ExperiBank:id/passwordTextField');
+   const password = await find('id=com.experitest.ExperiBank:id/passwordTextField');
    await password.setValue('company');
-   const loginButton = await $('id=com.experitest.ExperiBank:id/loginButton');
+   const loginButton = await find('id=com.experitest.ExperiBank:id/loginButton');
    await loginButton.click();
-   const makePaymentButton = await $('id=com.experitest.ExperiBank:id/makePaymentButton');
+   const makePaymentButton = await find('id=com.experitest.ExperiBank:id/makePaymentButton');
    await makePaymentButton.click();
-   const phoneNumber = await $("id=com.experitest.ExperiBank:id/phoneTextField");
+   const phoneNumber = await find('id=com.experitest.ExperiBank:id/phoneTextField');
    await phoneNumber.setValue('0541234567');
-   const name = await $("id=com.experitest.ExperiBank:id/nameTextField");
+   const name = await find('id=com.experitest.ExperiBank:id/nameTextField');
    await name.setValue('Jon Snow');
-   const amount = await $("id=com.experitest.ExperiBank:id/amountTextField");
+   const amount = await find('id=com.experitest.ExperiBank:id/amountTextField');
    await amount.setValue('50');
-   const countryButton = await $('//*[@resource-id="com.experitest.ExperiBank:id/countryButton"]');
+   const countryButton = await find('id=com.experitest.ExperiBank:id/countryButton');
    await countryButton.click();
-   const country = await $('//*[@text="Switzerland"]');
+   const country = await find('//*[@text="Switzerland"]');
    await country.click();
-   const sendPaymentButton = await $("id=com.experitest.ExperiBank:id/sendPaymentButton");
+   const sendPaymentButton = await find('id=com.experitest.ExperiBank:id/sendPaymentButton');
    await sendPaymentButton.click();
-   const yesButton = await $('id=android:id/button1');
+   const yesButton = await find('id=android:id/button1');
    await yesButton.click();
    // [END_DEMO_STEPS]
  }

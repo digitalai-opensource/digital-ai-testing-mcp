@@ -8,6 +8,8 @@ import unittest
 from appium import webdriver
 from selenium.webdriver.common.by import By
 from appium.webdriver.webelement import WebElement
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 
 class LocalAndroidTest(unittest.TestCase):
@@ -28,7 +30,6 @@ class LocalAndroidTest(unittest.TestCase):
             'autoGrantPermissions': True,
         }
         self.driver = webdriver.Remote("[Enter Instance here]/wd/hub", desired_capabilities=desired_caps)
-        self.driver.implicitly_wait(10)
         # System-level overlays (charging dialog, USB prompt) are NOT caught by autoDismissAlerts.
         # If they block tests: self.driver.execute_script("mobile: shell", {"command": "am", "args": ["broadcast", "-a", "android.intent.action.CLOSE_SYSTEM_DIALOGS"]})
 
@@ -40,11 +41,16 @@ class LocalAndroidTest(unittest.TestCase):
             return WebElement(self.driver, eid)
         return raw
 
+    def _wait(self, by, locator, timeout=20):
+        # Explicit wait (presence, not visibility: a JWP session returns a raw dict that has no is_displayed()).
+        # Used instead of an implicit wait — never mix the two.
+        return self._elem(WebDriverWait(self.driver, timeout).until(EC.presence_of_element_located((by, locator))))
+
     def _find(self, resource_id):
-        return self._elem(self.driver.find_element(By.ID, f"com.experitest.ExperiBank:id/{resource_id}"))
+        return self._wait(By.ID, f"com.experitest.ExperiBank:id/{resource_id}")
 
     def _find_xpath(self, xpath):
-        return self._elem(self.driver.find_element(By.XPATH, xpath))
+        return self._wait(By.XPATH, xpath)
 
     def testQuickStartAndroidNativeDemo(self):
         # [BEGIN_DEMO_STEPS]
@@ -61,8 +67,18 @@ class LocalAndroidTest(unittest.TestCase):
         # [END_DEMO_STEPS]
 
     def tearDown(self):
-        print('Report URL: ' + str(self.driver.desired_capabilities.get('digitalai:reportUrl', 'n/a')))
-        self.driver.quit()
+        # Guarded: when setUp fails the driver is None (or the session is already dead) and an unguarded quit() would
+        # replace the real error with its own. quit() always runs so a half-created session releases its device.
+        if self.driver is None:
+            return
+        try:
+            print('Report URL: ' + str(self.driver.desired_capabilities.get('digitalai:reportUrl', 'n/a')))
+        except Exception:
+            pass
+        try:
+            self.driver.quit()
+        finally:
+            self.driver = None
 
 
 if __name__ == '__main__':

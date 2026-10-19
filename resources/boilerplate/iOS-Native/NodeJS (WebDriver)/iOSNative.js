@@ -1,29 +1,35 @@
 describe('LocaliOSTest', () => {
     it('[testNameHere]', myTest)
  })
+ // Explicit wait: resolve the element and wait until it is displayed (waitforTimeout in wdio.conf.js) before acting.
+ async function find(selector) {
+   const el = await $(selector);
+   await el.waitForDisplayed();
+   return el;
+ }
  async function myTest() {
    // [BEGIN_DEMO_STEPS]
-   const username = await $('//*[@name="usernameTextField"]');
+   const username = await find('~usernameTextField');
    await username.setValue('company');
-   const password = await $('//*[@name="passwordTextField"]');
+   const password = await find('~passwordTextField');
    await password.setValue('company');
-   const loginButton = await $('//*[@name="loginButton"]');
+   const loginButton = await find('~loginButton');
    await loginButton.click();
-   const makePaymentButton = await $('//*[@name="makePaymentButton"]');
+   const makePaymentButton = await find('~makePaymentButton');
    await makePaymentButton.click();
-   const phoneNumber = await $("//*[@name='phoneTextField']");
+   const phoneNumber = await find('~phoneTextField');
    await phoneNumber.setValue('0541234567');
-   const name = await $("//*[@name='nameTextField']");
+   const name = await find('~nameTextField');
    await name.setValue('Jon Snow');
-   const amount = await $("//*[@name='amountTextField']");
+   const amount = await find('~amountTextField');
    await amount.setValue('50');
-   const countryButton = await $("//*[@name='countryButton']");
+   const countryButton = await find('~countryButton');
    await countryButton.click();
-   const country = await $("//*[@name='Switzerland']");
+   const country = await find('~Switzerland');
    await country.click();
-   const sendPaymentButton = await $("//*[@name='sendPaymentButton']");
+   const sendPaymentButton = await find('~sendPaymentButton');
    await sendPaymentButton.click();
-   const yesButton = await $("//*[@name='Yes']");
+   const yesButton = await find('~Yes');
    await yesButton.click();
    // [END_DEMO_STEPS]
  }

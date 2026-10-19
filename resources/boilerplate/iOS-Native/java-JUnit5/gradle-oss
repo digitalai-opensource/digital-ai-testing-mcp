@@ -11,5 +11,8 @@ test {
 dependencies {
     testImplementation group: 'org.junit.jupiter', name: 'junit-jupiter', version: '5.10.2'
     testRuntimeOnly group: 'org.junit.platform', name: 'junit-platform-launcher', version: '1.10.2'
-    testImplementation group: 'io.appium', name: 'java-client', version: '8.6.0'
+    // java-client 11 depends on selenium-api only ([4.50.0, 5.0)) and Gradle resolves the LOWEST version in a range —
+    // selenium-java pins the drivers and support classes explicitly
+    testImplementation group: 'io.appium', name: 'java-client', version: '11.0.0'
+    testImplementation group: 'org.seleniumhq.selenium', name: 'selenium-java', version: '4.51.0'
 }

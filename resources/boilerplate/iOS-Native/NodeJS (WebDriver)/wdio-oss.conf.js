@@ -17,7 +17,8 @@ exports.config = {
     }],
     logLevel: 'info',
     bail: 0,
-    waitforTimeout: 10000,
+    // Native apps on a device farm need longer than the wdio default: the first $() races app install + launch.
+    waitforTimeout: 45000,
     connectionRetryTimeout: 120000,
     connectionRetryCount: 3,
     framework: 'mocha',

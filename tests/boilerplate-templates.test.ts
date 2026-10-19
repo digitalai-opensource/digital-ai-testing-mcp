@@ -65,14 +65,16 @@ describe('TestNG templates use one session per test method', () => {
   }
 });
 
-describe('WebdriverIO Appium Server configs', () => {
+describe('WebdriverIO configs (Appium Server AND Grid)', () => {
   // Found live 2026-10-16: wdio 9 refuses to start a session when a capability is neither W3C-standard nor
   // vendor-prefixed — the Android config's bare autoDismissAlerts / autoGrantPermissions failed every run.
+  // 2026-10-17: wdio 7.40 (the Grid pin) rejects them the same way ("Invalid or unsupported WebDriver capabilities"),
+  // so the Grid configs are held to the same rule.
   const W3C = new Set(['platformName', 'browserName', 'browserVersion', 'acceptInsecureCerts', 'pageLoadStrategy', 'proxy', 'setWindowRect', 'timeouts', 'strictFileInteractability', 'unhandledPromptBehavior']);
-  const confs = all.filter((p) => /wdio-oss\.conf\.js$/.test(p));
+  const confs = all.filter((p) => /wdio(-oss)?\.conf\.js$/.test(p));
 
-  it('found both Appium Server wdio configs', () => {
-    assert.equal(confs.length, 2, confs.map(rel).join(', '));
+  it('found all four wdio configs', () => {
+    assert.equal(confs.length, 4, confs.map(rel).join(', '));
   });
 
   it('every capability is W3C-standard or vendor-prefixed', () => {
@@ -104,5 +106,66 @@ describe('adaptGradleForProjectType', () => {
   it('handles CRLF templates', () => {
     const out = adaptGradleForProjectType(sample.replace(/\n/g, '\r\n'), 'android-gradle-submodule');
     assert.doesNotMatch(out, /repositories/);
+  });
+});
+
+describe('Python and Node template fixes (2026-10-17)', () => {
+  const PY = walk(ROOT).filter((p) => p.endsWith('.py') && !p.endsWith('Report.py'));
+
+  it('every Python tearDown is guarded — a failed setUp must not be masked by quit()', () => {
+    assert.ok(PY.length >= 4, `expected the four Python templates, found ${PY.length}`);
+    for (const p of PY) {
+      const src = readFileSync(p, 'utf-8').replace(/\r\n/g, '\n');
+      assert.match(src, /def tearDown\(self\):\n(?:.*\n)*?\s+if self\.driver is None:\n\s+return/, `${p}: tearDown lacks the None guard`);
+      assert.match(src, /try:\n\s+self\.driver\.quit\(\)\n\s+finally:\n\s+self\.driver = None/, `${p}: quit() is not in try/finally`);
+    }
+  });
+
+  it('wdio configs pass the mobile: shell object as ONE execute argument and wait long enough for a native app', () => {
+    const confs = walk(ROOT).filter((p) => /wdio(-oss)?\.conf\.js$/.test(p));
+    assert.ok(confs.length >= 4);
+    for (const p of confs) {
+      const src = readFileSync(p, 'utf-8');
+      assert.ok(!/execute\('mobile: shell', \[/.test(src), `${p}: mobile: shell args are wrapped in an array (sent as args:[[{…}]])`);
+      if (/mobile: shell/.test(src)) assert.match(src, /mobile: broadcast/, `${p}: should name the flag-free mobile: broadcast alternative`);
+      if (p.includes('-oss')) assert.match(src, /waitforTimeout: 45000/, `${p}: OSS waitforTimeout should be 45 s`);
+    }
+  });
+});
+
+describe('Locators and waits in the templates (release 1, 2026-10-17)', () => {
+  const sources = walk(ROOT).filter((p) => /\.(py|java|js|robot)$/.test(p) && !/Report\.py$|wdio.*\.conf\.js$/.test(p));
+
+  it('no iOS template locates by //*[@name=…] XPath — accessibility id is the same match without the tree walk', () => {
+    const ios = sources.filter((p) => p.includes('iOS-Native'));
+    assert.ok(ios.length >= 7, `found ${ios.length}`);
+    for (const p of ios) {
+      const src = readFileSync(p, 'utf-8');
+      assert.doesNotMatch(src, /\/\/\*\[@name=/, `${p}: still uses //*[@name=] XPath`);
+      assert.ok(/AppiumBy\.accessibilityId|MobileBy\.AccessibilityId|ACCESSIBILITY_ID|find\('~|accessibility_id=|_find\("/.test(src), `${p}: no accessibility-id locator`);
+    }
+  });
+
+  it('every template waits explicitly and sets no implicit wait', () => {
+    for (const p of sources) {
+      const src = readFileSync(p, 'utf-8');
+      assert.doesNotMatch(src, /implicitly_wait|implicitlyWait/, `${p}: implicit wait present`);
+      assert.ok(/WebDriverWait|waitForDisplayed|Wait Until Element Is Visible/.test(src), `${p}: no explicit wait`);
+      assert.doesNotMatch(src, /Thread\.sleep|time\.sleep|browser\.pause|\n\s+Sleep\s{2,}/, `${p}: fixed sleep present`);
+    }
+  });
+
+  it('Android templates use By.id for the country button, not a resource-id XPath', () => {
+    for (const p of sources.filter((p) => p.includes('Android-Native'))) {
+      assert.doesNotMatch(readFileSync(p, 'utf-8'), /@resource-id='com\.experitest\.ExperiBank:id\/countryButton'|@resource-id="com\.experitest\.ExperiBank:id\/countryButton"/, p);
+    }
+  });
+
+  it('Grid Java templates spell the strategy MobileBy (java-client 7.x); Appium Server ones AppiumBy', () => {
+    for (const p of sources.filter((p) => p.includes('iOS-Native') && p.endsWith('.java'))) {
+      const src = readFileSync(p, 'utf-8');
+      if (p.endsWith('-oss.java')) assert.match(src, /AppiumBy\.accessibilityId/, p);
+      else assert.match(src, /MobileBy\.AccessibilityId/, p);
+    }
   });
 });

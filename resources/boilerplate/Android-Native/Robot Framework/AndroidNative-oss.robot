@@ -25,21 +25,32 @@ ${TEST_NAME}        [Enter Test Name here]
 Quick Start Android Native Demo
     Start Steps Group    Test steps
     # [BEGIN_DEMO_STEPS]
-    Input Text       id=com.experitest.ExperiBank:id/usernameTextField    company
-    Input Text       id=com.experitest.ExperiBank:id/passwordTextField    company
-    Click Element    id=com.experitest.ExperiBank:id/loginButton
-    Click Element    id=com.experitest.ExperiBank:id/makePaymentButton
-    Input Text       id=com.experitest.ExperiBank:id/phoneTextField    0501234567
-    Input Text       id=com.experitest.ExperiBank:id/nameTextField    John Snow
-    Input Text       id=com.experitest.ExperiBank:id/amountTextField    50
-    Click Element    xpath=//*[@resource-id='com.experitest.ExperiBank:id/countryButton']
-    Click Element    xpath=//*[@text='Switzerland']
-    Click Element    id=com.experitest.ExperiBank:id/sendPaymentButton
-    Click Element    id=android:id/button1
+    Wait And Input    id=com.experitest.ExperiBank:id/usernameTextField    company
+    Wait And Input    id=com.experitest.ExperiBank:id/passwordTextField    company
+    Wait And Click    id=com.experitest.ExperiBank:id/loginButton
+    Wait And Click    id=com.experitest.ExperiBank:id/makePaymentButton
+    Wait And Input    id=com.experitest.ExperiBank:id/phoneTextField    0501234567
+    Wait And Input    id=com.experitest.ExperiBank:id/nameTextField    John Snow
+    Wait And Input    id=com.experitest.ExperiBank:id/amountTextField    50
+    Wait And Click    id=com.experitest.ExperiBank:id/countryButton
+    Wait And Click    xpath=//*[@text='Switzerland']
+    Wait And Click    id=com.experitest.ExperiBank:id/sendPaymentButton
+    Wait And Click    id=android:id/button1
     # [END_DEMO_STEPS]
     Stop Steps Group
 
 *** Keywords ***
+Wait And Click
+    [Arguments]    ${locator}
+    # Explicit wait before every interaction — AppiumLibrary's Click Element / Input Text do not wait on their own.
+    Wait Until Element Is Visible    ${locator}    20s
+    Click Element    ${locator}
+
+Wait And Input
+    [Arguments]    ${locator}    ${text}
+    Wait Until Element Is Visible    ${locator}    20s
+    Input Text    ${locator}    ${text}
+
 Open Cloud Session
     Open Application    ${REMOTE_URL}    &{CAPABILITIES}
 

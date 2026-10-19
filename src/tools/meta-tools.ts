@@ -111,6 +111,7 @@ export const REGISTERED_TOOLS = [
   'long_press', 'double_tap', 'drag_and_drop', 'pinch_zoom', 'scroll_to_element',
   'press_key', 'hide_keyboard', 'app_control', 'device_control',
   'list_inspection_sessions', 'cleanup_inspection_sessions', 'mock_authentication', 'automotive_control', 'audio_control',
+  'webview_context', 'get_device_log', 'session_capture', 'network_control', 'inject_camera_image',
   // Inspection sessions — web (Selenium Grid, browser inspection)
   'start_browser_inspection_session', 'stop_browser_inspection_session',
   'navigate_to', 'get_page_dom', 'browser_action', 'find_web_elements',
@@ -153,7 +154,7 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['usage-reports', 'Usage Reports', 'summarize, download, download command (Cloud Admin)'],
   ['boilerplate', 'Boilerplate', 'Appium/Selenium test projects, Test Orchestrator agent, validate_test_script'],
   ['test-runs', 'Test Runs', 'Espresso/XCUITest/Maestro runs, status, cancel, command, Maestro flow generation'],
-  ['inspection', 'Mobile Inspection', 'live sessions: element tree, find, tap, type, gestures, keys, app/device control, Android Auto / CarPlay, audio'],
+  ['inspection', 'Mobile Inspection', 'live sessions: element tree, find, tap, type, gestures, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay, audio'],
   ['web-inspection', 'Browser Inspection', 'live browser sessions: DOM, find, navigate, actions'],
   ['debug', 'Remote Debug', 'get_remote_debug_command'],
   ['workflows', 'Workflows', 'POC and project setup / teardown (Cloud Admin)'],

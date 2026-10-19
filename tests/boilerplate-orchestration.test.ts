@@ -442,12 +442,33 @@ describe('get_test_boilerplate — Robot Framework (Appium Server only)', () => 
     account.isAppiumOss = true; account.fail = false;
     const s = suite((await gen({ platform: 'android', language: 'robot', confirmSelectorsVerified: true, packageName: 'com.acme.app', mainActivity: '.Main' })).json);
     assert.match(s, /^    Fail    Replace this placeholder body/m);
-    assert.match(s, /#   Click Element    id=<resource-id from get_element_tree>/);
+    assert.match(s, /#   Wait And Click    id=<resource-id from get_element_tree>/);
     assert.doesNotMatch(s, /usernameTextField/);
     const v = await call('validate_test_script', { scriptContent: s, fileName: 'AndroidNative.robot', outputFormat: 'json' });
     assert.equal(v.isError, true);
     assert.match(v.content.map((c) => c.text ?? '').join(''), /scaffold guard present/);
   });
+});
+
+describe('generated demo tests pass their own validator with no warnings (release 1)', () => {
+  for (const isAppiumOss of [true, false]) {
+    for (const platform of ['android', 'ios'] as const) {
+      for (const language of ['python', 'java-junit5', 'java-testng', 'nodejs', 'robot'] as const) {
+        if (language === 'robot' && !isAppiumOss) continue;
+        it(`${isAppiumOss ? 'Appium Server' : 'Appium Grid'} ${platform} ${language}`, async () => {
+          account.isAppiumOss = isAppiumOss; account.fail = false;
+          const g = (await gen({ platform, language, orchestration: 'off' })).json;
+          for (const f of g.files.filter((f) => /\.(py|java|js|robot)$/.test(f.filename) && !/Report\.py$|wdio\.conf\.js$/.test(f.filename))) {
+            const v = await call('validate_test_script', { scriptContent: f.content, fileName: f.filename, outputFormat: 'json' });
+            const j = JSON.parse(v.content.map((c) => c.text ?? '').join('')) as { verdict: string; issues: Array<{ severity: string; label: string; detail: string }> };
+            assert.equal(j.verdict, 'pass', f.filename);
+            const warn = j.issues.filter((i) => i.severity === 'warn');
+            assert.equal(warn.length, 0, `${f.filename}: ${warn.map((w) => `${w.label}: ${w.detail}`).join(' | ')}`);
+          }
+        });
+      }
+    }
+  }
 });
 
 describe('get_web_test_boilerplate — fixes found running the templates live (2026-10-16)', () => {

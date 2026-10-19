@@ -4,6 +4,9 @@ import io.appium.java_client.remote.AndroidMobileCapabilityType;
 import io.appium.java_client.remote.MobileCapabilityType;
 import org.junit.jupiter.api.*;
 import org.openqa.selenium.By;
+import org.openqa.selenium.WebElement;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
 import org.openqa.selenium.ScreenOrientation;
 import org.openqa.selenium.remote.DesiredCapabilities;
 
@@ -36,20 +39,26 @@ public class LocalAndroidTest {
         driver = new AndroidDriver<>(new URL("[Enter Instance here]/wd/hub"), dc);
     }
 
+    // Explicit wait (presence; 20 s) used instead of an implicit wait — never mix the two. Selenium 3 signature:
+    // java-client 7.x (required by the Appium Grid) pulls Selenium 3.141, whose WebDriverWait takes seconds as a long.
+    private WebElement find(By by) {
+        return new WebDriverWait(driver, 20).until(ExpectedConditions.presenceOfElementLocated(by));
+    }
+
     @Test
     public void quickStartAndroidNativeDemo() {
         // [BEGIN_DEMO_STEPS]
         driver.rotate(ScreenOrientation.PORTRAIT);
-        driver.findElement(By.id("com.experitest.ExperiBank:id/usernameTextField")).sendKeys("company");
-        driver.findElement(By.id("com.experitest.ExperiBank:id/passwordTextField")).sendKeys("company");
-        driver.findElement(By.id("com.experitest.ExperiBank:id/loginButton")).click();
-        driver.findElement(By.id("com.experitest.ExperiBank:id/makePaymentButton")).click();
-        driver.findElement(By.id("com.experitest.ExperiBank:id/phoneTextField")).sendKeys("0501234567");
-        driver.findElement(By.id("com.experitest.ExperiBank:id/nameTextField")).sendKeys("John Snow");
-        driver.findElement(By.id("com.experitest.ExperiBank:id/amountTextField")).sendKeys("50");
-        driver.findElement(By.id("com.experitest.ExperiBank:id/countryTextField")).sendKeys("'Switzerland'");
-        driver.findElement(By.id("com.experitest.ExperiBank:id/sendPaymentButton")).click();
-        driver.findElement(By.id("android:id/button1")).click();
+        find(By.id("com.experitest.ExperiBank:id/usernameTextField")).sendKeys("company");
+        find(By.id("com.experitest.ExperiBank:id/passwordTextField")).sendKeys("company");
+        find(By.id("com.experitest.ExperiBank:id/loginButton")).click();
+        find(By.id("com.experitest.ExperiBank:id/makePaymentButton")).click();
+        find(By.id("com.experitest.ExperiBank:id/phoneTextField")).sendKeys("0501234567");
+        find(By.id("com.experitest.ExperiBank:id/nameTextField")).sendKeys("John Snow");
+        find(By.id("com.experitest.ExperiBank:id/amountTextField")).sendKeys("50");
+        find(By.id("com.experitest.ExperiBank:id/countryTextField")).sendKeys("'Switzerland'");
+        find(By.id("com.experitest.ExperiBank:id/sendPaymentButton")).click();
+        find(By.id("android:id/button1")).click();
         // [END_DEMO_STEPS]
     }
 

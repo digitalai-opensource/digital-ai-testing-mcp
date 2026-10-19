@@ -856,4 +856,12 @@ export interface InspectionSession {
   automotiveRunning?: boolean;
   /** Repository name of the audio recording in progress (audio_control record_start → record_stop). */
   audioRecording?: string;
+  /** Appium Settings API applied (POST /elements answers carry attributes inline). undefined = not tried yet. */
+  inlineAttributes?: boolean;
+  /** Current WebDriver context ("NATIVE_APP" or a "WEBVIEW_…" id). undefined = native (never switched). */
+  currentContext?: string;
+  /** Repository file name of a HAR capture in progress (session_capture har start → stop). */
+  harRecording?: string;
+  /** Repository file name of a device-log capture in progress (session_capture device_log start → stop). */
+  deviceLogRecording?: string;
 }

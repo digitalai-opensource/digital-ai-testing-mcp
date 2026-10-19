@@ -33,10 +33,16 @@
             <version>7.9.0</version>
             <scope>test</scope>
         </dependency>
+        <!-- java-client 11 depends on selenium-api only ([4.50.0, 5.0)); selenium-java brings the drivers and support classes -->
         <dependency>
             <groupId>io.appium</groupId>
             <artifactId>java-client</artifactId>
-            <version>8.6.0</version>
+            <version>11.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-java</artifactId>
+            <version>4.51.0</version>
         </dependency>
     </dependencies>
 </project>

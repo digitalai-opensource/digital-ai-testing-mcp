@@ -122,13 +122,15 @@ export async function createInspectionSession(
     'platformName': platform === 'ios' ? 'iOS' : 'Android',
     'noReset': opts.noReset ?? true,
   };
+  // iOS identifies the app by bundleId (XCUITest capability reference); appPackage/appActivity are Android-only.
+  const appIdCap = platform === 'ios' ? 'bundleId' : 'appPackage';
   if (opts.app) {
     desiredCapabilities['app'] = opts.app;
-    if (opts.appPackage) desiredCapabilities['appPackage'] = opts.appPackage;
-    if (opts.appActivity) desiredCapabilities['appActivity'] = opts.appActivity;
+    if (opts.appPackage) desiredCapabilities[appIdCap] = opts.appPackage;
+    if (opts.appActivity && platform !== 'ios') desiredCapabilities['appActivity'] = opts.appActivity;
   } else if (opts.appPackage) {
-    desiredCapabilities['appPackage'] = opts.appPackage;
-    if (opts.appActivity) desiredCapabilities['appActivity'] = opts.appActivity;
+    desiredCapabilities[appIdCap] = opts.appPackage;
+    if (opts.appActivity && platform !== 'ios') desiredCapabilities['appActivity'] = opts.appActivity;
   }
   if (opts.automotiveProjection) desiredCapabilities['digitalai:automotiveProjection'] = opts.automotiveProjection;
   if (opts.instrumentCluster) desiredCapabilities['digitalai:instrumentCluster'] = opts.instrumentCluster;
@@ -238,7 +240,7 @@ export async function createInspectionSession(
     deviceModel: String(caps['device.model'] ?? caps['digitalai:publicModel'] ?? ''),
     deviceOs: String(caps['device.os'] ?? caps['platformName'] ?? 'Android'),
     deviceVersion: String(caps['device.version'] ?? caps['platformVersion'] ?? ''),
-    appPackage: String(caps['appPackage'] ?? opts.appPackage ?? ''),
+    appPackage: String(caps['appPackage'] ?? caps['bundleId'] ?? opts.appPackage ?? ''),
     startedAt: Date.now(),
     lastUsedAt: Date.now(),
     canDeleteReport,
@@ -258,6 +260,8 @@ export async function quitInspectionSession(
   keepReport = false
 ): Promise<{
   reportDeleted: boolean;
+  /** Why the report could not be deleted (it is still in the reporter). */
+  reportDeleteError?: string;
   reportKept: boolean;
   canDeleteReport: boolean;
   reportTestId: number;
@@ -275,6 +279,7 @@ export async function quitInspectionSession(
   sessionRegistry.delete(handle);
 
   let reportDeleted = false;
+  let reportDeleteError: string | undefined;
   let reportKept = false;
   if (session.reportTestId > 0 && keepReport) {
     // Deliberately preserved (e.g. for the platform's session video recording) —
@@ -288,13 +293,20 @@ export async function quitInspectionSession(
       await deleteTests([session.reportTestId], undefined, session.projectName);
       allReports.delete(session.reportTestId);
       reportDeleted = true;
-    } catch {
+    } catch (e) {
+      // A report that carries a performance transaction cannot be deleted while the transaction exists — the platform
+      // answers 400 "Persistent instance of Attachment references an unsaved transient instance of TestTransactionServer"
+      // (verified 2026-10-18). Keep the reason so the caller knows the record is still there.
+      reportDeleteError = (e as Error).message.includes('TestTransactionServer')
+        ? 'the report holds a performance transaction, which the platform refuses to delete (400 TransientPropertyValueException) — the report stays'
+        : (e as Error).message;
       // Non-fatal — user can delete via reporter UI
     }
   }
 
   return {
     reportDeleted,
+    ...(reportDeleteError ? { reportDeleteError } : {}),
     reportKept,
     canDeleteReport: session.canDeleteReport,
     reportTestId: session.reportTestId,
@@ -324,10 +336,23 @@ export async function captureScreenshot(
 
 // Augment a WebDriver error with a dead-session hint — a 404 on an established
 // session almost always means the Grid/agent terminated it (timeout, WDA crash).
+/** A 404 means a dead session only when the body says so — Appium 2/3 also answer 404 ("unknown command") for a route
+ *  the driver lacks, and the Digital.ai proxy wraps seetest:client failures the same way (a camera-injection URL the
+ *  platform could not fetch came back 404 and was misreported as a terminated session, 2026-10-18). */
+function looksLikeDeadSession(e: unknown): boolean {
+  const err = e as { response?: { status?: number; data?: { value?: { error?: string; message?: string } } } };
+  if (err.response?.status !== 404) return false;
+  const v = err.response.data?.value;
+  if (!v || (v.error == null && v.message == null)) return true; // bare route 404: nothing to proxy to
+  const msg = `${v.error ?? ''} ${v.message ?? ''}`.toLowerCase();
+  if (/invalid session id|no such session|session .*(not found|terminated|expired|does not exist|has ended|is not running)/.test(msg)) return true;
+  if (v.error === 'unknown command' && /command|method|route|url=|file url/.test(v.message ?? '')) return false;
+  return v.error !== 'unknown command' && v.error !== 'no such element' && v.error !== 'no such alert' && v.error !== 'invalid argument';
+}
+
 function sessionAwareError(e: unknown, handle: string): string {
   const detail = describeWdError(e);
-  const err = e as { response?: { status?: number } };
-  if (err.response?.status === 404) {
+  if (looksLikeDeadSession(e)) {
     const s = sessionRegistry.get(handle);
     const idleNote =
       s?.lastIdleMs != null && s.lastIdleMs > 60_000
@@ -364,6 +389,9 @@ export interface WdElement {
   name: string | null;
   label: string | null;
   value: string | null;
+  /** iOS only: XCUITest's tap-ability flag. `clickable` mirrors `visible` (accessibility-layer visibility); an element
+   *  can be visible yet not hittable (covered, off the hit-test path) — verified live 2026-10-17 on a home-screen icon. */
+  hittable?: boolean | null;
   /** false when the match is beyond the attribute cap/time budget — only elementId is set. */
   enriched?: boolean;
 }
@@ -374,6 +402,41 @@ export interface FindElementsOptions {
   /** Stop fetching attributes after this long (default 35 s) so the call stays under MCP client timeouts (~60 s). */
   budgetMs?: number;
 }
+
+/**
+ * Appium Settings API (Appium Server / W3C sessions only): one POST per session makes every `POST /elements` answer
+ * carry attributes inline. Verified live 2026-10-18 — what each driver honours in `elementResponseAttributes`:
+ *   UiAutomator2: name, text, rect, enabled, displayed, selected (NOT class / resource-id / content-desc / clickable)
+ *   XCUITest:     type, label, rect, enabled, displayed (NOT value / visible / hittable; and its inline `name` is the
+ *                 element TYPE, not the accessibility id — only `label` carries the identifier-or-label)
+ * So the inline answer replaces 3 (Android) / 4 (iOS, incl. the rect call) of the 7–8 per-element GETs; the rest are
+ * still fetched. 3 ExperiBank fields: 1 275 ms → 207 ms inline on Android, 3 612 ms → 357 ms on iOS (before the GETs).
+ * A session where the settings call fails keeps the GET path (`inlineAttributes: false`, tried once).
+ */
+async function ensureInlineAttributes(client: AxiosInstance, session: InspectionSession): Promise<boolean> {
+  if (session.sessionFormat !== 'w3c' || session.platform === 'web') return false;
+  if (session.inlineAttributes != null) return session.inlineAttributes;
+  const attrs = session.platform === 'ios' ? 'type,label,rect,enabled,displayed' : 'name,text,rect,enabled,displayed';
+  try {
+    await client.post(
+      `/session/${session.gridSessionId}/appium/settings`,
+      { settings: { shouldUseCompactResponses: false, elementResponseAttributes: attrs } },
+      { timeout: 10_000 }
+    );
+    session.inlineAttributes = true;
+  } catch {
+    session.inlineAttributes = false;
+  }
+  return session.inlineAttributes;
+}
+
+const rectToBounds = (r: unknown): string | null => {
+  const o = r as { x?: number; y?: number; width?: number; height?: number } | null;
+  if (!o || o.x == null || o.width == null) return null;
+  return `[${o.x},${o.y}][${o.x + o.width},${(o.y ?? 0) + (o.height ?? 0)}]`;
+};
+const asBool = (v: unknown): boolean | null => (v === true || v === 'true' ? true : v === false || v === 'false' ? false : null);
+const asStr = (v: unknown): string | null => (v == null ? null : String(v));
 
 /**
  * Attribute enrichment costs 7–9 requests per element. Done one element at a time with no cap, 48 iOS home-screen
@@ -390,21 +453,29 @@ export async function findElements(
   const session = requireSession(handle);
   const client = makeClient();
   const sid = session.gridSessionId;
+  const inline = await ensureInlineAttributes(client, session);
+  const inWebview = isWebviewContext(session);
 
   let res;
   try {
     res = await client.post(
       `/session/${sid}/elements`,
       { using, value },
-      { timeout: 20_000 }
+      // A Chrome WEBVIEW find on a heavy page exceeded 20 s live (2026-10-18); native finds answer in well under 1 s.
+      { timeout: inWebview ? 60_000 : 20_000 }
     );
   } catch (e) {
     throw new Error(sessionAwareError(e, handle));
   }
 
-  const rawList: Record<string, string>[] = res.data.value ?? [];
+  const rawList: Record<string, unknown>[] = res.data.value ?? [];
+  const rawById = new Map<string, Record<string, unknown>>();
   const ids = rawList
-    .map((raw) => raw['ELEMENT'] ?? raw['element-6066-11e4-a52e-4f735466cecf'])
+    .map((raw) => {
+      const id = (raw['ELEMENT'] ?? raw['element-6066-11e4-a52e-4f735466cecf']) as string | undefined;
+      if (id) rawById.set(id, raw);
+      return id;
+    })
     .filter((id): id is string => Boolean(id));
 
   const bare = (elementId: string): WdElement => ({
@@ -413,11 +484,65 @@ export async function findElements(
   });
 
   const enrich = async (elementId: string): Promise<WdElement> => {
+    const raw = rawById.get(elementId) ?? {};
+    if (inWebview) {
+      // Web element inside a WEBVIEW context: tag, text, id/class attributes and geometry (W3C routes).
+      const [tag, text, id, cls, rect] = await Promise.allSettled([
+        client.get(`/session/${sid}/element/${elementId}/name`, { timeout: 10_000 }).then((r) => asStr(r.data.value)),
+        client.get(`/session/${sid}/element/${elementId}/text`, { timeout: 10_000 }).then((r) => asStr(r.data.value)),
+        getAttr(client, sid, elementId, 'id'),
+        getAttr(client, sid, elementId, 'class'),
+        client.get(`/session/${sid}/element/${elementId}/rect`, { timeout: 10_000 }).then((r) => r.data.value),
+      ]).then((rs) => rs.map((r) => (r.status === 'fulfilled' ? r.value : null)));
+      return {
+        elementId, className: tag as string | null, resourceId: id as string | null, contentDesc: cls as string | null,
+        text: text as string | null, bounds: rectToBounds(rect), clickable: null, enabled: null, name: null, label: null, value: null, enriched: true,
+      };
+    }
+    if (session.platform === 'ios' && inline && 'type' in raw) {
+      // Inline: type, label, rect, enabled, displayed. Still fetched: name (identifier), value, visible, hittable.
+      const [name, val, visible, hittable] = await Promise.allSettled([
+        getAttr(client, sid, elementId, 'name'),
+        getAttr(client, sid, elementId, 'value'),
+        getAttr(client, sid, elementId, 'visible'),
+        getAttr(client, sid, elementId, 'hittable'),
+      ]).then((rs) => rs.map((r) => (r.status === 'fulfilled' ? r.value : null)));
+      return {
+        elementId,
+        className: asStr(raw['type']),
+        resourceId: null,
+        contentDesc: null,
+        text: null,
+        bounds: rectToBounds(raw['rect']),
+        clickable: visible === 'true' ? true : visible === 'false' ? false : asBool(raw['displayed']),
+        enabled: asBool(raw['enabled']),
+        name: name ?? asStr(raw['label']),
+        label: asStr(raw['label']),
+        value: val,
+        hittable: hittable === 'true' ? true : hittable === 'false' ? false : null,
+        enriched: true,
+      };
+    }
+    if (session.platform === 'android' && inline && 'text' in raw) {
+      // Inline: text, rect, enabled, displayed. Still fetched: class, resource-id, content-desc, clickable.
+      const [className, resourceId, contentDesc, clickable] = await Promise.allSettled([
+        getAttr(client, sid, elementId, 'class'),
+        getAttr(client, sid, elementId, 'resource-id'),
+        getAttr(client, sid, elementId, 'content-desc'),
+        getAttr(client, sid, elementId, 'clickable'),
+      ]).then((rs) => rs.map((r) => (r.status === 'fulfilled' ? r.value : null)));
+      return {
+        elementId, className, resourceId, contentDesc: contentDesc === 'null' ? null : contentDesc,
+        text: asStr(raw['text']), bounds: rectToBounds(raw['rect']),
+        clickable: clickable === 'true' ? true : clickable === 'false' ? false : null,
+        enabled: asBool(raw['enabled']), name: null, label: null, value: null, enriched: true,
+      };
+    }
     if (session.platform === 'ios') {
       // iOS attribute model: name/label/value/type. XCUITest rejects Android
       // names (class, text, bounds) outright; the Grid exposes `class` instead
       // of `type` — fetch both and take whichever resolves.
-      const [name, label, val, type, cls, enabled, visible] =
+      const [name, label, val, type, cls, enabled, visible, hittable] =
         await Promise.allSettled([
           getAttr(client, sid, elementId, 'name'),
           getAttr(client, sid, elementId, 'label'),
@@ -426,6 +551,7 @@ export async function findElements(
           getAttr(client, sid, elementId, 'class'),
           getAttr(client, sid, elementId, 'enabled'),
           getAttr(client, sid, elementId, 'visible'),
+          getAttr(client, sid, elementId, 'hittable'),
         ]).then((rs) => rs.map((r) => (r.status === 'fulfilled' ? r.value : null)));
 
       let bounds: string | null = null;
@@ -448,6 +574,7 @@ export async function findElements(
         name,
         label,
         value: val,
+        hittable: hittable === 'true' ? true : hittable === 'false' ? false : null,
         enriched: true,
       };
     }
@@ -910,7 +1037,10 @@ export async function launchApp(
     const w3c: Mechanism = ['mobile: startActivity', () =>
       client.post(
         `/session/${sid}/execute/sync`,
-        { script: 'mobile: startActivity', args: [{ intent: activityUrl, wait: true }] },
+        // stop: true — without it an already-running app only gets the intent "delivered to currently running top-most
+        // instance" (no restart; verified live 2026-10-17 on Android 13); with it the launch is COLD, matching the Grid's
+        // seetest:client.launch(..., stopIfRunning = true) used below.
+        { script: 'mobile: startActivity', args: [{ intent: activityUrl, wait: true, stop: true }] },
         { timeout: 30_000 }
       )];
     const legacy: Mechanism = ['legacy start_activity', () =>
@@ -985,7 +1115,7 @@ function execScript(
   client: AxiosInstance,
   session: InspectionSession,
   script: string,
-  args: unknown[],
+  args: unknown[] = [{}],
   timeoutMs = 30_000
 ): Promise<{ data: { value: unknown } }> {
   const path = session.sessionFormat === 'w3c' ? 'execute/sync' : 'execute';
@@ -1206,7 +1336,7 @@ function automotiveError(e: unknown, handle: string): string {
 export async function performanceTransaction(
   handle: string,
   action: 'start' | 'end',
-  opts: { networkProfile?: string; transactionName?: string }
+  opts: { networkProfile?: string; transactionName?: string; forApplication?: string }
 ): Promise<string> {
   const session = requireSession(handle);
   const client = makeClient();
@@ -1221,15 +1351,24 @@ export async function performanceTransaction(
           'region must be ONLINE and tunnel-connected (verify with list_nv_servers) or the transaction records nothing.'
         );
       }
-      await execScript(client, session, 'seetest:client.startPerformanceTransaction', [opts.networkProfile]);
+      // Per-application variant (verified live 2026-10-18, Android + iOS): CPU/memory/battery are sampled for ONE app
+      // (the one named) instead of the whole device; the start call took ~18 s on both platforms (vs ~1 s for the
+      // device-wide form) — the platform attaches to the process first. Platform docs: a transaction is capped at
+      // 5 minutes, cancelled when the session quits, "NONE" means no NV profile, and no HAR is recorded while NV
+      // tunneling is on.
+      if (opts.forApplication) {
+        await execScript(client, session, 'seetest:client.startPerformanceTransactionForApplication', [opts.forApplication, opts.networkProfile], 60_000);
+      } else {
+        await execScript(client, session, 'seetest:client.startPerformanceTransaction', [opts.networkProfile]);
+      }
       const isMonitor = opts.networkProfile.toLowerCase() === 'monitor';
       const throttleNote = isMonitor
         ? `"Monitor" is pass-through — no throttling is applied, so there is no ANR risk from network shaping. `
         : `⚠️ NV throttling is now ACTIVE — if the app makes background network calls during this window it may ANR/crash; keep the measured window tight. `;
       return (
-        `Started performance transaction with NV profile "${opts.networkProfile}". ` +
+        `Started ${opts.forApplication ? `per-application performance transaction for ${opts.forApplication}` : 'performance transaction'} with NV profile "${opts.networkProfile}". ` +
         throttleNote +
-        `Perform ONLY the UI steps you want measured, then call action:"end".`
+        `Perform ONLY the UI steps you want measured, then call action:"end" (within 5 minutes — the platform cancels longer transactions, and quitting the session cancels it too).`
       );
     }
     if (!opts.transactionName) {
@@ -1482,6 +1621,55 @@ export async function scrollToElement(
       : [Math.round(height * 0.3), Math.round(height * 0.7)];
 
   let swipesUsed = 0;
+  const client = makeClient();
+
+  // iOS Appium Server: XCUITest scrolls the application element to a name / predicate in ONE call (no page-source
+  // polling). `mobile: scroll` only targets the app under test ("application ... is not running" when another app is
+  // in front — verified live 2026-10-18), so a failure here just falls through to the swipe loop below.
+  if (session.sessionFormat === 'w3c' && session.platform === 'ios' && !isWebviewContext(session) &&
+      (using === 'accessibility id' || using === '-ios predicate string')) {
+    const args = using === 'accessibility id' ? { name: value, direction: direction === 'up' ? 'down' : 'up' } : { predicateString: value, direction: direction === 'up' ? 'down' : 'up' };
+    try {
+      await execScript(client, session, 'mobile: scroll', [args], 20_000);
+      const found = await findElements(handle, using, value, { maxEnriched: 1 });
+      if (found.length > 0) return { found: true, element: found[0], swipesUsed: 1, reachedEnd: false };
+    } catch {
+      // fall through to the generic loop
+    }
+  }
+
+  // Android Appium Server: `mobile: scrollGesture` answers canScrollMore, a real end-of-list signal that replaces the
+  // page-source diff (one full XML dump per swipe). `mobile: scroll` (UiScrollable) was tried first and dropped: it
+  // fails with "Cannot scroll to UiSelector[...]" on the first scrollable it picks (Settings on Samsung/LG, the
+  // ExperiBank country dialog) — verified live 2026-10-18.
+  if (session.sessionFormat === 'w3c' && session.platform === 'android' && !isWebviewContext(session)) {
+    const area = { left: Math.round(width * 0.1), top: Math.round(height * 0.15), width: Math.round(width * 0.8), height: Math.round(height * 0.7) };
+    for (let i = 0; i <= maxSwipes; i++) {
+      const found = await findElements(handle, using, value, { maxEnriched: 1 });
+      if (found.length > 0) return { found: true, element: found[0], swipesUsed, reachedEnd: false };
+      if (i === maxSwipes) break;
+      let canScrollMore: boolean | null = null;
+      try {
+        // direction is the FINGER direction (same convention as swipeGesture): 'up' reveals the content below. Verified
+        // live 2026-10-18 — mapping it the other way ended a Settings scroll after two swipes with canScrollMore=false.
+        const r = await execScript(client, session, 'mobile: scrollGesture', [{ ...area, direction, percent: 0.8 }], 20_000);
+        canScrollMore = asBool(r.data.value);
+      } catch {
+        canScrollMore = null; // unknown-command (older agent) → use the raw swipe instead
+      }
+      if (canScrollMore == null) await swipeScreen(handle, midX, startY, midX, endY, 500);
+      swipesUsed++;
+      await new Promise((r) => setTimeout(r, 500));
+      if (canScrollMore === false) {
+        const last = await findElements(handle, using, value, { maxEnriched: 1 });
+        return last.length > 0
+          ? { found: true, element: last[0], swipesUsed, reachedEnd: false }
+          : { found: false, element: null, swipesUsed, reachedEnd: true };
+      }
+    }
+    return { found: false, element: null, swipesUsed, reachedEnd: false };
+  }
+
   let lastSource = '';
   for (let i = 0; i <= maxSwipes; i++) {
     const found = await findElements(handle, using, value, { maxEnriched: 1 });
@@ -1519,11 +1707,14 @@ export const ANDROID_KEYCODES: Record<string, number> = {
 };
 
 // iOS physical buttons: XCUITest `mobile: pressButton` name → SeeTest deviceAction label.
-const IOS_BUTTONS: Record<string, { w3c: string; grid: string }> = {
+// mobile: pressButton supports only home / volumeup / volumedown on a real device ("The button 'power' is not
+// supported", verified live 2026-10-17, iPhone 13 mini / iOS 17.6). POWER is handled separately below with
+// mobile: lock / unlock (both returned OK on the same device); the Grid's deviceAction("Lock") stays as its fallback.
+const IOS_BUTTONS: Record<string, { w3c: string | null; grid: string }> = {
   HOME: { w3c: 'home', grid: 'Home' },
   VOLUME_UP: { w3c: 'volumeup', grid: 'Volume Up' },
   VOLUME_DOWN: { w3c: 'volumedown', grid: 'Volume Down' },
-  POWER: { w3c: 'power', grid: 'Lock' },
+  POWER: { w3c: null, grid: 'Lock' },
 };
 
 export async function pressKey(
@@ -1543,7 +1734,17 @@ export async function pressKey(
         `For ENTER, type "\\n" with type_into_element; iOS has no BACK button — press_back performs the edge-swipe instead.`
       );
     }
-    const w3c = () => execScript(client, session, 'mobile: pressButton', [{ name: button.w3c }]);
+    let w3cResult = key!;
+    const w3c = async () => {
+      if (button.w3c) {
+        await execScript(client, session, 'mobile: pressButton', [{ name: button.w3c }]);
+        return;
+      }
+      // POWER = toggle the lock state: lock when unlocked, unlock when locked (a physical side-button press does both).
+      const locked = (await execScript(client, session, 'mobile: isLocked', [{}])).data.value === true;
+      await execScript(client, session, locked ? 'mobile: unlock' : 'mobile: lock', [{}]);
+      w3cResult = locked ? 'POWER (device unlocked)' : 'POWER (device locked — press POWER again to unlock)';
+    };
     const grid = () =>
       client.post(
         `/session/${sid}/execute`,
@@ -1560,7 +1761,7 @@ export async function pressKey(
         throw new Error(`pressKey failed: ${describeWdError(e)}; fallback: ${describeWdError(e2)}`);
       }
     }
-    return key!;
+    return w3cResult;
   }
 
   const code = keycode ?? (key ? ANDROID_KEYCODES[key] : undefined);
@@ -1632,7 +1833,7 @@ export async function hideKeyboard(handle: string): Promise<void> {
 
 // ─── App control ─────────────────────────────────────────────────────────────
 
-export type AppControlAction = 'terminate' | 'clear_data' | 'query_state' | 'deep_link';
+export type AppControlAction = 'terminate' | 'clear_data' | 'query_state' | 'deep_link' | 'background' | 'is_installed' | 'current' | 'install';
 
 const APP_STATE_LABELS: Record<number, string> = {
   0: 'not installed',
@@ -1646,7 +1847,8 @@ export async function appControl(
   handle: string,
   action: AppControlAction,
   packageName?: string,
-  url?: string
+  url?: string,
+  opts: { seconds?: number; appRef?: string } = {}
 ): Promise<string> {
   const session = requireSession(handle);
   const client = makeClient();
@@ -1654,12 +1856,56 @@ export async function appControl(
   const isW3c = session.sessionFormat === 'w3c';
 
   const isIos = session.platform === 'ios';
+  const idArg = (pkg: string) => (isIos ? { bundleId: pkg } : { appId: pkg });
 
   switch (action) {
+    // Verified live 2026-10-18 (Appium Server, Galaxy Note 20 / iPhone 13 Pro Max): backgroundApp returns after the
+    // seconds elapse and the app is in the foreground again (queryAppState 4); isAppInstalled → true/false;
+    // getCurrentActivity/getCurrentPackage (Android) and activeAppInfo (iOS); `mobile: installApp {appPath: "cloud:…"}`
+    // installs from the Digital.ai repository mid-session (the `app` key is rejected: "required parameter appPath").
+    case 'background': {
+      const seconds = Math.max(1, Math.round(opts.seconds ?? 3));
+      if (!isW3c) throw new Error('background is not available on Appium Grid sessions — press HOME (press_key) and relaunch with launch_app instead.');
+      await execScript(client, session, 'mobile: backgroundApp', [{ seconds }], (seconds + 20) * 1000);
+      return `App sent to the background for ${seconds} s and brought back to the foreground. Verify the restored screen with take_inspection_screenshot.`;
+    }
+    case 'is_installed': {
+      if (!packageName) throw new Error('is_installed requires packageName (Android) or bundleIdentifier (iOS).');
+      if (!isW3c) throw new Error('is_installed is not available on Appium Grid sessions — use list_applications / get_application_info, or launch_app and read the error.');
+      const r = await execScript(client, session, 'mobile: isAppInstalled', [idArg(packageName)]);
+      return `${packageName} is ${r.data.value === true ? '' : 'NOT '}installed on ${session.deviceName || 'this device'}.`;
+    }
+    case 'current': {
+      if (isW3c && isIos) {
+        const r = await execScript(client, session, 'mobile: activeAppInfo');
+        const v = r.data.value as { bundleId?: string; name?: string; pid?: number };
+        return `Foreground app: ${v.bundleId ?? 'unknown'}${v.name ? ` (${v.name})` : ''}${v.pid != null ? `, pid ${v.pid}` : ''}.`;
+      }
+      if (isW3c) {
+        const [act, pkg] = await Promise.all([
+          execScript(client, session, 'mobile: getCurrentActivity').then((r) => String(r.data.value ?? '')),
+          execScript(client, session, 'mobile: getCurrentPackage').then((r) => String(r.data.value ?? '')),
+        ]);
+        return `Foreground: package ${pkg}, activity ${act}.`;
+      }
+      if (isIos) throw new Error('current is not available on Grid iOS sessions — use take_inspection_screenshot.');
+      const res = await client.get(`/session/${sid}/appium/device/current_activity`, { timeout: 15_000 });
+      return `Foreground activity: ${String(res.data.value ?? '')} (Grid sessions report the activity only).`;
+    }
+    case 'install': {
+      const ref = opts.appRef ?? packageName;
+      if (!ref) throw new Error('install requires appRef — a repository reference such as "cloud:com.example.app" (Android: "cloud:com.example.app/.MainActivity"), "cloud:uniqueName=<name>" or "cloud:<package>:releaseVersion=<v>".');
+      const appPath = ref.startsWith('cloud:') ? ref : `cloud:${ref}`;
+      if (!isW3c) throw new Error('install mid-session is not available on Appium Grid sessions — install_application before the session (the device must not be reserved).');
+      await execScript(client, session, 'mobile: installApp', [{ appPath }], 180_000);
+      return `Installed ${appPath} from the repository onto ${session.deviceName || 'the device'}. Use launch_app to open it.`;
+    }
     case 'terminate': {
       if (!packageName) throw new Error('terminate requires packageName (Android) or bundleIdentifier (iOS).');
       if (isW3c) {
-        const args = isIos ? { bundleId: packageName } : { appId: packageName };
+        // timeout: how long the driver waits for the process to disappear before answering false (UiAutomator2 default
+        // 500 ms — a slow-exiting app was reported "was not running"); verified live 2026-10-17 with 2000.
+        const args = isIos ? { bundleId: packageName } : { appId: packageName, timeout: 3000 };
         const res = await execScript(client, session, 'mobile: terminateApp', [args]);
         return res.data.value
           ? `Terminated ${packageName}.`
@@ -1830,9 +2076,38 @@ export async function resetGeolocation(handle: string): Promise<void> {
   await execScript(client, session, script, [{}]);
 }
 
+/** Alert text and, on iOS Appium Server, its button labels (`mobile: alert getButtons` → ["Yes","No"] live 2026-10-18). */
+export async function getAlertInfo(handle: string): Promise<{ text: string; buttons: string[] | null }> {
+  const session = requireSession(handle);
+  if (session.sessionFormat === 'jwp') {
+    throw new Error('Alert routes are not supported on Appium Grid sessions (501) — dialogs are regular UI elements there: use get_element_tree / find_elements and tap_element.');
+  }
+  const client = makeClient();
+  let text: string;
+  try {
+    const r = await client.get(`/session/${session.gridSessionId}/alert/text`, { timeout: 15_000 });
+    text = String(r.data.value ?? '');
+  } catch (e) {
+    const detail = describeWdError(e).toLowerCase();
+    if (detail.includes('no alert') || detail.includes('noalertopen') || detail.includes('modal dialog when one was not open')) throw new Error('No alert is present on the screen.');
+    throw new Error(describeWdError(e));
+  }
+  let buttons: string[] | null = null;
+  if (session.platform === 'ios') {
+    try {
+      const r = await execScript(client, session, 'mobile: alert', [{ action: 'getButtons' }]);
+      buttons = Array.isArray(r.data.value) ? r.data.value.map(String) : null;
+    } catch {
+      buttons = null;
+    }
+  }
+  return { text, buttons };
+}
+
 export async function handleAlert(
   handle: string,
-  action: 'accept' | 'dismiss'
+  action: 'accept' | 'dismiss',
+  buttonLabel?: string
 ): Promise<void> {
   const session = requireSession(handle);
   if (session.sessionFormat === 'jwp') {
@@ -1844,6 +2119,14 @@ export async function handleAlert(
   }
   const client = makeClient();
   try {
+    if (buttonLabel && session.platform === 'ios') {
+      // XCUITest: pick the button by its label (plain /alert/accept presses the default one).
+      await execScript(client, session, 'mobile: alert', [{ action, buttonLabel }]);
+      return;
+    }
+    if (buttonLabel) {
+      throw new Error('buttonLabel is iOS-only (mobile: alert). On Android tap the dialog button by text with find_elements + tap_element.');
+    }
     await client.post(
       `/session/${session.gridSessionId}/alert/${action}`,
       {},
@@ -1911,19 +2194,292 @@ export async function mockAuthentication(
   if (session.platform === 'web') throw new Error('mock_authentication is not available for browser sessions.');
   const client = makeClient();
 
-  // Android uses string enum values; iOS uses LAError numeric codes.
-  const replyValue: string | number =
+  // Both platforms take string replies (verified live 2026-10-17 — numeric LAError codes are refused on iOS:
+  // "Invalid setAuthenticationReply() parameter 1 for iOS, possible values are: MockFullGUI, Success, StopMock,
+  // AuthenticationFailedError, UserCancelError, UserFallbackError, SystemCancelError, PasscodeNotSetError,
+  // TouchIDNotAvailableError, TouchIDNotEnrolledError, TouchIDLockoutError, AppCancelError, InvalidContextError";
+  // Android: CLEAR_MOCK, AUTHENTICATION_SUCCEEDED, AUTHENTICATION_FAILED, ERROR_CANCELED, ERROR_HW_UNAVAILABLE,
+  // ERROR_LOCKOUT, ERROR_NO_SPACE, ERROR_TIMEOUT, ERROR_UNABLE_TO_PROCESS, ERROR_VENDOR_BASE, FP_ACQUIRED_*).
+  const replyValue: string =
     session.platform === 'ios'
-      ? ({ success: 1, failed: -1, cancel: -2, clear: 0 } as const)[reply]
+      ? ({ success: 'Success', failed: 'AuthenticationFailedError', cancel: 'UserCancelError', clear: 'StopMock' } as const)[reply]
       : ({ success: 'AUTHENTICATION_SUCCEEDED', failed: 'AUTHENTICATION_FAILED', cancel: 'ERROR_CANCELED', clear: 'CLEAR_MOCK' } as const)[reply];
 
-  await execScript(client, session, 'seetest:client.setAuthenticationReply', [replyValue, delayMs]);
+  // The platform rejects delay 0 ("Parameter delay must be a number greater than 0") on both platforms — so a zero
+  // default made EVERY call fail until 2026-10-17. 1 ms is the smallest accepted value.
+  const delay = Math.max(1, Math.floor(delayMs));
+
+  try {
+    await execScript(client, session, 'seetest:client.setAuthenticationReply', [replyValue, delay]);
+  } catch (e) {
+    const detail = describeWdError(e);
+    if (/not instrumented/i.test(detail)) {
+      throw new Error(
+        `${detail}. The app under test must be instrumented: re-upload it with instrument=true (upload_application_file / ` +
+        `upload_application_from_url) or start the session with the digitalai:instrumentApp capability, then launch it again.`
+      );
+    }
+    throw new Error(detail);
+  }
 
   const label = reply === 'clear' ? 'cleared (no mock active)' : `staged as "${reply}"`;
   return (
     `Authentication response ${label}. ` +
     `The next biometric prompt in the instrumented app will respond automatically.`
   );
+}
+
+// ─── Session capture: HAR + device log into the file repository ──────────────
+// seetest:client.startHarRecording("cloud:<name>.har") / stopHarRecording(), startLoggingDevice("cloud:<name>.log") /
+// stopLoggingDevice() — verified live 2026-10-18 on Appium Server Android + iOS. Both stop commands are 0-arg (Appium
+// Server only). The HAR lands as a ZIP that contains `har.json`; with NV tunneling on (this tenant) the platform
+// records no entries, so the ZIP is ~290 bytes — the tool says so instead of handing over an empty capture.
+
+export type CaptureKind = 'har' | 'device_log';
+
+export async function sessionCapture(
+  handle: string,
+  kind: CaptureKind,
+  action: 'start' | 'stop',
+  name?: string
+): Promise<{ file: string; repositoryFile?: { id: number; size: number }; note?: string }> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  if (session.sessionFormat === 'jwp') {
+    throw new Error(`${kind === 'har' ? 'HAR' : 'Device-log'} capture is Appium Server only — its stop command takes no arguments, which the Grid execute parser rejects.`);
+  }
+  const field = kind === 'har' ? 'harRecording' : 'deviceLogRecording';
+  if (action === 'start') {
+    if (session[field]) throw new Error(`A ${kind} capture ("${session[field]}") is already running — stop it first.`);
+    const base = (name ?? `mcp-${kind}-${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`).replace(/^cloud:/, '');
+    const file = kind === 'har' ? (base.endsWith('.har') ? base : `${base}.har`) : (base.endsWith('.log') ? base : `${base}.log`);
+    try {
+      await execScript(client, session, kind === 'har' ? 'seetest:client.startHarRecording' : 'seetest:client.startLoggingDevice', [`cloud:${file}`], 60_000);
+    } catch (e) {
+      throw new Error(sessionAwareError(e, handle));
+    }
+    session[field] = file;
+    return { file };
+  }
+  const file = session[field];
+  if (!file) throw new Error(`No ${kind} capture is running on this session — start one first.`);
+  try {
+    await execScript(client, session, kind === 'har' ? 'seetest:client.stopHarRecording' : 'seetest:client.stopLoggingDevice', [], 60_000);
+  } catch (e) {
+    throw new Error(sessionAwareError(e, handle));
+  }
+  session[field] = undefined;
+  let repositoryFile: { id: number; size: number } | undefined;
+  let note: string | undefined;
+  try {
+    const { listFiles } = await import('./repository.js');
+    for (let i = 0; i < 5 && !repositoryFile; i++) {
+      const hit = (await listFiles()).find((f) => f.uniqueName === file);
+      if (hit) repositoryFile = { id: hit.id, size: Number(hit.size ?? 0) };
+      else await new Promise((r) => setTimeout(r, 1500));
+    }
+  } catch {
+    // listing is best-effort
+  }
+  if (kind === 'har' && repositoryFile && repositoryFile.size < 400) {
+    note = 'The HAR holds no entries: the platform does not record HTTP traffic while NV tunneling is on for the device (platform docs), and this tenant tunnels every device. Use a performance transaction for network byte counts instead.';
+  }
+  return { file, repositoryFile, note };
+}
+
+// ─── Network connection / conditions ─────────────────────────────────────────
+// seetest:client.getNetworkConnection(kind) → boolean and setNetworkConnection(kind, enabled) for wifi / mobile_data /
+// airplane_mode / bluetooth — verified live 2026-10-18 on a Galaxy Note 20 (get all four; set bluetooth off/on). iOS
+// answered get wifi → true; set is Android-only per the platform docs. setNetworkConditions(profile, durationMs) applies
+// an NV profile WITHOUT a transaction (0 = until changed); docs restrict it to Project Admin and above.
+
+export type NetworkConnectionKind = 'wifi' | 'mobile_data' | 'airplane_mode' | 'bluetooth';
+
+export async function networkConnection(
+  handle: string,
+  kind: NetworkConnectionKind,
+  enabled?: boolean
+): Promise<{ kind: NetworkConnectionKind; enabled: boolean }> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  try {
+    if (enabled != null) {
+      if (session.platform === 'ios') throw new Error('setNetworkConnection is Android-only (platform docs) — on iOS only the read-back works.');
+      await execScript(client, session, 'seetest:client.setNetworkConnection', [kind, enabled]);
+    }
+    const r = await execScript(client, session, 'seetest:client.getNetworkConnection', [kind]);
+    return { kind, enabled: r.data.value === true };
+  } catch (e) {
+    throw new Error(sessionAwareError(e, handle));
+  }
+}
+
+export async function setNetworkConditions(handle: string, profile: string, durationMs = 0): Promise<string> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  try {
+    await execScript(client, session, 'seetest:client.setNetworkConditions', [profile, Math.max(0, Math.round(durationMs))]);
+  } catch (e) {
+    throw new Error(sessionAwareError(e, handle));
+  }
+  return `NV profile "${profile}" applied to the device's traffic${durationMs > 0 ? ` for ${Math.round(durationMs / 1000)} s` : ' until changed (apply "Monitor" or quit the session to lift it)'}. No transaction is recorded — this only shapes the network.`;
+}
+
+// ─── Camera image injection ──────────────────────────────────────────────────
+// seetest:client.simulateCapture(source): "cloud:<repository file>" or an http(s) URL; the platform checks the
+// extension first ("Only the following are supported:[jpg, jpeg, png]", live 2026-10-18) and needs the app under test
+// instrumented (digitalai:instrumentApp=true / instrument=true at upload) — not instrumented → "application is not
+// instrumented", the same gate as setAuthenticationReply.
+
+export async function injectCameraImage(handle: string, source: string): Promise<string> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  const src = source.trim();
+  if (!/\.(jpe?g|png)(\?.*)?$/i.test(src)) {
+    throw new Error(`"${src}" is not a jpg/jpeg/png — the platform accepts only those extensions (a repository file "cloud:<uniqueName>.png" or an http(s) URL ending in .jpg/.jpeg/.png).`);
+  }
+  if (!/^(cloud:|https?:\/\/)/i.test(src)) {
+    throw new Error('source must be "cloud:<repository uniqueName>" (upload the image with upload_repository_file first) or an http(s) URL.');
+  }
+  try {
+    await execScript(client, session, 'seetest:client.simulateCapture', [src], 60_000);
+  } catch (e) {
+    const detail = describeWdError(e);
+    if (/not instrumented/i.test(detail)) {
+      throw new Error(`${detail}. Camera injection needs an instrumented build: re-upload the app with instrument=true, or start the session with digitalai:instrumentApp=true, then launch it again.`);
+    }
+    throw new Error(sessionAwareError(e, handle));
+  }
+  return `Camera injection armed with ${src}: the next camera capture in the instrumented app returns this image instead of the sensor frame.`;
+}
+
+export async function clearWebCache(handle: string): Promise<void> {
+  const session = requireSession(handle);
+  if (session.sessionFormat === 'jwp') throw new Error('hybridClearCache takes no arguments — Appium Server sessions only (the Grid execute parser rejects 0-arg commands).');
+  try {
+    await execScript(makeClient(), session, 'seetest:client.hybridClearCache', [], 60_000);
+  } catch (e) {
+    throw new Error(sessionAwareError(e, handle));
+  }
+}
+
+// ─── Webview contexts ─────────────────────────────────────────────────────────
+// Verified live 2026-10-18 (Appium Server): ExperiBank iOS exposes "WEBVIEW_<pid>.1" (its balance page) once logged
+// in; Chrome on Android exposes "WEBVIEW_chrome" with page titles/urls via `mobile: getContexts`, which also waits for
+// a webview to appear (`waitForWebviewMs`) — GET /contexts immediately after an app switch listed none. An "OCR"
+// context (plugin) is listed on Appium Server too. The Grid lists NATIVE_APP only (switching there is unverified).
+
+export interface ContextInfo { id: string; title?: string; url?: string; bundleId?: string; package?: string }
+
+export function isWebviewContext(session: InspectionSession): boolean {
+  return !!session.currentContext && session.currentContext !== 'NATIVE_APP';
+}
+
+export async function listContexts(handle: string, waitMs = 3000): Promise<ContextInfo[]> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  if (session.sessionFormat === 'w3c') {
+    try {
+      const r = await execScript(client, session, 'mobile: getContexts', [{ waitForWebviewMs: waitMs }], waitMs + 20_000);
+      const v = r.data.value;
+      if (Array.isArray(v) && v.length) {
+        const out: ContextInfo[] = [];
+        for (const c of v as Array<Record<string, unknown>>) {
+          if (typeof c === 'string') { out.push({ id: c }); continue; }
+          if (c.id) { out.push({ id: String(c.id), title: c.title ? String(c.title) : undefined, url: c.url ? String(c.url) : undefined, bundleId: c.bundleId ? String(c.bundleId) : undefined }); continue; }
+          // Android shape: { webview, info: { 'Android-Package' }, pages: [{ title, url, type }] }
+          const pages = (c.pages as Array<Record<string, unknown>> | undefined)?.filter((pg) => pg.type === 'page') ?? [];
+          const info = c.info as Record<string, unknown> | undefined;
+          out.push({ id: String(c.webview), package: info?.['Android-Package'] ? String(info['Android-Package']) : undefined, title: pages[0]?.title ? String(pages[0].title) : undefined, url: pages[0]?.url ? String(pages[0].url) : undefined });
+        }
+        if (!out.some((c) => c.id === 'NATIVE_APP')) out.unshift({ id: 'NATIVE_APP' });
+        return out;
+      }
+    } catch {
+      // fall back to the plain route
+    }
+  }
+  const r = await client.get(`/session/${session.gridSessionId}/contexts`, { timeout: 15_000 });
+  return (Array.isArray(r.data.value) ? r.data.value : []).map((c: unknown) => ({ id: String(c) }));
+}
+
+export async function switchContext(
+  handle: string,
+  target: 'native' | 'auto' | string,
+  waitMs = 3000
+): Promise<{ context: string; title?: string; url?: string; available: string[] }> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  const contexts = await listContexts(handle, target === 'native' ? 0 : waitMs);
+  const ids = contexts.map((c) => c.id);
+  let name: string;
+  if (target === 'native') name = 'NATIVE_APP';
+  else if (target === 'auto') {
+    const web = ids.find((id) => /^WEBVIEW/i.test(id));
+    if (!web) {
+      throw new Error(
+        `No WEBVIEW context is available (contexts: ${ids.join(', ') || 'none'}). The screen in front has no web content, ` +
+        `or the webview is not debuggable (Android: WebView.setWebContentsDebuggingEnabled(true) in a debug build; ` +
+        `iOS: the app must be built with web inspection allowed). Navigate to the hybrid screen first, then retry.`
+      );
+    }
+    name = web;
+  } else {
+    if (!ids.includes(target)) throw new Error(`Context "${target}" is not available (contexts: ${ids.join(', ') || 'none'}).`);
+    name = target;
+  }
+  try {
+    await client.post(`/session/${session.gridSessionId}/context`, { name }, { timeout: 30_000 });
+  } catch (e) {
+    throw new Error(`Switching to ${name} failed: ${describeWdError(e)}`);
+  }
+  session.currentContext = name;
+  const result: { context: string; title?: string; url?: string; available: string[] } = { context: name, available: ids };
+  if (name !== 'NATIVE_APP') {
+    try { result.title = String((await client.get(`/session/${session.gridSessionId}/title`, { timeout: 10_000 })).data.value ?? ''); } catch { /* optional */ }
+    try { result.url = String((await client.get(`/session/${session.gridSessionId}/url`, { timeout: 10_000 })).data.value ?? ''); } catch { /* optional */ }
+  }
+  return result;
+}
+
+// ─── Device log (in-session) ─────────────────────────────────────────────────
+// GET /log/types → Android: logcat, bugreport, server (Grid: logcat); iOS: syslog, crashlog, performance,
+// safariConsole, safariNetwork, server. POST /log {type} returns every line captured so far (3 580 logcat / 9 548
+// syslog lines live 2026-10-18), so the tail is cut here and `contains` filters before anything is returned.
+
+export async function getDeviceLog(
+  handle: string,
+  type?: string,
+  opts: { tail?: number; contains?: string } = {}
+): Promise<{ type: string; totalLines: number; lines: string[]; types: string[] }> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  let types: string[] = [];
+  try {
+    const r = await client.get(`/session/${session.gridSessionId}/log/types`, { timeout: 15_000 });
+    types = Array.isArray(r.data.value) ? r.data.value.map(String) : [];
+  } catch {
+    types = [];
+  }
+  const wanted = type ?? (session.platform === 'ios' ? 'syslog' : 'logcat');
+  if (types.length && !types.includes(wanted)) {
+    throw new Error(`Log type "${wanted}" is not available on this session. Available: ${types.join(', ')}.`);
+  }
+  let entries: Array<{ message?: string; timestamp?: number; level?: string }>;
+  try {
+    const r = await client.post(`/session/${session.gridSessionId}/log`, { type: wanted }, { timeout: 60_000 });
+    entries = Array.isArray(r.data.value) ? r.data.value : [];
+  } catch (e) {
+    throw new Error(`Reading the ${wanted} log failed: ${describeWdError(e)}`);
+  }
+  let lines = entries.map((e) => (typeof e === 'string' ? e : String(e.message ?? '')));
+  const totalLines = lines.length;
+  if (opts.contains) {
+    const needle = opts.contains.toLowerCase();
+    lines = lines.filter((l) => l.toLowerCase().includes(needle));
+  }
+  const tail = Math.max(1, opts.tail ?? 200);
+  return { type: wanted, totalLines, lines: lines.slice(-tail), types };
 }
 
 export function registerSession(session: InspectionSession): void {

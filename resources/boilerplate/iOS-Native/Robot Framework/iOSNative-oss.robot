@@ -23,21 +23,32 @@ ${TEST_NAME}        [Enter Test Name here]
 Quick Start iOS Native Demo
     Start Steps Group    Test steps
     # [BEGIN_DEMO_STEPS]
-    Input Text       xpath=//*[@name='usernameTextField']    company
-    Input Text       xpath=//*[@name='passwordTextField']    company
-    Click Element    xpath=//*[@name='loginButton']
-    Click Element    xpath=//*[@name='makePaymentButton']
-    Input Text       xpath=//*[@name='phoneTextField']    1234567
-    Input Text       xpath=//*[@name='nameTextField']    Jon Snow
-    Input Text       xpath=//*[@name='amountTextField']    50
-    Click Element    xpath=//*[@name='countryButton']
-    Click Element    xpath=//*[@name='Switzerland']
-    Click Element    xpath=//*[@name='sendPaymentButton']
-    Click Element    xpath=//*[@name='Yes']
+    Wait And Input    accessibility_id=usernameTextField    company
+    Wait And Input    accessibility_id=passwordTextField    company
+    Wait And Click    accessibility_id=loginButton
+    Wait And Click    accessibility_id=makePaymentButton
+    Wait And Input    accessibility_id=phoneTextField    1234567
+    Wait And Input    accessibility_id=nameTextField    Jon Snow
+    Wait And Input    accessibility_id=amountTextField    50
+    Wait And Click    accessibility_id=countryButton
+    Wait And Click    accessibility_id=Switzerland
+    Wait And Click    accessibility_id=sendPaymentButton
+    Wait And Click    accessibility_id=Yes
     # [END_DEMO_STEPS]
     Stop Steps Group
 
 *** Keywords ***
+Wait And Click
+    [Arguments]    ${locator}
+    # Explicit wait before every interaction — AppiumLibrary's Click Element / Input Text do not wait on their own.
+    Wait Until Element Is Visible    ${locator}    20s
+    Click Element    ${locator}
+
+Wait And Input
+    [Arguments]    ${locator}    ${text}
+    Wait Until Element Is Visible    ${locator}    20s
+    Input Text    ${locator}    ${text}
+
 Open Cloud Session
     Open Application    ${REMOTE_URL}    &{CAPABILITIES}
 

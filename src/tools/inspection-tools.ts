@@ -45,6 +45,16 @@ import {
   INSTRUMENT_CLUSTER_CONTENT,
   getForegroundActivity,
   isSameActivity,
+  listContexts,
+  switchContext,
+  getDeviceLog,
+  getAlertInfo,
+  isWebviewContext,
+  sessionCapture,
+  networkConnection,
+  setNetworkConditions,
+  injectCameraImage,
+  clearWebCache
 } from '../api/webdriver.js';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -61,7 +71,7 @@ import { getDeploymentMode } from '../utils/deployment-mode.js';
 // — faster and less brittle than xpath on iOS, and the form the Mobile Studio iOS Test Recorder emits. iOS on Appium
 // Server only: the Appium Grid rejects it ("Locator Strategy '-ios predicate string' is not supported for this
 // session", verified live 2026-10-09 on an iPhone 13 Pro Max) — use xpath or accessibility id there.
-const LOCATOR_STRATEGIES = ['xpath', 'id', 'accessibility id', 'class name', '-ios predicate string'] as const;
+const LOCATOR_STRATEGIES = ['xpath', 'id', 'accessibility id', 'class name', '-ios predicate string', 'css selector'] as const;
 type LocatorStrategy = (typeof LOCATOR_STRATEGIES)[number];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -536,7 +546,7 @@ export function registerInspectionTools(server: McpServer): void {
     },
     async (args) => {
       try {
-        const { reportDeleted, reportKept, canDeleteReport, reportTestId, reportUrl } =
+        const { reportDeleted, reportKept, canDeleteReport, reportTestId, reportUrl, reportDeleteError } =
           await quitInspectionSession(args.handle, args.keepReport ?? false);
 
         let text: string;
@@ -548,6 +558,12 @@ export function registerInspectionTools(server: McpServer): void {
             `download_test_attachments once processing completes (usually within a minute).`;
         } else if (reportDeleted) {
           text = `✅ Session ${args.handle} stopped. Device released. Probe report deleted.`;
+        } else if (reportDeleteError && reportTestId > 0) {
+          text =
+            `✅ Session ${args.handle} stopped. Device released.
+
+` +
+            `⚠️  Report NOT deleted (test_id=${reportTestId}): ${reportDeleteError}. Report: ${reportUrl}`;
         } else if (!canDeleteReport && reportTestId > 0) {
           text =
             `✅ Session ${args.handle} stopped. Device released.\n\n` +
@@ -715,8 +731,13 @@ export function registerInspectionTools(server: McpServer): void {
       const mobileErr = requireMobileSession(args.handle, 'get_element_tree');
       if (mobileErr) return { ...mobileErr, content: [{ type: 'text' as const, text: `"get_element_tree" is for mobile sessions only. For browser sessions use get_page_dom to inspect the rendered DOM.` }] };
       try {
-        const platform = requireSession(args.handle).platform as 'android' | 'ios';
+        const sess = requireSession(args.handle);
+        const platform = sess.platform as 'android' | 'ios';
         const xml = await getPageSource(args.handle);
+        if (isWebviewContext(sess)) {
+          const html = xml.length > 12000 ? xml.slice(0, 12000) + '\n... (truncated)' : xml;
+          return { content: [{ type: 'text' as const, text: `Session is in web context ${sess.currentContext} — the page source is HTML (${xml.length} chars), not a native tree. Locate with find_elements(strategy: "css selector") or xpath; switch back with webview_context(action: "native").\n\n${html}` }] };
+        }
         const { elements, totalNodes } = parseElementTree(xml, platform);
         const table = formatElementTable(elements, totalNodes, platform);
 
@@ -741,10 +762,13 @@ export function registerInspectionTools(server: McpServer): void {
     'find_elements',
     'Find elements on the current screen using a locator strategy and return their IDs and attributes. ' +
     'The returned elementId values are used with tap_element, type_into_element, and clear_element. ' +
-    'Strategies: "xpath" (most flexible), "id" (resource-id, fastest), "accessibility id" (content-desc), ' +
-    '"class name" (by widget type, often returns many), "-ios predicate string" (iOS on Appium Server projects only — ' +
-    'NSPredicate such as "type == \'XCUIElementTypeButton\' AND label == \'Login\'"; faster and steadier than xpath; ' +
-    'the Appium Grid rejects it, so use xpath or accessibility id there). Attributes are fetched for the first ' +
+    'Strategies: "id" (Android resource-id, fastest), "accessibility id" (Android content-desc; on iOS it IS the name ' +
+    'attribute — identifier, else label — so it matches exactly what //*[@name=\'x\'] matches, without walking the tree; ' +
+    'works on the Grid too), "-ios predicate string" (iOS on Appium Server projects only — NSPredicate such as ' +
+    '"type == \'XCUIElementTypeButton\' AND label == \'Login\'"; the Appium Grid rejects it), "class name" (by widget ' +
+    'type, often returns many), "xpath" (most flexible, slowest — attribute matches only, never positional [1]/[2]), ' +
+    '"css selector" (ONLY inside a WEBVIEW context — see webview_context). ' +
+    'Prefer them in that order and copy the strategy you used into the generated test. Attributes are fetched for the first ' +
     'maxResults matches (default 20); the rest are listed by elementId — narrow the selector rather than raising it.',
     {
       handle: z
@@ -805,6 +829,7 @@ export function registerInspectionTools(server: McpServer): void {
           if (e.text != null || (!e.name && !e.label)) lines.push(`  text:         ${e.text ?? '(empty)'}`);
           if (e.bounds) lines.push(`  bounds:       ${e.bounds}`);
           lines.push(`  clickable:    ${e.clickable ?? 'unknown'}`);
+          if (e.hittable != null) lines.push(`  hittable:     ${e.hittable}${e.hittable ? '' : ' (visible but not on the hit-test path — a tap may land on what covers it)'}`);
           lines.push(`  enabled:      ${e.enabled ?? 'unknown'}`);
           lines.push('');
         }
@@ -1285,7 +1310,8 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'press_key',
     'Press a device key. Android: ENTER to submit forms/search, HOME, APP_SWITCH, volume, or any raw keycode. ' +
-    'iOS: HOME, VOLUME_UP, VOLUME_DOWN, POWER (physical buttons only — for ENTER type "\\n" via type_into_element). ' +
+    'iOS: HOME, VOLUME_UP, VOLUME_DOWN, POWER (physical buttons only — for ENTER type "\\n" via type_into_element; ' +
+    'POWER toggles the lock: it locks an unlocked device and unlocks a locked one). ' +
     'Complements press_back (which has its own tool).',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
@@ -1341,25 +1367,36 @@ export function registerInspectionTools(server: McpServer): void {
     'app_control',
     'Control app lifecycle in an inspection session: terminate (force-stop), clear_data (reset to first-launch state — Android only; ' +
     'iOS requires uninstall/reinstall), query_state (installed/background/foreground), ' +
-    'deep_link (open a URL/URI directly — skip navigation to the screen under test). ' +
-    'NOTE on Grid sessions: query_state reports only the foreground activity (Android) or is unavailable (iOS); deep_link is best-effort. ' +
-    'To relaunch after terminate, use launch_app.',
+    'deep_link (open a URL/URI directly — skip navigation to the screen under test), ' +
+    'background (send the app to the background for `seconds` and bring it back — lifecycle/resume testing), ' +
+    'is_installed (true/false for packageName), current (what is in the foreground: Android package + activity, iOS bundle id), ' +
+    'install (install a repository build mid-session from appRef "cloud:<package or bundle>" / "cloud:uniqueName=<name>" — Appium Server only; ' +
+    'this lifts the "install before the session" rule for Appium Server projects), ' +
+    'clear_web_cache (seetest:client.hybridClearCache — drops the cache of the app\'s webviews; Appium Server only). ' +
+    'NOTE on Grid sessions: query_state/current report only the foreground activity (Android) or are unavailable (iOS); deep_link is best-effort; ' +
+    'background, is_installed and install are Appium Server only. To relaunch after terminate, use launch_app.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z
-        .enum(['terminate', 'clear_data', 'query_state', 'deep_link'])
+        .enum(['terminate', 'clear_data', 'query_state', 'deep_link', 'background', 'is_installed', 'current', 'install', 'clear_web_cache'])
         .describe('Lifecycle action to perform.'),
       packageName: z
         .string()
         .optional()
-        .describe('Android package name or iOS bundle identifier. Required for terminate, clear_data, query_state; optional Android handler hint for deep_link.'),
+        .describe('Android package name or iOS bundle identifier. Required for terminate, clear_data, query_state, is_installed; optional Android handler hint for deep_link.'),
       url: z.string().optional().describe('URL or URI scheme for deep_link, e.g. "myapp://orders/42" or "https://...".'),
+      seconds: z.number().int().min(1).max(300).optional().describe('For background: how long to keep the app in the background. Default 3.'),
+      appRef: z.string().optional().describe('For install: repository reference — "cloud:com.example.app" (Android may add "/.MainActivity"), "cloud:uniqueName=<name>", or "cloud:<package>:releaseVersion=<v>:buildVersion=<b>".'),
     },
     async (args) => {
       const mobileErr = requireMobileSession(args.handle, 'app_control');
       if (mobileErr) return mobileErr;
       try {
-        const result = await appControl(args.handle, args.action, args.packageName, args.url);
+        if (args.action === 'clear_web_cache') {
+          await clearWebCache(args.handle);
+          return { content: [{ type: 'text' as const, text: '✅ Webview cache cleared (hybridClearCache).' }] };
+        }
+        const result = await appControl(args.handle, args.action, args.packageName, args.url, { seconds: args.seconds, appRef: args.appRef });
         return { content: [{ type: 'text' as const, text: `✅ ${result}` }] };
       } catch (e) {
         return { content: [{ type: 'text' as const, text: `Error (${args.action}): ${(e as Error).message}` }], isError: true };
@@ -1371,17 +1408,19 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'device_control',
     'Device-level controls for an inspection session: orientation (get/set — rotation testing), clipboard (get/set — paste flows), ' +
-    'geolocation (set/reset — location-based features), alerts (accept/dismiss — system dialogs, Appium Server only), ' +
+    'geolocation (set/reset — location-based features), alerts (get_alert reads the text and, on iOS, the button labels; ' +
+    'accept/dismiss — system dialogs, Appium Server only; iOS accept/dismiss take buttonLabel to press a specific button), ' +
     'and file transfer (push_file/pull_file — test fixtures like images for upload flows). ' +
     'Grid session limits: alerts and reset_geolocation are not supported, and iOS Grid devices reject clipboard ops ' +
     '(clear errors explain alternatives). iOS file paths may require the @bundleId:container syntax.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z
-        .enum(['get_orientation', 'set_orientation', 'get_clipboard', 'set_clipboard', 'set_geolocation', 'reset_geolocation', 'accept_alert', 'dismiss_alert', 'push_file', 'pull_file'])
+        .enum(['get_orientation', 'set_orientation', 'get_clipboard', 'set_clipboard', 'set_geolocation', 'reset_geolocation', 'get_alert', 'accept_alert', 'dismiss_alert', 'push_file', 'pull_file'])
         .describe('Device action to perform.'),
       orientation: z.enum(['PORTRAIT', 'LANDSCAPE']).optional().describe('For set_orientation.'),
       text: z.string().optional().describe('For set_clipboard: the text to place on the clipboard.'),
+      buttonLabel: z.string().optional().describe('For accept_alert / dismiss_alert on iOS: the exact button label to press (from get_alert), e.g. "Allow Once".'),
       latitude: z.number().optional().describe('For set_geolocation.'),
       longitude: z.number().optional().describe('For set_geolocation.'),
       remotePath: z.string().optional().describe('For push_file/pull_file: absolute device path, e.g. "/sdcard/Download/fixture.png".'),
@@ -1425,10 +1464,14 @@ export function registerInspectionTools(server: McpServer): void {
             await resetGeolocation(args.handle);
             return { content: [{ type: 'text' as const, text: '✅ Simulated location cleared — device uses its real location again.' }] };
           }
+          case 'get_alert': {
+            const a = await getAlertInfo(args.handle);
+            return { content: [{ type: 'text' as const, text: `Alert text: ${JSON.stringify(a.text)}${a.buttons ? `\nButtons: ${a.buttons.map((b) => `"${b}"`).join(', ')} — press one with accept_alert + buttonLabel` : ''}` }] };
+          }
           case 'accept_alert':
           case 'dismiss_alert': {
-            await handleAlert(args.handle, args.action === 'accept_alert' ? 'accept' : 'dismiss');
-            return { content: [{ type: 'text' as const, text: `✅ Alert ${args.action === 'accept_alert' ? 'accepted' : 'dismissed'}.` }] };
+            await handleAlert(args.handle, args.action === 'accept_alert' ? 'accept' : 'dismiss', args.buttonLabel);
+            return { content: [{ type: 'text' as const, text: `✅ Alert ${args.buttonLabel ? `button "${args.buttonLabel}" pressed` : args.action === 'accept_alert' ? 'accepted' : 'dismissed'}.` }] };
           }
           case 'push_file': {
             if (!args.remotePath || !args.localPath) {
@@ -1558,6 +1601,158 @@ export function registerInspectionTools(server: McpServer): void {
     }
   );
 
+  // ── webview_context ────────────────────────────────────────────────────────
+  server.tool(
+    'webview_context',
+    'Hybrid apps: list the WebDriver contexts of an inspection session and switch between the native layer and a ' +
+    'WEBVIEW_… context. In a webview, find_elements takes "css selector" (and xpath over the HTML), get_element_tree ' +
+    'returns the HTML, tap/type work on the web elements. action "list" shows what is available (waits up to waitMs ' +
+    'for a webview to be registered — one appears only while a screen with debuggable web content is in front); ' +
+    '"switch" enters the first WEBVIEW (or the one given in name); "native" returns to NATIVE_APP — ALWAYS switch back ' +
+    'before native taps, and before stop_inspection_session. Appium Server projects; the Appium Grid lists NATIVE_APP only. ' +
+    'No webview listed? The app must allow web inspection (Android: WebView.setWebContentsDebuggingEnabled(true) in the ' +
+    'build under test; iOS: web inspector enabled for the app) — a release build usually does not.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      action: z.enum(['list', 'switch', 'native']).describe('list, switch (to name or the first WEBVIEW), or native.'),
+      name: z.string().optional().describe('For switch: a context id from list, e.g. "WEBVIEW_chrome" or "WEBVIEW_12345.1". Default: the first WEBVIEW.'),
+      waitMs: z.number().int().min(0).max(30000).optional().describe('How long list/switch wait for a webview to appear. Default 3000.'),
+    },
+    async (args) => {
+      const mobileErr = requireMobileSession(args.handle, 'webview_context');
+      if (mobileErr) return mobileErr;
+      try {
+        if (args.action === 'list') {
+          const ctx = await listContexts(args.handle, args.waitMs ?? 3000);
+          const current = requireSession(args.handle).currentContext ?? 'NATIVE_APP';
+          const lines = ctx.map((c) => `  ${c.id === current ? '▶' : ' '} ${c.id}${c.title ? ` — "${c.title}"` : ''}${c.url ? ` ${c.url}` : ''}${c.package ? ` (${c.package})` : ''}${c.bundleId ? ` (${c.bundleId})` : ''}`);
+          const hasWeb = ctx.some((c) => /^WEBVIEW/i.test(c.id));
+          return { content: [{ type: 'text' as const, text: `Contexts (current: ${current}):\n${lines.join('\n')}${hasWeb ? '\n\nwebview_context(action: "switch") enters the first WEBVIEW.' : '\n\nNo WEBVIEW is registered on this screen.'}` }] };
+        }
+        const r = await switchContext(args.handle, args.action === 'native' ? 'native' : (args.name ?? 'auto'), args.waitMs ?? 3000);
+        return { content: [{ type: 'text' as const, text: r.context === 'NATIVE_APP'
+          ? `✅ Back in NATIVE_APP (contexts: ${r.available.join(', ')}).`
+          : `✅ Switched to ${r.context}${r.title ? ` — "${r.title}"` : ''}${r.url ? ` ${r.url}` : ''}.\nUse find_elements(strategy: "css selector", selector: "input[name=…]") / get_element_tree (HTML); call webview_context(action: "native") when done.` }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error (webview_context ${args.action}): ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── get_device_log ─────────────────────────────────────────────────────────
+  server.tool(
+    'get_device_log',
+    'Read the device log of a LIVE inspection session (Android logcat; iOS syslog — also crashlog, and on Appium Server ' +
+    'performance/safariConsole/safariNetwork) to diagnose a crash, ANR or permission denial while the session is still ' +
+    'open — no report download needed (get_test_log is the after-the-fact equivalent). Returns the last `tail` lines; ' +
+    'pass `contains` (e.g. the package name, "FATAL", "Exception", "denied") to filter first — logs run to thousands of lines.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      logType: z.string().optional().describe('Log type. Default: logcat (Android) / syslog (iOS). The error lists what the session offers.'),
+      contains: z.string().optional().describe('Case-insensitive substring filter applied before the tail.'),
+      tail: z.number().int().min(1).max(2000).optional().describe('Lines to return from the end (after filtering). Default 200.'),
+    },
+    async (args) => {
+      const mobileErr = requireMobileSession(args.handle, 'get_device_log');
+      if (mobileErr) return mobileErr;
+      try {
+        const r = await getDeviceLog(args.handle, args.logType, { tail: args.tail, contains: args.contains });
+        const head = `${r.type}: ${r.totalLines} line(s) captured${args.contains ? `, ${r.lines.length} shown matching "${args.contains}"` : `, last ${r.lines.length} shown`}${r.types.length ? ` (types: ${r.types.join(', ')})` : ''}`;
+        return { content: [{ type: 'text' as const, text: `${head}\n\n${r.lines.join('\n') || '(no matching lines)'}` }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error (get_device_log): ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── session_capture ────────────────────────────────────────────────────────
+  server.tool(
+    'session_capture',
+    'Record part of a live inspection session into the file repository: kind "har" captures the device\'s HTTP traffic ' +
+    '(startHarRecording → stopHarRecording) and kind "device_log" captures logcat/syslog for exactly the window between ' +
+    'start and stop (startLoggingDevice → stopLoggingDevice). stop returns the repository file (id, size) to fetch with ' +
+    'download_repository_file / get_repository_file_download_command. The HAR is a ZIP containing har.json. CAVEAT: with ' +
+    'NV tunneling on for the device (every device on this tenant) the platform records NO HAR entries — the file comes ' +
+    'back ~290 bytes and the response says so; use a performance transaction for network byte counts. Appium Server only ' +
+    '(the stop commands take no arguments, which the Grid rejects). For an unbounded in-session read without a file, use get_device_log.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      kind: z.enum(['har', 'device_log']).describe('What to capture.'),
+      action: z.enum(['start', 'stop']).describe('start or stop (one capture of each kind at a time).'),
+      name: z.string().optional().describe('For start: repository file name (uniqueName; ".har"/".log" is added). Default: mcp-<kind>-<timestamp>.'),
+    },
+    async (args) => {
+      const mobileErr = requireMobileSession(args.handle, 'session_capture');
+      if (mobileErr) return mobileErr;
+      try {
+        const r = await sessionCapture(args.handle, args.kind, args.action, args.name);
+        if (args.action === 'start') return { content: [{ type: 'text' as const, text: `✅ ${args.kind} capture started → repository file "${r.file}". Run the steps to capture, then session_capture(action: "stop").` }] };
+        const where = r.repositoryFile ? `repository file "${r.file}" (id ${r.repositoryFile.id}, ${r.repositoryFile.size} bytes) — download_repository_file(fileId: ${r.repositoryFile.id})` : `repository file "${r.file}" (not listed yet — list_repository_files(uniqueName: "${r.file}") in a few seconds)`;
+        return { content: [{ type: 'text' as const, text: `✅ ${args.kind} capture stopped → ${where}.${r.note ? `\n⚠️ ${r.note}` : ''}` }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error (session_capture ${args.kind} ${args.action}): ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── network_control ────────────────────────────────────────────────────────
+  server.tool(
+    'network_control',
+    'Network state of the device in a live inspection session. action "get" reads whether wifi / mobile_data / ' +
+    'airplane_mode / bluetooth is on; "set" switches one on or off (Android only — offline-mode and reconnect flows; ' +
+    'turn it back on before stopping); "set_conditions" applies an NV network profile ("3G-average", "Monitor" = none…) ' +
+    'to the device\'s traffic WITHOUT recording a transaction — for exploring an app under a slow network; durationMs 0 ' +
+    'keeps it until changed; needs an ONLINE, tunneled NV server in the device\'s region (list_nv_servers) and a Project Admin ' +
+    'or Cloud Admin key. Appium Server sessions.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      action: z.enum(['get', 'set', 'set_conditions']).describe('get / set a connection, or set_conditions (NV profile).'),
+      kind: z.enum(['wifi', 'mobile_data', 'airplane_mode', 'bluetooth']).optional().describe('For get/set: which connection.'),
+      enabled: z.boolean().optional().describe('For set: true = on, false = off.'),
+      profile: z.string().optional().describe('For set_conditions: NV profile name, e.g. "3G-average"; "Monitor" lifts shaping.'),
+      durationMs: z.number().int().min(0).max(3_600_000).optional().describe('For set_conditions: how long to keep the profile; 0 (default) = until changed.'),
+    },
+    async (args) => {
+      const mobileErr = requireMobileSession(args.handle, 'network_control');
+      if (mobileErr) return mobileErr;
+      try {
+        if (args.action === 'set_conditions') {
+          if (!args.profile) return { content: [{ type: 'text' as const, text: 'Error: set_conditions requires profile.' }], isError: true };
+          return { content: [{ type: 'text' as const, text: `✅ ${await setNetworkConditions(args.handle, args.profile, args.durationMs ?? 0)}` }] };
+        }
+        if (!args.kind) return { content: [{ type: 'text' as const, text: 'Error: get/set require kind.' }], isError: true };
+        if (args.action === 'set' && args.enabled == null) return { content: [{ type: 'text' as const, text: 'Error: set requires enabled.' }], isError: true };
+        const r = await networkConnection(args.handle, args.kind, args.action === 'set' ? args.enabled : undefined);
+        return { content: [{ type: 'text' as const, text: `${args.action === 'set' ? '✅ ' : ''}${r.kind}: ${r.enabled ? 'ON' : 'OFF'}` }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error (network_control ${args.action}): ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── inject_camera_image ────────────────────────────────────────────────────
+  server.tool(
+    'inject_camera_image',
+    'Camera image injection: the next camera capture in the app under test returns the given image instead of the sensor ' +
+    'frame — for check deposit, document/QR scan and profile-photo flows on a real device. source is "cloud:<repository ' +
+    'uniqueName>" (upload the .jpg/.png with upload_repository_file first) or an http(s) URL ending in .jpg/.jpeg/.png. ' +
+    'REQUIRES an instrumented build (uploaded with instrument=true, or the session started with digitalai:instrumentApp=true) — ' +
+    'otherwise the platform answers "application is not instrumented". Call it BEFORE tapping the capture button.',
+    {
+      handle: z.string().describe('Session handle from start_inspection_session.'),
+      source: z.string().describe('"cloud:<uniqueName>.png" or an http(s) URL to a .jpg/.jpeg/.png.'),
+    },
+    async (args) => {
+      const mobileErr = requireMobileSession(args.handle, 'inject_camera_image');
+      if (mobileErr) return mobileErr;
+      try {
+        return { content: [{ type: 'text' as const, text: `✅ ${await injectCameraImage(args.handle, args.source)}` }] };
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error (inject_camera_image): ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
   // ── mock_authentication ────────────────────────────────────────────────────
   server.tool(
     'mock_authentication',
@@ -1581,17 +1776,17 @@ export function registerInspectionTools(server: McpServer): void {
       delay: z
         .number()
         .int()
-        .min(0)
+        .min(1)
         .optional()
         .describe(
-          'Milliseconds to wait after the auth dialog appears before responding. Default 0.'
+          'Milliseconds to wait after the auth dialog appears before responding. Default 1 (the platform rejects 0).'
         ),
     },
     async (args) => {
       const mobileErr = requireMobileSession(args.handle, 'mock_authentication');
       if (mobileErr) return mobileErr;
       try {
-        const result = await mockAuthentication(args.handle, args.reply, args.delay ?? 0);
+        const result = await mockAuthentication(args.handle, args.reply, args.delay ?? 1);
         return { content: [{ type: 'text' as const, text: `✅ ${result}` }] };
       } catch (e) {
         return {

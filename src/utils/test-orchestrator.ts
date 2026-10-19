@@ -6,6 +6,8 @@
  * Build/Run IDs. Test code does not change. Release notes (26.9): "Available for Appium Server tests with JUnit
  * and TestNG" — so it applies ONLY to the Java templates on Appium Server (OSS) projects.
  *
+ * Re-verified 2026-10-18 with java-client 11.0.0 + selenium-java 4.51.0 (the agent transforms AppiumDriver/AppiumClientConfig
+ * of 11.x; Android JUnit 5 Maven run Passed with the agent attached).
  * Verified live (2026-10-08, uscloud, java-client 8.6.0 + UiAutomator2Options/XCUITestOptions, TestNG and JUnit 5,
  * Gradle and Maven): the agent injected digitalai:testCaseId / runId / retryAttempt, retried a failed test in a fresh
  * session, and stamped buildId/runId on the Reporter records. Its status-sync calls use java.net.http and need a JDK

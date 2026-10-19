@@ -313,19 +313,24 @@ export function registerPerformanceTools(server: McpServer): void {
     'measured screen may ANR; keep the window tight. "Monitor" is pass-through and carries no such risk. ' +
     '(2) The recorded transaction appears in the reporter ~1 minute AFTER end (not instantly) — wait, then read it ' +
     'with list_transactions(transactionName, deviceName, startDate) → get_transaction. ' +
-    '(3) networkProfile must exist on the NV server ("Monitor" is broadly guaranteed; others are deployment-specific). ' +
+    '(3) networkProfile must exist on the NV server ("Monitor" is broadly guaranteed; others are deployment-specific; "NONE" = no profile). ' +
+    '(4) A transaction is capped at 5 minutes and cancelled when the session quits; no HAR is recorded while NV tunneling is on. ' +
+    '(5) A report that holds a transaction cannot be deleted afterwards (platform 400) — stop_inspection_session reports that and the record stays. ' +
+    'Pass forApplication to sample one app instead of the whole device. ' +
     'All access levels — project keys see only their own project\'s transactions.',
     {
       handle: z.string().describe('Inspection session handle from start_inspection_session.'),
       action: z.enum(['start', 'end']).describe('"start" begins measurement (needs networkProfile); "end" finalizes it (needs transactionName).'),
       networkProfile: z.string().optional().describe('NV network profile for action:"start". Use "Monitor" to observe without throttling (default choice); "3G-average"/"wifi" apply network conditions. Required to start; must exist on the NV server.'),
       transactionName: z.string().optional().describe('Name for action:"end", e.g. "Login". This is how you find the record afterward via list_transactions.'),
+      forApplication: z.string().optional().describe('For action:"start": sample CPU/memory/battery for THIS app only (Android package / iOS bundle id) instead of the whole device — seetest:client.startPerformanceTransactionForApplication. The start takes ~18 s (the platform attaches to the process). Omit for the device-wide transaction.'),
     },
     async (args) => {
       try {
         const result = await performanceTransaction(args.handle, args.action, {
           networkProfile: args.networkProfile,
           transactionName: args.transactionName,
+          forApplication: args.forApplication,
         });
         return { content: [{ type: 'text', text: `✅ ${result}` }] };
       } catch (e) {
