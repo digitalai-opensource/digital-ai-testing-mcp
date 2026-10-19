@@ -441,3 +441,15 @@ describe('Appium Grid: zero-argument seetest commands run in the inline form (ve
     await tools.call('stop_inspection_session', { handle: h });
   });
 });
+
+describe('set_appearance reminder (intake 2026-10-19)', () => {
+  it('reminds to restore only while the device differs from where it started', async () => {
+    const h = await session('ios');
+    let r = await tools.call('device_control', { handle: h, action: 'set_appearance', style: 'dark' });
+    assert.match(r.text, /Set it back to light before stopping/);
+    r = await tools.call('device_control', { handle: h, action: 'set_appearance', style: 'light' });
+    assert.match(r.text, /the appearance the device started with/);
+    assert.doesNotMatch(r.text, /Set it back/);
+    await tools.call('stop_inspection_session', { handle: h });
+  });
+});

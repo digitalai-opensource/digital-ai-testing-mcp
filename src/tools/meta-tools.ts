@@ -478,6 +478,16 @@ export function registerMetaTools(server: McpServer): void {
       }
 
       const previousProfile = getActiveProfileName();
+      // Already on it: no reset, no re-verification ("Switched from X to X" read as a change — intake 2026-10-19).
+      if (previousProfile && previousProfile.toLowerCase() === resolvedName.toLowerCase()) {
+        const current = await getAccessInfo();
+        return {
+          content: [{
+            type: 'text',
+            text: `Already on "${previousProfile}"${resolvedName.toLowerCase() !== profileName.toLowerCase() ? ` (resolved from "${profileName}")` : ''} — ${describeLevel(current)}. Nothing changed.`,
+          }],
+        };
+      }
       resetClient(creds.url, creds.key, resolvedName.toLowerCase());
 
       // Verify the new connection works

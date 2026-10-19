@@ -478,7 +478,7 @@ describe('get_test_boilerplate — structure: "page-objects" (release 4)', () =>
     account.isAppiumOss = true; account.fail = false;
     const g = (await gen({ platform: 'android', language: 'java-junit5', structure: 'page-objects', orchestration: 'off' })).json as Gen & { structure?: string };
     assert.equal(g.structure, 'page-objects');
-    assert.deepEqual(g.files.map((f) => f.filename).filter((f) => f.endsWith('.java')).sort(), ['src/test/java/BaseScreen.java', 'src/test/java/DashboardScreen.java', 'src/test/java/LocalAndroidTest.java', 'src/test/java/LoginScreen.java', 'src/test/java/PaymentScreen.java']);
+    assert.deepEqual(g.files.map((f) => f.filename).filter((f) => f.endsWith('.java')).sort(), ['src/test/java/LocalAndroidTest.java', 'src/test/java/screens/BaseScreen.java', 'src/test/java/screens/DashboardScreen.java', 'src/test/java/screens/LoginScreen.java', 'src/test/java/screens/PaymentScreen.java']);
     const test = file(g, 'src/test/java/LocalAndroidTest.java')!.content;
     assert.match(test, /new LoginScreen\(driver\)\.login\("company", "company"\)/);
     assert.match(test, /seetest:client\.setReportStatus/);
@@ -502,12 +502,12 @@ describe('get_test_boilerplate — structure: "page-objects" (release 4)', () =>
   it('a real app gets a placeholder screen that validate_test_script flags, and the test keeps the fail guard', async () => {
     account.isAppiumOss = true; account.fail = false;
     const g = (await gen({ platform: 'ios', language: 'java-testng', structure: 'page-objects', confirmSelectorsVerified: true, bundleIdentifier: 'com.acme.app' })).json;
-    assert.ok(file(g, 'src/test/java/AppScreen.java'));
-    assert.ok(!file(g, 'src/test/java/LoginScreen.java'));
+    assert.ok(file(g, 'src/test/java/screens/AppScreen.java'));
+    assert.ok(!file(g, 'src/test/java/screens/LoginScreen.java'));
     const test = file(g, 'src/test/java/LocaliOSTest.java')!.content;
     assert.match(test, /Assertions\.fail|fail\(/);
     assert.match(test, /new AppScreen\(driver\)\.enterValue/);
-    const v = await call('validate_test_script', { scriptContent: file(g, 'src/test/java/AppScreen.java')!.content, outputFormat: 'json' });
+    const v = await call('validate_test_script', { scriptContent: file(g, 'src/test/java/screens/AppScreen.java')!.content, outputFormat: 'json' });
     assert.equal(v.isError, true);
   });
 
@@ -591,4 +591,40 @@ describe('get_test_boilerplate — NodeJS spec path matches wdio.conf.js', () =>
     }
     account.isAppiumOss = true;
   });
+});
+
+describe('Node setup steps follow the emitted files (intake 2026-10-19)', () => {
+  for (const structure of ['flat', 'page-objects'] as const) {
+    it(`${structure}: every folder of every file is created and listed`, async () => {
+      account.isAppiumOss = true; account.fail = false;
+      const g = (await gen({ platform: 'android', language: 'nodejs', structure })).json as Gen & { setupNote: string };
+      const shell = file(g, 'setup-steps.sh')!.content;
+      const dirs = [...new Set(g.files.map((f) => f.filename).filter((f) => f.includes('/') && !f.endsWith('.sh')).map((f) => f.slice(0, f.lastIndexOf('/'))))];
+      for (const d of dirs) {
+        assert.match(shell, new RegExp(`mkdir -p .*${d.replace('/', '\\/')}`), `setup-steps.sh misses ${d}`);
+        assert.ok(g.setupNote.includes(d), `setupNote misses ${d}`);
+      }
+      if (structure === 'page-objects') assert.ok(dirs.includes('test/screenobjects'));
+    });
+  }
+});
+
+describe('web templates wait explicitly and compile on TestNG (intake 2026-10-19)', () => {
+  const webGen2 = async (language: string) => {
+    const res = await call('get_web_test_boilerplate', { testName: 'Checkout', outputFormat: 'json', language });
+    return JSON.parse(res.content.map((c) => c.text ?? '').join('')) as { files: Array<{ filename: string; content: string }> };
+  };
+  for (const language of ['java-junit5', 'java-testng', 'python']) {
+    it(`${language}: no implicit wait, a find() helper, Selenium 4.51`, async () => {
+      const j = await webGen2(language);
+      const all = j.files.map((f) => f.content).join('\n');
+      assert.doesNotMatch(all, /implicitlyWait|implicitly_wait/);
+      assert.match(all, /WebDriverWait/);
+      assert.match(all, language === 'python' ? /selenium>=4\.51\.0/ : /<version>4\.51\.0<\/version>/);
+      if (language === 'java-testng') {
+        assert.match(all, /@BeforeMethod/);
+        assert.doesNotMatch(all, /public static void setUp|@BeforeClass/, 'static setUp with an instance driver never compiled');
+      }
+    });
+  }
 });

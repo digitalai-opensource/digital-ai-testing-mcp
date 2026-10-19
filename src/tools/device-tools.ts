@@ -32,6 +32,17 @@ import { outputFormatParam, respond } from '../utils/output-format.js';
 import { commandPayload } from '../utils/command-payload.js';
 import { getActiveUrl } from '../api/client.js';
 
+/**
+ * Devices other teams have set aside, by convention, through a tag or the device name ("DoNotTake", "DONTTAKE",
+ * "Do Not Use", "DO NOT TOUCH", "Reserved"). find_available_device returned such devices as its first pick and the agent
+ * had to choose by hand (debug-mode intake 2026-10-19). They are skipped unless nothing else is available or the caller
+ * opts in with includeDoNotUse.
+ */
+export const DO_NOT_USE_RE = /\b(do[\s_-]*n[o']?t[\s_-]*(take|use|touch)|dont[\s_-]*(take|use|touch)|reserved)\b/i;
+export function isDoNotUse(d: { tags?: string[]; deviceName?: string }): boolean {
+  return (d.tags ?? []).some((t) => DO_NOT_USE_RE.test(t)) || DO_NOT_USE_RE.test(d.deviceName ?? '');
+}
+
 // Region affinity by cloud hostname — used as the preferRegions default so callers
 // get server-proximate devices without passing the param explicitly.
 const CLOUD_REGION_AFFINITY: Array<{ hostMatch: string; regions: string[] }> = [
@@ -767,9 +778,13 @@ export function registerDeviceTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Only devices with a configured audio line (device bluetooth state PAIRED) — required for audio_control play/record; other devices fail with "Audio line is not configured". For two-phone call / SMS tests, start from https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests.'),
+      includeDoNotUse: z
+        .boolean()
+        .optional()
+        .describe('Devices whose tags or name mark them do-not-use ("DoNotTake", "DONTTAKE", "Do Not Use", "Reserved"…) are skipped by default — another team has set them aside. They are returned only when no other device matches (with a warning), or always when this is true.'),
       outputFormat: outputFormatParam,
     },
-    async ({ os, osVersion, manufacturer, model, tags, category, preferRegions, requireAudioLine, outputFormat }) => {
+    async ({ os, osVersion, manufacturer, model, tags, category, preferRegions, requireAudioLine, includeDoNotUse, outputFormat }) => {
       try {
         // No explicit preference → derive from the active cloud URL. An explicit [] opts out.
         const effectiveRegions = preferRegions ?? defaultPreferRegions();
@@ -799,9 +814,14 @@ export function registerDeviceTools(server: McpServer): void {
           return respond(outputFormat, { found: false, matchingCount: 0, ...(requireAudioLine ? { telephonyReference: TELEPHONY_REFERENCE } : {}) }, 'No devices match the specified criteria.' + (requireAudioLine ? `\n${TELEPHONY_REFERENCE}` : ''));
         }
 
-        const available = filtered.filter(
+        const allAvailable = filtered.filter(
           (d) => d.displayStatus.toLowerCase() === 'available'
         );
+        const usable = includeDoNotUse ? allAvailable : allAvailable.filter((d) => !isDoNotUse(d));
+        const skippedDoNotUse = allAvailable.length - usable.length;
+        // Fall back to set-aside devices only when nothing else is free — and say so.
+        const onlyDoNotUseLeft = usable.length === 0 && allAvailable.length > 0;
+        const available = onlyDoNotUseLeft ? allAvailable : usable;
 
         if (available.length > 0) {
           // Apply region preference: pick first available device in the highest-priority region.
@@ -835,6 +855,8 @@ export function registerDeviceTools(server: McpServer): void {
               audioLine: d.bluetooth?.state === 'PAIRED' ? d.bluetooth.adapterName : null,
             },
             alternativesAvailable: available.length - 1,
+            ...(skippedDoNotUse > 0 && !onlyDoNotUseLeft ? { skippedDoNotUse } : {}),
+            ...(onlyDoNotUseLeft ? { doNotUseWarning: 'Only devices marked do-not-use (tag or name) are free — this one was set aside by another team. Confirm with its owner before using it.' } : {}),
             regionPreferenceApplied,
             preferredRegionUsed,
             preferRegionsDefaulted: regionsDefaulted,
@@ -857,6 +879,8 @@ export function registerDeviceTools(server: McpServer): void {
             `  Audio line:   ${d.bluetooth?.state === 'PAIRED' ? `${d.bluetooth.adapterName} (audio_control ready)` : 'none'}`,
             available.length > 1 ? `\n${available.length - 1} other matching device(s) also available.` : '',
             requireAudioLine ? `\n${TELEPHONY_REFERENCE}` : '',
+            skippedDoNotUse > 0 && !onlyDoNotUseLeft ? `${skippedDoNotUse} available device(s) marked do-not-use (tag or name) were skipped — pass includeDoNotUse: true to consider them.` : '',
+            onlyDoNotUseLeft ? '⚠️  Only devices marked do-not-use (tag or name) are free — this one was set aside by another team. Confirm with its owner before using it.' : '',
             regionNote,
           ].filter(Boolean).join('\n');
           return respond(outputFormat, structured, humanText);

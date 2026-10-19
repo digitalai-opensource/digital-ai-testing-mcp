@@ -864,4 +864,6 @@ export interface InspectionSession {
   harRecording?: string;
   /** Repository file name of a device-log capture in progress (session_capture device_log start → stop). */
   deviceLogRecording?: string;
+  /** Light/dark appearance the device had before the first set_appearance (restore reminder only when different). */
+  originalAppearance?: 'dark' | 'light';
 }

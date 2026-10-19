@@ -37,3 +37,13 @@ describe('switch_environment', () => {
     assert.match(text, /matched a profile by that exact name, which is not Cloud Admin.*switch_environment\("cloud admin"\)/);
   });
 });
+
+describe('switch_environment to the profile already active (intake 2026-10-19)', () => {
+  it('answers "Already on" instead of "Switched from X to X"', async () => {
+    setAccessLevelOverrideForTests('project-admin');
+    await tools.call('switch_environment', { profileName: 'admin' });
+    const { text } = await tools.call('switch_environment', { profileName: 'admin' });
+    assert.match(text, /^Already on "admin"/);
+    assert.doesNotMatch(text, /Switched from/);
+  });
+});

@@ -1482,7 +1482,9 @@ export function registerInspectionTools(server: McpServer): void {
             if (now !== args.style) {
               return { content: [{ type: 'text' as const, text: `⚠️ Requested ${args.style} but the device reports ${now} afterwards — this device/OS build does not honour the ${requireSession(args.handle).platform === 'ios' ? 'appearance' : 'night-mode (cmd uimode)'} switch (seen on one Android phone live). Toggle dark mode in the device Settings app instead.` }], isError: true };
             }
-            return { content: [{ type: 'text' as const, text: `✅ Appearance is now ${now}. Take a screenshot to check the themed screen; set it back before stopping the session.` }] };
+            const original = requireSession(args.handle).originalAppearance;
+            const reminder = original && original === now ? ` This is the appearance the device started with.` : ` Set it back${original ? ` to ${original}` : ''} before stopping the session.`;
+            return { content: [{ type: 'text' as const, text: `✅ Appearance is now ${now}. Take a screenshot to check the themed screen.${reminder}` }] };
           }
           case 'accessibility_audit': {
             const findings = await accessibilityAudit(args.handle);

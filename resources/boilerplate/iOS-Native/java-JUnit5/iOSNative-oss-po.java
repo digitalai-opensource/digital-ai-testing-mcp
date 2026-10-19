@@ -2,10 +2,12 @@ import io.appium.java_client.ios.IOSDriver;
 import io.appium.java_client.ios.options.XCUITestOptions;
 import org.junit.jupiter.api.*;
 
+import screens.*;
+
 import java.net.MalformedURLException;
 import java.net.URI;
 
-/** Page-object layout: screens live next to this class (BaseScreen + one class per screen); the test reads as the flow. */
+/** Page-object layout: the screens live in the screens package (BaseScreen + one class per screen); the test reads as the flow. */
 public class LocaliOSTest {
 
     private IOSDriver driver;

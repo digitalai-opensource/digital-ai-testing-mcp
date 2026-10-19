@@ -24,6 +24,7 @@ const TEMPLATES = [
 // A full page that comes back identical for every `skip`, with no totalCount — the worst case for the paging loop.
 const FULL_PAGE = Array.from({ length: 500 }, (_, i) => ({ id: i + 1, name: 'ModelKey[x]', os: 'ANDROID', deviceModel: `M${i}` }));
 let ignoreSkip = false;
+let devicesFixture: unknown[] = [];
 
 let api: StubApi;
 let tools: ToolClient;
@@ -36,7 +37,7 @@ beforeAll(async () => {
       const q = JSON.parse(req.query.get('jsonQuery') ?? '{}');
       return { data: TEMPLATES.slice(q.skip, q.skip + q.take), totalCount: TEMPLATES.length };
     }
-    if (req.path === '/api/v1/devices') return { status: 'SUCCESS', data: [], code: 'OK' };
+    if (req.path === '/api/v1/devices') return { status: 'SUCCESS', data: devicesFixture, code: 'OK' };
     return undefined;
   });
   tools = await connectTools(registerDeviceTools);
@@ -100,5 +101,30 @@ describe('list_devices with an emulator query', () => {
     assert.match(String(j.note), /list_virtual_device_templates/);
     const plain = await tools.callJson('list_devices', { query: "@os='android'" });
     assert.equal('note' in plain, false);
+  });
+});
+
+describe('find_available_device skips devices marked do-not-use (intake 2026-10-19)', () => {
+  afterAll(() => { devicesFixture = []; });
+
+  it('passes over a tagged device and a device whose name says so, and reports how many were skipped', async () => {
+    devicesFixture = [{ id: 1, deviceName: 'iPad A', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: ['Team_X', 'DoNotTake'], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }, { id: 2, deviceName: 'iPhone DO NOT USE', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: [], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }, { id: 3, deviceName: 'iPhone C', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: ['POC'], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }];
+    const j = await tools.callJson('find_available_device', { os: 'iOS', preferRegions: [] });
+    assert.equal((j.device as { id: number }).id, 3);
+    assert.equal(j.skippedDoNotUse, 2);
+  });
+
+  it('falls back to a do-not-use device only when nothing else is free, with a warning', async () => {
+    devicesFixture = [{ id: 1, deviceName: 'iPhone A', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: ['DONTTAKE'], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }];
+    const j = await tools.callJson('find_available_device', { os: 'iOS', preferRegions: [] });
+    assert.equal((j.device as { id: number }).id, 1);
+    assert.match(String(j.doNotUseWarning), /set aside by another team/);
+  });
+
+  it('includeDoNotUse: true considers them like any other device', async () => {
+    devicesFixture = [{ id: 1, deviceName: 'iPad A', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: ['DoNotTake'], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }, { id: 3, deviceName: 'iPhone C', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: [], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }];
+    const j = await tools.callJson('find_available_device', { os: 'iOS', preferRegions: [], includeDoNotUse: true });
+    assert.equal((j.device as { id: number }).id, 1);
+    assert.equal(j.skippedDoNotUse, undefined);
   });
 });

@@ -19,7 +19,7 @@ import { startStubApi, connectTools, accountInfo, reply, type StubApi, type Tool
 const HOUR = 3_600_000;
 const NOW = Date.now();
 let spacingMs = HOUR; // gap between consecutive runs in the fake reporter
-let listFixture: 'trend' | 'incomplete' | 'failures' | 'failures-no-keys' = 'trend';
+let listFixture: 'trend' | 'incomplete' | 'failures' | 'failures-no-keys' | 'delete-preview' = 'trend';
 let runningFixture: unknown = undefined; // undefined → 404 → list_active_test_executions falls back to the reporter heuristic
 
 // One run per `spacingMs`, newest first — 100 hourly records cover ~4 days of a 14-day window.
@@ -71,6 +71,11 @@ beforeAll(async () => {
       return { count: 4, data: [{ 'device.os': 'ANDROID' }, { 'device.os': 'Android' }, { 'device.os': 'IOS' }, { 'device.os': 'iOS' }] };
     }
     if (req.path === '/reporter/api/tests/list') {
+      if (listFixture === 'delete-preview') {
+        const all = Array.from({ length: 7 }, (_, i) => ({ test_id: 900 + i, name: 'nightly_check', status: 'Passed', start_time: new Date(Date.UTC(2026, 0, 1 + ((i * 3) % 7))).toISOString() }));
+        const rows = req.json.sort ? [...all].sort((a, b) => b.start_time.localeCompare(a.start_time)) : all;
+        return { count: all.length, data: rows.slice(0, req.json.limit ?? 50) };
+      }
       if ((req.json.filter ?? []).some((f: { operator: string }) => f.operator === '>')) {
         return reply(400, { status: 'ERROR', message: 'Failed to retrieve data. Please check log for details.' });
       }
@@ -323,5 +328,21 @@ describe('get_test_log when the requested log is missing (UAT 2026-10-16)', () =
     const { res, text } = await tools.call('get_test_log', { uuid: 'two-logs' });
     assert.equal(res.isError, true);
     assert.match(text, /No appium log in this report\. It has: device\.log, ws_on_device\.log\. Retry with logType: "device" or "ws"\./);
+  });
+});
+
+describe('delete_test_reports_by_name preview (intake 2026-10-19)', () => {
+  afterAll(() => { listFixture = 'trend'; });
+
+  it('lists the newest matches first and states the exact total', async () => {
+    listFixture = 'delete-preview';
+    const { res, text } = await tools.call('delete_test_reports_by_name', { nameContains: 'nightly', maxPreviewResults: 3 });
+    assert.notEqual(res.isError, true, text);
+    assert.match(text, /Matching records: 7 in total, newest first/);
+    assert.match(text, /Showing the newest 3 of 7 matches/);
+    const dates = [...text.matchAll(/\((\d{4}-\d{2}-\d{2})\)/g)].map((m) => m[1]);
+    assert.equal(dates.length, 3);
+    assert.deepEqual(dates, [...dates].sort().reverse());
+    assert.ok(!api.requests.some((r) => r.path === '/reporter/api/tests/delete'), 'preview must not delete');
   });
 });

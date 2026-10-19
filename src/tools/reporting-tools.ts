@@ -735,9 +735,28 @@ export function registerReportingTools(server: McpServer): void {
           ? [{ property: 'name', operator: '=' as const, value: name }]
           : [{ property: 'name', operator: 'contains' as const, value: nameContains! }];
 
-        // In preview mode cap scanning to avoid timeout on high-cardinality matches
+        // Preview: newest matches first with the exact total (debug-mode intake 2026-10-19 — the old preview listed scan
+        // order and said "50+", so the user could not see how many records confirmDeletion would remove).
         const isPreview = !confirmDeletion;
         const previewCap = maxPreviewResults ?? 50;
+        if (isPreview) {
+          const newest = await listTestsSortedDesc({ limit: previewCap, page: 1, returnTotalCount: true, filter }, projectId, projectName);
+          const rows = newest.data ?? [];
+          if (rows.length === 0) {
+            const criterion = name ? `name = "${name}"` : `name contains "${nameContains}"`;
+            return { content: [{ type: 'text', text: `No test reports found matching ${criterion}.` }] };
+          }
+          const total = typeof newest.count === 'number' && newest.count >= rows.length ? newest.count : rows.length;
+          const guard = checkDestructiveGuard(false, `Delete ${total} test report(s) matching "${name ?? nameContains}"`)!;
+          const lines = rows.map((r) => `  ${r.test_id}: ${r.name} (${r.start_time?.slice(0, 10) ?? '?'})`);
+          const more = total > rows.length
+            ? `\n\n⚠️ Showing the newest ${rows.length} of ${total} matches. confirmDeletion: true deletes all ${total}; narrow nameContains to delete fewer.`
+            : '';
+          return {
+            content: [{ type: 'text', text: `${guard}\n\nMatching records: ${total} in total, newest first:\n${lines.join('\n')}${more}` }],
+          };
+        }
+
         const allIds: number[] = [];
         const previewNames: string[] = [];
         let truncated = false;

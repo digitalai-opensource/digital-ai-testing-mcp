@@ -93,7 +93,7 @@ function getFilesForVariant(
   const po = structure === 'page-objects' && (language === 'nodejs' || ((language === 'java-junit5' || language === 'java-testng') && isAppiumOss));
   const javaScreens = (dir: string): BoilerplateFile[] =>
     (placeholder ? ['BaseScreen', 'AppScreen'] : ['BaseScreen', 'LoginScreen', 'DashboardScreen', 'PaymentScreen'])
-      .map((c) => ({ filename: `${dir}${c}.java`, diskName: `${c}.java`, lang: 'java', sharedDir: 'java-screens' }));
+      .map((c) => ({ filename: `${dir}screens/${c}.java`, diskName: `${c}.java`, lang: 'java', sharedDir: 'java-screens' }));
   const nodeScreens = (): BoilerplateFile[] =>
     (placeholder ? ['AppScreen', 'PlaceholderScreen'] : ['AppScreen', 'LoginScreen', 'DashboardScreen', 'PaymentScreen'])
       .map((c) => ({ filename: `test/screenobjects/${c}.js`, diskName: `${c}.js`, lang: 'javascript', sharedDir: 'node-screens' }));
@@ -760,7 +760,19 @@ function parallelNote(language: Language, isAppiumOss: boolean): string {
   }
 }
 
-function setupNote(language: Language, isAppiumOss: boolean, projectType?: ProjectType): string {
+/**
+ * Node projects: the folder layout and the mkdir line come from the files actually emitted — page objects add
+ * test/screenobjects/, and a hardcoded "test/specs only" layout left the spec's require() pointing at a folder the user
+ * never created (debug-mode intake 2026-10-19).
+ */
+function nodeLayout(filenames: string[]): { layout: string; dirs: string[] } {
+  const listed = filenames.filter((f) => !f.endsWith('.sh'));
+  const layout = listed.map((f) => (f.includes('/') ? `  ${f}` : `  ${f.padEnd(22)}← project root`)).join('\n');
+  const dirs = [...new Set(listed.filter((f) => f.includes('/')).map((f) => f.slice(0, f.lastIndexOf('/'))))];
+  return { layout, dirs };
+}
+
+function setupNote(language: Language, isAppiumOss: boolean, projectType?: ProjectType, emitted: string[] = []): string {
   switch (language) {
     case 'java-junit5':
     case 'java-testng':
@@ -795,22 +807,23 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
         '  - Place files under e2e-tests/src/test/java/ and e2e-tests/build.gradle\n' +
         '  (Use projectType: android-gradle-submodule to generate paths pre-scoped to e2e-tests/.)'
       );
-    case 'nodejs':
+    case 'nodejs': {
+      const { layout, dirs } = emitted.length
+        ? nodeLayout(emitted)
+        : { layout: '  package.json          ← project root\n  wdio.conf.js          ← project root\n  test/specs/<TestFile>.js', dirs: ['test/specs'] };
+      const head =
+        'Create a project folder and save the provided files in this layout:\n' +
+        `${layout}\n` +
+        `(create the folders first: mkdir -p ${dirs.join(' ')})\n\n`;
       if (isAppiumOss) {
         return (
-          'Create a project folder and save the provided files in this layout:\n' +
-          '  package.json          ← project root\n' +
-          '  wdio.conf.js          ← project root\n' +
-          '  test/specs/<TestFile>.js\n\n' +
+          head +
           'Then run:\n' +
           '  npm install && npm run wdio'
         );
       }
       return (
-        'Create a project folder and save the provided files in this layout:\n' +
-        '  package.json          ← project root\n' +
-        '  wdio.conf.js          ← project root\n' +
-        '  test/specs/<TestFile>.js\n\n' +
+        head +
         'Then run:\n' +
         '  npm install && npm run wdio\n\n' +
         'IMPORTANT: Do NOT run npm init wdio — it installs wdio v9, which this project\'s Appium Grid rejects\n' +
@@ -818,6 +831,7 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
         '  session request; wdio v8+ sends W3C capabilities only. The package.json above pins wdio v7.40.0, the last\n' +
         '  release that still sends them (verified live: v9 refused, v7.40 runs). Appium Server projects use wdio v9.'
       );
+    }
     case 'python':
       return isAppiumOss
         ? 'Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client>=4.0.0), then run: python -m pytest\n\n' +
@@ -1358,6 +1372,16 @@ export function registerBoilerplateTools(server: McpServer): void {
           return { ...f, content: gridHeader(f.filename) + content };
         });
 
+        if (language === 'nodejs') {
+          const emittedNames = resolved.filter((f) => !f.isInstructions).map((f) => f.filename);
+          const { layout, dirs } = nodeLayout(emittedNames);
+          for (const f of resolved.filter((x) => x.isInstructions)) {
+            f.content = f.content
+              .replace(/# 2\. Save the provided files into this layout:\n(?:#[^\n]*\n)+/, `# 2. Save the provided files into this layout:\n${layout.split('\n').map((l) => `#  ${l}`).join('\n')}\n`)
+              .replace(/mkdir -p test\/specs/, `mkdir -p ${dirs.join(' ')}`);
+          }
+        }
+
         // ── Test Orchestrator (default ON for Java on Appium Server) ─────────────
         const decision = decideOrchestration({ mode: orchestration, language, isAppiumOss: detectedAppiumOss });
         let orchestrationInfo: OrchestrationInfo = { enabled: false, mode: orchestration, reason: decision.reason };
@@ -1448,7 +1472,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           orchestration: orchestrationInfo,
           ...(automotive ? { automotive } : {}),
           ...(capNotes.length ? { capabilityNotes: capNotes } : {}),
-          setupNote: setupNote(language, isAppiumOss, projectType),
+          setupNote: setupNote(language, isAppiumOss, projectType, resolved.filter((f) => !f.isInstructions).map((f) => f.filename)),
           appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
           parallelNote: parallelNote(language, isAppiumOss),
           credentialWarning: '⚠️ SECURITY: The access key embedded in these files is a live credential. Move it to an environment variable (DIGITAL_AI_ACCESS_KEY) and reference it from code before committing to source control.',
@@ -1478,7 +1502,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         const lines: string[] = [
           `# ${platformLabel} — ${langLabel[language]} Boilerplate (${serverModeLabel})`,
           '',
-          `> **Setup:** ${setupNote(language, isAppiumOss, projectType)}`,
+          `> **Setup:** ${setupNote(language, isAppiumOss, projectType, resolved.filter((f) => !f.isInstructions).map((f) => f.filename))}`,
           `> **App:** ${appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId)}`,
           `> **Device query:** ${regionLabel}${region ? '' : ' — re-call with region=<value> from find_available_device to scope to healthy devices only.'}`,
           `> ⚠️ **Security:** These files contain a live credential — move the access key to an environment variable (\`DIGITAL_AI_ACCESS_KEY\`) before committing to source control.`,
@@ -1842,17 +1866,17 @@ export function registerBoilerplateTools(server: McpServer): void {
           examples = [
             `${indent}${c} Example shape — replace <…> with selectors from get_page_dom / find_web_elements:`,
             `${indent}${c}   driver.get(${nav});`,
-            `${indent}${c}   driver.findElement(By.cssSelector("<CSS selector from find_web_elements>")).click();`,
-            `${indent}${c}   driver.findElement(By.cssSelector("input[name='<name attr>']")).sendKeys("<value>");`,
-            `${indent}${c}   driver.findElement(By.id("<id from get_page_dom>")).click();`,
+            `${indent}${c}   find(By.cssSelector("<CSS selector from find_web_elements>")).click();`,
+            `${indent}${c}   find(By.cssSelector("input[name='<name attr>']")).sendKeys("<value>");`,
+            `${indent}${c}   find(By.id("<id from get_page_dom>")).click();   // find() waits up to 20 s — never add sleeps`,
           ].join('\n');
         } else if (lang === 'python') {
           examples = [
             `${indent}${c} Example shape — replace <…> with selectors from get_page_dom / find_web_elements:`,
             `${indent}${c}   self.driver.get(${nav})`,
-            `${indent}${c}   self.driver.find_element(By.CSS_SELECTOR, "<CSS selector from find_web_elements>").click()`,
-            `${indent}${c}   self.driver.find_element(By.CSS_SELECTOR, "input[name='<name attr>']").send_keys("<value>")`,
-            `${indent}${c}   self.driver.find_element(By.ID, "<id from get_page_dom>").click()`,
+            `${indent}${c}   self.find(By.CSS_SELECTOR, "<CSS selector from find_web_elements>").click()`,
+            `${indent}${c}   self.find(By.CSS_SELECTOR, "input[name='<name attr>']").send_keys("<value>")`,
+            `${indent}${c}   self.find(By.ID, "<id from get_page_dom>").click()  # find() waits up to 20 s — never add sleeps`,
           ].join('\n');
         } else {
           examples = [
@@ -1957,8 +1981,10 @@ export function registerBoilerplateTools(server: McpServer): void {
         const framework = language === 'java-junit5' ? 'junit5' : 'testng';
         filename = `${testClass}.java`;
         const isJunit5 = language === 'java-junit5';
-        const beforeAnn  = isJunit5 ? '@BeforeAll' : '@BeforeClass';
-        const afterAnn   = isJunit5 ? '@AfterAll' : '@AfterClass';
+        // TestNG: one session per test method (@BeforeMethod, instance methods). The old static @BeforeClass referenced the
+        // instance driver and never compiled (found compiling the generated project, 2026-10-19).
+        const beforeAnn  = isJunit5 ? '@BeforeAll' : '@BeforeMethod';
+        const afterAnn   = isJunit5 ? '@AfterAll' : '@AfterMethod';
         const testAnn    = '@Test';
         const lifecycle  = isJunit5 ? '@TestInstance(TestInstance.Lifecycle.PER_CLASS)\n' : '';
         const assertion  = isJunit5 ? 'import org.junit.jupiter.api.*;' : 'import org.testng.annotations.*;';
@@ -1976,6 +2002,8 @@ export function registerBoilerplateTools(server: McpServer): void {
           `import org.openqa.selenium.JavascriptExecutor;`,
           `import org.openqa.selenium.WebElement;`,
           `import org.openqa.selenium.remote.RemoteWebDriver;`,
+          `import org.openqa.selenium.support.ui.ExpectedConditions;`,
+          `import org.openqa.selenium.support.ui.WebDriverWait;`,
           `${browserImp}`,
           ``,
           `import java.net.MalformedURLException;`,
@@ -1990,18 +2018,23 @@ export function registerBoilerplateTools(server: McpServer): void {
           `    private static final String GRID_URL   = "${gridUrl}";`,
           ``,
           `    ${beforeAnn}`,
-          `    ${isJunit5 ? '' : 'public static '}void setUp() throws MalformedURLException {`,
+          `    ${isJunit5 ? '' : 'public '}void setUp() throws MalformedURLException {`,
           `${browserCap}`,
           `        caps.setCapability("digitalai:accessKey", ACCESS_KEY);`,
           `        caps.setCapability("digitalai:testName", "${testName}");`,
           ``,
           `        driver = new RemoteWebDriver(new URL(GRID_URL), caps);`,
-          `        driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(10));`,
           `        driver.manage().window().maximize();`,
           `    }`,
           ``,
+          `    // Explicit wait (20 s) until the element is visible, then return it. There is no implicit wait — adding one`,
+          `    // would make every miss wait both timeouts. Use find(...) for every step.`,
+          `    private WebElement find(By by) {`,
+          `        return new WebDriverWait(driver, Duration.ofSeconds(20)).until(ExpectedConditions.visibilityOfElementLocated(by));`,
+          `    }`,
+          ``,
           `    ${afterAnn}`,
-          `    ${isJunit5 ? '' : 'public static '}void tearDown() {`,
+          `    ${isJunit5 ? '' : 'public '}void tearDown() {`,
           `        if (driver != null) driver.quit();`,
           `    }${shadowHelper}`,
           ``,
@@ -2023,7 +2056,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `    <dependency>`,
           `      <groupId>org.seleniumhq.selenium</groupId>`,
           `      <artifactId>selenium-java</artifactId>`,
-          `      <version>4.20.0</version>`,
+          `      <version>4.51.0</version>`,
           `    </dependency>`,
           framework === 'junit5' ? [
             `    <dependency>`,
@@ -2099,6 +2132,8 @@ export function registerBoilerplateTools(server: McpServer): void {
           `from selenium import webdriver`,
           `from selenium.webdriver.common.by import By`,
           `from selenium.webdriver.common.options import ArgOptions`,
+          `from selenium.webdriver.support.ui import WebDriverWait`,
+          `from selenium.webdriver.support import expected_conditions as EC`,
           ``,
           ``,
           `class ${testClass}(unittest.TestCase):`,
@@ -2117,8 +2152,12 @@ export function registerBoilerplateTools(server: McpServer): void {
           `        for name, value in caps.items():`,
           `            options.set_capability(name, value)`,
           `        self.driver = webdriver.Remote(command_executor=self.GRID_URL, options=options)`,
-          `        self.driver.implicitly_wait(10)`,
           `        self.driver.maximize_window()`,
+          ``,
+          `    def find(self, by, locator, timeout=20):`,
+          `        # Explicit wait until the element is visible. There is no implicit wait — adding one would make every`,
+          `        # miss wait both timeouts. Use self.find(...) for every step.`,
+          `        return WebDriverWait(self.driver, timeout).until(EC.visibility_of_element_located((by, locator)))`,
           ``,
           `    def tearDown(self):`,
           `        if self.driver:`,
@@ -2133,7 +2172,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         ].join('\n');
 
         const requirements = [
-          `selenium>=4.20.0`,
+          `selenium>=4.51.0,<5`,
         ].join('\n');
 
         const structured = {

@@ -2423,6 +2423,18 @@ export async function setAppearance(handle: string, style: 'dark' | 'light'): Pr
   const session = requireSession(handle);
   if (session.sessionFormat !== 'w3c') throw new Error('appearance is Appium Server only (mobile: setAppearance / setUiMode).');
   const client = makeClient();
+  // Remember the appearance the session started with, so the tool reminds the caller to restore it only when the
+  // device is left different (intake 2026-10-19: restoring light still said "set it back").
+  if (session.originalAppearance === undefined) {
+    try {
+      const before = session.platform === 'ios'
+        ? String(((await execScript(client, session, 'mobile: getAppearance', [{}])).data.value as { style?: string })?.style ?? '')
+        : ((await execScript(client, session, 'mobile: getUiMode', [{ mode: 'night' }])).data.value === 'yes' ? 'dark' : 'light');
+      if (before === 'dark' || before === 'light') session.originalAppearance = before;
+    } catch {
+      // unknown — the reminder stays on
+    }
+  }
   if (session.platform === 'ios') {
     await execScript(client, session, 'mobile: setAppearance', [{ style }]);
     const r = await execScript(client, session, 'mobile: getAppearance', [{}]);
