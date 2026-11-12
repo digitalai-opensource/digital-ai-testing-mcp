@@ -821,6 +821,7 @@ export interface InspectionSession {
   handle: string;           // Short user-facing identifier
   gridSessionId: string;    // Full CLOUD-SID:... Grid session ID
   acceptInsecureCerts?: boolean; // Browser sessions: started with acceptInsecureCerts (skip the certificate-warning check)
+  mobileOs?: 'android' | 'ios';  // Browser sessions on a cloud phone (Chrome on Android / Safari on iOS); unset = desktop
   browserEvents?: string;        // Browser sessions: 'on' | 'off' | 'unavailable: <reason>' — console/network capture (BiDi)
   reportTestId: number;     // Reporter test_id — 0 if not captured
   reportUrl: string;        // HTML report link (from caps)

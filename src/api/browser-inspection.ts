@@ -4,7 +4,7 @@ import type { InspectionSession } from '../types/digital-ai.js';
 import { getMyAccountInfo } from './users.js';
 import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
-import { registerSession, requireSession, listActiveSessions } from './webdriver.js';
+import { registerSession, requireSession, listActiveSessions, deviceQueryLengthError, newSessionWaitSeconds, cleanUpFailedSessionReport } from './webdriver.js';
 import { extractApiErrorMessage } from '../utils/api-error.js';
 import { BIDI_BROWSERS, startBrowserEventCapture } from './browser-events.js';
 
@@ -43,6 +43,17 @@ export interface BrowserSessionOptions {
   /** Capture console messages, uncaught JS errors and failed requests over WebDriver BiDi (default true where the
    *  browser supports it — see BIDI_BROWSERS; never on Safari, which hangs the session request). */
   captureEvents?: boolean;
+  /** Mobile browser on a cloud phone: Chrome on Android, Safari on iOS (verified live 2026-11-12 on Appium Server and
+   *  Appium Grid projects — navigate/title/find/text/source/screenshot all work; Grid sessions answer in JWP). */
+  mobile?: { platform: 'android' | 'ios'; deviceQuery?: string; region?: string };
+}
+
+/** Mobile browser sessions can take ~25–55 s to allocate a phone (live); give the platform up to 150 s. */
+export const MOBILE_BROWSER_TIMEOUT_MS = 180_000;
+
+/** W3C sessions route /execute/sync; JWP (Appium Grid phones) only /execute. */
+function execPath(session: InspectionSession): string {
+  return session.sessionFormat === 'jwp' ? 'execute' : 'execute/sync';
 }
 
 export async function createBrowserInspectionSession(
@@ -58,9 +69,18 @@ export async function createBrowserInspectionSession(
     // Non-fatal
   }
 
+  const mobile = opts.mobile;
   // Case-sensitive on the grid: lowercasing turned MicrosoftEdge into a rejected "microsoftedge" (verified live).
-  const browserName = canonicalBrowserName(opts.browserName) ?? opts.browserName;
-  const reportName = opts.reportName ?? `[MCP Browser Inspection] ${opts.browserName}`;
+  // A phone's browser is fixed by its platform: Chrome on Android, Safari on iOS.
+  const browserName = mobile ? (mobile.platform === 'ios' ? 'safari' : 'chrome') : canonicalBrowserName(opts.browserName) ?? opts.browserName;
+  const reportName = opts.reportName ?? `[MCP Browser Inspection] ${mobile ? `${browserName} on ${mobile.platform}` : opts.browserName}`;
+  let deviceQuery: string | undefined;
+  if (mobile) {
+    deviceQuery = mobile.deviceQuery ?? (mobile.platform === 'ios' ? "@os='ios' and @category='PHONE'" : "@os='android' and @category='PHONE'");
+    if (mobile.region) deviceQuery = `${deviceQuery} and @region='${mobile.region}'`;
+    const tooLong = deviceQueryLengthError(deviceQuery);
+    if (tooLong) throw new Error(tooLong);
+  }
 
   // Browsers are pure W3C — send both desiredCapabilities (legacy compat) and
   // capabilities.alwaysMatch. digitalai:* keys already contain the colon prefix
@@ -71,29 +91,44 @@ export async function createBrowserInspectionSession(
     // digitalai:testName names the report; digitalai:reportName is ignored by the platform (verified 2026-10-16).
     'digitalai:testName': reportName,
   };
-  if (opts.os) caps['platformName'] = opts.os;
+  if (mobile) {
+    caps['platformName'] = mobile.platform === 'ios' ? 'iOS' : 'Android';
+    caps['digitalai:deviceQuery'] = deviceQuery;
+    caps['digitalai:newSessionWaitTimeout'] = newSessionWaitSeconds(MOBILE_BROWSER_TIMEOUT_MS);
+  } else if (opts.os) caps['platformName'] = opts.os;
   if (opts.acceptInsecureCerts) caps['acceptInsecureCerts'] = true;
-  const wantEvents = opts.captureEvents !== false && BIDI_BROWSERS.has(browserName);
+  // BiDi capture is verified on desktop browsers only.
+  const wantEvents = !mobile && opts.captureEvents !== false && BIDI_BROWSERS.has(browserName);
   if (wantEvents) caps['webSocketUrl'] = true;
 
   const client = makeClient();
+  const requestedAt = Date.now();
   let res;
   try {
     res = await client.post('/session', {
       desiredCapabilities: caps,
       capabilities: { alwaysMatch: caps, firstMatch: [{}] },
-    });
+    }, mobile ? { timeout: MOBILE_BROWSER_TIMEOUT_MS } : undefined);
   } catch (e) {
+    if (mobile) {
+      const cleanup = await cleanUpFailedSessionReport(reportName, projectName, requestedAt);
+      throw new Error(
+        `Mobile browser session failed (${browserName} on ${mobile.platform}, query ${deviceQuery}): ${describeError(e)}.` +
+        ` Check find_available_device for a free ${mobile.platform} phone, or narrow the query with region.${cleanup}`
+      );
+    }
     throw new Error(
       `Browser session creation failed: ${describeError(e)}. ` +
       `Check that the requested browser (${opts.browserName}) is available via list_available_browsers.`
     );
   }
 
-  // Browsers always respond in W3C format
+  // Desktop browsers answer in W3C; a phone on an Appium Grid project answers in JWP ({ sessionId, value: caps }).
   const value = res.data.value ?? {};
+  const isW3c = value.capabilities != null || !mobile;
   const sessionCaps: Record<string, unknown> = value.capabilities ?? value ?? {};
-  const gridSessionId: string = value.sessionId ?? res.data.sessionId ?? '';
+  // JWP puts the Grid's CLOUD-SID at the top level; the caps may carry the agent's own sessionId (wrong one to use).
+  const gridSessionId: string = res.data.sessionId ?? value.sessionId ?? '';
 
   if (!gridSessionId) {
     throw new Error('Browser session created but no sessionId in response');
@@ -110,19 +145,25 @@ export async function createBrowserInspectionSession(
     gridSessionId,
     reportTestId,
     reportUrl: String(sessionCaps['digitalai:reportUrl'] ?? ''),
-    cloudViewLink: null, // No Mobile Studio for browser sessions
-    deviceUDID: '',
-    deviceName: `${opts.browserName}${opts.os ? ` on ${opts.os}` : ''}`,
-    deviceModel: opts.browserName,
-    deviceOs: opts.os ?? 'Web',
-    deviceVersion: String(sessionCaps['browserVersion'] ?? sessionCaps['version'] ?? ''),
+    // Mobile Studio exists for a phone, not for a desktop browser.
+    cloudViewLink: mobile && sessionCaps['digitalai:cloudViewLink'] ? String(sessionCaps['digitalai:cloudViewLink']) : null,
+    deviceUDID: mobile ? String(sessionCaps['deviceUDID'] ?? sessionCaps['udid'] ?? sessionCaps['device.serialNumber'] ?? '') : '',
+    deviceName: mobile
+      ? String(sessionCaps['digitalai:cloudDeviceName'] ?? sessionCaps['device.name'] ?? sessionCaps['deviceName'] ?? `${mobile.platform} phone`)
+      : `${opts.browserName}${opts.os ? ` on ${opts.os}` : ''}`,
+    deviceModel: mobile ? String(sessionCaps['digitalai:publicModel'] ?? sessionCaps['device.model'] ?? '') : opts.browserName,
+    deviceOs: mobile ? (mobile.platform === 'ios' ? 'iOS' : 'Android') : opts.os ?? 'Web',
+    deviceVersion: mobile
+      ? String(sessionCaps['platformVersion'] ?? sessionCaps['device.version'] ?? '')
+      : String(sessionCaps['browserVersion'] ?? sessionCaps['version'] ?? ''),
     appPackage: '',
     startedAt: Date.now(),
     lastUsedAt: Date.now(),
     canDeleteReport,
-    sessionFormat: 'w3c',
+    sessionFormat: isW3c ? 'w3c' : 'jwp',
     platform: 'web',
-    browserName: opts.browserName,
+    mobileOs: mobile?.platform,
+    browserName,
     acceptInsecureCerts: opts.acceptInsecureCerts === true,
     currentUrl: '',
     projectName,
@@ -131,7 +172,8 @@ export async function createBrowserInspectionSession(
   registerSession(session);
 
   // Console/network capture. A failure here never fails the session — it is reported on the session instead.
-  if (opts.captureEvents === false) session.browserEvents = 'off';
+  if (mobile) session.browserEvents = 'unavailable: not on mobile browsers (desktop chrome, MicrosoftEdge, firefox and opera only)';
+  else if (opts.captureEvents === false) session.browserEvents = 'off';
   else if (!BIDI_BROWSERS.has(browserName)) session.browserEvents = `unavailable: ${browserName} is not supported (Safari does not answer a BiDi session request)`;
   else {
     const ws = sessionCaps['webSocketUrl'];
@@ -173,7 +215,7 @@ export async function navigateTo(handle: string, url: string): Promise<void> {
   while (Date.now() < deadline) {
     try {
       const r = await client.post(
-        `/session/${session.gridSessionId}/execute/sync`,
+        `/session/${session.gridSessionId}/${execPath(session)}`,
         { script: 'return document.readyState', args: [] },
         { timeout: 10_000 }
       );
@@ -309,7 +351,7 @@ export async function getPageDom(
   let metaResult: { url: string; title: string; hasShadowDom: boolean };
   try {
     const detectRes = await client.post(
-      `/session/${sid}/execute/sync`,
+      `/session/${sid}/${execPath(session)}`,
       { script: SHADOW_DETECT_SCRIPT, args: [] },
       { timeout: 15_000 }
     );
@@ -327,7 +369,7 @@ export async function getPageDom(
   if (useWalker) {
     try {
       const shadowRes = await client.post(
-        `/session/${sid}/execute/sync`,
+        `/session/${sid}/${execPath(session)}`,
         { script: SHADOW_DOM_EXTRACT_SCRIPT, args: [] },
         { timeout: 30_000 }
       );

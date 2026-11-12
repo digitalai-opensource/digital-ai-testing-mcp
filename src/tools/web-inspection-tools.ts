@@ -45,8 +45,10 @@ export function registerWebInspectionTools(server: McpServer): void {
     'which browser to use — do not default silently. The browser chosen is the inspection vehicle only; ' +
     'the generated test will be platform-neutral (browser-neutral RemoteWebDriver) unless the user ' +
     'explicitly requests browser-specific code.\n\n' +
-    'There is no live view URL for browser sessions (unlike mobile sessions). ' +
+    'There is no live view URL for desktop browser sessions (unlike mobile sessions). ' +
     'Use take_inspection_screenshot to relay the current state to the user at each checkpoint. ' +
+    'Mobile web: set mobilePlatform ("android" → Chrome on a cloud phone, "ios" → Safari) to inspect a site as phones ' +
+    'render it; every browser tool (navigate_to, get_page_dom, find_web_elements, tap/type) works the same. ' +
     'Always call stop_browser_inspection_session when done.',
     {
       inspectionBrowser: z
@@ -84,12 +86,31 @@ export function registerWebInspectionTools(server: McpServer): void {
         .describe(
           'Capture console messages, uncaught JavaScript errors and failed network requests (4xx/5xx, fetch errors) for ' +
           'get_browser_log. Default true on chrome, MicrosoftEdge, firefox and opera (WebDriver BiDi); not available on ' +
-          'safari. Set false only if the user asks for a plain session.'
+          'safari or mobile browsers. Set false only if the user asks for a plain session.'
         ),
+      mobilePlatform: z
+        .enum(['android', 'ios'])
+        .optional()
+        .describe(
+          'Open the browser on a cloud phone instead of a desktop: "android" = Chrome, "ios" = Safari (inspectionBrowser ' +
+          'is then not needed). Allocating a phone takes about 25–55 s. Works on Appium Server and Appium Grid projects. ' +
+          'iOS Safari ignores acceptInsecureCerts (verified on real iPhones and a simulator).'
+        ),
+      deviceQuery: z
+        .string()
+        .optional()
+        .describe('mobilePlatform only: XPath device query, e.g. "@os=\'android\' and @model=\'Pixel 7\'". Default: any phone of that platform.'),
+      region: z
+        .string()
+        .optional()
+        .describe('mobilePlatform only: restrict to a region, e.g. "US2" (from find_available_device).'),
       outputFormat: outputFormatParam,
     },
     async (args) => {
-      if (!args.inspectionBrowser) {
+      if ((args.deviceQuery || args.region) && !args.mobilePlatform) {
+        return { content: [{ type: 'text' as const, text: 'Error: deviceQuery and region apply to mobile browsers only — set mobilePlatform ("android" or "ios").' }], isError: true };
+      }
+      if (!args.inspectionBrowser && !args.mobilePlatform) {
         return {
           content: [{
             type: 'text' as const,
@@ -102,12 +123,18 @@ export function registerWebInspectionTools(server: McpServer): void {
         };
       }
       try {
+        const mobile = args.mobilePlatform ? { platform: args.mobilePlatform, deviceQuery: args.deviceQuery, region: args.region } : undefined;
+        const expected = args.mobilePlatform === 'ios' ? 'safari' : 'chrome';
+        if (mobile && args.inspectionBrowser && canonicalBrowserName(args.inspectionBrowser) !== expected) {
+          return { content: [{ type: 'text' as const, text: `Error: on ${args.mobilePlatform} the browser is ${expected} — omit inspectionBrowser or set it to "${expected}".` }], isError: true };
+        }
         const session = await createBrowserInspectionSession({
-          browserName: canonicalBrowserName(args.inspectionBrowser) ?? args.inspectionBrowser,
+          browserName: mobile ? expected : canonicalBrowserName(args.inspectionBrowser!) ?? args.inspectionBrowser!,
           os: args.os,
           reportName: args.reportName,
           acceptInsecureCerts: args.acceptInsecureCerts,
           captureEvents: args.captureBrowserLog,
+          mobile,
         });
 
         // Structured like start_inspection_session — the handle is what every later call needs (UAT 2026-10-10 run 3).
@@ -117,21 +144,35 @@ export function registerWebInspectionTools(server: McpServer): void {
           browserVersion: session.deviceVersion || null,
           reportUrl: session.reportUrl || null,
           browserLog: session.browserEvents ?? 'off',
-          sessionNote: 'No live view URL for browser sessions — use take_inspection_screenshot to relay the page state. ' +
-            'The inspection browser is for element discovery only; the generated test is browser-neutral.',
+          ...(session.mobileOs ? {
+            device: { name: session.deviceName, model: session.deviceModel || null, os: session.deviceOs, osVersion: session.deviceVersion || null, serialNumber: session.deviceUDID || null },
+            mobileStudioUrl: session.cloudViewLink,
+            protocol: session.sessionFormat,
+          } : {}),
+          ...(session.mobileOs === 'ios' && args.acceptInsecureCerts ? { warning: 'iOS Safari ignores acceptInsecureCerts — a self-signed site will still show "This Connection Is Not Private".' } : {}),
+          sessionNote: session.mobileOs
+            ? 'Mobile browser session — mobileStudioUrl shows the phone live; take_inspection_screenshot relays the page.'
+            : 'No live view URL for browser sessions — use take_inspection_screenshot to relay the page state. ' +
+              'The inspection browser is for element discovery only; the generated test is browser-neutral.',
           next: `stop_browser_inspection_session("${session.handle}") when done`,
         };
         const lines = [
-          `✅ Browser inspection session started.`,
+          `✅ ${session.mobileOs ? 'Mobile browser' : 'Browser'} inspection session started.`,
           `Handle:       ${session.handle}`,
           `Browser:      ${session.browserName ?? args.inspectionBrowser}`,
-          `Version:      ${session.deviceVersion || '(unknown)'}`,
+          ...(session.mobileOs
+            ? [`Device:       ${session.deviceName}${session.deviceModel ? ` (${session.deviceModel})` : ''}, ${session.deviceOs} ${session.deviceVersion}`,
+              ...(session.cloudViewLink ? [`Live view:    ${session.cloudViewLink}`] : [])]
+            : [`Version:      ${session.deviceVersion || '(unknown)'}`]),
+          ...(session.mobileOs === 'ios' && args.acceptInsecureCerts ? [`⚠️ iOS Safari ignores acceptInsecureCerts — a self-signed site still shows its warning page.`] : []),
           `Report URL:   ${session.reportUrl || '(not available)'}`,
           `Browser log:  ${session.browserEvents === 'on' ? 'capturing console messages, JS errors and failed requests — read with get_browser_log' : session.browserEvents ?? 'off'}`,
           ``,
-          `SESSION NOTE: No live view URL for browser sessions (unlike mobile sessions).`,
-          `Use take_inspection_screenshot to relay the page state at each step.`,
-          `The inspection browser is for element discovery only — the generated test will be browser-neutral.`,
+          ...(session.mobileOs
+            ? [`SESSION NOTE: Use take_inspection_screenshot (or the live view) to relay the page state at each step.`]
+            : [`SESSION NOTE: No live view URL for browser sessions (unlike mobile sessions).`,
+              `Use take_inspection_screenshot to relay the page state at each step.`,
+              `The inspection browser is for element discovery only — the generated test will be browser-neutral.`]),
         ];
 
         if (args.url) {
@@ -439,11 +480,12 @@ export function registerWebInspectionTools(server: McpServer): void {
           `Found ${elements.length} element${elements.length !== 1 ? 's' : ''} (${args.strategy} = "${args.selector}"):`,
         ];
         for (const el of elements) {
+          // findElements reads web elements as tag (className), id (resourceId), class (contentDesc), text, bounds.
           const attrs = el.enriched === false
             ? '(attributes not fetched — beyond the first 20 matches; narrow the selector to see them)'
-            : Object.entries(el)
-              .filter(([k]) => k !== 'elementId' && k !== 'ELEMENT' && k !== 'enriched')
-              .map(([k, v]) => `${k}="${v}"`)
+            : ([['tag', el.className], ['id', el.resourceId], ['class', el.contentDesc], ['text', el.text], ['bounds', el.bounds]] as const)
+              .filter(([, v]) => v != null && v !== '')
+              .map(([k, v]) => `${k}="${String(v).replace(/\s+/g, ' ').slice(0, 120)}"`)
               .join(' ');
           lines.push(`  ID: ${el.elementId}  ${attrs}`);
         }

@@ -12,9 +12,10 @@ import { normalizeBidiMessage, injectBrowserEventsForTests, type BrowserEvent } 
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
 import { registerWebInspectionTools } from '../src/tools/web-inspection-tools.js';
 import type { InspectionSession } from '../src/types/digital-ai.js';
-import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
+import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 const sessionCaps: Array<Record<string, unknown>> = [];
+const jwpExecutes: string[] = [];
 
 const ELEMENTS = [{ tag: 'a', href: 'https://www.iana.org/domains/example', text: 'More information...' }];
 
@@ -31,10 +32,28 @@ beforeAll(async () => {
   api = await startStubApi((req) => {
     if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
     if (req.path === '/wd/hub/session' && req.method === 'POST') {
-      sessionCaps.push(req.json.capabilities?.alwaysMatch ?? {});
+      const caps = req.json.capabilities?.alwaysMatch ?? {};
+      sessionCaps.push(caps);
+      // A phone on an Appium Grid project answers in JWP: CLOUD-SID at the top, caps (with the agent's own id) in value.
+      if (String(caps['digitalai:deviceQuery'] ?? '').includes('GRID')) {
+        return { sessionId: 'CLOUD-SID:g-1', status: 0, value: { sessionId: 'agent-internal', 'device.name': 'Galaxy S22', 'device.model': 'SM-S901', 'device.version': '13.0', 'digitalai:cloudViewLink': 'https://cloud/studio/x', 'digitalai:reportTestId': 0 } };
+      }
+      if (caps.platformName) {
+        return { value: { sessionId: `s-${sessionCaps.length}`, capabilities: { platformVersion: '16', 'digitalai:cloudDeviceName': 'Pixel 7 sgdemo-0157', 'digitalai:publicModel': 'Pixel 7', 'digitalai:cloudViewLink': 'https://cloud/studio/y', 'digitalai:reportTestId': 0 } } };
+      }
       return { value: { sessionId: `s-${sessionCaps.length}`, capabilities: { browserVersion: '158', 'digitalai:reportTestId': 0 } } };
     }
-    if (/^\/wd\/hub\/session\/s-\d+$/.test(req.path) && req.method === 'DELETE') return { value: null };
+    if (/^\/wd\/hub\/session\/(s-\d+|CLOUD-SID:g-1)$/.test(req.path) && req.method === 'DELETE') return { value: null };
+    // JWP (Grid phone) execute route — only reachable through the CLOUD-SID.
+    if (req.path === '/wd/hub/session/CLOUD-SID:g-1/execute') { jwpExecutes.push(String(req.json.script)); return { value: 'complete', status: 0 }; }
+    if (req.path === '/wd/hub/session/CLOUD-SID:g-1/execute/sync') return reply(404, { value: { error: 'unknown command' } });
+    // find_web_elements on a web session: one <a> element read the web way (tag, text, id, class, rect).
+    if (/\/wd\/hub\/session\/[^/]+\/elements$/.test(req.path)) return { value: [{ 'element-6066-11e4-a52e-4f735466cecf': 'el-1' }] };
+    if (/\/element\/el-1\/name$/.test(req.path)) return { value: 'a' };
+    if (/\/element\/el-1\/text$/.test(req.path)) return { value: 'Learn more' };
+    if (/\/element\/el-1\/attribute\/id$/.test(req.path)) return { value: 'more' };
+    if (/\/element\/el-1\/attribute\/class$/.test(req.path)) return { value: null };
+    if (/\/element\/el-1\/rect$/.test(req.path)) return { value: { x: 165.238, y: 814.988, width: 81, height: 19 } };
     // navigate_to: sessions whose id contains "badcert" land on Chrome's certificate warning page.
     if (/\/wd\/hub\/session\/[^/]+\/url$/.test(req.path)) return { value: req.method === 'GET' ? 'https://self-signed.badssl.com/' : null };
     if (/\/wd\/hub\/session\/[^/]+\/title$/.test(req.path)) return { value: /badcert/.test(req.path) ? 'Privacy error' : 'self-signed.badssl.com' };
@@ -167,5 +186,58 @@ describe('browser log capture over WebDriver BiDi (verified live 2026-11-12 on C
     } finally {
       setAccessLevelOverrideForTests(null);
     }
+  });
+});
+
+describe('mobile browser sessions (Chrome on Android / Safari on iOS — verified live 2026-11-12)', () => {
+  it('mobilePlatform android opens Chrome on a phone: device query, wait timeout, no BiDi; result carries the device and live view', async () => {
+    setAccessLevelOverrideForTests('cloud-admin');
+    try {
+      const j = await tools.callJson('start_browser_inspection_session', { mobilePlatform: 'android', region: 'US2' });
+      const caps = sessionCaps.at(-1)!;
+      assert.equal(caps.platformName, 'Android');
+      assert.equal(caps.browserName, 'chrome');
+      assert.equal(caps['digitalai:deviceQuery'], "@os='android' and @category='PHONE' and @region='US2'");
+      assert.ok(Number(caps['digitalai:newSessionWaitTimeout']) > 0);
+      assert.equal(caps.webSocketUrl, undefined, 'BiDi is desktop-only');
+      assert.deepEqual(j.device, { name: 'Pixel 7 sgdemo-0157', model: 'Pixel 7', os: 'Android', osVersion: '16', serialNumber: null });
+      assert.equal(j.mobileStudioUrl, 'https://cloud/studio/y');
+      assert.equal(j.protocol, 'w3c');
+      assert.match(String(j.browserLog), /^unavailable: not on mobile browsers/);
+      await tools.call('stop_browser_inspection_session', { handle: j.handle });
+    } finally {
+      setAccessLevelOverrideForTests(null);
+    }
+  });
+
+  it('a Grid phone answers in JWP: the top-level CLOUD-SID is used (not the agent id in the caps) and scripts go to /execute', async () => {
+    setAccessLevelOverrideForTests('cloud-admin');
+    try {
+      const j = await tools.callJson('start_browser_inspection_session', { mobilePlatform: 'ios', deviceQuery: "@os='ios' and GRID", url: 'https://example.com/' });
+      assert.equal(sessionCaps.at(-1)!.browserName, 'safari');
+      assert.equal(j.protocol, 'jwp');
+      assert.equal((j.device as { name: string }).name, 'Galaxy S22');
+      assert.equal(j.navigationError, undefined, String(j.navigationError));
+      assert.ok(jwpExecutes.some((s) => /readyState/.test(s)), 'readyState polled through the JWP route');
+      await tools.call('stop_browser_inspection_session', { handle: j.handle });
+    } finally {
+      setAccessLevelOverrideForTests(null);
+    }
+  });
+
+  it('refuses deviceQuery/region without mobilePlatform, and a browser that does not match the phone', async () => {
+    let r = await tools.call('start_browser_inspection_session', { inspectionBrowser: 'chrome', region: 'US2' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /apply to mobile browsers only/);
+    r = await tools.call('start_browser_inspection_session', { mobilePlatform: 'ios', inspectionBrowser: 'chrome' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /on ios the browser is safari/);
+  });
+
+  it('find_web_elements reads web elements as tag/id/class/text with rounded bounds (not Android native attributes)', async () => {
+    registerSession(webSession('WEB00020'));
+    const { text } = await tools.call('find_web_elements', { handle: 'WEB00020', strategy: 'css selector', selector: 'a' });
+    assert.match(text, /ID: el-1  tag="a" id="more" text="Learn more" bounds="\[165,815\]\[246,834\]"/);
+    assert.doesNotMatch(text, /resourceId|contentDesc|class=/);
   });
 });

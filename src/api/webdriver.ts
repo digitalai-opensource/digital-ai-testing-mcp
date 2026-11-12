@@ -461,7 +461,10 @@ async function ensureInlineAttributes(client: AxiosInstance, session: Inspection
 const rectToBounds = (r: unknown): string | null => {
   const o = r as { x?: number; y?: number; width?: number; height?: number } | null;
   if (!o || o.x == null || o.width == null) return null;
-  return `[${o.x},${o.y}][${o.x + o.width},${(o.y ?? 0) + (o.height ?? 0)}]`;
+  // Web elements report fractional CSS pixels (e.g. 165.23809814453125) — round for readability.
+  const n = (v: number) => Math.round(v);
+  const y = o.y ?? 0;
+  return `[${n(o.x)},${n(y)}][${n(o.x + o.width)},${n(y + (o.height ?? 0))}]`;
 };
 const asBool = (v: unknown): boolean | null => (v === true || v === 'true' ? true : v === false || v === 'false' ? false : null);
 const asStr = (v: unknown): string | null => (v == null ? null : String(v));
@@ -482,7 +485,9 @@ export async function findElements(
   const client = makeClient();
   const sid = session.gridSessionId;
   const inline = await ensureInlineAttributes(client, session);
-  const inWebview = isWebviewContext(session);
+  // Browser sessions (desktop or a phone's browser) hold web elements too — read them the web way. They used to fall
+  // through to the Android native branch (class/resource-id/text attributes), which gave null text on Android Chrome.
+  const inWebview = isWebviewContext(session) || session.platform === 'web';
 
   let res;
   try {
