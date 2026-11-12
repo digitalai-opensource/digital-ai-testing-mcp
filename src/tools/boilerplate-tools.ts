@@ -769,7 +769,7 @@ function parallelNote(language: Language, isAppiumOss: boolean): string {
   const cap = 'Check the project\'s concurrency limit first (get_project_admin_settings → maxDevelopmentLicense) and that enough matching devices are free (find_available_device): a worker that finds no device waits for newSessionWaitTimeout and then fails.';
   switch (language) {
     case 'python':
-      return `Each test method has its own setUp/tearDown session — no code changes needed. pip install pytest-xdist, then: pytest -n auto -v (one worker per test). ${cap}`;
+      return `Each test method has its own setUp/tearDown session — no code changes needed. pip install pytest-xdist, then: pytest -n auto -v <test file>.py (name the file — pytest only collects test_*.py on its own; one worker per test). ${cap}`;
     case 'java-junit5':
       return `Each @Test has its own @BeforeEach/@AfterEach session. Enable JUnit 5 parallelism with src/test/resources/junit-platform.properties: junit.jupiter.execution.parallel.enabled=true, junit.jupiter.execution.parallel.mode.default=concurrent, junit.jupiter.execution.parallel.config.strategy=fixed, junit.jupiter.execution.parallel.config.fixed.parallelism=<workers>. Never make the driver static. ${cap}`;
     case 'java-testng':
@@ -853,21 +853,24 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
         '  release that still sends them (verified live: v9 refused, v7.40 runs). Appium Server projects use wdio v9.'
       );
     }
-    case 'python':
+    case 'python': {
+      // pytest collects only test_*.py / *_test.py on its own; the generated module is AndroidNative.py / iOSNative.py,
+      // so a bare "python -m pytest" ran nothing ("no tests ran", found live 2026-11-12). Name the file.
+      const py = emitted.find((e) => e.endsWith('.py')) ?? '<test file>.py';
       return isAppiumOss
-        ? 'Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client>=4.0.0), then run: python -m pytest\n\n' +
+        ? `Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client>=4.0.0), then run: python -m pytest ${py}\n\n` +
           'Waits: every step goes through find(), an explicit WebDriverWait — there is no implicit wait, and adding one would make every miss wait both timeouts.\n\n' +
           'Parallel execution (recommended on device farms — each test gets its own device):\n' +
           '  pip install pytest-xdist\n' +
-          '  pytest -n auto -v   # spawns one worker per test method; each creates its own Appium session'
+          `  pytest -n auto -v ${py}   # spawns one worker per test method; each creates its own Appium session`
         : '⚠️  APPIUM GRID (LEGACY): This project uses Appium Grid — a legacy Digital.ai framework\n' +
           'that predates the W3C WebDriver standard. It is NOT the same as standard Appium Server.\n' +
           'All workarounds below exist because of this protocol difference, not Python version conflicts.\n\n' +
           'Install: pip install -r requirements.txt  (appium-python-client==2.2.0 + selenium==4.9.0)\n' +
-          'Run:     python -m pytest\n\n' +
+          `Run:     python -m pytest ${py}\n\n` +
           'Parallel execution (recommended — each test method gets its own device from the farm pool):\n' +
           '  pip install pytest-xdist\n' +
-          '  pytest -n auto -v   # safe: each worker process creates its own setUp/tearDown session\n' +
+          `  pytest -n auto -v ${py}   # safe: each worker process creates its own setUp/tearDown session\n` +
           '  Check project concurrency limits first: get_project_admin_settings → maxDevelopmentLicense\n\n' +
           'Protocol requirements (Appium Grid only):\n' +
           '  • desired_capabilities= dict (JWP format) — W3C options= triggers grid rejection\n' +
@@ -876,6 +879,7 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
           '  • Use appium.webdriver.webelement.WebElement (not selenium\'s) for is_displayed()\n\n' +
           'If you can migrate this project to Appium Server, all of these workarounds go away.\n' +
           'Error "Cant run Appium Grid with Appium client 8+" = W3C format rejected by grid (not a version issue).';
+    }
     case 'robot':
       return (
         'Save the files in this layout:\n' +

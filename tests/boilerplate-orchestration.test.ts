@@ -702,3 +702,18 @@ describe('no generated file carries the access key (credential handling, user de
     }
   });
 });
+
+describe('Python setup note names the test file (pytest only collects test_*.py on its own — live 2026-11-12)', () => {
+  it('both server modes and platforms', async () => {
+    for (const oss of [true, false]) {
+      account.isAppiumOss = oss; account.fail = false;
+      for (const platform of ['android', 'ios']) {
+        const { json } = await gen({ platform, language: 'python' });
+        const py = json.files.find((f) => f.filename.endsWith('.py'))!.filename;
+        const note = String((json as unknown as { setupNote: string }).setupNote);
+        assert.ok(note.includes(`python -m pytest ${py}`), `${platform}/${oss}: ${note.slice(0, 200)}`);
+        assert.ok(note.includes(`pytest -n auto -v ${py}`), `${platform}/${oss}`);
+      }
+    }
+  });
+});
