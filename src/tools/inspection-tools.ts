@@ -57,7 +57,8 @@ import {
   clearWebCache,
   deviceDiagnostics,
   setAppearance,
-  accessibilityAudit
+  accessibilityAudit,
+  adbShell
 } from '../api/webdriver.js';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -69,6 +70,7 @@ import { listFiles } from '../api/repository.js';
 import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
 import { readFileSync, writeFileSync } from 'fs';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
+import { classifyShellCommand, shellGuardMessage, capShellOutput, shellCommandProblem } from '../utils/adb-shell.js';
 
 // '-ios predicate string' is XCUITest's NSPredicate locator (e.g. "type == 'XCUIElementTypeButton' AND label == 'Login'")
 // — faster and less brittle than xpath on iOS, and the form the Mobile Studio iOS Test Recorder emits. iOS on Appium
@@ -1417,14 +1419,24 @@ export function registerInspectionTools(server: McpServer): void {
     'device_info (one call: model, OS/API level, locale, time zone, battery, screen size/scale, system bars, lock state, ' +
     'light/dark appearance — Appium Server), set_appearance (style dark|light: iOS appearance / Android night mode — ' +
     'dark-mode screenshot checks), accessibility_audit (iOS: XCTest\'s built-in audit of the current screen, no extra ' +
-    'dependency; Android: use includeAxeScan in get_test_boilerplate). ' +
+    'dependency; Android: use includeAxeScan in get_test_boilerplate), shell (Android Appium Server: adb shell ' +
+    'command — getprop, dumpsys <service>, settings get, pm list/path, wm size run directly (device log: get_device_log); anything that can change ' +
+    'the shared device, or uses shell operators, returns a preview until confirmChange: true). ' +
     'Grid session limits: alerts and reset_geolocation are not supported, and iOS Grid devices reject clipboard ops ' +
     '(clear errors explain alternatives). iOS file paths may require the @bundleId:container syntax.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z
-        .enum(['get_orientation', 'set_orientation', 'get_clipboard', 'set_clipboard', 'set_geolocation', 'reset_geolocation', 'get_alert', 'accept_alert', 'dismiss_alert', 'push_file', 'pull_file', 'device_info', 'set_appearance', 'accessibility_audit'])
+        .enum(['get_orientation', 'set_orientation', 'get_clipboard', 'set_clipboard', 'set_geolocation', 'reset_geolocation', 'get_alert', 'accept_alert', 'dismiss_alert', 'push_file', 'pull_file', 'device_info', 'set_appearance', 'accessibility_audit', 'shell'])
         .describe('Device action to perform.'),
+      command: z.string().optional().describe(
+        'For shell: the adb shell command, e.g. "dumpsys battery", "getprop ro.build.version.release", ' +
+        '"settings get global airplane_mode_on". Put everything in this string (no separate args needed).'
+      ),
+      confirmChange: z.boolean().optional().describe(
+        'For shell: set true only after the user agreed to a command that changes the device (the first call returns ' +
+        'a preview saying why). Read-only commands never need it.'
+      ),
       orientation: z.enum(['PORTRAIT', 'LANDSCAPE']).optional().describe('For set_orientation.'),
       style: z.enum(['dark', 'light']).optional().describe('For set_appearance.'),
       text: z.string().optional().describe('For set_clipboard: the text to place on the clipboard.'),
@@ -1490,6 +1502,15 @@ export function registerInspectionTools(server: McpServer): void {
             const findings = await accessibilityAudit(args.handle);
             const lines = findings.slice(0, 30).map((f, i) => `${i + 1}. ${String(f.type ?? f.auditType ?? 'issue')}: ${String(f.detailedDescription ?? f.compactDescription ?? f.elementDescription ?? '').split('\n')[0].slice(0, 200)}`);
             return { content: [{ type: 'text' as const, text: findings.length ? `${findings.length} accessibility finding(s) on this screen:\n${lines.join('\n')}${findings.length > 30 ? `\n… ${findings.length - 30} more` : ''}` : 'No accessibility findings on this screen.' }] };
+          }
+          case 'shell': {
+            if (!args.command?.trim()) return { content: [{ type: 'text' as const, text: 'Error: shell requires command, e.g. "dumpsys battery".' }], isError: true };
+            const problem = shellCommandProblem(args.command);
+            if (problem) return { content: [{ type: 'text' as const, text: `Error: ${problem}` }], isError: true };
+            const c = classifyShellCommand(args.command.trim());
+            if (!c.readOnly && args.confirmChange !== true) return { content: [{ type: 'text' as const, text: shellGuardMessage(c) }] };
+            const out = await adbShell(args.handle, c.commandLine);
+            return { content: [{ type: 'text' as const, text: `$ adb shell ${c.commandLine}\n${capShellOutput(out.trimEnd()) || '(no output)'}` }] };
           }
           case 'get_alert': {
             const a = await getAlertInfo(args.handle);

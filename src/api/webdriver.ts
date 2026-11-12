@@ -2466,6 +2466,25 @@ export async function accessibilityAudit(handle: string): Promise<Array<Record<s
   return Array.isArray(r.data.value) ? (r.data.value as Array<Record<string, unknown>>) : [];
 }
 
+/**
+ * Run an adb shell command on an Android Appium Server session (`mobile: shell`, verified live 2026-11-12). The Grid's
+ * execute layer accepts only seetest:client.* (and seetest:client.run is "not implemented" on Appium Server), and iOS
+ * has no shell. Callers must classify the command first (src/utils/adb-shell.ts) — this function does not guard.
+ */
+export async function adbShell(handle: string, command: string, args: string[] = [], timeoutMs = 60_000): Promise<string> {
+  const session = requireSession(handle);
+  if (session.platform !== 'android') throw new Error('shell is Android only — iOS devices have no adb shell.');
+  if (session.sessionFormat !== 'w3c') {
+    throw new Error('shell needs an Appium Server project: the Appium Grid only runs seetest:client commands. Use get_remote_debug_command for a full adb connection instead.');
+  }
+  try {
+    const r = await execScript(makeClient(), session, 'mobile: shell', [{ command, args, timeout: timeoutMs }], timeoutMs + 5_000);
+    return typeof r.data.value === 'string' ? r.data.value : JSON.stringify(r.data.value ?? '');
+  } catch (e) {
+    throw new Error(`adb shell "${[command, ...args].join(' ')}" failed: ${describeWdError(e)}`);
+  }
+}
+
 // ─── Webview contexts ─────────────────────────────────────────────────────────
 // Verified live 2026-10-18 (Appium Server): ExperiBank iOS exposes "WEBVIEW_<pid>.1" (its balance page) once logged
 // in; Chrome on Android exposes "WEBVIEW_chrome" with page titles/urls via `mobile: getContexts`, which also waits for

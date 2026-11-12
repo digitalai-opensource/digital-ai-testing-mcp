@@ -49,6 +49,7 @@ beforeAll(async () => {
       const script = String(req.json.script);
       const args = req.json.args as unknown[];
       executed.push({ script, args });
+      if (script === 'mobile: shell') return { value: `ran: ${(args[0] as { command: string }).command}\n` };
       if (script === 'mobile: pressButton' && (args[0] as { name: string }).name === 'power') {
         return reply(500, { value: { error: 'unknown error', message: "The button 'power' is not supported. The device under test only supports the following buttons: (home, volumedown, volumeup)" } });
       }
@@ -282,6 +283,42 @@ describe('device_control alerts (release 2)', () => {
     assert.equal(r.res.isError, true);
     assert.match(r.text, /buttonLabel is iOS-only/);
     await tools.call('stop_inspection_session', { handle: h });
+  });
+});
+
+describe('device_control shell (mobile: shell, verified live 2026-11-12)', () => {
+  it('a read-only command runs at once; a changing one returns a guard preview and runs only with confirmChange', async () => {
+    const h = await session('android');
+    let r = await tools.call('device_control', { handle: h, action: 'shell', command: 'dumpsys battery' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.match(r.text, /^\$ adb shell dumpsys battery\nran: dumpsys battery/);
+    assert.deepEqual(executed.at(-1), { script: 'mobile: shell', args: [{ command: 'dumpsys battery', args: [], timeout: 60_000 }] });
+
+    const before = executed.length;
+    r = await tools.call('device_control', { handle: h, action: 'shell', command: 'getprop ro.product.model; reboot' });
+    assert.equal(r.res.isError, undefined, 'a guard is an instruction, not a failure');
+    assert.match(r.text, /Safety guard triggered[\s\S]*shell operators[\s\S]*confirmChange: true[\s\S]*No changes were made/);
+    assert.equal(executed.length, before, 'nothing sent to the device');
+
+    r = await tools.call('device_control', { handle: h, action: 'shell', command: 'settings put global airplane_mode_on 1', confirmChange: true });
+    assert.match(r.text, /ran: settings put global airplane_mode_on 1/);
+    await tools.call('stop_inspection_session', { handle: h });
+  });
+
+  it('refused on iOS, on the Appium Grid, and without a command', async () => {
+    const ios = await session('ios');
+    let r = await tools.call('device_control', { handle: ios, action: 'shell', command: 'getprop' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /Android only/);
+    await tools.call('stop_inspection_session', { handle: ios });
+
+    const grid = await session('android', { deviceQuery: "@os='android' and GRID" });
+    r = await tools.call('device_control', { handle: grid, action: 'shell', command: 'getprop' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /Appium Server project/);
+    r = await tools.call('device_control', { handle: grid, action: 'shell' });
+    assert.match(r.text, /shell requires command/);
+    await tools.call('stop_inspection_session', { handle: grid });
   });
 });
 
