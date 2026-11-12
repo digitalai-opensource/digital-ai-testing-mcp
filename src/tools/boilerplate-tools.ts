@@ -393,6 +393,11 @@ function wrapWithReporting(language: Language, indent: string, core: string, isA
       // The Grid parses arguments out of the script string, so a 0-arg command is written inline there.
       isAppiumOss ? `${indent}    driver.executeScript("seetest:client.stopStepsGroup");` : `${indent}    driver.executeScript("seetest:client.stopStepsGroup()");`,
       `${indent}    driver.executeScript("seetest:client.setReportStatus", "Passed", "All steps completed");`,
+      // A skipped test (JUnit 5 Assumptions / TestNG SkipException) is a RuntimeException — report Skipped, not Failed
+      // (the platform accepts "Skipped", verified live 2026-11-12).
+      `${indent}} catch (${language === 'java-testng' ? 'org.testng.SkipException' : 'org.opentest4j.TestAbortedException'} e) {`,
+      `${indent}    try { driver.executeScript("seetest:client.setReportStatus", "Skipped", String.valueOf(e.getMessage())); } catch (RuntimeException ignored) {}`,
+      `${indent}    throw e;`,
       `${indent}} catch (RuntimeException | AssertionError e) {`,
       `${indent}    try { driver.executeScript("seetest:client.setReportStatus", "Failed", String.valueOf(e.getMessage())); } catch (RuntimeException ignored) {}`,
       `${indent}    throw e;`,
@@ -407,6 +412,12 @@ function wrapWithReporting(language: Language, indent: string, core: string, isA
       inner,
       isAppiumOss ? `${indent}    self.driver.execute_script("seetest:client.stopStepsGroup")` : `${indent}    self.driver.execute_script("seetest:client.stopStepsGroup()")`,
       `${indent}    self.driver.execute_script("seetest:client.setReportStatus", "Passed", "All steps completed")`,
+      `${indent}except unittest.SkipTest as e:`,
+      `${indent}    try:`,
+      `${indent}        self.driver.execute_script("seetest:client.setReportStatus", "Skipped", str(e)[:500])`,
+      `${indent}    except Exception:`,
+      `${indent}        pass`,
+      `${indent}    raise`,
       `${indent}except Exception as e:`,
       `${indent}    try:`,
       `${indent}        self.driver.execute_script("seetest:client.setReportStatus", "Failed", str(e)[:500])`,
@@ -423,7 +434,9 @@ function wrapWithReporting(language: Language, indent: string, core: string, isA
     isAppiumOss ? `${indent}    await browser.execute('seetest:client.stopStepsGroup');` : `${indent}    await browser.execute('seetest:client.stopStepsGroup()');`,
     `${indent}    await browser.execute('seetest:client.setReportStatus', 'Passed', 'All steps completed');`,
     `${indent}} catch (e) {`,
-    `${indent}    await browser.execute('seetest:client.setReportStatus', 'Failed', String(e && e.message).slice(0, 500)).catch(() => {});`,
+    `${indent}    // this.skip() throws mocha's Pending — report Skipped, not Failed.`,
+    `${indent}    const skipped = !!(e && e.constructor && e.constructor.name === 'Pending');`,
+    `${indent}    await browser.execute('seetest:client.setReportStatus', skipped ? 'Skipped' : 'Failed', String(e && e.message).slice(0, 500)).catch(() => {});`,
     `${indent}    throw e;`,
     `${indent}}`,
   ].join('\n');

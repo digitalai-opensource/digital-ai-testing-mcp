@@ -259,7 +259,15 @@ describe('get_test_boilerplate — reportStatus (report the real outcome)', () =
         assert.match(t, /seetest:client\.startStepsGroup['"], ['"]Test steps/, `${platform}/${language}: group start`);
         assert.match(t, /seetest:client\.stopStepsGroup/, `${platform}/${language}: group stop`);
         assert.match(t, /seetest:client\.setReportStatus['"], ['"]Passed/, `${platform}/${language}: Passed`);
-        assert.match(t, /seetest:client\.setReportStatus['"], ['"]Failed/, `${platform}/${language}: Failed`);
+        assert.match(t, /seetest:client\.setReportStatus['"], (?:skipped \? 'Skipped' : )?['"]Failed/, `${platform}/${language}: Failed`);
+        // A skipped test reports Skipped (platform accepts it, verified live 2026-11-12), not Failed.
+        const skipRe = {
+          'java-junit5': /catch \(org\.opentest4j\.TestAbortedException e\) \{\n.*setReportStatus", "Skipped"/,
+          'java-testng': /catch \(org\.testng\.SkipException e\) \{\n.*setReportStatus", "Skipped"/,
+          python: /except unittest\.SkipTest as e:\n(?:.*\n){1,2}.*setReportStatus", "Skipped"/,
+          nodejs: /e\.constructor\.name === 'Pending'/,
+        }[language]!;
+        assert.match(t, skipRe, `${platform}/${language}: Skipped`);
         // Arguments are passed separately — the inline form fails silently.
         assert.doesNotMatch(t, /seetest:client\.\w+\(/, `${platform}/${language}: inline arguments`);
       }
@@ -592,7 +600,8 @@ describe('get_web_test_boilerplate — fixes found running the templates live (2
   it('every web language reports the real outcome', async () => {
     for (const language of ['java-junit5', 'python', 'nodejs']) {
       const s = source((await webGen({ language })).json);
-      assert.match(s, /seetest:client\.setReportStatus['"], ['"]Failed/, language);
+      assert.match(s, /seetest:client\.setReportStatus['"], (?:skipped \? 'Skipped' : )?['"]Failed/, language);
+      assert.match(s, /Skipped/, language);
       assert.match(s, /seetest:client\.startStepsGroup/, language);
     }
   });
