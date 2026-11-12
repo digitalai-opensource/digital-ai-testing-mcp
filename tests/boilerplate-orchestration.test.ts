@@ -763,3 +763,37 @@ describe('playwright config switches between the Selenium agent and Playwright b
     }
   });
 });
+
+describe('template client pins and driver names (best-practice review, 2026-11-12)', () => {
+  it('Appium Server: Python pins Appium-Python-Client ~=6.0 with typed options; every language names the driver', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const platform of ['android', 'ios']) {
+      const driver = platform === 'android' ? 'UiAutomator2' : 'XCUITest';
+      const py = await gen({ platform, language: 'python' });
+      assert.equal(py.json.files.find((f) => f.filename === 'requirements.txt')!.content.trim(), 'Appium-Python-Client~=6.0', platform);
+      const pySrc = py.json.files.find((f) => f.filename.endsWith('.py'))!.content;
+      assert.match(pySrc, new RegExp(`options = ${platform === 'android' ? 'UiAutomator2Options' : 'XCUITestOptions'}\(\)`), platform);
+      assert.doesNotMatch(pySrc, /AppiumOptions/, platform);
+      const node = await gen({ platform, language: 'nodejs' });
+      const conf = node.json.files.find((f) => f.filename === 'wdio.conf.js')!.content;
+      assert.match(conf, new RegExp(`'appium:automationName': '${driver}'`), platform);
+      // With the Axe scan the Axe driver replaces it — exactly one automationName.
+      const axe = (await gen({ platform, language: 'nodejs', includeAxeScan: true })).json.files.find((f) => f.filename === 'wdio.conf.js')!.content;
+      assert.equal((axe.match(/'appium:automationName'/g) ?? []).length, 1, `${platform} axe`);
+      assert.match(axe, new RegExp(`'appium:automationName': 'Axe${driver}'`), `${platform} axe`);
+    }
+  });
+
+  it('Appium Grid pins stay on the JWP-era clients (java-client 7.6.0, Appium-Python-Client 2.2.0 + selenium 4.9.0)', async () => {
+    account.isAppiumOss = false; account.fail = false;
+    for (const platform of ['android', 'ios']) {
+      for (const [language, projectType] of [['java-junit5', 'standalone-gradle'], ['java-testng', 'standalone-gradle'], ['java-junit5', 'standalone-maven'], ['java-testng', 'standalone-maven']]) {
+        const { json } = await gen({ platform, language, projectType, orchestration: 'off' });
+        const build = json.files.find((f) => /build\.gradle|pom\.xml/.test(f.filename))!.content;
+        assert.match(build, /java-client['"]?,? *(?:version: *)?['"]?7\.6\.0|<artifactId>java-client<\/artifactId>\s*<version>7\.6\.0<\/version>/, `${platform}/${language}/${projectType}`);
+      }
+      const py = await gen({ platform, language: 'python' });
+      assert.equal(py.json.files.find((f) => f.filename === 'requirements.txt')!.content.trim(), 'appium-python-client==2.2.0\nselenium==4.9.0', platform);
+    }
+  });
+});

@@ -727,6 +727,8 @@ function substitute(
         );
       }
     } else if (language === 'nodejs') {
+      // The Appium Server wdio configs already name the driver — drop that line so the Axe driver is the only one.
+      result = result.replace(/\n[ \t]*'appium:automationName': '(?:UiAutomator2|XCUITest)',/, '');
       result = result.replace(
         /('digitalai:deviceQuery': [^\n]+)/,
         (match) =>
@@ -858,7 +860,7 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
       // so a bare "python -m pytest" ran nothing ("no tests ran", found live 2026-11-12). Name the file.
       const py = emitted.find((e) => e.endsWith('.py')) ?? '<test file>.py';
       return isAppiumOss
-        ? `Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client>=4.0.0), then run: python -m pytest ${py}\n\n` +
+        ? `Install the dependency with: pip install -r requirements.txt  (Appium-Python-Client ~=6.0), then run: python -m pytest ${py}\n\n` +
           'Waits: every step goes through find(), an explicit WebDriverWait — there is no implicit wait, and adding one would make every miss wait both timeouts.\n\n' +
           'Parallel execution (recommended on device farms — each test gets its own device):\n' +
           '  pip install pytest-xdist\n' +
@@ -1477,7 +1479,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           serverModeNote: isAppiumOss
             ? 'Appium Server (OSS) — standard W3C WebDriver protocol. ' +
               'Java: java-client 11.x + selenium-java 4.51 (Java 17+), UiAutomator2Options/XCUITestOptions, AppiumBy, URI.create(...).toURL() (no DesiredCapabilities, no MobileBy). ' +
-              'Python: appium-python-client 4.x+, AppiumOptions. ' +
+              'Python: Appium-Python-Client 6.x, UiAutomator2Options / XCUITestOptions. ' +
               'If you need Grid mode, switch to a Grid-enabled profile and regenerate — the APIs are incompatible.'
             : 'Appium Grid (legacy) — Digital.ai JWP-era protocol, NOT standard Appium Server. ' +
               'Java: java-client 7.6.0, Java 8+, DesiredCapabilities + AndroidElement. ' +

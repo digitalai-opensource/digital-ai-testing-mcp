@@ -1,6 +1,6 @@
 import unittest
 from appium import webdriver
-from appium.options.common.base import AppiumOptions
+from appium.options.android import UiAutomator2Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -12,7 +12,8 @@ class LocalAndroidTest(unittest.TestCase):
     driver = None
 
     def setUp(self):
-        options = AppiumOptions()
+        # Typed options set appium:automationName=UiAutomator2 and prefix non-W3C capabilities with appium: themselves.
+        options = UiAutomator2Options()
         options.set_capability('digitalai:testName', self.testName)
         options.set_capability('digitalai:accessKey', self.accessKey)
         options.set_capability('app', 'cloud:com.experitest.ExperiBank/.LoginActivity')

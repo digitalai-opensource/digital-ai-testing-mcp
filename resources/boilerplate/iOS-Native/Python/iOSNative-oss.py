@@ -1,6 +1,6 @@
 import unittest
 from appium import webdriver
-from appium.options.common.base import AppiumOptions
+from appium.options.ios import XCUITestOptions
 from selenium.webdriver.common.by import By
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
@@ -13,7 +13,8 @@ class LocalIosTest(unittest.TestCase):
     driver = None
 
     def setUp(self):
-        options = AppiumOptions()
+        # Typed options set appium:automationName=XCUITest and prefix non-W3C capabilities with appium: themselves.
+        options = XCUITestOptions()
         options.set_capability('digitalai:testName', self.testName)
         options.set_capability('digitalai:accessKey', self.accessKey)
         options.set_capability('app', 'cloud:com.experitest.ExperiBank')

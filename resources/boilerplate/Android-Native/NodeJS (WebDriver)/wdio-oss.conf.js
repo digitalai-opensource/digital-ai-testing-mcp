@@ -11,6 +11,7 @@ exports.config = {
     maxInstances: 1,
     capabilities: [{
         platformName: 'ANDROID',
+        'appium:automationName': 'UiAutomator2',
         'digitalai:testName': '[Enter Test Name here]',
         'digitalai:accessKey': '[Enter Your Access key here]',
         'appium:app': 'cloud:com.experitest.ExperiBank/.LoginActivity',
