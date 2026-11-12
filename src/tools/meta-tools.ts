@@ -114,7 +114,7 @@ export const REGISTERED_TOOLS = [
   'webview_context', 'get_device_log', 'session_capture', 'network_control', 'inject_camera_image',
   // Inspection sessions — web (Selenium Grid, browser inspection)
   'start_browser_inspection_session', 'stop_browser_inspection_session',
-  'navigate_to', 'get_page_dom', 'browser_action', 'find_web_elements',
+  'navigate_to', 'get_page_dom', 'browser_action', 'find_web_elements', 'get_browser_log',
   'list_browser_inspection_sessions', 'cleanup_browser_inspection_sessions',
   // Performance comparison (all roles; transaction-control is session-based)
   'compare_performance_transactions', 'assess_comparison_confounds',
@@ -155,7 +155,7 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['boilerplate', 'Boilerplate', 'Appium/Selenium test projects, Test Orchestrator agent, validate_test_script'],
   ['test-runs', 'Test Runs', 'Espresso/XCUITest/Maestro runs, status, cancel, command, Maestro flow generation'],
   ['inspection', 'Mobile Inspection', 'live sessions: element tree, find, tap, type, gestures, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay, audio'],
-  ['web-inspection', 'Browser Inspection', 'live browser sessions: DOM, find, navigate, actions'],
+  ['web-inspection', 'Browser Inspection', 'live browser sessions: DOM, find, navigate, actions, console and network log'],
   ['debug', 'Remote Debug', 'get_remote_debug_command'],
   ['workflows', 'Workflows', 'POC and project setup / teardown (Cloud Admin)'],
   ['meta', 'Server', 'server info, connectivity, workflow readiness, environments'],

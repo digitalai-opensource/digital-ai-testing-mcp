@@ -5,6 +5,7 @@ import { getMyAccountInfo } from './users.js';
 import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
 import { isEmulatorQuery } from '../utils/device-query.js';
+import { stopBrowserEventCapture } from './browser-events.js';
 
 // In-process session registry — cleared on MCP server restart
 const sessionRegistry = new Map<string, InspectionSession>();
@@ -280,6 +281,7 @@ export async function quitInspectionSession(
   reportUrl: string;
 }> {
   const session = requireSession(handle);
+  stopBrowserEventCapture(handle); // browser sessions: close the BiDi socket (no-op otherwise)
 
   const client = makeClient();
   // A HAR / device-log capture left running would never be finalised once the session is gone — stop it first

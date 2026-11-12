@@ -6,6 +6,7 @@ import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
 import { registerSession, requireSession, listActiveSessions } from './webdriver.js';
 import { extractApiErrorMessage } from '../utils/api-error.js';
+import { BIDI_BROWSERS, startBrowserEventCapture } from './browser-events.js';
 
 function gridBase(): string {
   const base = getActiveUrl();
@@ -39,6 +40,9 @@ export interface BrowserSessionOptions {
   /** W3C acceptInsecureCerts — load sites with self-signed/untrusted certificates (verified live 2026-11-12 on
    *  Chrome, Firefox, MicrosoftEdge and Safari against self-signed.badssl.com). */
   acceptInsecureCerts?: boolean;
+  /** Capture console messages, uncaught JS errors and failed requests over WebDriver BiDi (default true where the
+   *  browser supports it — see BIDI_BROWSERS; never on Safari, which hangs the session request). */
+  captureEvents?: boolean;
 }
 
 export async function createBrowserInspectionSession(
@@ -69,6 +73,8 @@ export async function createBrowserInspectionSession(
   };
   if (opts.os) caps['platformName'] = opts.os;
   if (opts.acceptInsecureCerts) caps['acceptInsecureCerts'] = true;
+  const wantEvents = opts.captureEvents !== false && BIDI_BROWSERS.has(browserName);
+  if (wantEvents) caps['webSocketUrl'] = true;
 
   const client = makeClient();
   let res;
@@ -123,6 +129,15 @@ export async function createBrowserInspectionSession(
   };
 
   registerSession(session);
+
+  // Console/network capture. A failure here never fails the session — it is reported on the session instead.
+  if (opts.captureEvents === false) session.browserEvents = 'off';
+  else if (!BIDI_BROWSERS.has(browserName)) session.browserEvents = `unavailable: ${browserName} is not supported (Safari does not answer a BiDi session request)`;
+  else {
+    const ws = sessionCaps['webSocketUrl'];
+    const problem = typeof ws === 'string' ? await startBrowserEventCapture(handle, ws) : 'the platform returned no webSocketUrl';
+    session.browserEvents = problem ? `unavailable: ${problem}` : 'on';
+  }
   return session;
 }
 

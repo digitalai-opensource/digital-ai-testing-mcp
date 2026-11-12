@@ -17,6 +17,7 @@ import {
   getPageDom,
   browserNavigate,
 } from '../api/browser-inspection.js';
+import { readBrowserEvents } from '../api/browser-events.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
 import { checkDeleteAllowed } from '../api/access-level.js';
 
@@ -77,6 +78,14 @@ export function registerWebInspectionTools(server: McpServer): void {
           '("insecure certificate"). Set it only when the user is testing such a site. Pass the same option to ' +
           'get_web_test_boilerplate so the generated test can reach it too.'
         ),
+      captureBrowserLog: z
+        .boolean()
+        .optional()
+        .describe(
+          'Capture console messages, uncaught JavaScript errors and failed network requests (4xx/5xx, fetch errors) for ' +
+          'get_browser_log. Default true on chrome, MicrosoftEdge, firefox and opera (WebDriver BiDi); not available on ' +
+          'safari. Set false only if the user asks for a plain session.'
+        ),
       outputFormat: outputFormatParam,
     },
     async (args) => {
@@ -98,6 +107,7 @@ export function registerWebInspectionTools(server: McpServer): void {
           os: args.os,
           reportName: args.reportName,
           acceptInsecureCerts: args.acceptInsecureCerts,
+          captureEvents: args.captureBrowserLog,
         });
 
         // Structured like start_inspection_session — the handle is what every later call needs (UAT 2026-10-10 run 3).
@@ -106,6 +116,7 @@ export function registerWebInspectionTools(server: McpServer): void {
           browserName: session.browserName ?? args.inspectionBrowser,
           browserVersion: session.deviceVersion || null,
           reportUrl: session.reportUrl || null,
+          browserLog: session.browserEvents ?? 'off',
           sessionNote: 'No live view URL for browser sessions — use take_inspection_screenshot to relay the page state. ' +
             'The inspection browser is for element discovery only; the generated test is browser-neutral.',
           next: `stop_browser_inspection_session("${session.handle}") when done`,
@@ -116,6 +127,7 @@ export function registerWebInspectionTools(server: McpServer): void {
           `Browser:      ${session.browserName ?? args.inspectionBrowser}`,
           `Version:      ${session.deviceVersion || '(unknown)'}`,
           `Report URL:   ${session.reportUrl || '(not available)'}`,
+          `Browser log:  ${session.browserEvents === 'on' ? 'capturing console messages, JS errors and failed requests — read with get_browser_log' : session.browserEvents ?? 'off'}`,
           ``,
           `SESSION NOTE: No live view URL for browser sessions (unlike mobile sessions).`,
           `Use take_inspection_screenshot to relay the page state at each step.`,
@@ -443,6 +455,56 @@ export function registerWebInspectionTools(server: McpServer): void {
           content: [{ type: 'text' as const, text: `Error finding elements: ${(e as Error).message}` }],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ── get_browser_log ───────────────────────────────────────────────────────
+  server.tool(
+    'get_browser_log',
+    'Read what a browser inspection session captured since it started (or since the last clear): console messages ' +
+    '(console.log/info/warn/error), uncaught JavaScript errors, and failed network requests (HTTP 4xx/5xx and fetch ' +
+    'errors — successful requests are only counted). Use it to explain a blank or broken page, a button that does ' +
+    'nothing, or a failing API call. Captured over WebDriver BiDi on chrome, MicrosoftEdge, firefox and opera; ' +
+    'safari sessions have no capture. Newest entries last.',
+    {
+      handle: z.string().describe('Session handle from start_browser_inspection_session.'),
+      kind: z.enum(['all', 'console', 'network']).optional().default('all')
+        .describe('"console" = console messages and uncaught JS errors; "network" = failed requests; "all" (default).'),
+      errorsOnly: z.boolean().optional().default(false).describe('Only error-level entries (console.error, JS errors, failed requests).'),
+      clear: z.boolean().optional().default(false).describe('Empty the buffer after reading — call before an action to see only what that action caused.'),
+      maxEntries: z.number().int().min(1).max(500).optional().default(50).describe('Newest N matching entries (default 50).'),
+      outputFormat: outputFormatParam,
+    },
+    async (args) => {
+      try {
+        const session = requireSession(args.handle);
+        if (session.platform !== 'web') {
+          return { content: [{ type: 'text' as const, text: 'get_browser_log is for browser sessions. For a mobile device use get_device_log.' }], isError: true };
+        }
+        const r = readBrowserEvents(args.handle, { kind: args.kind, errorsOnly: args.errorsOnly, clear: args.clear, maxEntries: args.maxEntries });
+        if (!r) {
+          return {
+            content: [{ type: 'text' as const, text: `No browser log for session ${args.handle}: capture is ${session.browserEvents ?? 'off'}. ` +
+              'Start a new session on chrome, MicrosoftEdge, firefox or opera (captureBrowserLog defaults to true) to capture it.' }],
+            isError: true,
+          };
+        }
+        const fmt = (e: (typeof r.events)[number]) => {
+          const t = new Date(e.time).toISOString().slice(11, 23);
+          const label = e.kind === 'network' ? `network ${e.method ?? ''}`.trim() : e.kind === 'javascript' ? 'js-error' : `console.${e.level}`;
+          return `[${t}] ${label.padEnd(16)} ${e.text}${e.url ? `  (${e.url})` : ''}`;
+        };
+        const header = `${r.matched} matching entr${r.matched === 1 ? 'y' : 'ies'}` +
+          (r.matched > r.events.length ? ` (newest ${r.events.length} shown)` : '') +
+          ` · ${r.okRequests} successful request${r.okRequests === 1 ? '' : 's'} not listed` +
+          (r.dropped ? ` · ${r.dropped} older entries dropped (buffer keeps 500)` : '') +
+          (args.clear ? ' · buffer cleared' : '') +
+          (r.socketClosed ? ` · ⚠️ capture stopped: ${r.socketClosed}` : '');
+        const human = r.events.length ? `${header}\n${r.events.map(fmt).join('\n')}` : `${header}\nNothing captured${args.errorsOnly ? ' at error level' : ''}.`;
+        return respond(args.outputFormat, { handle: args.handle, ...r }, human);
+      } catch (e) {
+        return { content: [{ type: 'text' as const, text: `Error: ${(e as Error).message}` }], isError: true };
       }
     }
   );

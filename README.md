@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **210 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **211 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -389,7 +389,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ### Toolsets (reducing context size)
 
-All 210 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
+All 211 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
 
 Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
@@ -502,7 +502,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 
 ### All capability areas
 
-210 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+211 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -965,7 +965,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 210; 211 with MCP_DEBUG_MODE=true) and active profile
+1. get_server_info           — confirm tool count (expect 211; 212 with MCP_DEBUG_MODE=true) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -975,7 +975,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 210,
+  "registeredToolCount": 211,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
