@@ -4,7 +4,7 @@
 
 There is no REST API to trigger Appium (or Selenium) test execution directly. Those tests are launched from Appium clients (IDE plugins, CI scripts) — this MCP server manages the devices, apps and reservations they use and can open its own inspection sessions, but does not run a user's Appium suite.
 
-**Espresso, XCUITest and Maestro suites are different:** the platform runs them itself through the Test Run API — see `execute_test_run`, `get_test_run_status`, `cancel_test_run` and `get_test_run_command`. Maestro is Android-only and its bundle must be a ZIP containing a `flows/` directory.
+**Espresso, XCUITest and Maestro suites are different:** the platform runs them itself through the Test Run API — see `execute_test_run`, `get_test_run_status`, `cancel_test_run` and `get_test_run_command`. Maestro is Android-only and its bundle must be a ZIP containing a `flows/` directory. **Playwright** projects run through the platform's Execution Service with `execute_playwright_run` (see limitation 38).
 
 XCUITest runs follow the platform's Test Run API reference but have not yet been verified end to end (Espresso and Maestro have). Espresso can only instrument an app signed with the same key as the test APK, so it cannot drive preinstalled apps (Settings, Messages); use UiAutomator for those, and set `useUIAutomator: true` for any suite that uses UiAutomator — without it those tests fail with "UiAutomationService … already registered". An app or test APK uploaded with a run is not added to the application repository. `get_test_run_status` waits at most 50 seconds per call; call it again to keep waiting.
 
@@ -106,7 +106,7 @@ The agent itself is currently a **1.0-SNAPSHOT** build. It is not shipped with t
 
 ## 18. Appium Grid Projects Support Fewer Commands than Appium Server
 
-Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locators `-ios predicate string` and `-ios class chain` (use accessibility id or xpath); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom and alert routes; clipboard and app-state queries on iOS devices; webview contexts (`webview_context` lists NATIVE_APP only); the app-control extras `background`, `is_installed`, `install`; device diagnostics, appearance switching and the accessibility audit; and audio play/record (`audio_control`, see limitation 31). Zero-argument platform commands (geolocation reset, steps-group stop, HAR and device-log capture stop, webview-cache reset) DO run on the Grid — the server writes them in the Grid's inline form. Robot Framework mobile tests are generated for Appium Server projects only (see limitation 32). There is no launch-by-package command on the Grid, so `launch_app` on an Android Grid session needs the launch activity (`mainActivity` from `get_application_info`). The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
+Projects on the legacy Appium Grid (`isAppiumOss=false`) reject several things Appium Server accepts: the iOS locators `-ios predicate string` and `-ios class chain` (use accessibility id or xpath); Android Auto / CarPlay projection (the capability is accepted but every projection command fails); pinch/zoom and alert routes; clipboard and app-state queries on iOS devices; webview contexts (`webview_context` lists NATIVE_APP only); the app-control extras `background`, `is_installed`, `install`; device diagnostics, appearance switching and the accessibility audit; ADB shell (`device_control` action `shell`); and audio play/record (`audio_control`, see limitation 31). Zero-argument platform commands (geolocation reset, steps-group stop, HAR and device-log capture stop, webview-cache reset) DO run on the Grid — the server writes them in the Grid's inline form. Robot Framework mobile tests are generated for Appium Server projects only (see limitation 32). There is no launch-by-package command on the Grid, so `launch_app` on an Android Grid session needs the launch activity (`mainActivity` from `get_application_info`). The Grid also rejects session requests that lack legacy `desiredCapabilities`, so the generated WebdriverIO project pins wdio 7.40 for Grid projects (wdio 8+ is refused) and uses wdio 9 for Appium Server. Check `get_server_info` to see which mode your project uses.
 
 ## 19. `find_elements` Details Only the First 20 Matches
 
@@ -130,7 +130,7 @@ The usage-report tools (`download_usage_report`, `get_usage_report_download_comm
 
 ## 24. Features That Depend on the Platform Version
 
-The shared vs dedicated device-pool breakdown (`device.pool.actual`) needs platform 26.7+ (older runs show as not recorded). User Tag columns in usage reports need 26.2+. From 26.9, crashes and infrastructure aborts are reported as Error rather than Incomplete, so status counts that span the upgrade mix both conventions.
+The shared vs dedicated device-pool breakdown (`device.pool.actual`) needs platform 26.7+ (older runs show as not recorded). User Tag columns in usage reports need 26.2+. From 26.9, crashes and infrastructure aborts are reported as Error rather than Incomplete, so status counts that span the upgrade mix both conventions. Appium Server 3.8.1 (26.9+) needs iOS 17 or later — on an iOS 15/16 device the session fails after about a minute with `DeviceOSVersionTooLow`; use 3.8.0 there.
 
 ## 25. Android Auto / CarPlay Verification
 
@@ -186,3 +186,21 @@ Once a session has recorded a performance transaction, the platform refuses to d
 ## 37. Image-Based Locators Are Not Available
 
 The Appium image-comparison plugin is not loaded on the cloud agents, and an element find with the `-image` strategy terminates the agent's Appium process for the rest of the session (every later command fails with a connection error). The inspection tools do not offer the strategy; do not use it from generated tests either.
+
+## 38. Playwright: Known Issues
+
+**Execution Service runs (`execute_playwright_run`).** The platform runs the project in Microsoft's Playwright container image, which needs a **Cross Browser license** on a Digital.ai-hosted (SaaS) cloud. Without free capacity, a run stays `QUEUED` with the reason "Waiting for licenses" — `get_test_run_status` shows the reason; cancel the run with `cancel_test_run` and ask your cloud administrator. Submitting, the queue status, cancelling and log download are verified; a run that executes to completion has not yet been verified end to end with this server, so treat the result states and browser counts it reports as provisional. `imageVersion` must be a published Playwright version (for example `1.49.0`); an unknown one is rejected immediately.
+
+**Playwright on the Selenium agent (`get_web_test_boilerplate` `language: "playwright"`)** — an **experimental** platform feature:
+
+- Chrome and Microsoft Edge only. For Firefox or WebKit, use `execute_playwright_run`.
+- The Digital.ai report holds one record per browser session and shows **Passed even when a Playwright test failed**. The Playwright list or HTML report is the source of truth.
+- Playwright drives the cloud browser over the Chrome DevTools Protocol, so keep `@playwright/test` close to the cloud browser version. The generated project pins 1.65.0, verified against Chrome 158 and Edge 157.
+- The generated configuration connects through `SELENIUM_REMOTE_URL` / `SELENIUM_REMOTE_CAPABILITIES`. A `connectOptions.wsEndpoint` pointing at `/wd/hub` did not connect with Playwright 1.65.0 ("does not look like a Playwright server").
+- A project generated for the Selenium agent is not meant for `execute_playwright_run`: the container image has no branded Chrome or Edge and cannot reach the Selenium agent. Use a standard `playwright.config` for Execution Service runs.
+
+## 39. Browser Inspection Sessions: What Differs by Browser
+
+- **Console and network log (`get_browser_log`)** — captured over WebDriver BiDi on desktop Chrome, Edge, Firefox and Opera. Not on Safari (a BiDi session request to Safari is not answered, so the server never asks for it) and not on mobile browsers.
+- **Mobile browsers (`mobilePlatform`)** — Chrome on Android and Safari on iOS, on Appium Server and Appium Grid projects. Allocating a phone takes about 25–55 seconds. iOS Safari does not honour `acceptInsecureCerts`: a site with a self-signed certificate still shows "This Connection Is Not Private" (Android Chrome and the desktop browsers load it).
+- **`acceptInsecureCerts`** is verified on Chrome, Firefox, Edge and Safari on the desktop, and on Android Chrome; not on Opera.

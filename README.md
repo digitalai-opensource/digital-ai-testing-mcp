@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **212 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest and Maestro test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **212 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -400,7 +400,7 @@ Nothing becomes unavailable. Tools outside the chosen toolsets are still listed,
 | `reporting` | Test reports, analytics, root-cause analysis, test views, coverage |
 | `performance` | Performance transactions and comparisons, NV servers |
 | `inspection` | Live device and browser inspection, Android Auto / CarPlay, remote debug |
-| `authoring` | Test boilerplate, Espresso / XCUITest / Maestro test runs |
+| `authoring` | Test boilerplate, Espresso / XCUITest / Maestro / Playwright test runs |
 | `browsers` | Browser listing and Selenium sessions |
 | `admin` | Users, projects, backups, usage reports, POC and project workflows |
 
@@ -474,7 +474,7 @@ Once connected, talk to the server in plain language — no tool names needed:
 | Upload, install or find the latest build of an app; manage test files and iOS profiles | [Applications](docs/tools.md#applications), [Repository](docs/tools.md#repository), [Provisioning Profiles](docs/tools.md#provisioning-profiles) |
 | Explore an app or web page live with the AI | [Interactive inspection](#interactive-inspection) below |
 | Create an automated test | [Creating Tests](#creating-tests) |
-| Run Espresso, XCUITest or Maestro suites on the platform | [Test runs](#test-runs-espresso-xcuitest-maestro) below |
+| Run Espresso, XCUITest, Maestro or Playwright suites on the platform | [Test runs](#test-runs-espresso-xcuitest-maestro) below |
 | Find out why tests failed, and track pass rates and trends | [Test Results and Root Cause Analysis](#test-results-and-root-cause-analysis) |
 | Compare performance between versions, devices or networks | [Performance Comparison Reports](#performance-comparison-reports) |
 | Export or summarize platform usage *(Cloud Admin)* | [Usage reports](#usage-reports) below |
@@ -485,14 +485,18 @@ Once connected, talk to the server in plain language — no tool names needed:
 An inspection session opens a live connection to a real device or browser so the AI can see the screen and interact with it — useful for exploring an app and capturing real element IDs before writing a test.
 
 - **Mobile** ([tools](docs/tools.md#mobile-inspection-sessions)) — Android and iOS, on both Appium Grid and Appium Server projects: screenshots, element discovery, the full gesture set, keys, app/device control (including background/resume, mid-session install from the repository and a webview-cache reset), hybrid-app webview contexts (`webview_context`), the live device log, HAR and device-log capture into the file repository, network toggles and NV network conditions, camera image injection, device diagnostics (battery, screen, dark mode, iOS accessibility audit), Android Auto / CarPlay projection, audio play/record on devices with an audio line, and mock biometric authentication. The session shares a watch-only live view URL so you can follow along. iOS behaves differently in a few places ([limitation 29](docs/limitations.md#29-ios-inspection-sessions-differ-from-android)), and Appium Grid projects support fewer commands ([limitation 18](docs/limitations.md#18-appium-grid-projects-support-fewer-commands-than-appium-server)).
-- **Browser** ([tools](docs/tools.md#web-inspection-sessions)) — navigate, discover elements (including inside Shadow DOM), verify CSS selectors and generate browser-neutral Selenium scripts.
+- **Browser** ([tools](docs/tools.md#web-inspection-sessions)) — desktop browsers, or Chrome / Safari on a cloud phone (`mobilePlatform`): navigate, discover elements (including inside Shadow DOM), verify CSS selectors, read the console and failed network requests (`get_browser_log`; Chrome, Edge, Firefox and Opera), open staging sites with self-signed certificates (`acceptInsecureCerts`) and generate browser-neutral Selenium scripts. See [limitation 39](docs/limitations.md#39-browser-inspection-sessions-what-differs-by-browser).
 - **Remote debug** ([tools](docs/tools.md#remote-debug)) — `get_remote_debug_command` makes a cloud device appear as if it were plugged into your machine (over ADB for Android, usbmuxd for iOS), so Android Studio, Xcode and command-line ADB can use it — for example for shell commands or file push. Install the app **before** connecting (see [Troubleshooting](#common-symptoms)).
 
 Example prompts: [Interactive Inspection](docs/examples.md#interactive-inspection-ai-driven-test-building), [Android Auto / CarPlay](docs/examples.md#android-auto--carplay), [Web Browser Inspection](docs/examples.md#web-browser-inspection-ai-driven-browser-test-building).
 
 #### Test runs (Espresso, XCUITest, Maestro)
 
-The platform runs these suites itself: `execute_test_run` starts a run, `get_test_run_status` follows it, `cancel_test_run` stops it, and `get_test_run_command` gives a command to start it from your own machine. `generate_maestro_flow` builds a Maestro flow from structured steps. Maestro is Android-only. Espresso and Maestro runs are verified; XCUITest uses the same API but is not yet verified end to end. See [Test Runs](docs/tools.md#test-runs-espresso--xcuitest--maestro) and [example prompts](docs/examples.md#test-runs-espresso-xcuitest-maestro).
+The platform runs these suites itself: `execute_test_run` starts a run, `get_test_run_status` follows it, `cancel_test_run` stops it, and `get_test_run_command` gives a command to start it from your own machine. `generate_maestro_flow` builds a Maestro flow from structured steps. Maestro is Android-only. Espresso and Maestro runs are verified; XCUITest uses the same API but is not yet verified end to end.
+
+**Playwright** projects run through the platform's Execution Service: `execute_playwright_run` uploads the project (a folder or .zip), and the platform runs it in Microsoft's Playwright image on chromium, firefox or webkit; `get_test_run_status` and `cancel_test_run` take its run id. It needs a Cross Browser license — a run that stays queued with "Waiting for licenses" has no capacity on your cloud. See [limitation 38](docs/limitations.md#38-playwright-known-issues).
+
+See [Test Runs](docs/tools.md#test-runs-espresso--xcuitest--maestro) and [example prompts](docs/examples.md#test-runs-espresso-xcuitest-maestro).
 
 Appium and Selenium tests are different: you run them from your own Appium or Selenium client (IDE, CI scripts), and the server manages the devices, apps, reservations and results they use.
 
@@ -519,7 +523,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 | [Health & Diagnostics](docs/tools.md#health--diagnostics) | 7 | Farm snapshot, iOS readiness, agent status, active sessions, reporter storage, license limits and utilization |
 | [Coverage Analytics](docs/tools.md#coverage-analytics) | 2 | Tested-vs-available device gap analysis |
 | [Reporting](docs/tools.md#reporting) | 23 | Search/filter test reports, root-cause analysis, failure summarization, stability, trends, logs, video download (byte ranges), share links, attachment download command, cleanup |
-| [Test Runs](docs/tools.md#test-runs-espresso--xcuitest--maestro) | 5 | Run Espresso, XCUITest and Maestro suites on the platform; status, cancel, local command; generate Maestro flows |
+| [Test Runs](docs/tools.md#test-runs-espresso--xcuitest--maestro) | 6 | Run Espresso, XCUITest, Maestro and Playwright suites on the platform; status, cancel, local command; generate Maestro flows |
 | [Test Views](docs/tools.md#test-views) | 7 | Dashboard view groups |
 | [Transactions & Performance](docs/tools.md#transactions--performance) | 4 | CPU/memory/battery/Speed Index analytics |
 | [Agents](docs/tools.md#agents) | 2 | Host machine status *(Cloud Admin)* |
@@ -660,6 +664,8 @@ Generates a complete, pre-configured Selenium test project for browser testing. 
 
 **Browser-neutral by default:** when `targetBrowser` is omitted, the generated script reads the browser name at runtime from the `BROWSER` environment variable, so the same script runs on Chrome, Firefox, Microsoft Edge, Safari and Opera without changes (Robot Framework: every browser except Opera, which SeleniumLibrary cannot drive) — just change the variable or your CI matrix. Specify `targetBrowser` only when you need browser-specific options (e.g. Safari-only session setup).
 
+**Playwright (experimental):** `language: "playwright"` generates a Playwright Test project that drives Chrome or Edge on the Digital.ai Selenium agent — `npm install`, then `npx playwright test`, with no local browser. This route is an experimental platform feature, and the Digital.ai report shows Passed even when a test fails, so read the Playwright report (see [limitation 38](docs/limitations.md#38-playwright-known-issues)).
+
 **Shadow DOM support:** with `always`, the generated script includes a `shadowQuery(host, cssSelector)` helper; with `auto` (the default), it is included only while a browser inspection session is open in the MCP server; `never` omits it. The helper reaches into shadow roots using `executeScript`. Use it for apps built with Web Components, Lit, Polymer or other shadow-DOM frameworks. `get_page_dom` detects shadow DOM automatically during inspection and reports `hasShadowDom: true` when present.
 
 <details>
@@ -667,12 +673,13 @@ Generates a complete, pre-configured Selenium test project for browser testing. 
 
 | Parameter | Values | Default |
 |---|---|---|
-| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Robot Framework + SeleniumLibrary) | _(required)_ |
+| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Robot Framework + SeleniumLibrary) \| `playwright` (experimental; Chrome / Edge) | _(required)_ |
 | `url` | URL of the page being tested | _(optional)_ |
 | `testName` | Any string | `"WebTest"` |
 | `targetBrowser` | `chrome` \| `firefox` \| `MicrosoftEdge` \| `safari` \| `opera` (names as `list_available_browsers` returns them; `edge` is accepted for `MicrosoftEdge`) | _(optional)_ |
 | `shadowDomSupport` | `auto` \| `always` \| `never` | `auto` |
 | `confirmSelectorsVerified` | `true` \| `false` | _(optional)_ |
+| `acceptInsecureCerts` | `true` for a site with a self-signed, expired or untrusted-CA certificate | _(optional)_ |
 | `outputFormat` | `json` \| `human` | `json` |
 
 </details>
@@ -1081,6 +1088,7 @@ The ones you're most likely to run into:
 5. **Usage reports go back 2 years** (platform 25.9+), and large unfiltered exports need your explicit approval. See [limitation 21](docs/limitations.md#21-usage-reports-2-year-retention-large-exports).
 6. **There's no way to disable or lock a user.** Removing access for a user created only for a POC means deleting the account — which is why `close_poc` asks for confirmation per user.
 7. **Deleting test reports with a project-level key depends on a per-project setting** (`allowUsersDeleteTests`). Cloud Admin can always delete. When the setting is off, the tools refuse up front for a Project Admin and explain how to get it enabled; a Project User cannot read the setting, so the platform returns its own 403.
+8. **Playwright needs a Cross Browser license, and its Selenium-agent route is experimental.** An `execute_playwright_run` job without free capacity stays queued with "Waiting for licenses". Projects generated for the Selenium agent run on Chrome and Edge only, and the Digital.ai report shows Passed even when a test failed — read the Playwright report. See [limitation 38](docs/limitations.md#38-playwright-known-issues).
 
 See [docs/limitations.md](docs/limitations.md) for the full list.
 
