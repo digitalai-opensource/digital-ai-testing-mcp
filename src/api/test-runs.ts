@@ -75,6 +75,11 @@ export interface TestRunStatus {
     ignored: number | null;
   };
   reporterLink: string | null;
+  /** Set for Execution Service (Playwright) runs, whose counts are browsers, not tests. */
+  kind?: 'playwright';
+  browsersCompleted?: number | null;
+  /** Playwright: why the run is QUEUED (live: "Waiting for licenses"). */
+  queueReason?: string | null;
 }
 
 /**

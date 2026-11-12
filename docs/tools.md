@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 211 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 212 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (access level is detected from the API — either key format works); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -302,10 +302,11 @@ The platform schedules, runs and reports these suites itself — no local driver
 | Tool | What it does | Admin Required? |
 |---|---|---|
 | `execute_test_run` | Start a run (async; returns `testRunId`). App by `cloudAppId` (numeric) / `appUrl` / `appPath`; tests by `testsPath` (Maestro: required .zip with `flows/`, Android only; Espresso: the androidTest .apk; XCUITest: the runner package) or, for Espresso/XCUITest only, `testsUrl` / `cloudTestAppId`. `deviceQueries` (required), `runningType` (`fastFeedback` default / `coverage`), `maxDevices`, `retry` (0–5), `runTags`. Espresso suites that use UiAutomator need `useUIAutomator: true`. Lenient on shape: `executionType`/`runningType` accept any casing, `deviceQueries` may be a JSON string or a single query string, and numeric fields accept numeric strings. | Any |
-| `get_test_run_status` | State (Starting / Running / Finished / Cancelled) and passed / failed / skipped / running / queued counts (may briefly be unknown mid-run); `waitSeconds` (≤ 50) polls until finished | Any |
-| `cancel_test_run` | Cancel the remaining tests of a run — running tests stop; not-yet-run tests are reported as skipped. Requires `confirmDeletion: true` (omit it to preview) | Any |
+| `get_test_run_status` | State (Starting / Running / Finished / Cancelled) and passed / failed / skipped / running / queued counts (may briefly be unknown mid-run); `waitSeconds` (≤ 50) polls until finished. A Playwright run id (UUID) reads the Execution Service instead: state (QUEUED / RUNNING / CANCELED …), browser counts and the queue reason; `logsPath` saves its logs zip | Any |
+| `cancel_test_run` | Cancel the remaining tests of a run — running tests stop; not-yet-run tests are reported as skipped. Requires `confirmDeletion: true` (omit it to preview). Also cancels a Playwright run (UUID id) | Any |
 | `get_test_run_command` | curl / PowerShell command that starts the run from the user's machine (for Docker installs). `localPlatform` required; embeds the access key — run once and discard. | Any |
 | `generate_maestro_flow` | Build a Maestro flow (YAML) from structured steps (launchApp, tapOn, inputText, assertVisible, scrollUntilVisible, …) and optionally write the bundle .zip for `execute_test_run`. Returns no flow without a live Android inspection session or `confirmSelectorsVerified: true`; rejects placeholder selectors | Any |
+| `execute_playwright_run` | Run a Playwright Test project on the cloud (Execution Service, Microsoft's Playwright image; chromium / firefox / webkit). `projectPath` = the project folder (zipped without node_modules, reports, .git and credential files) or a .zip; `imageVersion` defaults to the project's @playwright/test version; `browsers` required without a playwright.config.*. Returns a UUID run id for `get_test_run_status` / `cancel_test_run`; results land in the Reporter under test.run.id. Needs a Cross Browser license — a run that stays QUEUED "Waiting for licenses" has no capacity. | Any |
 
 ### Test Views
 

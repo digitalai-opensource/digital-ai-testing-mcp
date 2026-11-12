@@ -24,6 +24,18 @@ import { detectFabricationIssues } from './boilerplate-tools.js';
 import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
 import { caseInsensitiveEnum } from '../utils/schema.js';
 import { MAESTRO_ACTIONS, buildMaestroFlowYaml, validateMaestroFlow, bareIdWarnings, flowFileName, type MaestroFlowSpec } from '../utils/maestro-flow.js';
+import { writeFileSync } from 'fs';
+import {
+  PLAYWRIGHT_BROWSERS,
+  type PlaywrightBrowser,
+  isPlaywrightRunId,
+  loadPlaywrightProject,
+  buildPlaywrightConf,
+  executePlaywrightRun,
+  getPlaywrightRunStatus,
+  cancelPlaywrightRun,
+  downloadPlaywrightLogs,
+} from '../api/playwright-runs.js';
 
 const MAESTRO_BUNDLE_NOTE =
   'Maestro bundle = a .zip with a flows/ directory of .yaml flows (the platform rejects a bundle without flows/); ' +
@@ -114,7 +126,19 @@ function toRequest(a: RunArgs, files: { appPath?: string; testsPath?: string }):
 
 function formatStatus(s: TestRunStatus): string {
   const c = s.counts;
-  const n = (v: number | null) => (v == null ? '—' : String(v));
+  const n = (v: number | null | undefined) => (v == null ? '—' : String(v));
+  if (s.kind === 'playwright') {
+    return [
+      `🎭 Playwright run ${s.testRunId}: ${s.state}${s.finished ? '' : ' (in progress)'}`,
+      `   Browsers: requested ${n(c.requested)} · completed ${n(s.browsersCompleted)} · ▶️ running ${n(c.running)} · ⏳ queued ${n(c.queued)}`,
+      ...(s.queueReason ? [`   Queued because: ${s.queueReason}` +
+        (/licen[cs]e/i.test(s.queueReason) ? ' — the cloud has no free Playwright (Cross Browser) license; a cloud admin must free or add capacity. cancel_test_run if it should not wait.' : '')] : []),
+      ...(s.reporterLink ? [`   Reporter: ${s.reporterLink}`] : []),
+      ...(s.finished
+        ? [`   Results are in the Reporter with test.run.id=${s.testRunId}; logsPath on get_test_run_status downloads the run's logs (zip).`]
+        : ['   Poll again with get_test_run_status (waitSeconds lets the tool wait for completion).']),
+    ].join('\n');
+  }
   return [
     `🧪 Test run ${s.testRunId}: ${s.state}${s.finished ? '' : ' (in progress)'}`,
     `   Total ${n(c.total)} · ✅ passed ${n(c.passed)} · ❌ failed ${n(c.failed)} · ⏭️ skipped ${n(c.skipped)} · ▶️ running ${n(c.running)} · ⏳ queued ${n(c.queued)}` +
@@ -168,19 +192,36 @@ export function registerTestRunTools(server: McpServer): void {
     'get_test_run_status',
     'Status of a test run started with execute_test_run (or the Test Run API): state (Starting / Running / Finished / Cancelled) ' +
     'and passed/failed/skipped/running/queued counts. Pass waitSeconds to keep polling until the run finishes or the wait ' +
-    'elapses (max 50 — MCP clients time tool calls out at ~60 s; call again to keep waiting). Counts can briefly be unknown mid-run.',
+    'elapses (max 50 — MCP clients time tool calls out at ~60 s; call again to keep waiting). Counts can briefly be unknown mid-run. ' +
+    'Also takes a Playwright run id (a UUID from execute_playwright_run): state (QUEUED / RUNNING / CANCELED …), browser ' +
+    'counts and the queue reason; logsPath saves that run\'s logs zip.',
     {
-      testRunId: z.string().describe('The Test Run Id returned by execute_test_run.'),
+      testRunId: z.string().describe('The Test Run Id returned by execute_test_run or execute_playwright_run.'),
       waitSeconds: z.number().int().min(0).max(50).optional().describe('Poll every 10 s for up to this many seconds (max 50) until the run finishes. Default 0 (single check).'),
+      logsPath: z.string().optional().describe('Playwright runs only: save the run\'s logs (.zip) here. ' + serverFsOutputParam()),
       outputFormat: outputFormatParam,
     },
-    async ({ testRunId, waitSeconds, outputFormat }) => {
+    async ({ testRunId, waitSeconds, logsPath, outputFormat }) => {
+      const playwright = isPlaywrightRunId(testRunId);
+      if (logsPath) {
+        if (!playwright) return { content: [{ type: 'text', text: 'Error: logsPath is for Playwright runs (UUID ids) only.' }], isError: true };
+        const pathErr = validateOutputPath(logsPath);
+        if (pathErr) return { content: [{ type: 'text', text: `Error: ${pathErr}` }], isError: true };
+      }
+      const fetchStatus = (id: string) => (playwright ? getPlaywrightRunStatus(id) : getTestRunStatus(id));
       try {
         const deadline = Date.now() + (waitSeconds ?? 0) * 1000;
-        let s = await getTestRunStatus(testRunId);
+        let s = await fetchStatus(testRunId);
         while (!s.finished && Date.now() + 10_000 <= deadline) {
           await new Promise((r) => setTimeout(r, 10_000));
-          s = await getTestRunStatus(testRunId);
+          s = await fetchStatus(testRunId);
+        }
+        if (logsPath) {
+          const logs = await downloadPlaywrightLogs(testRunId);
+          writeFileSync(logsPath, logs);
+          const entries = (() => { try { return new AdmZip(logs).getEntries().filter((e) => !e.isDirectory).length; } catch { return null; } })();
+          const note = `Logs: ${logs.length} bytes written to ${logsPath}${entries === 0 ? ' (empty — the run produced no logs, e.g. it never started)' : entries != null ? ` (${entries} file${entries === 1 ? '' : 's'})` : ''}.`;
+          return respond(outputFormat, { ...s, logsPath, logsBytes: logs.length, logFiles: entries }, `${formatStatus(s)}\n   ${note}`);
         }
         return respond(outputFormat, s, formatStatus(s));
       } catch (e) {
@@ -191,7 +232,8 @@ export function registerTestRunTools(server: McpServer): void {
 
   server.tool(
     'cancel_test_run',
-    'Cancel every remaining test of a test run (running tests stop; not-yet-run tests are reported as skipped). ' +
+    'Cancel every remaining test of a test run (running tests stop; not-yet-run tests are reported as skipped), or a ' +
+    'Playwright run (UUID id from execute_playwright_run). ' +
     'Requires confirmDeletion: true. Cancelling a finished run is harmless.',
     {
       testRunId: z.string().describe('The Test Run Id to cancel.'),
@@ -202,11 +244,73 @@ export function registerTestRunTools(server: McpServer): void {
       const guard = checkDestructiveGuard(confirmDeletion, `Cancel test run ${testRunId}`);
       if (guard) return { content: [{ type: 'text', text: guard }] };
       try {
+        if (isPlaywrightRunId(testRunId)) {
+          const answer = await cancelPlaywrightRun(testRunId);
+          const s = await getPlaywrightRunStatus(testRunId);
+          return respond(outputFormat, { ...s, platformAnswer: answer }, `🛑 Cancel requested${/already canceled/i.test(answer) ? ' — the run was already canceled' : ''}.\n${formatStatus(s)}`);
+        }
         await cancelTestRun(testRunId);
         // The state flips within seconds (verified: Starting → Cancelled in < 5 s).
         await new Promise((r) => setTimeout(r, 3000));
         const s = await getTestRunStatus(testRunId);
         return respond(outputFormat, s, `🛑 Cancel requested.\n${formatStatus(s)}`);
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'execute_playwright_run',
+    'Run a Playwright Test project on the Digital.ai cloud (Execution Service): the platform runs the whole project in ' +
+    'Microsoft\'s Playwright container image (chromium, firefox, webkit) and reports each test to the Reporter under ' +
+    'test.run.id=<run id>. Asynchronous — returns a run id (UUID) at once; follow with get_test_run_status, cancel with ' +
+    'cancel_test_run. Needs a Cross Browser license on a Digital.ai-hosted (SaaS) cloud: if the run stays QUEUED with ' +
+    '"Waiting for licenses", no Playwright capacity is free — tell the user rather than waiting. ' +
+    'projectPath is the project folder (zipped here without node_modules, reports, .git or credential files) or a .zip ' +
+    'of it. With a playwright.config.* its projects choose the browsers; otherwise pass browsers. ' + serverFsUploadNotice(),
+    {
+      projectPath: z.string().describe('Playwright project folder or .zip (tests plus optional playwright.config.* and package.json). ' + serverFsInputParam()),
+      imageVersion: z
+        .string()
+        .optional()
+        .describe('Playwright version of the container image, e.g. "1.49.0" (any tag of mcr.microsoft.com/playwright; an unknown one is rejected at once). Default: the @playwright/test version in the project\'s package.json.'),
+      browsers: z
+        .preprocess(parseStringArray, z.array(z.enum(PLAYWRIGHT_BROWSERS)).min(1))
+        .optional()
+        .describe('chromium, firefox and/or webkit — one run per browser. Required when the project has no playwright.config.*; overrides the config\'s projects otherwise.'),
+      outputFormat: outputFormatParam,
+    },
+    async (args) => {
+      const pathErr = validateInputPath(args.projectPath);
+      if (pathErr) return { content: [{ type: 'text', text: `Error: ${pathErr}` }], isError: true };
+      let project;
+      try {
+        project = loadPlaywrightProject(args.projectPath);
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+      if (project.specCount === 0 && !project.hasConfig) {
+        return { content: [{ type: 'text', text: `Error: no Playwright tests found in ${args.projectPath} (no *.spec.* / *.test.* files and no playwright.config.*). Files: ${project.files.slice(0, 15).join(', ') || '(none)'}.` }], isError: true };
+      }
+      const imageVersion = args.imageVersion ?? project.detectedVersion;
+      if (!imageVersion) {
+        return { content: [{ type: 'text', text: 'Error: pass imageVersion (e.g. "1.49.0") — the project has no package.json with an exact @playwright/test version to take it from. Use the version the tests are written for.' }], isError: true };
+      }
+      const conf = buildPlaywrightConf(project, imageVersion, args.browsers as PlaywrightBrowser[] | undefined);
+      if (typeof conf === 'string') return { content: [{ type: 'text', text: `Error: ${conf}` }], isError: true };
+      try {
+        const run = await executePlaywrightRun(project, conf);
+        const browsersText = conf.browsers.map((b) => b.browser ?? 'config projects').join(', ');
+        const human =
+          `🎭 Playwright run ${run.testRunId} submitted (${browsersText}, image ${imageVersion}; ${project.specCount} spec file${project.specCount === 1 ? '' : 's'}, ${Math.round(project.zip.length / 1024)} KB` +
+          (project.skipped.length ? `; not uploaded: ${project.skipped.slice(0, 6).join(', ')}${project.skipped.length > 6 ? ' …' : ''}` : '') + `).\n` +
+          (run.reporterLink ? `Reporter: ${run.reporterLink}\n` : '') +
+          `Track it with get_test_run_status(testRunId: "${run.testRunId}", waitSeconds: 45).`;
+        return respond(args.outputFormat, {
+          testRunId: run.testRunId, reporterLink: run.reporterLink, kind: 'playwright', imageVersion,
+          imageVersionSource: args.imageVersion ? 'argument' : 'package.json', conf, specFiles: project.specCount, uploadedBytes: project.zip.length, notUploaded: project.skipped,
+        }, human);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
