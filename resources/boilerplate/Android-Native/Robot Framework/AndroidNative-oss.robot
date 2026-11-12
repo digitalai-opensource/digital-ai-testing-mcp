@@ -8,7 +8,7 @@ Test Teardown     Close Cloud Session
 
 *** Variables ***
 ${REMOTE_URL}       [Enter Instance here]/wd/hub
-# The DIGITAL_AI_ACCESS_KEY environment variable wins; the value after "=" is the fallback. Remove the fallback before committing.
+# The access key comes from the DIGITAL_AI_ACCESS_KEY environment variable (Robot stops if it is not set).
 ${ACCESS_KEY}       %{DIGITAL_AI_ACCESS_KEY=[Enter Your Access key here]}
 ${TEST_NAME}        [Enter Test Name here]
 &{CAPABILITIES}     platformName=Android

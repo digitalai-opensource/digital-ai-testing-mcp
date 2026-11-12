@@ -14,6 +14,19 @@ import { staleBuildRemedy, serverFsInstallNotice, serverFsProjectDirParam } from
 import { isLocalFilesystem } from '../utils/deployment-mode.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import {
+  ACCESS_KEY_ENV,
+  JAVA_KEY_EXPR,
+  PYTHON_KEY_EXPR,
+  JS_KEY_EXPR,
+  JS_KEY_GUARD,
+  ROBOT_KEY_EXPR,
+  ensurePythonImportOs,
+  addJsKeyGuard,
+  ENV_EXAMPLE_FILE,
+  CREDENTIAL_SETUP,
+  CREDENTIAL_SETUP_TEXT,
+} from '../utils/credential-env.js';
+import {
   AGENT_PROJECT_PATH,
   CONFIG_TEMPLATE_PATH,
   GITIGNORE_ADVICE,
@@ -650,8 +663,15 @@ function substitute(
     }
   }
 
+  // The key is read from DIGITAL_AI_ACCESS_KEY at run time — no generated file carries it (src/utils/credential-env.ts).
+  const hadKeyPlaceholder = result.includes('[Enter Your Access key here]');
   result = result
-    .replaceAll('[Enter Your Access key here]', vars.accessKey)
+    .replaceAll(`%{${ACCESS_KEY_ENV}=[Enter Your Access key here]}`, ROBOT_KEY_EXPR)
+    .replaceAll('"[Enter Your Access key here]"', language === 'python' ? PYTHON_KEY_EXPR : JAVA_KEY_EXPR)
+    .replaceAll("'[Enter Your Access key here]'", JS_KEY_EXPR);
+  if (hadKeyPlaceholder && language === 'python') result = ensurePythonImportOs(result);
+  if (hadKeyPlaceholder && language === 'nodejs') result = addJsKeyGuard(result);
+  result = result
     .replaceAll('[Enter Instance here]', vars.instanceUrl)
     .replaceAll('[Enter Instance HOST here]', vars.instanceHost)
     .replaceAll('[Enter Test Name here]', vars.testName)
@@ -865,8 +885,7 @@ function setupNote(language: Language, isAppiumOss: boolean, projectType?: Proje
         'Then run:\n' +
         '  pip install -r requirements.txt   (robotframework 7.5 + robotframework-appiumlibrary 3.2.1)\n' +
         '  robot --outputdir results tests/\n\n' +
-        'The access key is read from DIGITAL_AI_ACCESS_KEY when set; the value after "=" in ${ACCESS_KEY} is the fallback — ' +
-        'remove it before committing. The Test Teardown sets the platform report to Passed / Failed / Skipped from Robot\'s ' +
+        'Set DIGITAL_AI_ACCESS_KEY first — the suite reads the access key from it and stops if it is missing. The Test Teardown sets the platform report to Passed / Failed / Skipped from Robot\'s ' +
         'own result, and the steps run inside a named steps group. Run suites in parallel with pabot (pip install robotframework-pabot).'
       );
   }
@@ -1470,14 +1489,14 @@ export function registerBoilerplateTools(server: McpServer): void {
           projectType: projectType ?? 'standalone-gradle',
           structure: pageObjectsApplied ? 'page-objects' : 'flat',
           ...(structureNote ? { structureNote } : {}),
-          files: resolved.map(f => ({ filename: f.filename, content: f.content })),
+          files: [...resolved.map(f => ({ filename: f.filename, content: f.content })), ENV_EXAMPLE_FILE],
           orchestration: orchestrationInfo,
           ...(automotive ? { automotive } : {}),
           ...(capNotes.length ? { capabilityNotes: capNotes } : {}),
           setupNote: setupNote(language, isAppiumOss, projectType, resolved.filter((f) => !f.isInstructions).map((f) => f.filename)),
           appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
           parallelNote: parallelNote(language, isAppiumOss),
-          credentialWarning: '⚠️ SECURITY: The access key embedded in these files is a live credential. Move it to an environment variable (DIGITAL_AI_ACCESS_KEY) and reference it from code before committing to source control.',
+          credentialSetup: CREDENTIAL_SETUP,
           // v38: when a custom app is targeted the test body is a placeholder, NOT a finished test.
           requiresVerifiedSelectors: clearTestBody,
           ...(clearTestBody && {
@@ -1507,7 +1526,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `> **Setup:** ${setupNote(language, isAppiumOss, projectType, resolved.filter((f) => !f.isInstructions).map((f) => f.filename))}`,
           `> **App:** ${appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId)}`,
           `> **Device query:** ${regionLabel}${region ? '' : ' — re-call with region=<value> from find_available_device to scope to healthy devices only.'}`,
-          `> ⚠️ **Security:** These files contain a live credential — move the access key to an environment variable (\`DIGITAL_AI_ACCESS_KEY\`) before committing to source control.`,
+          `> ${CREDENTIAL_SETUP_TEXT}`,
           '',
         ];
         if (orchestrationInfo.enabled && orchestrationInfo.agent) {
@@ -1817,7 +1836,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         }
       }
 
-      const accessKey = getActiveAccessKey() || '[Enter Your Access key here]';
+      // No access key in any generated file — every template reads DIGITAL_AI_ACCESS_KEY (src/utils/credential-env.ts).
       const baseUrl = getActiveUrl() || '[Enter Instance here]';
       const gridUrl = `${baseUrl}/wd/hub`;
 
@@ -2033,7 +2052,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           ``,
           `    private RemoteWebDriver driver;`,
           ``,
-          `    private static final String ACCESS_KEY = "${accessKey}";`,
+          `    private static final String ACCESS_KEY = ${JAVA_KEY_EXPR};`,
           `    private static final String GRID_URL   = "${gridUrl}";`,
           ``,
           `    ${beforeAnn}`,
@@ -2105,7 +2124,9 @@ export function registerBoilerplateTools(server: McpServer): void {
           files: [
             { filename, language: 'java', content: code },
             { filename: 'pom.xml', language: 'xml', content: pom },
+            ENV_EXAMPLE_FILE,
           ],
+          credentialSetup: CREDENTIAL_SETUP,
           guidance: [
             'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
             'Set BROWSER=chrome (or firefox/MicrosoftEdge/safari) in your environment to choose the browser at runtime.',
@@ -2115,6 +2136,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         };
 
         const humanText = [
+          CREDENTIAL_SETUP_TEXT,
           `Generated: ${filename}`,
           `Browser: ${targetBrowser ?? 'neutral (BROWSER env var)'}`,
           includeShadowHelper ? 'Shadow DOM helper: included' : '',
@@ -2158,7 +2180,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           ``,
           `class ${testClass}(unittest.TestCase):`,
           ``,
-          `    ACCESS_KEY = "${accessKey}"`,
+          `    ACCESS_KEY = ${PYTHON_KEY_EXPR}`,
           `    GRID_URL   = "${gridUrl}"`,
           ``,
           `    def setUp(self):`,
@@ -2204,7 +2226,9 @@ export function registerBoilerplateTools(server: McpServer): void {
           files: [
             { filename, language: 'python', content: code },
             { filename: 'requirements.txt', language: 'text', content: requirements },
+            ENV_EXAMPLE_FILE,
           ],
+          credentialSetup: CREDENTIAL_SETUP,
           guidance: [
             'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
             'Set BROWSER=chrome (or firefox / MicrosoftEdge / safari / opera) in your environment.',
@@ -2213,6 +2237,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         };
 
         const humanText = [
+          CREDENTIAL_SETUP_TEXT,
           `Generated: ${filename}`,
           `Browser: ${targetBrowser ?? 'neutral (BROWSER env var)'}`,
           ``,
@@ -2248,8 +2273,8 @@ export function registerBoilerplateTools(server: McpServer): void {
           ``,
           `*** Variables ***`,
           `\${GRID_URL}       ${gridUrl}`,
-          `# The DIGITAL_AI_ACCESS_KEY environment variable wins; the value after "=" is the fallback. Remove it before committing.`,
-          `\${ACCESS_KEY}     %{DIGITAL_AI_ACCESS_KEY=${accessKey}}`,
+          `# The access key comes from the DIGITAL_AI_ACCESS_KEY environment variable (Robot stops if it is not set).`,
+          `\${ACCESS_KEY}     ${ROBOT_KEY_EXPR}`,
           slBrowser
             ? `\${BROWSER}        ${slBrowser}`
             : `# BROWSER-NEUTRAL: set BROWSER=chrome / firefox / edge / safari (SeleniumLibrary names) at run time.\n\${BROWSER}        %{BROWSER=chrome}`,
@@ -2282,7 +2307,9 @@ export function registerBoilerplateTools(server: McpServer): void {
             { filename: suiteFile, language: 'robotframework', content: suite },
             { filename: 'tests/DigitalAiWebReport.py', language: 'python', content: library },
             { filename: 'requirements.txt', language: 'text', content: requirements },
+            ENV_EXAMPLE_FILE,
           ],
+          credentialSetup: CREDENTIAL_SETUP,
           guidance: [
             'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
             'pip install -r requirements.txt, then robot --outputdir results tests/',
@@ -2291,6 +2318,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           ],
         };
         const humanText = [
+          CREDENTIAL_SETUP_TEXT,
           `Generated: ${suiteFile}, tests/DigitalAiWebReport.py, requirements.txt`,
           `Browser: ${targetBrowser ?? 'neutral (BROWSER env var)'}`,
           '',
@@ -2317,11 +2345,12 @@ export function registerBoilerplateTools(server: McpServer): void {
         const pwConfig = [
           `// playwright.config.js — Playwright on the Digital.ai Selenium agent (EXPERIMENTAL platform feature; Chrome and Edge only).`,
           `// npx playwright test runs every test in a cloud browser — no local browser install is needed.`,
-          `// Set DIGITALAI_CLOUD_URL / DIGITALAI_ACCESS_KEY / BROWSER (chrome | MicrosoftEdge) instead of editing this file.`,
+          `// Needs ${ACCESS_KEY_ENV}; DIGITAL_AI_CLOUD_URL and BROWSER (chrome | MicrosoftEdge) override the defaults below.`,
+          JS_KEY_GUARD,
           `const { defineConfig, devices } = require('@playwright/test');`,
           ``,
-          `const CLOUD_URL = process.env.DIGITALAI_CLOUD_URL || '${baseUrl}';`,
-          `const ACCESS_KEY = process.env.DIGITALAI_ACCESS_KEY || '${accessKey}';`,
+          `const CLOUD_URL = process.env.DIGITAL_AI_CLOUD_URL || '${baseUrl}';`,
+          `const ACCESS_KEY = ${JS_KEY_EXPR};`,
           `const BROWSER = process.env.BROWSER || '${targetBrowser ?? 'chrome'}';`,
           ``,
           `// Playwright launches Chromium-family browsers on a Selenium Grid when these are set (read by every worker).`,
@@ -2370,10 +2399,13 @@ export function registerBoilerplateTools(server: McpServer): void {
             { filename: 'playwright.config.js', language: 'javascript', content: pwConfig },
             { filename: specFile, language: 'javascript', content: code },
             { filename: 'package.json', language: 'json', content: pkg },
+            ENV_EXAMPLE_FILE,
           ],
+          credentialSetup: CREDENTIAL_SETUP,
           guidance,
         };
         const humanText = [
+          CREDENTIAL_SETUP_TEXT,
           `Generated: playwright.config.js, ${specFile}, package.json (Playwright → Digital.ai Selenium agent, EXPERIMENTAL)`,
           ...guidance.map((g) => `• ${g}`),
           '',
@@ -2401,6 +2433,7 @@ export function registerBoilerplateTools(server: McpServer): void {
 
       const wdioConf = [
         `// wdio.conf.js — Digital.ai Selenium Grid configuration`,
+        JS_KEY_GUARD,
         `exports.config = {`,
         `    hostname: '${baseUrl.replace(/^https?:\/\//, '')}',`,
         `    path: '/wd/hub',`,
@@ -2408,7 +2441,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         `    protocol: 'https',`,
         `    capabilities: [{`,
         `        ${browserCapNode},`,
-        `        'digitalai:accessKey': '${accessKey}',`,
+        `        'digitalai:accessKey': ${JS_KEY_EXPR},`,
         `        'digitalai:testName': '${testName}',`,
         ...(insecure ? [`        acceptInsecureCerts: true, // site uses a self-signed/untrusted certificate`] : []),
         `    }],`,
@@ -2440,7 +2473,9 @@ export function registerBoilerplateTools(server: McpServer): void {
           { filename: 'wdio.conf.js', language: 'javascript', content: wdioConf },
           { filename, language: 'javascript', content: code },
           { filename: 'package.json', language: 'json', content: JSON.stringify({ scripts: { test: 'npx wdio run wdio.conf.js' }, devDependencies: { '@wdio/cli': '^8.0.0', '@wdio/local-runner': '^8.0.0', '@wdio/mocha-framework': '^8.0.0', '@wdio/spec-reporter': '^8.0.0' } }, null, 2) },
+          ENV_EXAMPLE_FILE,
         ],
+        credentialSetup: CREDENTIAL_SETUP,
         guidance: [
           'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
           'Set BROWSER=chrome (or firefox/MicrosoftEdge/safari) in your environment.',
@@ -2449,6 +2484,7 @@ export function registerBoilerplateTools(server: McpServer): void {
       };
 
       const humanText = [
+        CREDENTIAL_SETUP_TEXT,
         `Generated: ${filename}`,
         `Browser: ${targetBrowser ?? 'neutral (BROWSER env var)'}`,
         ``,

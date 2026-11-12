@@ -109,7 +109,7 @@ describe('get_test_boilerplate — orchestration defaults', () => {
     assert.doesNotMatch(file(json, 'build.gradle')!.content, /javaagent/);
     assert.doesNotMatch(file(json, 'pom.xml')!.content, /orchestrator/);
     assert.equal(file(json, 'orchestrator/config.template.yml'), undefined);
-    assert.equal(json.files.length, 3);
+    assert.equal(json.files.length, 4, 'build file, test, instructions, .env.example');
   });
 
   it('Appium Grid (auto): classic output, no warning', async () => {
@@ -407,13 +407,13 @@ describe('get_test_boilerplate — Robot Framework (Appium Server only)', () => 
     account.isAppiumOss = true; account.fail = false;
     for (const platform of ['android', 'ios']) {
       const { json, human } = await gen({ platform, language: 'robot' });
-      assert.deepEqual(json.files.map((f) => f.filename).sort(), ['requirements.txt', `tests/${platform === 'android' ? 'AndroidNative' : 'iOSNative'}.robot`, 'tests/DigitalAiReport.py'].sort());
+      assert.deepEqual(json.files.map((f) => f.filename).sort(), ['.env.example', 'requirements.txt', `tests/${platform === 'android' ? 'AndroidNative' : 'iOSNative'}.robot`, 'tests/DigitalAiReport.py'].sort());
       const s = suite(json);
       assert.match(s, /Library\s+AppiumLibrary/);
       assert.match(s, /Test Teardown\s+Close Cloud Session/);
       assert.match(s, /Report Test Outcome\s+\$\{TEST STATUS\}\s+\$\{TEST MESSAGE\}/);
       assert.match(s, /Start Steps Group\s+Test steps/);
-      assert.match(s, /%\{DIGITAL_AI_ACCESS_KEY=aut_1_harness_key\}/, 'env var wins, key is the fallback');
+      assert.match(s, /\$\{ACCESS_KEY\}\s+%\{DIGITAL_AI_ACCESS_KEY\}\n/, 'read from the environment, no fallback key');
       assert.doesNotMatch(s, /\[Enter |BEGIN_DEMO_STEPS/);
       assert.match(json.files.find((f) => f.filename === 'requirements.txt')!.content, /robotframework==7\.5\nrobotframework-appiumlibrary==3\.2\.1/);
       assert.match(json.files.find((f) => f.filename === 'tests/DigitalAiReport.py')!.content, /execute_script\('seetest:client\.setReportStatus', mapped,/);
@@ -557,11 +557,12 @@ describe('get_web_test_boilerplate — fixes found running the templates live (2
   it('playwright: SELENIUM_REMOTE_URL route (verified live with @playwright/test 1.65.0), Chrome/Edge only, guarded placeholder', async () => {
     const { json } = await webGen({ language: 'playwright' });
     const names = json.files.map((f) => f.filename);
-    assert.deepEqual(names, ['playwright.config.js', 'tests/Checkout.spec.js', 'package.json']);
+    assert.deepEqual(names, ['playwright.config.js', 'tests/Checkout.spec.js', 'package.json', '.env.example']);
     const config = json.files[0].content;
     assert.match(config, /process\.env\.SELENIUM_REMOTE_URL = `\$\{CLOUD_URL\}\/wd\/hub`;/);
     assert.match(config, /'digitalai:options': \{ accessKey: ACCESS_KEY, testName: 'Checkout' \}/);
-    assert.match(config, /process\.env\.DIGITALAI_ACCESS_KEY \|\|/);
+    assert.match(config, /const ACCESS_KEY = process\.env\.DIGITAL_AI_ACCESS_KEY;/);
+    assert.match(config, /if \(!process\.env\.DIGITAL_AI_ACCESS_KEY\) throw new Error/);
     assert.match(config, /channel: 'msedge'[\s\S]*channel: 'chrome'/);
     assert.doesNotMatch(config, /connectOptions|wsEndpoint/, 'the documented connectOptions route 404s live');
     assert.match(json.files[1].content, /throw new Error\('Replace this placeholder/);
@@ -598,7 +599,7 @@ describe('get_web_test_boilerplate — fixes found running the templates live (2
 
   it('robot: SeleniumLibrary suite with the report library; Edge maps to "edge"; Opera is refused', async () => {
     const { json } = await webGen({ language: 'robot' });
-    assert.deepEqual(json.files.map((f) => f.filename), ['tests/Checkout.robot', 'tests/DigitalAiWebReport.py', 'requirements.txt']);
+    assert.deepEqual(json.files.map((f) => f.filename), ['tests/Checkout.robot', 'tests/DigitalAiWebReport.py', 'requirements.txt', '.env.example']);
     const s = json.files[0].content;
     assert.match(s, /Library\s+SeleniumLibrary/);
     assert.match(s, /set_capability\("digitalai:testName", "\$\{TEST_NAME\}"\)/);
@@ -662,4 +663,42 @@ describe('web templates wait explicitly and compile on TestNG (intake 2026-10-19
       }
     });
   }
+});
+
+describe('no generated file carries the access key (credential handling, user decision 2026-11-12)', () => {
+  const KEY = /aut_1_harness_key/;
+  const READS_ENV = /DIGITAL_AI_ACCESS_KEY/;
+
+  it('mobile: every language × platform × server mode reads DIGITAL_AI_ACCESS_KEY and fails fast without it', async () => {
+    for (const oss of [true, false]) {
+      account.isAppiumOss = oss; account.fail = false;
+      for (const platform of ['android', 'ios']) {
+        for (const language of ['java-junit5', 'java-testng', 'python', 'nodejs', ...(oss ? ['robot'] : [])]) {
+          const { json, human } = await gen({ platform, language, orchestration: 'off' });
+          const label = `${language}/${platform}/${oss ? 'server' : 'grid'}`;
+          for (const f of json.files) assert.doesNotMatch(f.content, KEY, `${label}: ${f.filename}`);
+          assert.doesNotMatch(human, KEY, `${label}: human text`);
+          const code = json.files.filter((f) => /\.(java|py|js|robot)$/.test(f.filename) && /accessKey|ACCESS_KEY/.test(f.content)).map((f) => f.content).join('\n');
+          assert.match(code, READS_ENV, label);
+          if (language.startsWith('java')) assert.match(code, /Objects\.requireNonNull\(System\.getenv\("DIGITAL_AI_ACCESS_KEY"\)/, label);
+          if (language === 'python') assert.match(code, /^import os$[\s\S]*os\.environ\["DIGITAL_AI_ACCESS_KEY"\]/m, label);
+          if (language === 'nodejs') assert.match(code, /^if \(!process\.env\.DIGITAL_AI_ACCESS_KEY\) throw new Error/m, label);
+          if (language === 'robot') assert.match(code, /%\{DIGITAL_AI_ACCESS_KEY\}\n/, label);
+          assert.ok(json.files.some((f) => f.filename === '.env.example' && /^DIGITAL_AI_ACCESS_KEY=$/m.test(f.content)), `${label}: .env.example`);
+          assert.equal((json as unknown as { credentialSetup: { envVar: string } }).credentialSetup.envVar, 'DIGITAL_AI_ACCESS_KEY');
+        }
+      }
+    }
+  });
+
+  it('web: every language reads the key from the environment', async () => {
+    for (const language of ['java-junit5', 'java-testng', 'python', 'nodejs', 'robot', 'playwright']) {
+      const r = await call('get_web_test_boilerplate', { language, outputFormat: 'json' });
+      const json = JSON.parse(r.content.map((c) => c.text ?? '').join('')) as { files: Array<{ filename: string; content: string }> };
+      for (const f of json.files) assert.doesNotMatch(f.content, KEY, `${language}: ${f.filename}`);
+      assert.match(json.files.map((f) => f.content).join('\n'), READS_ENV, language);
+      const human = await call('get_web_test_boilerplate', { language, outputFormat: 'human' });
+      assert.match(human.content[0].text ?? '', /contain no key/, language);
+    }
+  });
 });

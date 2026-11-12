@@ -565,7 +565,7 @@ The server supports two ways of creating a test, for both mobile and web, and th
 
 ### Mobile app tests (`get_test_boilerplate`)
 
-Generates a complete, pre-configured Appium test project. The Digital.ai server URL and access key are filled in from the active connection profile — switch profiles with `switch_environment` first if you want the script to carry a project-scoped key instead of your admin key.
+Generates a complete, pre-configured Appium test project. The Digital.ai server URL is filled in from the active connection profile. The generated files contain **no access key**: they read it from the `DIGITAL_AI_ACCESS_KEY` environment variable and stop with a clear message if it is unset (a key-free `.env.example` lists what to set). Use a project-scoped key there rather than your admin key, and store it as a secret in CI.
 
 **Recommended workflow** for building a new test:
 
@@ -648,7 +648,7 @@ The agent JAR is **not** shipped with this server. By default it is downloaded f
 
 ### Web tests (`get_web_test_boilerplate`)
 
-Generates a complete, pre-configured Selenium test project for browser testing. The Digital.ai server URL and access key are filled in from the active connection profile.
+Generates a complete, pre-configured Selenium test project for browser testing. The Digital.ai server URL is filled in from the active connection profile; the access key is read from the `DIGITAL_AI_ACCESS_KEY` environment variable, never written into the files.
 
 **Recommended workflow** for building a new web test:
 
