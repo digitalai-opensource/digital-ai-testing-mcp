@@ -161,7 +161,8 @@ export function registerReportingTools(server: McpServer): void {
     'classification (errorCategory / errorClassification / cause). Read-only — it never starts an analysis. ' +
     'Analyses are started from the video report in the Reporter UI; they cover Appium tests only (Appium Server; Appium Grid from platform 26.9) and allow ' +
     '3 failed attempts per test. ineligibleReason explains when an analysis cannot be run. ' +
-    'To find analysed reports: list_test_reports with filter rca.status = COMPLETED.',
+    'To find analysed reports: list_test_reports with filter rca.status = COMPLETED. The framework shown comes from the ' +
+    'report key test.framework — filter list_test_reports on that key (e.g. "Appium Grid") to find candidate reports.',
     {
       uuid: z.string().optional().describe('Test execution UUID. Preferred.'),
       reportUrl: z.string().optional().describe('Report URL (e.g. .../reporter/video-report/<uuid>).'),
@@ -298,6 +299,11 @@ export function registerReportingTools(server: McpServer): void {
               '"test_id" (number), ' +
               '"project_id" (number), ' +
               '"device.os" ("Android"/"iOS" — case-sensitive), ' +
+              '"test.framework" (exact, case-sensitive: "Appium Server", "Appium Grid", "Selenium", "Espresso", "XCUITest", ' +
+              '"Maestro", "Playwright", "Cypress", "Mobile Studio Manual", … — get_distinct_test_key_values(["test.framework"]) ' +
+              'lists what this cloud has; the key is test.framework, not "framework"), ' +
+              '"test.run.id" (the run id from execute_test_run / execute_playwright_run), ' +
+              '"rca.status" (e.g. "COMPLETED" — reports with a finished root-cause analysis), ' +
               '"duration" (milliseconds), ' +
               '"attachment_count", ' +
               '"attachments_size" (bytes), ' +

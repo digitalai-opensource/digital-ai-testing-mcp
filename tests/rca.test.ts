@@ -106,3 +106,17 @@ describe('get_root_cause_analysis (handler)', () => {
     assert.ok(!seen.some((s) => s.includes('/rca/trigger')), 'must be read-only');
   });
 });
+
+describe('list_test_reports names the test.framework filter (debug-mode note 2026-11-12: 5 calls lost guessing "framework")', () => {
+  it('the filter property description lists test.framework with real values, test.run.id and rca.status', async () => {
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === 'list_test_reports')!;
+    const schema = JSON.stringify(t.inputSchema);
+    assert.match(schema, /\\"test\.framework\\" \(exact, case-sensitive: \\"Appium Server\\", \\"Appium Grid\\"/);
+    assert.match(schema, /not \\"framework\\"/);
+    assert.match(schema, /\\"test\.run\.id\\"/);
+    assert.match(schema, /\\"rca\.status\\"/);
+    const rca = tools.find((x) => x.name === 'get_root_cause_analysis')!;
+    assert.match(rca.description ?? '', /report key test\.framework/);
+  });
+});
