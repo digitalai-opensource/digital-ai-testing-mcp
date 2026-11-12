@@ -16,6 +16,8 @@ import {
   pressBack,
   longPress,
   doubleTap,
+  tapAt,
+  appPermissions,
   dragAndDrop,
   pinchZoom,
   scrollToElement,
@@ -76,7 +78,9 @@ import { classifyShellCommand, shellGuardMessage, capShellOutput, shellCommandPr
 // — faster and less brittle than xpath on iOS, and the form the Mobile Studio iOS Test Recorder emits. iOS on Appium
 // Server only: the Appium Grid rejects it ("Locator Strategy '-ios predicate string' is not supported for this
 // session", verified live 2026-10-09 on an iPhone 13 Pro Max) — use xpath or accessibility id there.
-const LOCATOR_STRATEGIES = ['xpath', 'id', 'accessibility id', 'class name', '-ios predicate string', 'css selector'] as const;
+// '-android uiautomator' is UiAutomator2's UiSelector locator (e.g. 'new UiSelector().resourceIdMatches(".*login")') —
+// regex / partial matches xpath can't express cheaply. Verified live 2026-11-12 on Appium Server (OnePlus 6, Android 9).
+const LOCATOR_STRATEGIES = ['xpath', 'id', 'accessibility id', 'class name', '-ios predicate string', '-android uiautomator', 'css selector'] as const;
 type LocatorStrategy = (typeof LOCATOR_STRATEGIES)[number];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -551,8 +555,13 @@ export function registerInspectionTools(server: McpServer): void {
     },
     async (args) => {
       try {
-        const { reportDeleted, reportKept, canDeleteReport, reportTestId, reportUrl, reportDeleteError } =
+        const { reportDeleted, reportKept, canDeleteReport, reportTestId, reportUrl, reportDeleteError, geolocationReset } =
           await quitInspectionSession(args.handle, args.keepReport ?? false);
+        const geoNote = geolocationReset === true
+          ? '\n🧭 The simulated location was reset before stopping, so the next user of this device gets its real location.'
+          : geolocationReset === false
+            ? '\n⚠️  The simulated location could not be reset before stopping — the device may still report the simulated location.'
+            : '';
 
         let text: string;
         if (reportKept) {
@@ -579,6 +588,7 @@ export function registerInspectionTools(server: McpServer): void {
           text = `✅ Session ${args.handle} stopped. Device released.`;
         }
 
+        text += geoNote;
         text +=
           '\n\n📌 If you have the View URL open in a browser, please close that tab now — ' +
           'the device has been released but the browser session may still appear connected.';
@@ -770,7 +780,9 @@ export function registerInspectionTools(server: McpServer): void {
     'Strategies: "id" (Android resource-id, fastest), "accessibility id" (Android content-desc; on iOS it IS the name ' +
     'attribute — identifier, else label — so it matches exactly what //*[@name=\'x\'] matches, without walking the tree; ' +
     'works on the Grid too), "-ios predicate string" (iOS on Appium Server projects only — NSPredicate such as ' +
-    '"type == \'XCUIElementTypeButton\' AND label == \'Login\'"; the Appium Grid rejects it), "class name" (by widget ' +
+    '"type == \'XCUIElementTypeButton\' AND label == \'Login\'"; the Appium Grid rejects it), "-android uiautomator" ' +
+    '(Android on Appium Server — a UiSelector such as \'new UiSelector().resourceIdMatches(".*login")\' or ' +
+    '\'new UiSelector().textContains("Pay")\', for partial / regex matches), "class name" (by widget ' +
     'type, often returns many), "xpath" (most flexible, slowest — attribute matches only, never positional [1]/[2]), ' +
     '"css selector" (ONLY inside a WEBVIEW context — see webview_context). ' +
     'Prefer them in that order and copy the strategy you used into the generated test. Attributes are fetched for the first ' +
@@ -869,6 +881,10 @@ export function registerInspectionTools(server: McpServer): void {
               (args.strategy === '-ios predicate string' && /not supported/i.test((e as Error).message)
                 ? '\n\nThis session is on the Appium Grid, which does not support iOS predicates. Use xpath (e.g. ' +
                   '//XCUIElementTypeButton[@label=\'Login\']) or accessibility id instead.'
+                : '') +
+              (args.strategy === '-android uiautomator' && /not supported|invalid selector|unknown/i.test((e as Error).message)
+                ? '\n\n"-android uiautomator" needs an Android session on an Appium Server project. Use id, accessibility id ' +
+                  'or an attribute xpath (e.g. //*[contains(@resource-id,\'login\')]) instead.'
                 : ''),
           }],
           isError: true,
@@ -917,10 +933,22 @@ export function registerInspectionTools(server: McpServer): void {
     'Tap (click) an element on the device screen. ' +
     'Target it directly with strategy + selector (one call — the find happens internally), ' +
     'or pass an elementId from a previous find_elements call. ' +
+    'x + y (instead of an element) tap a screen point — only for what has no element (a map, a canvas, a game); ' +
+    'coordinates break across screen sizes, so never put them in a generated test when an element exists. ' +
     'After tapping, call take_inspection_screenshot to verify the result.',
-    { ...targetParams },
+    {
+      ...targetParams,
+      x: z.number().int().min(0).optional().describe('Tap a screen point instead of an element: X in the session\'s own coordinates (see take_inspection_screenshot / the window size).'),
+      y: z.number().int().min(0).optional().describe('Y of the screen point (with x).'),
+    },
     async (args) => {
       try {
+        if (args.x != null || args.y != null) {
+          if (args.x == null || args.y == null) return { content: [{ type: 'text' as const, text: 'Error: a point tap needs both x and y.' }], isError: true };
+          if (args.elementId || args.selector) return { content: [{ type: 'text' as const, text: 'Error: pass either an element (elementId / strategy+selector) or x+y, not both.' }], isError: true };
+          await tapAt(args.handle, args.x, args.y);
+          return { content: [{ type: 'text' as const, text: `✅ Tapped the point (${args.x}, ${args.y}).\n\nCall take_inspection_screenshot to verify the result.` }] };
+        }
         const target = await resolveTargetElement(args);
         if ('error' in target) {
           return { content: [{ type: 'text' as const, text: `Error: ${target.error}` }], isError: true };
@@ -1377,14 +1405,19 @@ export function registerInspectionTools(server: McpServer): void {
     'is_installed (true/false for packageName), current (what is in the foreground: Android package + activity, iOS bundle id), ' +
     'install (install a repository build mid-session from appRef "cloud:<package or bundle>" / "cloud:uniqueName=<name>" — Appium Server only; ' +
     'this lifts the "install before the session" rule for Appium Server projects), ' +
-    'clear_web_cache (seetest:client.hybridClearCache — drops the cache of the app\'s webviews; both modes). ' +
+    'clear_web_cache (seetest:client.hybridClearCache — drops the cache of the app\'s webviews; both modes), ' +
+    'permissions (Android, Appium Server: list the app\'s requested / granted / denied runtime permissions; with ' +
+    'permissionAction grant or revoke and permissions, change them first — only permissions the app declares can change, ' +
+    'and revoking one makes Android kill the app, so relaunch it with launch_app afterwards). ' +
     'NOTE on Grid sessions: query_state/current report only the foreground activity (Android) or are unavailable (iOS); deep_link is best-effort; ' +
     'background, is_installed and install are Appium Server only. To relaunch after terminate, use launch_app.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
       action: z
-        .enum(['terminate', 'clear_data', 'query_state', 'deep_link', 'background', 'is_installed', 'current', 'install', 'clear_web_cache'])
+        .enum(['terminate', 'clear_data', 'query_state', 'deep_link', 'background', 'is_installed', 'current', 'install', 'clear_web_cache', 'permissions'])
         .describe('Lifecycle action to perform.'),
+      permissionAction: z.enum(['list', 'grant', 'revoke']).optional().describe('For permissions: list (default), grant or revoke.'),
+      permissions: z.array(z.string()).optional().describe('For permissions grant/revoke: full names, e.g. ["android.permission.CAMERA"].'),
       packageName: z
         .string()
         .optional()
@@ -1397,6 +1430,23 @@ export function registerInspectionTools(server: McpServer): void {
       const mobileErr = requireMobileSession(args.handle, 'app_control');
       if (mobileErr) return mobileErr;
       try {
+        if (args.action === 'permissions') {
+          if (!args.packageName) return { content: [{ type: 'text' as const, text: 'Error: permissions requires packageName (the app\'s Android package).' }], isError: true };
+          const act = args.permissionAction ?? 'list';
+          if (act !== 'list' && !args.permissions?.length) {
+            return { content: [{ type: 'text' as const, text: `Error: permissions ${act} requires permissions, e.g. ["android.permission.CAMERA"].` }], isError: true };
+          }
+          const p = await appPermissions(args.handle, act, args.packageName, args.permissions ?? []);
+          const changed = act === 'list' ? '' : (args.permissions ?? []).map((x) =>
+            `${x}: ${p.granted.includes(x) ? 'granted' : p.requested.includes(x) ? 'not granted' : 'NOT DECLARED by the app — it cannot be changed'}`).join('\n') + '\n';
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `${changed}Granted: ${p.granted.join(', ') || '(none)'}\nDenied: ${p.denied.join(', ') || '(none)'}\nRequested: ${p.requested.join(', ') || '(none)'}` +
+                (act === 'revoke' ? '\nAndroid kills an app when one of its permissions is revoked — relaunch it with launch_app.' : ''),
+            }],
+          };
+        }
         if (args.action === 'clear_web_cache') {
           await clearWebCache(args.handle);
           return { content: [{ type: 'text' as const, text: '✅ Webview cache cleared (hybridClearCache).' }] };

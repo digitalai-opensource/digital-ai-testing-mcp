@@ -279,6 +279,8 @@ export async function quitInspectionSession(
   canDeleteReport: boolean;
   reportTestId: number;
   reportUrl: string;
+  /** Set when a simulated location was active: true = reset before quitting, false = the reset failed. */
+  geolocationReset?: boolean;
 }> {
   const session = requireSession(handle);
   stopBrowserEventCapture(handle); // browser sessions: close the BiDi socket (no-op otherwise)
@@ -297,6 +299,17 @@ export async function quitInspectionSession(
       // Best-effort
     }
     session[field] = undefined;
+  }
+  // A simulated location outlives the session on the device (iOS keeps it until resetSimulatedLocation) — the next
+  // user of a shared phone would inherit it. Reset it before quitting (best-effort).
+  let geolocationReset: boolean | undefined;
+  if (session.geolocationSet) {
+    try {
+      await resetGeolocation(handle);
+      geolocationReset = true;
+    } catch {
+      geolocationReset = false;
+    }
   }
   try {
     await client.delete(`/session/${session.gridSessionId}`, { timeout: 30_000 });
@@ -339,6 +352,7 @@ export async function quitInspectionSession(
     canDeleteReport: session.canDeleteReport,
     reportTestId: session.reportTestId,
     reportUrl: session.reportUrl,
+    ...(geolocationReset !== undefined ? { geolocationReset } : {}),
   };
 }
 
@@ -1530,6 +1544,58 @@ export async function doubleTap(
   await gestureWithFallback(session, w3c, jwp);
 }
 
+/** Single tap at a screen point — W3C pointer actions, JWP touch/perform on the Grid (same fallback as doubleTap). */
+export async function tapAt(handle: string, x: number, y: number): Promise<void> {
+  const session = requireSession(handle);
+  const client = makeClient();
+  const sid = session.gridSessionId;
+  const jwp = () => client.post(`/session/${sid}/touch/perform`, { actions: [{ action: 'tap', options: { x, y } }] }, { timeout: 30_000 });
+  const w3c = () =>
+    client.post(
+      `/session/${sid}/actions`,
+      {
+        actions: [{
+          type: 'pointer', id: 'finger1', parameters: { pointerType: 'touch' },
+          actions: [
+            { type: 'pointerMove', duration: 0, x, y },
+            { type: 'pointerDown', button: 0 },
+            { type: 'pause', duration: 80 },
+            { type: 'pointerUp', button: 0 },
+          ],
+        }],
+      },
+      { timeout: 30_000 }
+    );
+  await gestureWithFallback(session, w3c, jwp);
+}
+
+/**
+ * Android app runtime permissions (Appium Server, UiAutomator2 — verified live 2026-11-12 on a Pixel 7 / Android 14):
+ * mobile: getPermissions {type, appPackage} lists requested / granted / denied; mobile: changePermissions grants or
+ * revokes. Only permissions the app declares can change (granting an undeclared CAMERA was a silent no-op), and
+ * REVOKING kills the app process — Android does that to any app whose permission is revoked.
+ */
+export async function appPermissions(
+  handle: string,
+  action: 'list' | 'grant' | 'revoke',
+  appPackage: string,
+  permissions: string[] = []
+): Promise<{ requested: string[]; granted: string[]; denied: string[] }> {
+  const session = requireSession(handle);
+  if (session.platform !== 'android' || session.sessionFormat !== 'w3c') {
+    throw new Error('Permissions are an Android Appium Server feature (mobile: getPermissions / changePermissions). On iOS the system dialog is a normal alert — use device_control accept_alert / dismiss_alert.');
+  }
+  const client = makeClient();
+  if (action !== 'list') {
+    await execScript(client, session, 'mobile: changePermissions', [{ permissions, appPackage, action }], 30_000);
+  }
+  const get = async (type: string) => {
+    const r = await execScript(client, session, 'mobile: getPermissions', [{ type, appPackage }], 30_000);
+    return Array.isArray(r.data.value) ? (r.data.value as string[]) : [];
+  };
+  return { requested: await get('requested'), granted: await get('granted'), denied: await get('denied') };
+}
+
 export async function dragAndDrop(
   handle: string,
   startX: number,
@@ -2093,6 +2159,7 @@ export async function setGeolocation(
     // setSimulatedLocation; UiAutomator2 uses setGeolocation — both confirmed live.
     const script = session.platform === 'ios' ? 'mobile: setSimulatedLocation' : 'mobile: setGeolocation';
     await execScript(client, session, script, [{ latitude, longitude }]);
+    session.geolocationSet = true;
     return;
   }
   // Confirmed live on the Grid (both platforms): seetest:client.setLocation, string args.
@@ -2100,6 +2167,7 @@ export async function setGeolocation(
     String(latitude),
     String(longitude),
   ]);
+  session.geolocationSet = true;
 }
 
 export async function resetGeolocation(handle: string): Promise<void> {
@@ -2108,10 +2176,12 @@ export async function resetGeolocation(handle: string): Promise<void> {
   if (session.sessionFormat === 'jwp') {
     // seetest:client.clearLocation() — inline 0-arg form (execScript adds the parentheses on the Grid).
     await execScript(client, session, 'seetest:client.clearLocation', []);
+    session.geolocationSet = false;
     return;
   }
   const script = session.platform === 'ios' ? 'mobile: resetSimulatedLocation' : 'mobile: resetGeolocation';
   await execScript(client, session, script, [{}]);
+  session.geolocationSet = false;
 }
 
 /** Alert text and, on iOS Appium Server, its button labels (`mobile: alert getButtons` → ["Yes","No"] live 2026-10-18). */

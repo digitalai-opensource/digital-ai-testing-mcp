@@ -28,6 +28,10 @@ const gridExecuted: Array<{ script: string; args: unknown[] }> = [];
 const netState: Record<string, boolean> = { wifi: true, bluetooth: false };
 const executed: Array<{ script: string; args: unknown[] }> = [];
 const sessionBodies: Array<Record<string, unknown>> = [];
+const DECLARED = ['android.permission.INTERNET', 'android.permission.READ_EXTERNAL_STORAGE', 'android.permission.RECORD_AUDIO'];
+const granted = new Set(['android.permission.INTERNET']);
+const findBodies: Array<{ using: string; value: string }> = [];
+const actionBodies: unknown[] = [];
 
 beforeAll(async () => {
   api = await startStubApi((req) => {
@@ -50,6 +54,16 @@ beforeAll(async () => {
       const args = req.json.args as unknown[];
       executed.push({ script, args });
       if (script === 'mobile: shell') return { value: `ran: ${(args[0] as { command: string }).command}\n` };
+      // Runtime permissions (live 2026-11-12): only declared ones change.
+      if (script === 'mobile: getPermissions') {
+        const type = (args[0] as { type: string }).type;
+        return { value: type === 'requested' ? DECLARED : type === 'granted' ? [...granted] : DECLARED.filter((p) => !granted.has(p)) };
+      }
+      if (script === 'mobile: changePermissions') {
+        const a = args[0] as { permissions: string[]; action: string };
+        for (const p of a.permissions) if (DECLARED.includes(p)) { if (a.action === 'grant') granted.add(p); else granted.delete(p); }
+        return { value: null };
+      }
       if (script === 'mobile: pressButton' && (args[0] as { name: string }).name === 'power') {
         return reply(500, { value: { error: 'unknown error', message: "The button 'power' is not supported. The device under test only supports the following buttons: (home, volumedown, volumeup)" } });
       }
@@ -82,7 +96,8 @@ beforeAll(async () => {
       if (script === 'seetest:client.setAuthenticationReply') return authReply;
       return { value: null };
     }
-    if (/\/elements$/.test(req.path)) return { value: [{ 'element-6066-11e4-a52e-4f735466cecf': 'el-1' }] };
+    if (/\/elements$/.test(req.path)) { findBodies.push(req.json as { using: string; value: string }); return { value: [{ 'element-6066-11e4-a52e-4f735466cecf': 'el-1' }] }; }
+    if (/\/actions$/.test(req.path)) { actionBodies.push(req.json); return { value: null }; }
     if (req.path === '/api/v1/files') return { status: 'SUCCESS', data: [{ id: 501, uniqueName: 'mcp-har-x.har', size: 290, projectName: 'Default', extension: 'har' }, { id: 502, uniqueName: 'runlog.log', size: 33000, projectName: 'Default', extension: 'log' }], code: 'OK' };
     if (req.path === '/reporter/api/tests/delete') return deleteFails ? reply(400, { message: 'org.hibernate.TransientPropertyValueException: Persistent instance of Attachment references an unsaved transient instance of TestTransactionServer' }) : {};
     if (/\/alert\/text$/.test(req.path)) return alertOpen ? { value: 'Are you sure you want to send payment?' } : reply(404, { value: { error: 'no such alert', message: 'An attempt was made to operate on a modal dialog when one was not open' } });
@@ -488,5 +503,63 @@ describe('set_appearance reminder (intake 2026-10-19)', () => {
     assert.match(r.text, /the appearance the device started with/);
     assert.doesNotMatch(r.text, /Set it back/);
     await tools.call('stop_inspection_session', { handle: h });
+  });
+});
+
+describe('best-practice inspection additions (verified live 2026-11-12)', () => {
+  it('app_control permissions: list, grant, revoke; undeclared permissions are named; Android Appium Server only', async () => {
+    const h = await session('android');
+    let r = await tools.call('app_control', { handle: h, action: 'permissions', packageName: 'com.experitest.ExperiBank' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.match(r.text, /Granted: android\.permission\.INTERNET\nDenied: android\.permission\.READ_EXTERNAL_STORAGE, android\.permission\.RECORD_AUDIO/);
+    r = await tools.call('app_control', { handle: h, action: 'permissions', packageName: 'com.experitest.ExperiBank', permissionAction: 'grant', permissions: ['android.permission.READ_EXTERNAL_STORAGE', 'android.permission.CAMERA'] });
+    assert.match(r.text, /READ_EXTERNAL_STORAGE: granted\nandroid\.permission\.CAMERA: NOT DECLARED by the app/);
+    r = await tools.call('app_control', { handle: h, action: 'permissions', packageName: 'com.experitest.ExperiBank', permissionAction: 'revoke', permissions: ['android.permission.READ_EXTERNAL_STORAGE'] });
+    assert.match(r.text, /READ_EXTERNAL_STORAGE: not granted[\s\S]*relaunch it with launch_app/);
+    r = await tools.call('app_control', { handle: h, action: 'permissions', permissionAction: 'grant' });
+    assert.match(r.text, /requires packageName/);
+    await tools.call('stop_inspection_session', { handle: h });
+    const ios = await session('ios');
+    r = await tools.call('app_control', { handle: ios, action: 'permissions', packageName: 'com.experitest.ExperiBank' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /Android Appium Server feature/);
+    await tools.call('stop_inspection_session', { handle: ios });
+  });
+
+  it('tap_element x+y taps a point with W3C pointer actions; both coordinates required; not combined with an element', async () => {
+    const h = await session('android');
+    actionBodies.length = 0;
+    let r = await tools.call('tap_element', { handle: h, x: 540, y: 1200 });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.match(r.text, /Tapped the point \(540, 1200\)/);
+    assert.match(JSON.stringify(actionBodies.at(-1)), /"pointerMove","duration":0,"x":540,"y":1200/);
+    r = await tools.call('tap_element', { handle: h, x: 540 });
+    assert.match(r.text, /needs both x and y/);
+    r = await tools.call('tap_element', { handle: h, x: 1, y: 2, elementId: 'el-1' });
+    assert.match(r.text, /not both/);
+    await tools.call('stop_inspection_session', { handle: h });
+  });
+
+  it('find_elements accepts "-android uiautomator" and sends it as the W3C strategy', async () => {
+    const h = await session('android');
+    findBodies.length = 0;
+    const r = await tools.call('find_elements', { handle: h, strategy: '-android uiautomator', selector: 'new UiSelector().resourceIdMatches(".*login")' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.deepEqual(findBodies.at(-1), { using: '-android uiautomator', value: 'new UiSelector().resourceIdMatches(".*login")' });
+    await tools.call('stop_inspection_session', { handle: h });
+  });
+
+  it('a simulated location is reset when the session stops (iOS keeps it otherwise — the next user would inherit it)', async () => {
+    const h = await session('ios');
+    await tools.call('device_control', { handle: h, action: 'set_geolocation', latitude: 51.5, longitude: -0.12 });
+    executed.length = 0;
+    const r = await tools.call('stop_inspection_session', { handle: h });
+    assert.ok(executed.some((e) => e.script === 'mobile: resetSimulatedLocation'), JSON.stringify(executed));
+    assert.match(r.text, /simulated location was reset before stopping/);
+    const h2 = await session('android');
+    executed.length = 0;
+    const r2 = await tools.call('stop_inspection_session', { handle: h2 });
+    assert.ok(!executed.some((e) => /Geolocation|SimulatedLocation/.test(e.script)), 'no reset when no location was set');
+    assert.doesNotMatch(r2.text, /simulated location/);
   });
 });

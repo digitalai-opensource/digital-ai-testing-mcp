@@ -867,6 +867,8 @@ export interface InspectionSession {
   harRecording?: string;
   /** Repository file name of a device-log capture in progress (session_capture device_log start → stop). */
   deviceLogRecording?: string;
+  /** A simulated location is active (device_control set_geolocation) — reset when the session stops. */
+  geolocationSet?: boolean;
   /** Light/dark appearance the device had before the first set_appearance (restore reminder only when different). */
   originalAppearance?: 'dark' | 'light';
 }
