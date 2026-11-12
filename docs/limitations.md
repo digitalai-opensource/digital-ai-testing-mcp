@@ -197,7 +197,7 @@ The Appium image-comparison plugin is not loaded on the cloud agents, and an ele
 - The Digital.ai report holds one record per browser session and shows **Passed even when a Playwright test failed**. The Playwright list or HTML report is the source of truth.
 - Playwright drives the cloud browser over the Chrome DevTools Protocol, so keep `@playwright/test` close to the cloud browser version. The generated project pins 1.65.0, verified against Chrome 158 and Edge 157.
 - The generated configuration connects through `SELENIUM_REMOTE_URL` / `SELENIUM_REMOTE_CAPABILITIES`. A `connectOptions.wsEndpoint` pointing at `/wd/hub` did not connect with Playwright 1.65.0 ("does not look like a Playwright server").
-- A project generated for the Selenium agent is not meant for `execute_playwright_run`: the container image has no branded Chrome or Edge and cannot reach the Selenium agent. Use a standard `playwright.config` for Execution Service runs.
+- The generated configuration switches targets on its own: inside the Playwright container that `execute_playwright_run` uses it runs chromium, firefox and webkit and needs no key (it detects the container by `PLAYWRIGHT_BROWSERS_PATH`, which Microsoft's image sets). Locally, `DIGITAL_AI_PLAYWRIGHT_TARGET=local` selects the same browsers. The container switch has not yet been seen running on a live Execution Service job.
 
 ## 39. Browser Inspection Sessions: What Differs by Browser
 

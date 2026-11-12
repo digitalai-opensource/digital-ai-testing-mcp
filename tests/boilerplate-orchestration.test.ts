@@ -717,3 +717,49 @@ describe('Python setup note names the test file (pytest only collects test_*.py 
     }
   });
 });
+
+describe('playwright config switches between the Selenium agent and Playwright browsers (Playwright-Issues #9)', () => {
+  // Load the generated config for real, with a stub @playwright/test, under each environment.
+  it('agent by default (key required); chromium/firefox/webkit without a key inside the container or with TARGET=local', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const { mkdirSync } = await import('node:fs');
+    const r = await call('get_web_test_boilerplate', { language: 'playwright', testName: 'Switch', outputFormat: 'json' });
+    const files = (JSON.parse(r.content.map((c) => c.text ?? '').join('')) as { files: Array<{ filename: string; content: string }> }).files;
+    const dir = mkdtempSync(join(tmpdir(), 'pw-config-'));
+    try {
+      writeFileSync(join(dir, 'playwright.config.js'), files.find((f) => f.filename === 'playwright.config.js')!.content);
+      mkdirSync(join(dir, 'node_modules', '@playwright', 'test'), { recursive: true });
+      writeFileSync(join(dir, 'node_modules', '@playwright', 'test', 'index.js'),
+        "module.exports = { defineConfig: (c) => c, devices: new Proxy({}, { get: (_, k) => ({ device: k }) }) };\n");
+      const probe = "const c = require('./playwright.config.js'); console.log(JSON.stringify({ projects: c.projects.map((p) => p.name + (p.use.channel ? ':' + p.use.channel : '')), remote: process.env.SELENIUM_REMOTE_URL || null, caps: process.env.SELENIUM_REMOTE_CAPABILITIES || null }));";
+      const run = (env: Record<string, string>) => {
+        const base = { ...process.env } as Record<string, string>;
+        for (const k of ['DIGITAL_AI_ACCESS_KEY', 'PLAYWRIGHT_BROWSERS_PATH', 'DIGITAL_AI_PLAYWRIGHT_TARGET', 'SELENIUM_REMOTE_URL', 'SELENIUM_REMOTE_CAPABILITIES', 'BROWSER']) delete base[k];
+        const p = spawnSync(process.execPath, ['-e', probe], { cwd: dir, env: { ...base, ...env }, encoding: 'utf8' });
+        return { code: p.status, out: p.stdout.trim(), err: p.stderr };
+      };
+      const agent = run({ DIGITAL_AI_ACCESS_KEY: 'k-test' });
+      assert.equal(agent.code, 0, agent.err);
+      const a = JSON.parse(agent.out);
+      assert.deepEqual(a.projects, ['chrome:chrome']);
+      assert.match(a.remote, /\/wd\/hub$/);
+      assert.match(a.caps, /"digitalai:options":\{"accessKey":"k-test"/);
+      assert.deepEqual(JSON.parse(run({ DIGITAL_AI_ACCESS_KEY: 'k', BROWSER: 'MicrosoftEdge' }).out).projects, ['edge:msedge']);
+
+      const noKey = run({});
+      assert.notEqual(noKey.code, 0);
+      assert.match(noKey.err, /Set the DIGITAL_AI_ACCESS_KEY environment variable/);
+
+      const switchEnvs: Array<Record<string, string>> = [{ PLAYWRIGHT_BROWSERS_PATH: '/ms-playwright' }, { DIGITAL_AI_PLAYWRIGHT_TARGET: 'local' }];
+      for (const env of switchEnvs) {
+        const res = run(env);
+        assert.equal(res.code, 0, `${JSON.stringify(env)}: ${res.err}`);
+        const j = JSON.parse(res.out);
+        assert.deepEqual(j.projects, ['chromium', 'firefox', 'webkit'], JSON.stringify(env));
+        assert.equal(j.remote, null, 'no Selenium agent from inside the container / local mode');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
