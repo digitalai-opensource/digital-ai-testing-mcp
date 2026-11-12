@@ -68,6 +68,15 @@ export function registerWebInspectionTools(server: McpServer): void {
         .string()
         .optional()
         .describe("Name shown in the Digital.ai reporter for this session. Default: '[MCP Browser Inspection] <browser>'."),
+      acceptInsecureCerts: z
+        .boolean()
+        .optional()
+        .describe(
+          'Load sites whose TLS certificate is self-signed, expired or from an untrusted CA (typical for staging/dev ' +
+          'environments). Without it Chrome/Edge/Safari show a privacy-warning page and Firefox refuses the navigation ' +
+          '("insecure certificate"). Set it only when the user is testing such a site. Pass the same option to ' +
+          'get_web_test_boilerplate so the generated test can reach it too.'
+        ),
       outputFormat: outputFormatParam,
     },
     async (args) => {
@@ -88,6 +97,7 @@ export function registerWebInspectionTools(server: McpServer): void {
           browserName: canonicalBrowserName(args.inspectionBrowser) ?? args.inspectionBrowser,
           os: args.os,
           reportName: args.reportName,
+          acceptInsecureCerts: args.acceptInsecureCerts,
         });
 
         // Structured like start_inspection_session — the handle is what every later call needs (UAT 2026-10-10 run 3).

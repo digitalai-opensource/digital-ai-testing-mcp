@@ -36,6 +36,9 @@ export interface BrowserSessionOptions {
   browserName: string;
   os?: string;
   reportName?: string;
+  /** W3C acceptInsecureCerts — load sites with self-signed/untrusted certificates (verified live 2026-11-12 on
+   *  Chrome, Firefox, MicrosoftEdge and Safari against self-signed.badssl.com). */
+  acceptInsecureCerts?: boolean;
 }
 
 export async function createBrowserInspectionSession(
@@ -61,9 +64,11 @@ export async function createBrowserInspectionSession(
   const caps: Record<string, unknown> = {
     browserName,
     'digitalai:accessKey': accessKey,
-    'digitalai:reportName': reportName,
+    // digitalai:testName names the report; digitalai:reportName is ignored by the platform (verified 2026-10-16).
+    'digitalai:testName': reportName,
   };
   if (opts.os) caps['platformName'] = opts.os;
+  if (opts.acceptInsecureCerts) caps['acceptInsecureCerts'] = true;
 
   const client = makeClient();
   let res;
@@ -112,12 +117,27 @@ export async function createBrowserInspectionSession(
     sessionFormat: 'w3c',
     platform: 'web',
     browserName: opts.browserName,
+    acceptInsecureCerts: opts.acceptInsecureCerts === true,
     currentUrl: '',
     projectName,
   };
 
   registerSession(session);
   return session;
+}
+
+/**
+ * A site with a self-signed / untrusted certificate (verified live 2026-11-12 against self-signed.badssl.com):
+ * Firefox refuses the navigation with "insecure certificate"; Chrome and Edge load a page titled "Privacy error" and
+ * Safari one titled "This Connection Is Not Private", with no WebDriver error. Returns guidance, or null.
+ */
+export function certificateWarning(errorOrTitle: string | null | undefined): string | null {
+  if (!errorOrTitle) return null;
+  if (!/insecure certificate|^Privacy error$|^This Connection Is Not Private$/i.test(errorOrTitle.trim())) return null;
+  return 'The site\'s TLS certificate is self-signed, expired or from an untrusted CA, so the browser showed its ' +
+    'security warning instead of the page. If this is the user\'s staging/dev site, stop this session and start a new one ' +
+    'with start_browser_inspection_session(acceptInsecureCerts: true), and pass acceptInsecureCerts: true to ' +
+    'get_web_test_boilerplate.';
 }
 
 export async function navigateTo(handle: string, url: string): Promise<void> {
@@ -129,7 +149,9 @@ export async function navigateTo(handle: string, url: string): Promise<void> {
   try {
     await client.post(`/session/${session.gridSessionId}/url`, { url }, { timeout: 60_000 });
   } catch (e) {
-    throw new Error(`navigate_to failed: ${describeError(e)}`);
+    const detail = describeError(e);
+    const hint = certificateWarning(detail);
+    throw new Error(`navigate_to failed: ${detail}${hint ? `\n${hint}` : ''}`);
   }
   // Wait for readyState === 'complete' (up to 30s)
   const deadline = Date.now() + 30_000;
@@ -145,6 +167,16 @@ export async function navigateTo(handle: string, url: string): Promise<void> {
       break; // If the execute fails, don't block
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  // Chrome/Edge/Safari answer a bad certificate with a warning page, not an error — surface it as one.
+  if (!session.acceptInsecureCerts) {
+    try {
+      const t = await client.get(`/session/${session.gridSessionId}/title`, { timeout: 10_000 });
+      const hint = certificateWarning(String(t.data.value ?? ''));
+      if (hint) throw new Error(`navigate_to: the browser showed "${t.data.value}" for ${url}.\n${hint}`);
+    } catch (e) {
+      if ((e as Error).message.startsWith('navigate_to:')) throw e;
+    }
   }
   // Update currentUrl in session
   try {

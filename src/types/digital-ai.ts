@@ -820,6 +820,7 @@ export interface ConfoundAssessment {
 export interface InspectionSession {
   handle: string;           // Short user-facing identifier
   gridSessionId: string;    // Full CLOUD-SID:... Grid session ID
+  acceptInsecureCerts?: boolean; // Browser sessions: started with acceptInsecureCerts (skip the certificate-warning check)
   reportTestId: number;     // Reporter test_id — 0 if not captured
   reportUrl: string;        // HTML report link (from caps)
   cloudViewLink: string | null; // Mobile Studio URL (from caps)

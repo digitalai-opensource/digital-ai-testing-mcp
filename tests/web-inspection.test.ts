@@ -7,6 +7,7 @@
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { registerSession } from '../src/api/webdriver.js';
+import { certificateWarning } from '../src/api/browser-inspection.js';
 import { registerWebInspectionTools } from '../src/tools/web-inspection-tools.js';
 import type { InspectionSession } from '../src/types/digital-ai.js';
 import { startStubApi, connectTools, type StubApi, type ToolClient } from './helpers/offline.js';
@@ -24,6 +25,10 @@ let tools: ToolClient;
 
 beforeAll(async () => {
   api = await startStubApi((req) => {
+    // navigate_to: sessions whose id contains "badcert" land on Chrome's certificate warning page.
+    if (/\/wd\/hub\/session\/[^/]+\/url$/.test(req.path)) return { value: req.method === 'GET' ? 'https://self-signed.badssl.com/' : null };
+    if (/\/wd\/hub\/session\/[^/]+\/title$/.test(req.path)) return { value: /badcert/.test(req.path) ? 'Privacy error' : 'self-signed.badssl.com' };
+    if (/\/wd\/hub\/session\/[^/]+\/execute\/sync$/.test(req.path) && /readyState/.test(req.json.script ?? '')) return { value: 'complete' };
     if (/\/wd\/hub\/session\/[^/]+\/execute\/sync$/.test(req.path)) {
       const script: string = req.json.script ?? '';
       // Detection script → page meta; anything else is the element walker.
@@ -57,5 +62,30 @@ describe('get_page_dom', () => {
     const { text } = await tools.call('get_page_dom', { handle: 'WEB00002', shadowMode: 'never' });
     assert.match(text, /--- RAW HTML \(\d+ chars\) ---/);
     assert.match(text, /<a href="x">More<\/a>/);
+  });
+});
+
+describe('self-signed / untrusted certificates (verified live 2026-11-12 against self-signed.badssl.com)', () => {
+  it('certificateWarning recognises the Firefox error and the Chrome/Edge/Safari warning-page titles, nothing else', () => {
+    assert.match(certificateWarning('HTTP 400: insecure certificate') ?? '', /acceptInsecureCerts: true/);
+    assert.ok(certificateWarning('Privacy error'));
+    assert.ok(certificateWarning('This Connection Is Not Private'));
+    assert.equal(certificateWarning('Example Domain'), null);
+    assert.equal(certificateWarning('Privacy error — our policy page'), null, 'an ordinary page titled with the phrase');
+    assert.equal(certificateWarning(''), null);
+  });
+
+  it('navigate_to reports a certificate warning page as an error with the acceptInsecureCerts remedy', async () => {
+    registerSession({ ...webSession('WEB00003'), gridSessionId: 'sid-badcert' });
+    const { res, text } = await tools.call('navigate_to', { handle: 'WEB00003', url: 'https://self-signed.badssl.com/' });
+    assert.equal(res.isError, true, text);
+    assert.match(text, /"Privacy error"/);
+    assert.match(text, /start_browser_inspection_session\(acceptInsecureCerts: true\)/);
+  });
+
+  it('navigate_to skips the check on a session started with acceptInsecureCerts', async () => {
+    registerSession({ ...webSession('WEB00004'), gridSessionId: 'sid-badcert', acceptInsecureCerts: true });
+    const { res, text } = await tools.call('navigate_to', { handle: 'WEB00004', url: 'https://self-signed.badssl.com/' });
+    assert.notEqual(res.isError, true, text);
   });
 });

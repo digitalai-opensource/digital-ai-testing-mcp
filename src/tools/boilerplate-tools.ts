@@ -1768,10 +1768,19 @@ export function registerBoilerplateTools(server: McpServer): void {
           '(get_page_dom / find_web_elements) or authoritative source. Required when url is provided and no ' +
           'live browser session exists.'
         ),
+      acceptInsecureCerts: z
+        .boolean()
+        .optional()
+        .describe(
+          'Add the W3C acceptInsecureCerts capability so the test can open a site with a self-signed, expired or ' +
+          'untrusted-CA certificate (staging/dev). Verified on Chrome, Firefox, MicrosoftEdge and Safari. Omit for ' +
+          'sites with a valid certificate.'
+        ),
       outputFormat: outputFormatParam,
     },
     async (args) => {
       const language = args.language;
+      const insecure = args.acceptInsecureCerts === true;
       const testName = args.testName ?? 'WebTest';
       const targetUrl = args.url ?? '';
       // The grid matches browserName case-sensitively: "microsoftedge" → 400 "No browser found matching the desired
@@ -2024,6 +2033,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `${browserCap}`,
           `        caps.setCapability("digitalai:accessKey", ACCESS_KEY);`,
           `        caps.setCapability("digitalai:testName", "${testName}");`,
+          ...(insecure ? [`        caps.setCapability("acceptInsecureCerts", true); // site uses a self-signed/untrusted certificate`] : []),
           ``,
           `        driver = new RemoteWebDriver(new URL(GRID_URL), caps);`,
           `        driver.manage().window().maximize();`,
@@ -2148,6 +2158,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `        ${browserCap}`,
           `        caps["digitalai:accessKey"] = self.ACCESS_KEY`,
           `        caps["digitalai:testName"] = "${testName}"`,
+          ...(insecure ? [`        caps["acceptInsecureCerts"] = True  # site uses a self-signed/untrusted certificate`] : []),
           ``,
           `        # Selenium 4.10+ removed desired_capabilities — capabilities go through an Options object.`,
           `        options = ArgOptions()`,
@@ -2245,7 +2256,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `*** Keywords ***`,
           `Open Cloud Browser`,
           `    Open Browser    about:blank    \${BROWSER}    remote_url=\${GRID_URL}`,
-          `    ...    options=set_capability("digitalai:accessKey", "\${ACCESS_KEY}");set_capability("digitalai:testName", "\${TEST_NAME}")`,
+          `    ...    options=set_capability("digitalai:accessKey", "\${ACCESS_KEY}");set_capability("digitalai:testName", "\${TEST_NAME}")${insecure ? ';set_capability("acceptInsecureCerts", True)' : ''}`,
           ``,
           `Close Cloud Browser`,
           `    # Report the real outcome: without this a failed step or assertion can still show as Passed in the platform report.`,
@@ -2306,6 +2317,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         `        ${browserCapNode},`,
         `        'digitalai:accessKey': '${accessKey}',`,
         `        'digitalai:testName': '${testName}',`,
+        ...(insecure ? [`        acceptInsecureCerts: true, // site uses a self-signed/untrusted certificate`] : []),
         `    }],`,
         `    framework: 'mocha',`,
         `    reporters: ['spec'],`,

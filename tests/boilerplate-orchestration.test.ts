@@ -538,6 +538,21 @@ describe('get_web_test_boilerplate — fixes found running the templates live (2
   };
   const source = (j: { files: Array<{ filename: string; content: string }> }) => j.files.map((f) => f.content).join('\n');
 
+  it('acceptInsecureCerts adds the W3C capability in every language, and only when asked', async () => {
+    // Verified live 2026-11-12: Chrome, Firefox, MicrosoftEdge and Safari load self-signed.badssl.com only with it.
+    const expected: Record<string, RegExp> = {
+      'java-junit5': /caps\.setCapability\("acceptInsecureCerts", true\);/,
+      'java-testng': /caps\.setCapability\("acceptInsecureCerts", true\);/,
+      python: /caps\["acceptInsecureCerts"\] = True/,
+      nodejs: /acceptInsecureCerts: true,/,
+      robot: /set_capability\("acceptInsecureCerts", True\)/,
+    };
+    for (const [language, re] of Object.entries(expected)) {
+      assert.match(source((await webGen({ language, acceptInsecureCerts: true })).json), re, language);
+      assert.doesNotMatch(source((await webGen({ language })).json), /acceptInsecureCerts/, language);
+    }
+  });
+
   it('names the report with digitalai:testName (digitalai:reportName is ignored by the platform)', async () => {
     for (const language of ['java-junit5', 'python', 'nodejs']) {
       const s = source((await webGen({ language })).json);
