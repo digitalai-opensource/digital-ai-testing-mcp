@@ -806,3 +806,14 @@ describe('template client pins and driver names (best-practice review, 2026-11-1
     }
   });
 });
+
+describe('Node Appium Server placeholder shows the wdio 9 swipe with scrollableElement (verified live 2026-11-12)', () => {
+  it('Android, Appium Server only', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const t = (await gen({ platform: 'android', language: 'nodejs', packageName: 'com.example.app', confirmSelectorsVerified: true })).json.files.map((f) => f.content).join('\n');
+    assert.match(t, /driver\.swipe\(\{ direction: 'up', scrollableElement: await \$\('<scrollable list from get_element_tree>'\) \}\)/);
+    account.isAppiumOss = false;
+    const g = (await gen({ platform: 'android', language: 'nodejs', packageName: 'com.example.app', confirmSelectorsVerified: true })).json.files.map((f) => f.content).join('\n');
+    assert.doesNotMatch(g, /driver\.swipe/, 'wdio 7 on the Grid has no driver.swipe');
+  });
+});

@@ -569,6 +569,9 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
         `${indent}${c}   const btn = await find('id=<resource-id from get_element_tree>'); await btn.click();`,
         `${indent}${c}   const field = await find('id=<resource-id>'); await field.setValue('<value>');`,
         `${indent}${c}   await expect($('//*[@text="<visible text>"]')).toBeDisplayed();`,
+        // wdio 9 native gesture, verified live 2026-11-12 on Appium Server: without scrollableElement it looks for an
+        // android.widget.ScrollView and fails on a ListView/RecyclerView ("Default scrollable element ... was not found").
+        ...(isAppiumOss ? [`${indent}${c}   await driver.swipe({ direction: 'up', scrollableElement: await $('<scrollable list from get_element_tree>') });`] : []),
       ];
     } else {
       examples = [
