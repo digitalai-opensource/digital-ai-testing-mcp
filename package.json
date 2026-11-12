@@ -76,6 +76,7 @@
     "test:device-keys-app-control": "vitest run tests/device-keys-app-control.test.ts",
     "test:adb-shell": "vitest run tests/adb-shell.test.ts",
     "test:playwright-runs": "vitest run tests/playwright-runs.test.ts",
+    "test:locator-recommend": "vitest run tests/locator-recommend.test.ts",
     "test:inspection-contexts-log": "vitest run tests/inspection-contexts-log.test.ts",
     "test:examples-doc": "vitest run tests/examples-doc.test.ts",
     "test:test-views": "vitest run tests/api/test-views.test.ts",

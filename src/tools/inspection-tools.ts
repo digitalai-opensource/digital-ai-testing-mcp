@@ -73,6 +73,7 @@ import { validateInputPath, validateOutputPath } from '../utils/path-guard.js';
 import { readFileSync, writeFileSync } from 'fs';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
 import { classifyShellCommand, shellGuardMessage, capShellOutput, shellCommandProblem } from '../utils/adb-shell.js';
+import { recommendLocators, formatRecommendation } from '../utils/locator-recommend.js';
 
 // '-ios predicate string' is XCUITest's NSPredicate locator (e.g. "type == 'XCUIElementTypeButton' AND label == 'Login'")
 // — faster and less brittle than xpath on iOS, and the form the Mobile Studio iOS Test Recorder emits. iOS on Appium
@@ -237,6 +238,25 @@ function parseElementTree(
   return { elements, totalNodes };
 }
 
+/** The locator ladder applied to this screen — one recommended selector per listed element (src/utils/locator-recommend.ts). */
+function recommendationLines(all: ParsedElement[], shown: ParsedElement[], platform: 'android' | 'ios'): string[] {
+  const recs = recommendLocators(all, platform);
+  const byElement = new Map(all.map((e, i) => [e, recs[i]] as const));
+  const MAX = 40;
+  const lines = [
+    '',
+    `Recommended locator per element (${platform === 'ios' ? 'accessibility id → @label xpath' : 'resource-id → accessibility id → @text xpath'}; unique on this screen — copy these into find_elements and the test):`,
+  ];
+  for (const e of shown.slice(0, MAX)) {
+    const what = platform === 'ios'
+      ? `${shortClass(e.className).replace(/^XCUIElementType/, '')} "${(e.label ?? e.name ?? e.value ?? '').slice(0, 30)}"`
+      : `${shortClass(e.className)} "${(e.text ?? e.contentDesc ?? (e.resourceId ? shortId(e.resourceId) : '')).slice(0, 30)}"`;
+    lines.push(`  ${what} → ${formatRecommendation(byElement.get(e) ?? null)}`);
+  }
+  if (shown.length > MAX) lines.push(`  … ${shown.length - MAX} more — use find_elements to narrow.`);
+  return lines;
+}
+
 function formatElementTable(
   elements: ParsedElement[],
   totalNodes: number,
@@ -260,6 +280,8 @@ function formatElementTable(
     }
     if (interesting.length === 0) {
       lines.push('  (no elements with name, label, or value found on this screen)');
+    } else {
+      lines.push(...recommendationLines(elements, interesting, 'ios'));
     }
     lines.push('', "Locate iOS elements with: strategy 'accessibility id' (matches name), xpath like //*[@label='...'] or //XCUIElementTypeButton, or on Appium Server projects '-ios predicate string' like \"label == '...'\".");
     return lines.join('\n');
@@ -288,10 +310,22 @@ function formatElementTable(
 
   if (interesting.length === 0) {
     lines.push('  (no elements with resource-id, content-desc, or text found on this screen)');
+  } else {
+    lines.push(...recommendationLines(elements, interesting, 'android'));
+    // Jetpack Compose exposes Modifier.testTag as resource-id only when the app opts in — a screen of texts with no ids
+    // is the usual sign. The fix is in the app, not the test.
+    if (interesting.length >= 3 && !interesting.some((e) => e.resourceId)) {
+      lines.push('', 'No element on this screen has a resource-id. If this is a Jetpack Compose app, ask its developers to set ' +
+        'testTagsAsResourceId = true (Modifier.semantics) so Modifier.testTag values become resource-ids; until then ' +
+        'use accessibility id (contentDescription) or text.');
+    }
   }
 
   return lines.join('\n');
 }
+
+/** Test seam: the element-table pipeline get_element_tree uses. */
+export const __elementTreeForTests = { parseElementTree, formatElementTable };
 
 // ─── Tool registration ────────────────────────────────────────────────────────
 
