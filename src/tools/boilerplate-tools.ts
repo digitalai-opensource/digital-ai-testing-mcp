@@ -1732,8 +1732,8 @@ export function registerBoilerplateTools(server: McpServer): void {
     'inside Shadow DOM trees (React, Angular, Web Components).',
     {
       language: z
-        .enum(['java-junit5', 'java-testng', 'nodejs', 'python', 'robot'])
-        .describe('Target language and test framework. "robot" = Robot Framework + SeleniumLibrary (no shadowQuery helper; Opera unsupported).'),
+        .enum(['java-junit5', 'java-testng', 'nodejs', 'python', 'robot', 'playwright'])
+        .describe('Target language and test framework. "robot" = Robot Framework + SeleniumLibrary (no shadowQuery helper; Opera unsupported). "playwright" = Playwright Test driving Chrome or Edge on the Digital.ai Selenium agent (EXPERIMENTAL platform feature; verified with @playwright/test 1.65.0 — the cloud report shows Passed even when a test fails, trust the Playwright report). For firefox/webkit or cloud-side runs use execute_playwright_run.'),
       testName: z
         .string()
         .optional()
@@ -1888,6 +1888,14 @@ export function registerBoilerplateTools(server: McpServer): void {
             `${indent}${c}   self.find(By.CSS_SELECTOR, "<CSS selector from find_web_elements>").click()`,
             `${indent}${c}   self.find(By.CSS_SELECTOR, "input[name='<name attr>']").send_keys("<value>")`,
             `${indent}${c}   self.find(By.ID, "<id from get_page_dom>").click()  # find() waits up to 20 s — never add sleeps`,
+          ].join('\n');
+        } else if (lang === 'playwright') {
+          examples = [
+            `${indent}${c} Example shape — replace <…> with selectors from get_page_dom / find_web_elements:`,
+            `${indent}${c}   await page.goto(${nav});`,
+            `${indent}${c}   await page.locator('<CSS selector from find_web_elements>').click();`,
+            `${indent}${c}   await page.locator("input[name='<name attr>']").fill('<value>');`,
+            `${indent}${c}   await expect(page.locator('#<id from get_page_dom>')).toBeVisible();  // auto-waits — never add sleeps`,
           ].join('\n');
         } else {
           examples = [
@@ -2291,6 +2299,91 @@ export function registerBoilerplateTools(server: McpServer): void {
           '```python', library, '```',
           '',
           '```text', requirements, '```',
+        ].join('\n');
+        return respond(args.outputFormat, structured, humanText);
+      }
+
+      // Playwright on the Selenium agent (EXPERIMENTAL platform feature — Chrome and Edge only). Verified live
+      // 2026-11-12 with @playwright/test 1.65.0 against Chrome 158 / Edge 157: SELENIUM_REMOTE_URL +
+      // SELENIUM_REMOTE_CAPABILITIES ('digitalai:options': { accessKey, testName }) runs the tests with no local
+      // browser; the documented connectOptions.wsEndpoint = <cloud>/wd/hub fails (Playwright looks for its own server
+      // and gets a 404 on /wd/hub/json). The cloud keeps ONE report per worker session, Passed even when a test failed.
+      if (language === 'playwright') {
+        if (targetBrowser && targetBrowser !== 'chrome' && targetBrowser !== 'MicrosoftEdge') {
+          return { content: [{ type: 'text', text: `Error: Playwright on the Digital.ai Selenium agent drives chrome or MicrosoftEdge only (got ${targetBrowser}). For firefox/webkit run the project in the cloud's Playwright containers with execute_playwright_run.` }], isError: true };
+        }
+        const specFile = `tests/${testName.replace(/[^\w-]/g, '_')}.spec.js`;
+        const placeholder = webPlaceholderBody(language, '  ', targetUrl);
+        const pwConfig = [
+          `// playwright.config.js — Playwright on the Digital.ai Selenium agent (EXPERIMENTAL platform feature; Chrome and Edge only).`,
+          `// npx playwright test runs every test in a cloud browser — no local browser install is needed.`,
+          `// Set DIGITALAI_CLOUD_URL / DIGITALAI_ACCESS_KEY / BROWSER (chrome | MicrosoftEdge) instead of editing this file.`,
+          `const { defineConfig, devices } = require('@playwright/test');`,
+          ``,
+          `const CLOUD_URL = process.env.DIGITALAI_CLOUD_URL || '${baseUrl}';`,
+          `const ACCESS_KEY = process.env.DIGITALAI_ACCESS_KEY || '${accessKey}';`,
+          `const BROWSER = process.env.BROWSER || '${targetBrowser ?? 'chrome'}';`,
+          ``,
+          `// Playwright launches Chromium-family browsers on a Selenium Grid when these are set (read by every worker).`,
+          `process.env.SELENIUM_REMOTE_URL = \`\${CLOUD_URL}/wd/hub\`;`,
+          `process.env.SELENIUM_REMOTE_CAPABILITIES = JSON.stringify({`,
+          `  browserName: BROWSER,`,
+          `  'digitalai:options': { accessKey: ACCESS_KEY, testName: '${testName}' },`,
+          ...(insecure ? [`  acceptInsecureCerts: true, // site uses a self-signed/untrusted certificate`] : []),
+          `});`,
+          ``,
+          `module.exports = defineConfig({`,
+          `  testDir: './tests',`,
+          `  timeout: 60_000,`,
+          `  reporter: [['list'], ['html', { open: 'never' }]],`,
+          `  use: { trace: 'retain-on-failure'${insecure ? ', ignoreHTTPSErrors: true' : ''} },`,
+          `  projects: [`,
+          `    BROWSER === 'MicrosoftEdge'`,
+          `      ? { name: 'edge', use: { ...devices['Desktop Edge'], channel: 'msedge' } }`,
+          `      : { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },`,
+          `  ],`,
+          `});`,
+        ].join('\n');
+        code = [
+          `// ${specFile}`,
+          `const { test, expect } = require('@playwright/test');`,
+          ``,
+          `test('${testName}', async ({ page }) => {`,
+          placeholder,
+          `});`,
+        ].join('\n');
+        const pkg = JSON.stringify({ scripts: { test: 'playwright test' }, devDependencies: { '@playwright/test': '1.65.0' } }, null, 2);
+        const guidance = [
+          'EXPERIMENTAL platform feature: Playwright drives Chrome or Edge on the Digital.ai Selenium agent.',
+          'npm install, then npx playwright test — no "npx playwright install" needed (the browser runs in the cloud).',
+          'The Digital.ai report is one record per browser session and shows Passed even when a test failed — the Playwright list/HTML report is the source of truth.',
+          'Keep @playwright/test close to the cloud browser version (Playwright talks CDP); 1.65.0 was verified against Chrome 158 and Edge 157.',
+          'For firefox/webkit, or to run the whole suite in the cloud, use execute_playwright_run (Playwright containers) instead.',
+          'Replace the placeholder with selectors from get_page_dom / find_web_elements. Playwright CSS locators pierce shadow DOM on their own.',
+        ];
+        const structured = {
+          language,
+          testName,
+          targetBrowser: targetBrowser ?? 'chrome (BROWSER env var: chrome | MicrosoftEdge)',
+          experimental: true,
+          files: [
+            { filename: 'playwright.config.js', language: 'javascript', content: pwConfig },
+            { filename: specFile, language: 'javascript', content: code },
+            { filename: 'package.json', language: 'json', content: pkg },
+          ],
+          guidance,
+        };
+        const humanText = [
+          `Generated: playwright.config.js, ${specFile}, package.json (Playwright → Digital.ai Selenium agent, EXPERIMENTAL)`,
+          ...guidance.map((g) => `• ${g}`),
+          '',
+          '```javascript',
+          pwConfig,
+          '```',
+          '',
+          '```javascript',
+          code,
+          '```',
         ].join('\n');
         return respond(args.outputFormat, structured, humanText);
       }

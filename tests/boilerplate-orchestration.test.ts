@@ -546,11 +546,31 @@ describe('get_web_test_boilerplate — fixes found running the templates live (2
       python: /caps\["acceptInsecureCerts"\] = True/,
       nodejs: /acceptInsecureCerts: true,/,
       robot: /set_capability\("acceptInsecureCerts", True\)/,
+      playwright: /acceptInsecureCerts: true,[\s\S]*ignoreHTTPSErrors: true/,
     };
     for (const [language, re] of Object.entries(expected)) {
       assert.match(source((await webGen({ language, acceptInsecureCerts: true })).json), re, language);
       assert.doesNotMatch(source((await webGen({ language })).json), /acceptInsecureCerts/, language);
     }
+  });
+
+  it('playwright: SELENIUM_REMOTE_URL route (verified live with @playwright/test 1.65.0), Chrome/Edge only, guarded placeholder', async () => {
+    const { json } = await webGen({ language: 'playwright' });
+    const names = json.files.map((f) => f.filename);
+    assert.deepEqual(names, ['playwright.config.js', 'tests/Checkout.spec.js', 'package.json']);
+    const config = json.files[0].content;
+    assert.match(config, /process\.env\.SELENIUM_REMOTE_URL = `\$\{CLOUD_URL\}\/wd\/hub`;/);
+    assert.match(config, /'digitalai:options': \{ accessKey: ACCESS_KEY, testName: 'Checkout' \}/);
+    assert.match(config, /process\.env\.DIGITALAI_ACCESS_KEY \|\|/);
+    assert.match(config, /channel: 'msedge'[\s\S]*channel: 'chrome'/);
+    assert.doesNotMatch(config, /connectOptions|wsEndpoint/, 'the documented connectOptions route 404s live');
+    assert.match(json.files[1].content, /throw new Error\('Replace this placeholder/);
+    assert.match(json.files[1].content, /await page\.goto\(/);
+    assert.equal(JSON.parse(json.files[2].content).devDependencies['@playwright/test'], '1.65.0');
+    assert.match(JSON.stringify((json as unknown as { guidance: string[] }).guidance), /shows Passed even when a test failed/);
+    const r = await call('get_web_test_boilerplate', { language: 'playwright', targetBrowser: 'firefox' });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0].text ?? '', /chrome or MicrosoftEdge only[\s\S]*execute_playwright_run/);
   });
 
   it('names the report with digitalai:testName (digitalai:reportName is ignored by the platform)', async () => {
