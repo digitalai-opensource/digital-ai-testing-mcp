@@ -52,7 +52,7 @@ describe('buildRootCauseAnalysis (pure)', () => {
   });
 
   it('non-Appium framework is explained; malformed evidence is kept as text, not thrown', () => {
-    assert.match(buildRootCauseAnalysis(SELENIUM, null, null).ineligibleReason ?? '', /Appium Server .* Selenium/);
+    assert.match(buildRootCauseAnalysis(SELENIUM, null, null).ineligibleReason ?? '', /Appium Server.*Appium Grid.*Selenium/);
     const odd = buildRootCauseAnalysis({ ...COMPLETED, keyValuePairs: { ...COMPLETED.keyValuePairs, 'rca.evidence': 'not json' } }, null, null);
     assert.deepEqual(odd.evidence, [{ findings: 'not json' }]);
   });
@@ -62,6 +62,12 @@ describe('buildRootCauseAnalysis (pure)', () => {
     assert.equal(a.status, 'none');
     assert.equal(a.ineligibleReason, null);
     assert.equal(a.attemptsRemaining, 3);
+  });
+
+  it('Appium Grid report is eligible (platform 26.9 extended RCA to the Grid)', () => {
+    const a = buildRootCauseAnalysis({ ...EXHAUSTED, keyValuePairs: { 'test.framework': 'Appium Grid' } }, { attemptCount: 0, lastStatus: null }, { enabled: true });
+    assert.equal(a.framework, 'Appium Grid');
+    assert.equal(a.ineligibleReason, null);
   });
 });
 

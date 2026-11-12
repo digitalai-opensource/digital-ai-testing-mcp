@@ -126,7 +126,7 @@ The usage-report tools (`download_usage_report`, `get_usage_report_download_comm
 
 ## 23. Root Cause Analysis Is Read-Only
 
-`get_root_cause_analysis` reads existing analyses but cannot start one. Analyses are started from the video report in the Reporter UI, cover Appium Server tests only, and allow 3 failed attempts per test.
+`get_root_cause_analysis` reads existing analyses but cannot start one. Analyses are started from the video report in the Reporter UI, cover Appium tests only (Appium Server, and Appium Grid from platform 26.9), and allow 3 failed attempts per test.
 
 ## 24. Features That Depend on the Platform Version
 

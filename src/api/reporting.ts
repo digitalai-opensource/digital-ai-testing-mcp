@@ -121,7 +121,9 @@ export async function getTestByUuid(uuid: string): Promise<TestReport> {
 //    fails upstream with 500 rca/submission-failed, and each failure burns one of only 3 attempts per test)
 //  - results live in the report's keyValuePairs: rca.status (e.g. COMPLETED), rca.description (the hypothesis),
 //    rca.evidence (JSON [{source, time, log, findings}]), rca.id
-// Trigger refusals (403 problem types): framework-not-supported (only Appium Server / "Appium OSS" tests),
+// Trigger refusals (403 problem types): framework-not-supported (Appium tests only — Appium Server, plus Appium Grid from
+// platform 26.9 per its release notes; test.framework is "Appium Server" / "Appium Grid", both match /appium/i. No Grid
+// analysis existed on the dev tenant to confirm it end to end, 2026-11-12),
 // already-completed, max-attempts-exceeded (3 failed attempts), service-not-available (RCA not enabled for the project).
 
 export const RCA_MAX_ATTEMPTS = 3;
@@ -168,7 +170,7 @@ export function buildRootCauseAnalysis(
   let ineligibleReason: string | null = null;
   if (status === 'completed') ineligibleReason = 'An analysis already completed for this report (re-running is not allowed).';
   else if (raw.status === 'Passed' || raw.status === 'Healed') ineligibleReason = 'The test passed — there is nothing to analyse.';
-  else if (framework && !/appium/i.test(framework)) ineligibleReason = `RCA only supports Appium Server (Appium OSS) tests; this report's framework is ${framework}.`;
+  else if (framework && !/appium/i.test(framework)) ineligibleReason = `RCA only supports Appium tests (Appium Server, and Appium Grid from platform 26.9); this report's framework is ${framework}.`;
   else if (attempts != null && attempts >= RCA_MAX_ATTEMPTS && status !== 'queued' && status !== 'running') {
     ineligibleReason = `All ${RCA_MAX_ATTEMPTS} attempts are used — a cloud administrator must reset them.`;
   } else if (info?.enabled === false) ineligibleReason = 'RCA is not enabled on this cloud.';

@@ -1096,7 +1096,8 @@ export function registerBoilerplateTools(server: McpServer): void {
         .describe(
           'Appium Server projects only: pin the Appium version the session runs on (digitalai:appiumVersion). Omit to use ' +
           'the platform default. An unavailable version fails the session at start with the list of versions the platform ' +
-          'offers. Not combinable with includeAxeScan, which pins 2.16.2 itself.'
+          'offers. 3.8.1 (platform 26.9+) needs iOS 17+ — on iOS 15/16 the session fails after about a minute with ' +
+          '"DeviceOSVersionTooLow"; use 3.8.0 there. Not combinable with includeAxeScan, which pins 2.16.2 itself.'
         ),
       newSessionWaitTimeout: z
         .number()

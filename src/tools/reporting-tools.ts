@@ -159,7 +159,7 @@ export function registerReportingTools(server: McpServer): void {
     'Read the platform\'s AI Root Cause Analysis for a failed test report: the hypothesis, the supporting evidence ' +
     '(log lines with source, time and findings), the analysis status and attempts used, plus the reporter\'s own error ' +
     'classification (errorCategory / errorClassification / cause). Read-only — it never starts an analysis. ' +
-    'Analyses are started from the video report in the Reporter UI; they cover Appium Server tests only and allow ' +
+    'Analyses are started from the video report in the Reporter UI; they cover Appium tests only (Appium Server; Appium Grid from platform 26.9) and allow ' +
     '3 failed attempts per test. ineligibleReason explains when an analysis cannot be run. ' +
     'To find analysed reports: list_test_reports with filter rca.status = COMPLETED.',
     {
