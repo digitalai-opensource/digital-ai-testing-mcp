@@ -2309,7 +2309,7 @@ export async function sessionCapture(
   try {
     const { listFiles } = await import('./repository.js');
     for (let i = 0; i < 5 && !repositoryFile; i++) {
-      const hit = (await listFiles()).find((f) => f.uniqueName === file);
+      const hit = (await listFiles({ uniqueName: file })).find((f) => f.uniqueName === file); // a miss re-fetches (cache)
       if (hit) repositoryFile = { id: hit.id, size: Number(hit.size ?? 0) };
       else await new Promise((r) => setTimeout(r, 1500));
     }

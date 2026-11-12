@@ -131,7 +131,7 @@ Combine with `and`: `@os='android' and @category='PHONE' and @version>'13.0' and
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `list_repository_files` | List files in the repository. `uniqueName` / `projectName` / `projectId` filter client-side (the platform ignores them) | Any |
+| `list_repository_files` | List files in the repository. `uniqueName` / `projectName` / `projectId` filter client-side (the platform ignores them) The list is cached for 30 s per credential and cleared when this server uploads, updates or deletes a file; a `uniqueName` that is not found is re-checked, and `refresh: true` skips the cache. | Any |
 | `get_repository_file_info` | Get file details by ID | Any |
 | `upload_repository_file` | Upload a file (reads from the MCP server's filesystem) | Any |
 | `get_repository_upload_command` | Generate a curl/PowerShell command to upload a file from the user's local machine — use when the server runs in Docker/remote and cannot read the local file | Any |

@@ -1,7 +1,8 @@
 import { createReadStream } from 'fs';
 import { writeFile } from 'fs/promises';
 import FormData from 'form-data';
-import { apiGet, apiDelete, apiPostForm, apiDownload } from './client.js';
+import { createHash } from 'crypto';
+import { apiGet, apiDelete, apiPostForm, apiDownload, getActiveUrl, getActiveAccessKey } from './client.js';
 import type { ApiResponse, RepositoryFile, RepositoryFileFilters } from '../types/digital-ai.js';
 
 /**
@@ -16,9 +17,40 @@ export function filterRepositoryFiles(files: RepositoryFile[], filters: { projec
   );
 }
 
-export async function listFiles(filters?: RepositoryFileFilters): Promise<RepositoryFile[]> {
+/**
+ * Short-lived cache of the full list. The platform ignores every filter, so each list_repository_files call fetched the
+ * whole repository (210+ files on the dev tenant) — an agent filtering the same repository several times in a row paid
+ * for it each time. Keyed by credential (a profile switch never sees another key's files). Cleared by this MCP's own
+ * upload / update / delete. Files created elsewhere (another user, a generated upload command, a HAR/log/audio capture)
+ * can be up to REPOSITORY_CACHE_TTL_MS old — which is why a uniqueName lookup that misses always re-fetches once, and
+ * `fresh` bypasses the cache.
+ */
+export const REPOSITORY_CACHE_TTL_MS = 30_000;
+let cache: { credential: string; at: number; files: RepositoryFile[] } | null = null;
+
+function credentialFingerprint(): string {
+  return createHash('sha256').update(`${getActiveUrl()}\0${getActiveAccessKey()}`).digest('hex');
+}
+
+export function invalidateRepositoryCache(): void {
+  cache = null;
+}
+
+async function fetchAllFiles(fresh: boolean): Promise<RepositoryFile[]> {
+  const credential = credentialFingerprint();
+  if (!fresh && cache && cache.credential === credential && Date.now() - cache.at < REPOSITORY_CACHE_TTL_MS) return cache.files;
+  const res = await apiGet<ApiResponse<RepositoryFile[]>>('/api/v1/files');
+  cache = { credential, at: Date.now(), files: res.data ?? [] };
+  return cache.files;
+}
+
+export async function listFiles(filters?: RepositoryFileFilters, opts: { fresh?: boolean } = {}): Promise<RepositoryFile[]> {
   try {
-    const res = await apiGet<ApiResponse<RepositoryFile[]>>('/api/v1/files');
+    let all = await fetchAllFiles(opts.fresh === true);
+    // A file just created outside this MCP may not be in a cached list yet — a named lookup that misses checks again.
+    if (!opts.fresh && filters?.uniqueName && filterRepositoryFiles(all, { uniqueName: filters.uniqueName }).length === 0) {
+      all = await fetchAllFiles(true);
+    }
     let projectName = filters?.projectName;
     if (filters?.projectId && !projectName) {
       // File records carry the project NAME only — resolve the id through the projects the caller can see.
@@ -27,7 +59,7 @@ export async function listFiles(filters?: RepositoryFileFilters): Promise<Reposi
       if (!match) throw new Error(`project ${filters.projectId} is not visible to this credential — use projectName`);
       projectName = match.name;
     }
-    return filterRepositoryFiles(res.data ?? [], { projectName, uniqueName: filters?.uniqueName });
+    return filterRepositoryFiles(all, { projectName, uniqueName: filters?.uniqueName });
   } catch (e) {
     throw new Error(`listFiles failed: ${(e as Error).message}`);
   }
@@ -60,6 +92,7 @@ export async function uploadFile(
     if (params?.projectName) form.append('projectName', params.projectName);
 
     const res = await apiPostForm<ApiResponse<number>>('/api/v1/files', form);
+    invalidateRepositoryCache();
     return res.data;
   } catch (e) {
     throw new Error(`uploadFile failed: ${(e as Error).message}`);
@@ -86,6 +119,7 @@ export async function updateFile(
     if (params.description) form.append('description', params.description);
 
     await apiPostForm(`/api/v1/files/${fileId}`, form);
+    invalidateRepositoryCache();
   } catch (e) {
     throw new Error(`updateFile failed: ${(e as Error).message}`);
   }
@@ -94,6 +128,7 @@ export async function updateFile(
 export async function deleteFile(fileId: number): Promise<void> {
   try {
     await apiDelete(`/api/v1/files/${fileId}`);
+    invalidateRepositoryCache();
   } catch (e) {
     throw new Error(`deleteFile failed: ${(e as Error).message}`);
   }

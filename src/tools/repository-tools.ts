@@ -28,11 +28,13 @@ import { commandPayload } from '../utils/command-payload.js';
 export function registerRepositoryTools(server: McpServer): void {
   server.tool(
     'list_repository_files',
-    'Lists files in the Digital.ai file repository. You can filter by project name or unique name. Each file has a numeric ID — use that ID for downloads, updates, and deletes.',
+    'Lists files in the Digital.ai file repository. You can filter by project name or unique name. Each file has a numeric ID — use that ID for downloads, updates, and deletes. ' +
+    'The list is cached for 30 s per credential and refreshed after this server uploads, updates or deletes a file; a uniqueName that is not found is always re-checked. Pass refresh: true for files just added another way (another user, an upload command).',
     {
       projectId: z.string().optional().describe('Filter by project ID (resolved to its name — must be a project this credential can see).'),
       projectName: z.string().optional().describe('Filter by project name (exact, case-insensitive).'),
       uniqueName: z.string().optional().describe('Filter by unique name alias (exact, case-insensitive) — e.g. the name used as cloud:<uniqueName>.'),
+      refresh: z.boolean().optional().describe('Skip the 30-second cache and fetch the repository list again.'),
       maxResults: z
         .number()
         .optional()
@@ -40,9 +42,9 @@ export function registerRepositoryTools(server: McpServer): void {
         .describe('Maximum number of results to return (default: 50, max: 500).'),
       outputFormat: outputFormatParam,
     },
-    async ({ projectId, projectName, uniqueName, maxResults, outputFormat }) => {
+    async ({ projectId, projectName, uniqueName, refresh, maxResults, outputFormat }) => {
       try {
-        const files = await listFiles({ projectId, projectName, uniqueName });
+        const files = await listFiles({ projectId, projectName, uniqueName }, { fresh: refresh === true });
         const paged = applyMaxResults(files, maxResults);
         const structured = {
           files: paged.items.map(f => ({
