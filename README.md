@@ -536,7 +536,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 | [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 30 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay projection, audio play/record, mock biometric authentication |
 | [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 8 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
 | [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation |
-| [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with a User Tag column, 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
+| [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with User Tag, Device Tag and Device Group columns (tag/group lists are split when grouping), 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
 | [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 7 guided prompts |
 
 [↑ Back to top](#table-of-contents)
@@ -591,7 +591,7 @@ Generates a complete, pre-configured Appium test project. The Digital.ai server 
 | `platform` | `android` \| `ios` | _(required)_ |
 | `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Appium Server projects only) | _(required)_ |
 | `appId` | Numeric app ID from `list_applications` | Recommended |
-| `deviceCategory` | `PHONE` \| `TABLET` | `PHONE` |
+| `deviceCategory` | `PHONE` \| `TABLET` \| `FOLDABLE` (platform 26.10+; a foldable is never matched by `PHONE`) | `PHONE` |
 | `testName` | Any string | `"My First Mobile Test"` |
 | `packageName` | Android package name (e.g. `com.mycompany.app`) | _(optional)_ |
 | `mainActivity` | Android main activity (e.g. `.MainActivity`) | _(optional)_ |
@@ -609,6 +609,10 @@ Generates a complete, pre-configured Appium test project. The Digital.ai server 
 | `appiumVersion` | Appium Server version, e.g. `"2.18.0"` (Appium Server projects; not with `includeAxeScan`) | platform default |
 | `newSessionWaitTimeout` | Seconds (10–3600) to wait for a free matching device before failing with the platform's reason | _(optional)_ |
 | `reportKeys` | Custom report columns, e.g. `{"build": "1.4.0"}` — find the runs later with a `list_test_reports` filter | _(optional)_ |
+| `appReset` | `reinstall` (the platform reinstalls the app at every session start) \| `keep-data` (launch the installed app, keep its data) — Appium Server projects | `reinstall` |
+| `deviceLanguage` | e.g. `en_US` — sets `appium:language` + `appium:locale`. iOS: the app, for this session; **Android: the whole device, and it stays changed** — Appium Server projects | _(optional)_ |
+| `autoAcceptAlerts` | `true` — iOS accepts every native alert as it appears (also hides alerts a test should check) — Appium Server projects | _(off)_ |
+| `platformOptions` | `releaseDevice`, `reservationDuration`, `devicePool`, `commandScreenshot`, `dontGoHomeOnQuit` → `digitalai:*` capabilities — Appium Server projects | _(optional)_ |
 | `outputFormat` | `json` \| `human` | `json` |
 
 </details>
