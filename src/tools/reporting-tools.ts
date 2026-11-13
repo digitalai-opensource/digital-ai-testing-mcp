@@ -28,6 +28,8 @@ import { buildDownloadCommand } from '../utils/download-command.js';
 import {
   formatTestReport,
   formatTestReportList,
+  formatCompactReportList,
+  compactReport,
   formatFailureSummary,
   formatTestAttachments,
   formatGroupedTestReports,
@@ -266,8 +268,20 @@ export function registerReportingTools(server: McpServer): void {
     'Scoped to a project if projectId or projectName is provided. ' +
     'NOTE: the list response does NOT include failure diagnostics — the cause, errorCategory, and errorDetail fields are only returned by get_test_report (single-record). ' +
     'To diagnose why a listed test failed, call get_test_report with its test_id, or get_test_log for the full Appium log. ' +
-    'For "why are my tests failing?" across many failures, use summarize_test_failures — it buckets failures by error classification in one call.',
+    'For "why are my tests failing?" across many failures, use summarize_test_failures — it buckets failures by error classification in one call. ' +
+    'SPEED: built-in filters (status, name, test_id, success, test.framework) and project scoping answer in well under a second; ' +
+    'a filter on a CUSTOM key (e.g. rca.status, test.run.id, a report key) or searchValue can take 5–40 s on a large reporter ' +
+    '(measured live on ~40k records) — combine it with a built-in filter where you can, and do not repeat it to "retry". ' +
+    'Use fields: "compact" for lists you only scan (about half the size).',
     {
+      fields: z
+        .enum(['full', 'compact'])
+        .optional()
+        .describe(
+          '"full" (default): every column of each record. "compact": only test_id, uuid, name, status, start_time, ' +
+          'duration plus the keys you asked for — about half the size; use it for scanning or counting, then ' +
+          'get_test_report for the records that matter.'
+        ),
       limit: z
         .number()
         .int()
@@ -356,9 +370,12 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Scope results to this project name.'),
       outputFormat: outputFormatParam,
     },
-    async ({ limit, page, searchValue, filter, sort, keys, returnTotalCount, startDate, endDate, projectId, projectName, outputFormat }) => {
+    async ({ fields, limit, page, searchValue, filter, sort, keys, returnTotalCount, startDate, endDate, projectId, projectName, outputFormat }) => {
       try {
         const targetLimit = limit ?? 50;
+        const compact = fields === 'compact';
+        const shape = (rs: TestReport[]) => (compact ? rs.map((r) => compactReport(r, keys)) : rs);
+        const render = (rs: TestReport[]) => (compact ? formatCompactReportList(rs, keys) : formatTestReportList(rs));
 
         if (startDate || endDate) {
           // Client-side date filtering — server-side start_time filter is CSRF-blocked for all key types.
@@ -431,10 +448,10 @@ export function registerReportingTools(server: McpServer): void {
           return respond(
             outputFormat,
             {
-              reports: matched,
+              reports: shape(matched),
               ...(wantTotal && { total: matchedCount, totalCapped: countCapped }),
             },
-            header + (matched.length > 0 ? '\n' + formatTestReportList(matched) : '')
+            header + (matched.length > 0 ? '\n' + render(matched) : '')
           );
         }
 
@@ -458,8 +475,8 @@ export function registerReportingTools(server: McpServer): void {
           : undefined;
         return respond(
           outputFormat,
-          { reports, total: result.count, ...(sortRefused && { sortApplied: false, warning: sortWarning }) },
-          (sortWarning ? `⚠️  ${sortWarning}\n\n` : '') + countLine + formatTestReportList(reports)
+          { reports: shape(reports), total: result.count, ...(sortRefused && { sortApplied: false, warning: sortWarning }) },
+          (sortWarning ? `⚠️  ${sortWarning}\n\n` : '') + countLine + render(reports)
         );
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

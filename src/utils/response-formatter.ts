@@ -332,6 +332,30 @@ export function formatFailureSummary(s: FailureSummary): string {
   return lines.join('\n');
 }
 
+/**
+ * list_test_reports fields: "compact" — the six columns callers actually use plus the requested keys. A full record is
+ * ~475 characters (debug-mode intake 2026-11-12: a limit-40 call was 19 KB); compact drops the built-in columns that
+ * repeat on every record (has_attachment, create_time, success, status_code, attachment_count, …).
+ */
+export const COMPACT_REPORT_FIELDS = ['test_id', 'uuid', 'name', 'status', 'start_time', 'duration'] as const;
+
+export function compactReport(report: TestReport, keys: string[] = []): Record<string, unknown> {
+  const r = report as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const f of [...COMPACT_REPORT_FIELDS, ...keys]) if (r[f] !== undefined && r[f] !== null) out[f] = r[f];
+  return out;
+}
+
+export function formatCompactReportList(reports: TestReport[], keys: string[] = []): string {
+  if (reports.length === 0) return 'No test reports found.';
+  return reports.map((report) => {
+    const r = compactReport(report, keys);
+    const dur = typeof r.duration === 'number' ? ` ${(r.duration / 1000).toFixed(1)}s` : '';
+    const extra = keys.filter((k) => r[k] !== undefined).map((k) => `${k}=${String(r[k])}`).join(' ');
+    return `#${r.test_id} ${r.status} ${r.start_time}${dur} — ${r.name}${extra ? ` [${extra}]` : ''}`;
+  }).join('\n');
+}
+
 export function formatTestReportList(reports: TestReport[]): string {
   if (reports.length === 0) return 'No test reports found.';
   return reports.map(formatTestReport).join('\n\n');

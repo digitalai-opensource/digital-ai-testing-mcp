@@ -200,6 +200,27 @@ describe('list_test_reports keys', () => {
     assert.deepEqual(lastListBody().keys, ['user']);
   });
 
+  it('fields: "compact" keeps the six core columns plus requested keys; full stays the default (intake 2026-11-12)', async () => {
+    listFixture = 'incomplete';
+    const full = await tools.callJson('list_test_reports', { limit: 5 });
+    const fullKeys = Object.keys((full.reports as Array<Record<string, unknown>>)[0]);
+    const compact = await tools.callJson('list_test_reports', { limit: 5, fields: 'compact' });
+    const rows = compact.reports as Array<Record<string, unknown>>;
+    assert.ok(fullKeys.length > Object.keys(rows[0]).length, `default is the full record: ${fullKeys.join(',')}`);
+    assert.ok(fullKeys.includes('duration'), 'full keeps null columns');
+    assert.equal(rows.length, 2);
+    assert.deepEqual(Object.keys(rows[0]).sort(), ['name', 'start_time', 'status', 'test_id', 'uuid']);
+    const human = await tools.call('list_test_reports', { limit: 5, fields: 'compact', outputFormat: 'human' });
+    assert.match(human.text, /^#1 Incomplete \S+ — running$/m);
+    listFixture = 'trend';
+  });
+
+  it('the description warns that custom-key filters and searchValue are slow', async () => {
+    const { tools: list } = await tools.client.listTools();
+    const d = list.find((t) => t.name === 'list_test_reports')!.description ?? '';
+    assert.match(d, /CUSTOM key .* 5–40 s/);
+  });
+
   it('explains the opaque 400 a comparison filter produces', async () => {
     const { res, text } = await tools.call('list_test_reports', { filter: [{ property: 'loadSeq', operator: '>', value: 8 }] });
     assert.equal(res.isError, true);
