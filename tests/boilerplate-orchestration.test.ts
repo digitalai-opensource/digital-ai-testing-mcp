@@ -404,6 +404,15 @@ describe('get_test_boilerplate — appReset, deviceLanguage, autoAcceptAlerts, p
     }
   });
 
+  it('deviceCategory FOLDABLE (26.10) reaches the device query and keeps the region suffix', async () => {
+    // Verified live 2026-11-12: a foldable reports deviceCategory FOLDABLE and is NOT matched by @category='PHONE'.
+    account.isAppiumOss = true; account.fail = false;
+    for (const language of LANGS) {
+      const t = test((await gen({ platform: 'android', language, deviceCategory: 'FOLDABLE', region: 'UK1', orchestration: 'off' })).json);
+      assert.match(t, /@category='FOLDABLE' and @region='UK1'/, language);
+    }
+  });
+
   it('deviceLanguage maps to language + locale per platform; Android gets the persistence note', async () => {
     account.isAppiumOss = true; account.fail = false;
     const a = await gen({ platform: 'android', language: 'python', deviceLanguage: 'fr_FR', orchestration: 'off' });

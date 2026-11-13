@@ -114,6 +114,18 @@ describe('multi-section usage reports (Users Usage, platform 26.2 User Tag colum
     assert.deepEqual(byTag, { france: 2, 'fiserv-poc': 0.5, jpmcpoc: 0.5, '': 1 });
   });
 
+  it('splits comma-separated Device Group and Device Tag cells (Device Reservations, 26.10)', () => {
+    const parsed = {
+      headers: ['Device Name', 'Device Tag', 'Device Group'],
+      rows: [['A', 'nv, demo', 'Monitoring, Default'], ['B', '', 'Monitoring']],
+    };
+    const g = summarizeRows(parsed, { groupBy: 'device group' });
+    assert.equal(g.valuesSplit, true);
+    assert.deepEqual(Object.fromEntries(g.groups.map((x) => [x.value, x.count])), { Monitoring: 2, Default: 1 });
+    const t = summarizeRows(parsed, { groupBy: 'Device Tag' });
+    assert.deepEqual(Object.fromEntries(t.groups.map((x) => [x.value, x.count])), { nv: 1, demo: 1, '': 1 });
+  });
+
   it('does not split non-tag columns', () => {
     const r = summarizeRows({ headers: ['Project'], rows: [['A, B']] }, { groupBy: 'Project' });
     assert.equal(r.valuesSplit, undefined);

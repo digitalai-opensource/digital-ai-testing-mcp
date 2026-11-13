@@ -41,6 +41,9 @@ export interface SummaryResult {
 
 const DEFAULT_TOP_N = 50;
 
+/** Columns whose cells are comma-separated lists: User Tag, Device Tag, Device Group. */
+export const MULTI_VALUE_COLUMN_RE = /\b(?:tags?|groups?)\b/i;
+
 function findColumnIndex(headers: string[], name: string): number {
   const target = name.trim().toLowerCase();
   return headers.findIndex((h) => h.trim().toLowerCase() === target);
@@ -62,7 +65,9 @@ export function summarizeRows(parsed: ParsedCsv, opts: SummarizeOptions): Summar
     }
   }
 
-  const splitValues = opts.splitValues ?? /\btags?\b/i.test(headers[groupIdx]);
+  // User Tag, Device Tag and Device Group (26.10) cells hold comma-separated lists — verified live 2026-11-12: one
+  // Device Group cell named up to eight groups.
+  const splitValues = opts.splitValues ?? MULTI_VALUE_COLUMN_RE.test(headers[groupIdx]);
   const buckets = new Map<string, { count: number; sum: number }>();
   let countedRows = 0;
   for (const row of rows) {

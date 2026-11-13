@@ -88,7 +88,7 @@ export function registerDeviceTools(server: McpServer): void {
           "CONFIRMED WORKING fields: " +
           "@os ('android'/'iOS', case-insensitive), " +
           "@version (decimal required — '14.0' works, '14' matches nothing; supports =, >, <, !=), " +
-          "@category ('PHONE'/'TABLET' — UPPERCASE required, lowercase returns nothing), " +
+          "@category ('PHONE'/'TABLET'/'WATCH'/'FOLDABLE' — UPPERCASE required; a foldable is FOLDABLE, never PHONE, lowercase returns nothing), " +
           "@region (e.g. 'US2', 'SG1'), " +
           "@serialNumber (exact device serial/UDID), " +
           "@name (exact device display name), " +
@@ -760,9 +760,9 @@ export function registerDeviceTools(server: McpServer): void {
         .optional()
         .describe('All listed tags must be present on the device (case-insensitive, client-side filter).'),
       category: z
-        .enum(['PHONE', 'TABLET', 'WATCH'])
+        .enum(['PHONE', 'TABLET', 'WATCH', 'FOLDABLE'])
         .optional()
-        .describe('Device form factor. Applied server-side.'),
+        .describe('Device form factor. Applied server-side. FOLDABLE (platform 26.10+) is a category of its own — a foldable is not returned for PHONE.'),
       preferRegions: z
         .array(z.string())
         .optional()

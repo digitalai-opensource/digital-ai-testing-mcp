@@ -80,7 +80,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
     'get_devices_in_group',
     'Lists all devices that belong to a specific device group. ' +
     'Optional client-side filters: osType (ios/android), status (Available/Offline/In Use/etc.), ' +
-    'category (PHONE/TABLET/WATCH), excludeTags (exclude devices with any listed tag), ' +
+    'category (PHONE/TABLET/WATCH/FOLDABLE), excludeTags (exclude devices with any listed tag), ' +
     'requireTags (include only devices with all listed tags). ' +
     'Used in create_poc Step 3 to select eligible devices from the Default group. Cloud Admin only.',
     {
@@ -95,7 +95,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
       category: z
         .string()
         .optional()
-        .describe("Filter by deviceCategory: 'PHONE', 'TABLET', 'WATCH', or 'UNKNOWN'. Exact case-insensitive match."),
+        .describe("Filter by deviceCategory: 'PHONE', 'TABLET', 'WATCH', 'FOLDABLE' or 'UNKNOWN'. Exact case-insensitive match."),
       excludeTags: z
         .array(z.string())
         .optional()

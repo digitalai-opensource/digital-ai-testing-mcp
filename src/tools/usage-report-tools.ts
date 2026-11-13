@@ -28,8 +28,9 @@ const REPORT_TYPE_DESCRIPTION =
   '- "Device Reservations": section 1 = Project, Start Date, End Date, Total Reservation Time (hours), Tokens — one row ' +
   'per project. Section 2 = one row per reservation: Reservation Start/End Timestamp/Date/Hour, Reservation Duration, ' +
   'Reservation Host, Reservation Notes, Release Reason, Device ID/Name/UDID/OS/OS Version/Model/Manufacturer, User ID, ' +
-  'Username, first/last name, email, Project, Tokens. Use for chargeback-by-project, or per-device / per-user ' +
-  'reservation audits. Section 2 lists every reservation, so it is large.\n' +
+  'Username, first/last name, email, Project, Tokens, User Tag, Device Tag, Device Group (the last three 26.10+; each ' +
+  'cell can hold several comma-separated values). Use for chargeback-by-project, per-device / per-user reservation ' +
+  'audits, or reservations per device group or tag. Section 2 lists every reservation, so it is large.\n' +
   '- "Users Usage": section 1 = the same per-project summary as Device Reservations. Section 2 = one row per user per ' +
   'project: User ID, Username, first/last name, email, Project, Total Duration (in hours), Tokens, User Tag (26.2+; one ' +
   'cell can hold several comma-separated tags). Use for reservation-hours per user or per user tag ' +
@@ -182,8 +183,9 @@ export function registerUsageReportTools(server: McpServer): void {
       'groupBy must name an actual column in that report\'s CSV — if it doesn\'t match, the error lists the real ' +
       'column names so you can retry correctly. Common groupBy values: "Username" (License Usage, Browser Usage), ' +
       '"User" (Users Statistics), "Project" (Device Reservations, Users Usage, Devices Usage), "Username" or ' +
-      '"User Tag" (Users Usage per-user section), "Device Name" or "Release Reason" (Device Reservations ' +
-      'per-reservation section).\n\n' +
+      '"User Tag" (Users Usage per-user section), "Device Name", "Release Reason", "Device Group", "Device Tag" or ' +
+      '"User Tag" (Device Reservations per-reservation section). Tag and group columns are split on commas: a row ' +
+      'with several values counts in each group.\n\n' +
       FETCH_TIME_NOTE,
     {
       reportType: REPORT_TYPE_ENUM.describe(REPORT_TYPE_DESCRIPTION),

@@ -748,7 +748,7 @@ function substitute(
   if (vars.region) {
     // Append region to the deviceQuery — fires after the PHONE/TABLET substitution has already run.
     result = result.replace(
-      /@category='(PHONE|TABLET)'/g,
+      /@category='(PHONE|TABLET|FOLDABLE)'/g,
       `@category='$1' and @region='${vars.region}'`
     );
   }
@@ -1085,10 +1085,10 @@ export function registerBoilerplateTools(server: McpServer): void {
           'Recommended for any real app.'
         ),
       deviceCategory: z
-        .enum(['PHONE', 'TABLET'])
+        .enum(['PHONE', 'TABLET', 'FOLDABLE'])
         .optional()
         .default('PHONE')
-        .describe("Device form factor to target: 'PHONE' (default) or 'TABLET'."),
+        .describe("Device form factor to target: 'PHONE' (default), 'TABLET' or 'FOLDABLE' (platform 26.10+; foldables are not in PHONE)."),
       testName: z
         .string()
         .optional()

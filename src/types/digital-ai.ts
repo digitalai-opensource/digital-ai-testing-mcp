@@ -714,7 +714,7 @@ export interface Transaction {
   deviceManufacturer: string;
   deviceVersion: string;      // OS version string
   deviceScreen: string;       // e.g. "1080 x 2190"
-  deviceType: string;         // "PHONE", "TABLET"
+  deviceType: string;         // "PHONE", "TABLET", "WATCH", "FOLDABLE" (26.10+)
   networkProfile: string;
   cpuAvg: number | null;      // %
   cpuMax: number | null;      // %
