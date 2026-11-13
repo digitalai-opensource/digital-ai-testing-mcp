@@ -176,6 +176,49 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
       assert.ok(t.templateName || t.model, 'template has neither a name nor a model — deviceQuery cannot target it');
     }
   });
+
+  // FINDING 14 (26.10, 2026-11-12): foldables are their own category. find_available_device / get_test_boilerplate
+  // offer FOLDABLE and the query help says @category='PHONE' never matches one. If a FOLDABLE record also comes back
+  // for PHONE, that guidance is wrong. Passes vacuously on a tenant with no foldable.
+  it('a FOLDABLE device reports deviceCategory FOLDABLE and is not matched by PHONE', async () => {
+    const { getDevicesByQuery } = await import('../../src/api/devices.js');
+    const foldables = await getDevicesByQuery("@category='FOLDABLE'");
+    for (const d of foldables) assert.equal(String(d.deviceCategory).toUpperCase(), 'FOLDABLE', d.deviceName);
+    if (foldables.length === 0) return;
+    const phones = await getDevicesByQuery(`@category='PHONE' and @model='${foldables[0].model}'`);
+    assert.ok(!phones.some((p) => String(p.id) === String(foldables[0].id)), 'a foldable was returned for PHONE');
+  });
+
+  // FINDING 15 (26.10, 2026-11-12): Device Reservations' per-reservation section carries User Tag, Device Tag and
+  // Device Group, and summarize_usage_report splits their comma lists. Cloud Admin only — skipped for project keys.
+  it('Device Reservations has the User Tag / Device Tag / Device Group columns (Cloud Admin)', async (ctx) => {
+    const { getAccessInfo } = await import('../../src/api/access-level.js');
+    if ((await getAccessInfo()).level !== 'cloud-admin') return ctx.skip();
+    const { summarizeUsageReport } = await import('../../src/api/usage-reports.js');
+    const day = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+    const s = await summarizeUsageReport('Device Reservations', { startDate: day, endDate: day }, { groupBy: 'Device Group', topN: 5 });
+    for (const col of ['User Tag', 'Device Tag', 'Device Group']) assert.ok(s.availableColumns.includes(col), `missing ${col}`);
+    assert.equal(s.valuesSplit, true);
+  }, 120_000);
+
+  // FINDING 16 (2026-11-12): an unknown digitalai:appiumVersion is refused at once with the configured list (no session,
+  // no report). The default (3.5.2) and 3.8.1 must be in it. Logs a note when 3.9.0 (26.10 notes, not deployed on
+  // 2026-11-12) appears — then probe it on Android, iOS < 17 and iOS 17+ and add it to the appiumVersion docs (B11).
+  it('the platform lists its Appium Server versions; default and 3.8.1 are present', async () => {
+    const axios = (await import('axios')).default;
+    const { getActiveUrl, getActiveAccessKey } = await import('../../src/api/client.js');
+    const r = await axios.post(`${getActiveUrl().replace(/\/$/, '')}/wd/hub/session`, {
+      capabilities: { alwaysMatch: { platformName: 'Android', 'appium:automationName': 'UiAutomator2',
+        'digitalai:accessKey': getActiveAccessKey(), 'digitalai:appiumVersion': '0.0.0-probe',
+        'digitalai:deviceQuery': "@os='android'", 'digitalai:testName': 'appium version list probe' } },
+    }, { validateStatus: () => true, timeout: 60_000 });
+    const msg = String(r.data?.value?.message ?? '');
+    const list = (msg.match(/configured appium versions are (.+)$/)?.[1] ?? '').split(/,\s*/).filter(Boolean);
+    assert.ok(list.length > 0, `no version list in the refusal: ${msg.slice(0, 200)}`);
+    for (const v of ['3.5.2', '3.8.1']) assert.ok(list.includes(v), `Appium ${v} is no longer offered`);
+    const newer = list.filter((v) => /^3\.(9|\d{2,})\./.test(v) || /^[4-9]\./.test(v));
+    if (newer.length) console.warn(`[B11] new Appium Server version(s) offered: ${newer.join(', ')} — probe and document them`);
+  }, 90_000);
 });
 
 // The Test Orchestrator agent is NOT shipped with the package — install_test_orchestrator_agent downloads it on

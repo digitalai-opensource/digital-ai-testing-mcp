@@ -68,7 +68,7 @@ export interface Device {
   modelName?: string;
   manufacturer: string;
   currentUser: string;
-  deviceCategory: 'PHONE' | 'TABLET' | 'WATCH' | 'UNKNOWN';
+  deviceCategory: 'PHONE' | 'TABLET' | 'WATCH' | 'FOLDABLE' | 'UNKNOWN';
   uptime: string;
   isEmulator: boolean;
   profiles: string;
