@@ -31,6 +31,7 @@ import { resolveDevice, formatResolvedDevice } from '../utils/device-resolver.js
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import { commandPayload } from '../utils/command-payload.js';
 import { getActiveUrl } from '../api/client.js';
+import { getRunningTestRequests } from '../api/test-requests.js';
 
 /**
  * Devices other teams have set aside, by convention, through a tag or the device name ("DoNotTake", "DONTTAKE",
@@ -38,7 +39,7 @@ import { getActiveUrl } from '../api/client.js';
  * had to choose by hand (debug-mode intake 2026-10-19). They are skipped unless nothing else is available or the caller
  * opts in with includeDoNotUse.
  */
-export const DO_NOT_USE_RE = /\b(do[\s_-]*n[o']?t[\s_-]*(take|use|touch)|dont[\s_-]*(take|use|touch)|reserved)\b/i;
+export const DO_NOT_USE_RE = /\b(do[\s_-]*n[o']?t[\s_-]*(take|use|touch)|dont[\s_-]*(take|use|touch)|reserved|occupied)\b/i; // OCCUPIED added after a UAT pick (2026-11-13)
 export function isDoNotUse(d: { tags?: string[]; deviceName?: string }): boolean {
   return (d.tags ?? []).some((t) => DO_NOT_USE_RE.test(t)) || DO_NOT_USE_RE.test(d.deviceName ?? '');
 }
@@ -690,6 +691,12 @@ export function registerDeviceTools(server: McpServer): void {
         const available = paged.items.filter(d => d.displayStatus.toLowerCase() === 'available').length;
         const reserved = paged.items.filter(d => d.displayStatus.toLowerCase() === 'reserved').length;
         const offline = paged.items.filter(d => d.displayStatus.toLowerCase() === 'offline').length;
+        // Every other status (In Use, Error, Unauthorized, Cleanup, …) — without these the buckets did not add up to the
+        // total and "offline" looked lower than in get_license_utilization (UAT 2026-11-13: 17 vs 20).
+        const byStatus: Record<string, number> = {};
+        for (const d of paged.items) byStatus[d.displayStatus] = (byStatus[d.displayStatus] ?? 0) + 1;
+        const inUse = paged.items.filter(d => /^(in ?use|busy)$/i.test(d.displayStatus)).length;
+        const other = paged.items.length - available - reserved - offline - inUse;
         const ios = paged.items.filter(d => d.deviceOs === 'iOS').length;
         const android = paged.items.filter(d => d.deviceOs === 'Android').length;
         const agentMapStruct: Record<string, { total: number; online: number; ip: string }> = {};
@@ -706,7 +713,7 @@ export function registerDeviceTools(server: McpServer): void {
           total: paged.total,
           analyzed: paged.returned,
           truncated: paged.truncated,
-          available, reserved, offline, ios, android,
+          available, reserved, offline, inUse, other, byStatus, ios, android,
           agents: agentArray,
           longOffline: longOfflineArray,
         };
@@ -910,7 +917,9 @@ export function registerDeviceTools(server: McpServer): void {
 
   server.tool(
     'release_orphaned_sessions',
-    'Find and release devices that have been in an "In Use" state longer than the specified threshold. Useful for clearing sessions orphaned by crashed test runners or forgotten manual sessions. Requires confirmDeletion: true to actually release; omit it to preview what would be released.',
+    'Find and release devices that have been in an "In Use" state longer than the specified threshold. Useful for clearing sessions orphaned by crashed test runners or forgotten manual sessions. ' +
+    'Devices with a test running right now (the platform\'s running-test list) are shown as busy and never released — back-to-back CI runs keep a device "In Use" for days. ' +
+    'Requires confirmDeletion: true to actually release; omit it to preview what would be released.',
     {
       maxAgeHours: z
         .number()
@@ -932,16 +941,43 @@ export function registerDeviceTools(server: McpServer): void {
         const devices = await getAllDevices();
         const thresholdMinutes = maxAgeHours * 60;
 
-        const orphaned = devices.filter((d) => {
+        const longInUse = devices.filter((d) => {
           const status = d.displayStatus.toLowerCase();
           const isInUse = status === 'in use' || status === 'inuse' || status === 'busy';
           const age = parseFloat(d.statusAgeInMinutes);
           return isInUse && !isNaN(age) && age >= thresholdMinutes;
         });
 
+        // A device "In Use" for 51 h was running a test started 2 minutes earlier — back-to-back CI keeps the status
+        // age growing (UAT 2026-11-13). The platform's running-test list is the truth: those devices are busy, not
+        // orphaned, and are never released. The list is scoped to what the caller may see, so a miss is not proof.
+        let running: Map<string, string | null> | null = null;
+        let runningCheckError: string | undefined;
+        if (longInUse.length > 0) {
+          try {
+            running = new Map(
+              (await getRunningTestRequests()).filter((r) => r.deviceName).map((r) => [r.deviceName as string, r.startedAt ?? r.createdAt])
+            );
+          } catch (e) {
+            runningCheckError = (e as Error).message;
+          }
+        }
+        const busy = running ? longInUse.filter((d) => running.has(d.deviceName)) : [];
+        const orphaned = longInUse.filter((d) => !busy.includes(d));
+        const busyText = busy.length
+          ? '\n\nBusy, NOT orphaned — a test is running on them now (never released):\n' +
+            busy.map((d) => `  • ${d.deviceName} (ID: ${d.id}) — in use ${(parseFloat(d.statusAgeInMinutes) / 60).toFixed(1)}h, current test started ${running?.get(d.deviceName) ?? 'recently'}`).join('\n')
+          : '';
+        const checkWarning = runningCheckError
+          ? `\n\n⚠️ Could not read the running-test list (${runningCheckError}) — a device below may be running a test. Check list_active_test_executions before confirming.`
+          : '';
+
         if (orphaned.length === 0) {
-          return respond(outputFormat, { orphaned: 0, thresholdHours: maxAgeHours, released: 0 },
-            `No orphaned sessions found (threshold: ${maxAgeHours}h). All in-use devices are within the time limit.`);
+          return respond(
+            outputFormat,
+            { orphaned: 0, busy: busy.map((d) => ({ id: d.id, name: d.deviceName, testStartedAt: running?.get(d.deviceName) ?? null })), thresholdHours: maxAgeHours, released: 0 },
+            `No orphaned sessions found (threshold: ${maxAgeHours}h).${busy.length ? '' : ' All in-use devices are within the time limit.'}${busyText}`
+          );
         }
 
         const preview = orphaned
@@ -957,7 +993,7 @@ export function registerDeviceTools(server: McpServer): void {
         );
         if (guard) {
           return {
-            content: [{ type: 'text', text: `${guard}\n\nDevices that would be released:\n${preview}` }],
+            content: [{ type: 'text', text: `${guard}\n\nDevices that would be released:\n${preview}${busyText}${checkWarning}` }],
           };
         }
 
@@ -975,7 +1011,7 @@ export function registerDeviceTools(server: McpServer): void {
         }
 
         const structured = { released: releaseResults.filter(r => r.status === 'released').length, results: releaseResults };
-        const humanText = `Released ${orphaned.length} orphaned session(s):\n${results.join('\n')}`;
+        const humanText = `Released ${orphaned.length} orphaned session(s):\n${results.join('\n')}${busyText}`;
         return respond(outputFormat, structured, humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

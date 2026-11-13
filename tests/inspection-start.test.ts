@@ -13,6 +13,7 @@ import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_
 import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
 
 let foreground = '.makePaymentView';
+let foregroundPackage = 'com.experitest.ExperiBank';
 let sweepable = false;
 let api: StubApi;
 let tools: ToolClient;
@@ -29,6 +30,7 @@ beforeAll(async () => {
       } } };
     }
     if (req.path === '/wd/hub/session/sid-1/appium/device/current_activity') return { value: foreground };
+    if (req.path === '/wd/hub/session/sid-1/execute/sync' && req.json.script === 'mobile: getCurrentPackage') return { value: foregroundPackage };
     if (req.path === '/wd/hub/session/sid-1' && req.method === 'DELETE') return { value: null };
     if (req.path === '/reporter/api/tests/list') {
       // After a timed-out start the platform may have created the session anyway — its report carries the test name.
@@ -63,6 +65,19 @@ describe('start_inspection_session reports the screen in front', () => {
     assert.match(String(j.screenNote), /showing "\.makePaymentView", not the requested "\.LoginActivity"/);
     assert.match(String(j.screenNote), /noReset is true/);
     assert.match(String(j.screenNote), /get_element_tree|noReset: false/);
+  });
+
+  it('says the app is NOT in front when another package (a launcher) is — never "resumed" (UAT 2026-11-13)', async () => {
+    foreground = '.activities.LauncherActivity';
+    foregroundPackage = 'com.sec.android.app.launcher';
+    try {
+      const j = await start({ platform: 'android', app: 'cloud:com.experitest.ExperiBank/.LoginActivity', appPackage: 'com.experitest.ExperiBank', appActivity: '.LoginActivity' });
+      assert.match(String(j.screenNote), /NOT in the foreground: com\.sec\.android\.app\.launcher is/);
+      assert.match(String(j.screenNote), /launch_app\(packageName: "com\.experitest\.ExperiBank", activity: "\.LoginActivity"\)/);
+      assert.doesNotMatch(String(j.screenNote), /resumed/);
+    } finally {
+      foregroundPackage = 'com.experitest.ExperiBank';
+    }
   });
 
   it('stays quiet when the requested activity is in front, in either spelling', async () => {

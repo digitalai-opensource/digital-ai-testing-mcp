@@ -201,6 +201,8 @@ describe('start_inspection_session — automotive argument validation (before an
       { platform: 'android', automotiveProjection: '800x480', instrumentCluster: 'Map' },
       { platform: 'ios', instrumentCluster: 'Map' },
       { platform: 'ios', automotiveProjection: '1280x720' },
+      // Projection is phones-only; a foldable is its own category since 26.10 (UAT 2026-11-13).
+      { platform: 'android', automotiveProjection: '800x480', deviceQuery: "@os='android' and @category='FOLDABLE'" },
     ]) {
       const r = await call('start_inspection_session', args);
       assert.equal(r.res.isError, true, JSON.stringify(args));

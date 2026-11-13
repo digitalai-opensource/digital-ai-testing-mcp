@@ -854,7 +854,9 @@ export function automotiveSessionHint(detail: string): string | null {
   }
   if (/automotive dev mode|start Android Auto/i.test(detail)) {
     return 'The device could not switch on Android Auto developer mode. It needs Android 10 or later, and not every device ' +
-      'or host supports projection: try another device, or ask your platform admin which devices support it.';
+      'or host supports projection. The platform does not say which device it allocated, so a retry with the same ' +
+      'deviceQuery can land on the same phone: pin a different PHONE with device (find_available_device), or ask your ' +
+      'platform admin which devices support it.';
   }
   return null;
 }
@@ -2005,8 +2007,23 @@ export async function appControl(
     case 'background': {
       const seconds = Math.max(1, Math.round(opts.seconds ?? 3));
       if (!isW3c) throw new Error('background is not available on Appium Grid sessions — press HOME (press_key) and relaunch with launch_app instead.');
+      // backgroundApp acts on WHATEVER is in front and restores that — it said "brought back" for an app that was never
+      // in front when the session had left the launcher showing (UAT 2026-11-13). Name what was actually in front.
+      const front = async (): Promise<string | null> => {
+        try {
+          const r = isIos ? await execScript(client, session, 'mobile: activeAppInfo') : await execScript(client, session, 'mobile: getCurrentPackage');
+          const v = r.data.value as unknown;
+          const id = isIos ? (v as { bundleId?: string })?.bundleId : v;
+          return typeof id === 'string' && id ? id : null;
+        } catch { return null; }
+      };
+      const before = await front();
       await execScript(client, session, 'mobile: backgroundApp', [{ seconds }], (seconds + 20) * 1000);
-      return `App sent to the background for ${seconds} s and brought back to the foreground. Verify the restored screen with take_inspection_screenshot.`;
+      const after = await front();
+      if (packageName && before && before !== packageName) {
+        return `${packageName} was NOT in the foreground (${before} was), so nothing of it was backgrounded — ${before} was sent to the background for ${seconds} s and ${after ?? 'an app'} is in front now. Open the app first with launch_app.`;
+      }
+      return `${before ?? 'The foreground app'} was sent to the background for ${seconds} s; ${after ? `${after} is in front now` : 'the foreground could not be read afterwards'}. Verify the restored screen with take_inspection_screenshot.`;
     }
     case 'is_installed': {
       if (!packageName) throw new Error('is_installed requires packageName (Android) or bundleIdentifier (iOS).');
@@ -2734,6 +2751,22 @@ export async function getForegroundActivity(handle: string): Promise<string | nu
     const res = await makeClient().get(`/session/${session.gridSessionId}/appium/device/current_activity`, { timeout: 15_000 });
     const activity = res.data?.value;
     return typeof activity === 'string' && activity ? activity : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The Android package in the foreground right now, or null when it cannot be read (never fatal). */
+export async function getForegroundPackage(handle: string): Promise<string | null> {
+  const session = requireSession(handle);
+  if (session.platform !== 'android') return null;
+  const client = makeClient();
+  try {
+    const r = session.sessionFormat === 'w3c'
+      ? await execScript(client, session, 'mobile: getCurrentPackage')
+      : await client.get(`/session/${session.gridSessionId}/appium/device/current_package`, { timeout: 15_000 });
+    const pkg = r.data?.value;
+    return typeof pkg === 'string' && pkg ? pkg : null;
   } catch {
     return null;
   }

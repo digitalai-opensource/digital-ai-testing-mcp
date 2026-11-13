@@ -46,6 +46,7 @@ import {
   AUTOMOTIVE_RESOLUTIONS,
   INSTRUMENT_CLUSTER_CONTENT,
   getForegroundActivity,
+  getForegroundPackage,
   isSameActivity,
   listContexts,
   switchContext,
@@ -435,6 +436,12 @@ export function registerInspectionTools(server: McpServer): void {
       if (args.platform === 'ios' && args.automotiveProjection && args.automotiveProjection !== '800x480') {
         return { content: [{ type: 'text' as const, text: 'Error: CarPlay supports automotiveProjection "800x480" only.' }], isError: true };
       }
+      // Projection runs on PHONES only — the platform answers "Automotive-Projection is only supported on phones" for a
+      // foldable (its own category since 26.10) or a tablet (UAT 2026-11-13). Refuse before allocating anything.
+      const queryCategory = args.automotiveProjection ? args.deviceQuery?.match(/@category\s*=\s*'([^']+)'/i)?.[1] : undefined;
+      if (queryCategory && queryCategory.toUpperCase() !== 'PHONE') {
+        return { content: [{ type: 'text' as const, text: `Error: automotiveProjection runs on phones only, and this deviceQuery asks for @category='${queryCategory}'. Use @category='PHONE' (a foldable is category FOLDABLE, not PHONE).` }], isError: true };
+      }
       try {
         // Device pinning: resolve to the serial and use an exact @serialNumber query
         // (confirmed live — routes to the requested device). Fail fast when the
@@ -452,6 +459,15 @@ export function registerInspectionTools(server: McpServer): void {
               };
             }
             resolved = { ...resolved, udid: match.udid, deviceName: match.deviceName, displayStatus: match.displayStatus };
+          }
+          if (args.automotiveProjection) {
+            const category = (await getAllDevices()).find((d) => d.id === resolved.id)?.deviceCategory;
+            if (category && category.toUpperCase() !== 'PHONE') {
+              return {
+                content: [{ type: 'text' as const, text: `Error: ${resolved.deviceName} is category ${category}, and automotiveProjection runs on phones only (the platform refuses: "only supported on phones"). Pick a PHONE — find_available_device(category: "PHONE").` }],
+                isError: true,
+              };
+            }
           }
           if (resolved.displayStatus.toLowerCase() !== 'available' && resolved.displayStatus !== 'unknown') {
             return {
@@ -502,7 +518,15 @@ export function registerInspectionTools(server: McpServer): void {
         let screenNote: string | undefined;
         if (session.platform === 'android' && (args.app || args.appPackage)) {
           currentActivity = await getForegroundActivity(session.handle);
-          if (currentActivity && args.appActivity && !isSameActivity(args.appActivity, currentActivity)) {
+          // A launcher (or any other app) in front is not "the app resumed elsewhere" — the app never came up (UAT
+          // 2026-11-13: the session started with the Samsung home screen showing and the old note called it a resume).
+          const wantedPackage = args.appPackage ?? args.app?.replace(/^cloud:/, '').split(/[/:]/)[0];
+          const foregroundPackage = wantedPackage ? await getForegroundPackage(session.handle) : null;
+          if (foregroundPackage && wantedPackage && foregroundPackage !== wantedPackage) {
+            screenNote =
+              `The app is NOT in the foreground: ${foregroundPackage} is (activity "${currentActivity ?? 'unknown'}"). ` +
+              `Call launch_app(packageName: "${wantedPackage}"${args.appActivity ? `, activity: "${args.appActivity}"` : ''}) before acting on the app.`;
+          } else if (currentActivity && args.appActivity && !isSameActivity(args.appActivity, currentActivity)) {
             screenNote =
               `The app is showing "${currentActivity}", not the requested "${args.appActivity}": noReset is ${args.noReset ?? true}, so a running app ` +
               'resumed on its last screen. Call get_element_tree before acting on this screen, or stop and start again with noReset: false ' +

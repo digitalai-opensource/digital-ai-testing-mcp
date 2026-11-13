@@ -239,8 +239,12 @@ describe('app_control release-2 actions (verified live 2026-10-18)', () => {
   it('background / is_installed / current / install map to the documented mobile: commands', async () => {
     const h = await session('android');
     let r = await tools.call('app_control', { handle: h, action: 'background', seconds: 2 });
-    assert.match(r.text, /background for 2 s/);
-    assert.deepEqual(executed.at(-1), { script: 'mobile: backgroundApp', args: [{ seconds: 2 }] });
+    assert.match(r.text, /com\.experitest\.ExperiBank was sent to the background for 2 s; com\.experitest\.ExperiBank is in front now/);
+    assert.ok(executed.some((e) => e.script === 'mobile: backgroundApp' && JSON.stringify(e.args) === JSON.stringify([{ seconds: 2 }])));
+    // Naming another app than the one in front: say so instead of claiming it was "brought back" (UAT 2026-11-13).
+    r = await tools.call('app_control', { handle: h, action: 'background', seconds: 2, packageName: 'com.other.app' });
+    assert.match(r.text, /com\.other\.app was NOT in the foreground \(com\.experitest\.ExperiBank was\)/);
+    assert.doesNotMatch(r.text, /brought back/);
     r = await tools.call('app_control', { handle: h, action: 'is_installed', packageName: 'com.experitest.ExperiBank' });
     assert.match(r.text, /is installed/);
     assert.deepEqual(executed.at(-1), { script: 'mobile: isAppInstalled', args: [{ appId: 'com.experitest.ExperiBank' }] });

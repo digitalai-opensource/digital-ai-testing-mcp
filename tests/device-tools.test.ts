@@ -25,6 +25,7 @@ const TEMPLATES = [
 const FULL_PAGE = Array.from({ length: 500 }, (_, i) => ({ id: i + 1, name: 'ModelKey[x]', os: 'ANDROID', deviceModel: `M${i}` }));
 let ignoreSkip = false;
 let devicesFixture: unknown[] = [];
+let runningFixture: unknown[] | 'fail' = [];
 
 let api: StubApi;
 let tools: ToolClient;
@@ -38,6 +39,7 @@ beforeAll(async () => {
       return { data: TEMPLATES.slice(q.skip, q.skip + q.take), totalCount: TEMPLATES.length };
     }
     if (req.path === '/api/v1/devices') return { status: 'SUCCESS', data: devicesFixture, code: 'OK' };
+    if (req.path === '/api/v2/test-requests/running') return runningFixture === 'fail' ? { other: true } : { runningTestRequests: runningFixture };
     return undefined;
   });
   tools = await connectTools(registerDeviceTools);
@@ -121,10 +123,51 @@ describe('find_available_device skips devices marked do-not-use (intake 2026-10-
     assert.match(String(j.doNotUseWarning), /set aside by another team/);
   });
 
+  it('an OCCUPIED tag is a do-not-use mark too (UAT 2026-11-13)', async () => {
+    devicesFixture = [{ id: 1, deviceName: 'Galaxy A', deviceOs: 'Android', osVersion: '9.0', manufacturer: 'Samsung', model: 'A8', modelName: 'A8', tags: ['OCCUPIED', 'INTERNAL_TESTING'], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }, { id: 2, deviceName: 'Galaxy B', deviceOs: 'Android', osVersion: '12.0', manufacturer: 'Samsung', model: 'S20', modelName: 'S20', tags: [], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }];
+    const j = await tools.callJson('find_available_device', { os: 'Android', preferRegions: [] });
+    assert.equal((j.device as { id: number }).id, 2);
+    assert.equal(j.skippedDoNotUse, 1);
+  });
+
   it('includeDoNotUse: true considers them like any other device', async () => {
     devicesFixture = [{ id: 1, deviceName: 'iPad A', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: ['DoNotTake'], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }, { id: 3, deviceName: 'iPhone C', deviceOs: 'iOS', osVersion: '17.0', manufacturer: 'Apple', model: 'iPhone', modelName: 'iPhone', tags: [], displayStatus: 'Available', region: 'US1', agentName: 'a', bluetooth: null }];
     const j = await tools.callJson('find_available_device', { os: 'iOS', preferRegions: [], includeDoNotUse: true });
     assert.equal((j.device as { id: number }).id, 1);
     assert.equal(j.skippedDoNotUse, undefined);
+  });
+});
+
+describe('release_orphaned_sessions — a device running a test is busy, not orphaned (UAT 2026-11-13)', () => {
+  afterAll(() => { devicesFixture = []; runningFixture = []; });
+  const LONG = (id: string, name: string) => ({ id, deviceName: name, deviceOs: 'Android', osVersion: '13.0', displayStatus: 'In Use', statusAgeInMinutes: '3090', currentUser: 'ci', agentName: 'a', agentIp: '1', tags: [] });
+
+  it('lists a long-"In Use" device with a running test as busy and never offers it for release', async () => {
+    devicesFixture = [LONG('1', 'Vivo CI'), LONG('2', 'Pixel Forgotten')];
+    runningFixture = [{ id: 7, name: 'ci test', status: 'RUNNING', deviceName: 'Vivo CI', startedAt: Date.now() - 120_000 }];
+    const r = await tools.call('release_orphaned_sessions', { maxAgeHours: 4 });
+    assert.match(r.text, /Devices that would be released:\n {2}• Pixel Forgotten/);
+    assert.match(r.text, /Busy, NOT orphaned[\s\S]*Vivo CI/);
+    assert.doesNotMatch(r.text.split('Busy, NOT orphaned')[0], /Vivo CI/);
+  });
+
+  it('warns when the running-test list cannot be read, and still previews', async () => {
+    devicesFixture = [LONG('2', 'Pixel Forgotten')];
+    runningFixture = 'fail';
+    const r = await tools.call('release_orphaned_sessions', { maxAgeHours: 4 });
+    assert.match(r.text, /Pixel Forgotten/);
+    assert.match(r.text, /Could not read the running-test list/);
+  });
+});
+
+describe('get_device_health_summary — the status buckets add up to the total (UAT 2026-11-13)', () => {
+  afterAll(() => { devicesFixture = []; });
+  it('counts In Use and other statuses (Error, Unauthorized) explicitly', async () => {
+    const d = (id: string, status: string) => ({ id, deviceName: `D${id}`, deviceOs: 'Android', osVersion: '13.0', displayStatus: status, statusAgeInMinutes: '5', agentName: 'a', agentIp: '1', tags: [] });
+    devicesFixture = [d('1', 'Available'), d('2', 'Offline'), d('3', 'In Use'), d('4', 'Error'), d('5', 'Unauthorized'), d('6', 'Reserved')];
+    const j = await tools.callJson('get_device_health_summary', {});
+    assert.equal(j.available, 1); assert.equal(j.offline, 1); assert.equal(j.reserved, 1); assert.equal(j.inUse, 1); assert.equal(j.other, 2);
+    assert.equal((j.available as number) + (j.offline as number) + (j.reserved as number) + (j.inUse as number) + (j.other as number), j.analyzed);
+    assert.deepEqual(j.byStatus, { Available: 1, Offline: 1, 'In Use': 1, Error: 1, Unauthorized: 1, Reserved: 1 });
   });
 });
