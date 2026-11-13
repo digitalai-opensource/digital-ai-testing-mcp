@@ -83,7 +83,12 @@ export function formatDeviceHealthSummary(
   const available = statusCounts['available'] ?? 0;
   const reserved = statusCounts['reserved'] ?? 0;
   const offline = statusCounts['offline'] ?? 0;
-  const other = devices.length - available - reserved - offline;
+  const inUse = (statusCounts['in use'] ?? 0) + (statusCounts['inuse'] ?? 0) + (statusCounts['busy'] ?? 0);
+  const other = devices.length - available - reserved - offline - inUse;
+  // Name what "Other" holds (Error, Unauthorized, Cleanup …) so its count can be checked against other tools.
+  const otherNames = Object.entries(statusCounts)
+    .filter(([s]) => !['available', 'reserved', 'offline', 'in use', 'inuse', 'busy'].includes(s))
+    .map(([s, n]) => `${s} ${n}`).join(', ');
 
   const ios = devices.filter((d) => d.deviceOs === 'iOS').length;
   const android = devices.filter((d) => d.deviceOs === 'Android').length;
@@ -109,7 +114,8 @@ export function formatDeviceHealthSummary(
     `  🟢 Available:    ${available}`,
     `  🟡 Reserved:     ${reserved}`,
     `  🔴 Offline:      ${offline}`,
-    `  ⚪ Other:        ${other}`,
+    `  🔵 In Use:       ${inUse}`,
+    `  ⚪ Other:        ${other}${otherNames ? ` (${otherNames})` : ''}`,
     '',
     '── By OS ──',
     `  🍎 iOS:          ${ios}`,

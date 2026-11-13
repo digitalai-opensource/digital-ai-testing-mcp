@@ -438,7 +438,8 @@ export function registerInspectionTools(server: McpServer): void {
       }
       // Projection runs on PHONES only — the platform answers "Automotive-Projection is only supported on phones" for a
       // foldable (its own category since 26.10) or a tablet (UAT 2026-11-13). Refuse before allocating anything.
-      const queryCategory = args.automotiveProjection ? args.deviceQuery?.match(/@category\s*=\s*'([^']+)'/i)?.[1] : undefined;
+      // deviceQuery is ignored when a device is pinned — the pinned device's own category is checked below instead.
+      const queryCategory = args.automotiveProjection && !args.device ? args.deviceQuery?.match(/@category\s*=\s*'([^']+)'/i)?.[1] : undefined;
       if (queryCategory && queryCategory.toUpperCase() !== 'PHONE') {
         return { content: [{ type: 'text' as const, text: `Error: automotiveProjection runs on phones only, and this deviceQuery asks for @category='${queryCategory}'. Use @category='PHONE' (a foldable is category FOLDABLE, not PHONE).` }], isError: true };
       }
@@ -461,8 +462,9 @@ export function registerInspectionTools(server: McpServer): void {
             resolved = { ...resolved, udid: match.udid, deviceName: match.deviceName, displayStatus: match.displayStatus };
           }
           if (args.automotiveProjection) {
-            const category = (await getAllDevices()).find((d) => d.id === resolved.id)?.deviceCategory;
-            if (category && category.toUpperCase() !== 'PHONE') {
+            // Fail open: an unreadable device list or an UNKNOWN category lets the platform decide.
+            const category = (await getAllDevices().catch(() => [])).find((d) => d.id === resolved.id)?.deviceCategory;
+            if (category && /^(TABLET|WATCH|FOLDABLE)$/i.test(category)) {
               return {
                 content: [{ type: 'text' as const, text: `Error: ${resolved.deviceName} is category ${category}, and automotiveProjection runs on phones only (the platform refuses: "only supported on phones"). Pick a PHONE — find_available_device(category: "PHONE").` }],
                 isError: true,
@@ -520,7 +522,10 @@ export function registerInspectionTools(server: McpServer): void {
           currentActivity = await getForegroundActivity(session.handle);
           // A launcher (or any other app) in front is not "the app resumed elsewhere" — the app never came up (UAT
           // 2026-11-13: the session started with the Samsung home screen showing and the old note called it a resume).
-          const wantedPackage = args.appPackage ?? args.app?.replace(/^cloud:/, '').split(/[/:]/)[0];
+          // Only a package-shaped app reference names the package — "cloud:uniqueName=X", a bare unique name or a URL
+          // does not, and comparing those to the foreground package would always claim the app is not in front.
+          const appRefPackage = args.app?.replace(/^cloud:/, '').split(/[/:]/)[0];
+          const wantedPackage = args.appPackage ?? (appRefPackage && /^[A-Za-z]\w*(\.\w+)+$/.test(appRefPackage) ? appRefPackage : undefined);
           const foregroundPackage = wantedPackage ? await getForegroundPackage(session.handle) : null;
           if (foregroundPackage && wantedPackage && foregroundPackage !== wantedPackage) {
             screenNote =

@@ -80,6 +80,12 @@ describe('start_inspection_session reports the screen in front', () => {
     }
   });
 
+  it('a uniqueName app reference is not mistaken for a package name', async () => {
+    foreground = '.LoginActivity';
+    const j = await start({ platform: 'android', app: 'cloud:uniqueName=SeeTestDemoApp' });
+    assert.doesNotMatch(String(j.screenNote ?? ''), /NOT in the foreground/);
+  });
+
   it('stays quiet when the requested activity is in front, in either spelling', async () => {
     foreground = 'com.experitest.ExperiBank.LoginActivity';
     const j = await start({ platform: 'android', appPackage: 'com.experitest.ExperiBank', appActivity: '.LoginActivity' });

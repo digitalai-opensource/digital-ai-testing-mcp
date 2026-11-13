@@ -14,6 +14,10 @@ export interface RunningTestRequest {
   projectId: number | null;
   username: string | null;
   deviceName: string | null;
+  /** The device record's numeric id (list_devices `id`) — null for browser runs. Verified live 2026-11-13. */
+  deviceId: number | null;
+  /** The device's serial / UDID — null for browser runs. */
+  deviceUid: string | null;
   deviceModel: string | null;
   deviceOs: string | null;
   deviceOsVersion: string | null;
@@ -41,6 +45,8 @@ export function normalizeRunningTestRequest(r: Raw): RunningTestRequest {
     projectId: r.projectId != null && r.projectId !== '' && Number.isFinite(Number(r.projectId)) ? Number(r.projectId) : null,
     username: str(r.username),
     deviceName: str(r.deviceName),
+    deviceId: r.deviceId != null && r.deviceId !== '' && Number.isFinite(Number(r.deviceId)) ? Number(r.deviceId) : null,
+    deviceUid: str(r.deviceUid),
     deviceModel: str(r.deviceModel),
     deviceOs: str(r.deviceOs),
     deviceOsVersion: str(r.deviceOsVersion),

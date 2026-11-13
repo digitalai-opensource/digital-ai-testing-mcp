@@ -2010,10 +2010,9 @@ export async function appControl(
       // backgroundApp acts on WHATEVER is in front and restores that — it said "brought back" for an app that was never
       // in front when the session had left the launcher showing (UAT 2026-11-13). Name what was actually in front.
       const front = async (): Promise<string | null> => {
+        if (!isIos) return getForegroundPackage(handle);
         try {
-          const r = isIos ? await execScript(client, session, 'mobile: activeAppInfo') : await execScript(client, session, 'mobile: getCurrentPackage');
-          const v = r.data.value as unknown;
-          const id = isIos ? (v as { bundleId?: string })?.bundleId : v;
+          const id = ((await execScript(client, session, 'mobile: activeAppInfo')).data.value as { bundleId?: string } | null)?.bundleId;
           return typeof id === 'string' && id ? id : null;
         } catch { return null; }
       };

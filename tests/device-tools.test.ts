@@ -151,6 +151,23 @@ describe('release_orphaned_sessions — a device running a test is busy, not orp
     assert.doesNotMatch(r.text.split('Busy, NOT orphaned')[0], /Vivo CI/);
   });
 
+  it('matches by device ID: of two devices with the same name, only the one running a test is busy (review 2026-11-13)', async () => {
+    devicesFixture = [{ ...LONG('11', 'Galaxy S22'), udid: 'UDID-11' }, { ...LONG('12', 'Galaxy S22'), udid: 'UDID-12' }];
+    // Live record shape: deviceId is the device record's id, deviceUid its serial (verified 2026-11-13).
+    runningFixture = [{ id: 8, name: 'ci', status: 'RUNNING', deviceName: 'Galaxy S22', deviceId: 11, deviceUid: 'UDID-11', startedAt: Date.now() - 60_000 }];
+    const j = await tools.callJson('release_orphaned_sessions', { maxAgeHours: 4, confirmDeletion: true });
+    assert.deepEqual((j.busy as Array<{ id: string }>).map((b) => b.id), ['11']);
+    assert.deepEqual((j.results as Array<{ id: string }>).map((x) => x.id), ['12'], 'only the real orphan is released');
+  });
+
+  it('falls back to the serial when a running record has no deviceId', async () => {
+    devicesFixture = [{ ...LONG('21', 'Pixel A'), udid: 'SER-21' }, { ...LONG('22', 'Pixel B'), udid: 'SER-22' }];
+    runningFixture = [{ id: 9, name: 'ci', status: 'RUNNING', deviceName: 'renamed', deviceUid: 'SER-22', startedAt: Date.now() }];
+    const r = await tools.call('release_orphaned_sessions', { maxAgeHours: 4 });
+    assert.match(r.text, /Devices that would be released:\n {2}• Pixel A/);
+    assert.match(r.text, /Busy, NOT orphaned[\s\S]*Pixel B/);
+  });
+
   it('warns when the running-test list cannot be read, and still previews', async () => {
     devicesFixture = [LONG('2', 'Pixel Forgotten')];
     runningFixture = 'fail';
@@ -169,5 +186,8 @@ describe('get_device_health_summary — the status buckets add up to the total (
     assert.equal(j.available, 1); assert.equal(j.offline, 1); assert.equal(j.reserved, 1); assert.equal(j.inUse, 1); assert.equal(j.other, 2);
     assert.equal((j.available as number) + (j.offline as number) + (j.reserved as number) + (j.inUse as number) + (j.other as number), j.analyzed);
     assert.deepEqual(j.byStatus, { Available: 1, Offline: 1, 'In Use': 1, Error: 1, Unauthorized: 1, Reserved: 1 });
+    const h = await tools.call('get_device_health_summary', { outputFormat: 'human' });
+    assert.match(h.text, /In Use: +1/);
+    assert.match(h.text, /Other: +2 \(error 1, unauthorized 1\)/);
   });
 });

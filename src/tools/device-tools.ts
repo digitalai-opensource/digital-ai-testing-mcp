@@ -31,7 +31,7 @@ import { resolveDevice, formatResolvedDevice } from '../utils/device-resolver.js
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import { commandPayload } from '../utils/command-payload.js';
 import { getActiveUrl } from '../api/client.js';
-import { getRunningTestRequests } from '../api/test-requests.js';
+import { getRunningTestRequests, type RunningTestRequest } from '../api/test-requests.js';
 
 /**
  * Devices other teams have set aside, by convention, through a tag or the device name ("DoNotTake", "DONTTAKE",
@@ -951,22 +951,33 @@ export function registerDeviceTools(server: McpServer): void {
         // A device "In Use" for 51 h was running a test started 2 minutes earlier — back-to-back CI keeps the status
         // age growing (UAT 2026-11-13). The platform's running-test list is the truth: those devices are busy, not
         // orphaned, and are never released. The list is scoped to what the caller may see, so a miss is not proof.
-        let running: Map<string, string | null> | null = null;
+        // Matched by device ID (the running record's deviceId is the device record's id — verified live 2026-11-13), then
+        // by serial/UDID, and by name only for a record that carries neither (names are not unique on every farm).
+        let runningRequests: RunningTestRequest[] | null = null;
         let runningCheckError: string | undefined;
         if (longInUse.length > 0) {
           try {
-            running = new Map(
-              (await getRunningTestRequests()).filter((r) => r.deviceName).map((r) => [r.deviceName as string, r.startedAt ?? r.createdAt])
-            );
+            runningRequests = await getRunningTestRequests();
           } catch (e) {
             runningCheckError = (e as Error).message;
           }
         }
-        const busy = running ? longInUse.filter((d) => running.has(d.deviceName)) : [];
-        const orphaned = longInUse.filter((d) => !busy.includes(d));
+        const testStart = new Map<string, string | null>(); // device id → start of the test running on it
+        if (runningRequests) {
+          for (const d of longInUse) {
+            const r = runningRequests.find((req) =>
+              req.deviceId != null ? String(req.deviceId) === String(d.id)
+                : req.deviceUid ? req.deviceUid === d.udid
+                  : req.deviceName != null && req.deviceName === d.deviceName);
+            if (r) testStart.set(String(d.id), r.startedAt ?? r.createdAt);
+          }
+        }
+        const busy = longInUse.filter((d) => testStart.has(String(d.id)));
+        const orphaned = longInUse.filter((d) => !testStart.has(String(d.id)));
+        const busyStructured = busy.map((d) => ({ id: d.id, name: d.deviceName, testStartedAt: testStart.get(String(d.id)) ?? null }));
         const busyText = busy.length
           ? '\n\nBusy, NOT orphaned — a test is running on them now (never released):\n' +
-            busy.map((d) => `  • ${d.deviceName} (ID: ${d.id}) — in use ${(parseFloat(d.statusAgeInMinutes) / 60).toFixed(1)}h, current test started ${running?.get(d.deviceName) ?? 'recently'}`).join('\n')
+            busy.map((d) => `  • ${d.deviceName} (ID: ${d.id}) — in use ${(parseFloat(d.statusAgeInMinutes) / 60).toFixed(1)}h, current test started ${testStart.get(String(d.id)) ?? 'recently'}`).join('\n')
           : '';
         const checkWarning = runningCheckError
           ? `\n\n⚠️ Could not read the running-test list (${runningCheckError}) — a device below may be running a test. Check list_active_test_executions before confirming.`
@@ -975,7 +986,7 @@ export function registerDeviceTools(server: McpServer): void {
         if (orphaned.length === 0) {
           return respond(
             outputFormat,
-            { orphaned: 0, busy: busy.map((d) => ({ id: d.id, name: d.deviceName, testStartedAt: running?.get(d.deviceName) ?? null })), thresholdHours: maxAgeHours, released: 0 },
+            { orphaned: 0, busy: busyStructured, thresholdHours: maxAgeHours, released: 0 },
             `No orphaned sessions found (threshold: ${maxAgeHours}h).${busy.length ? '' : ' All in-use devices are within the time limit.'}${busyText}`
           );
         }
@@ -1010,8 +1021,15 @@ export function registerDeviceTools(server: McpServer): void {
           }
         }
 
-        const structured = { released: releaseResults.filter(r => r.status === 'released').length, results: releaseResults };
-        const humanText = `Released ${orphaned.length} orphaned session(s):\n${results.join('\n')}${busyText}`;
+        const structured = {
+          released: releaseResults.filter(r => r.status === 'released').length,
+          results: releaseResults,
+          busy: busyStructured,
+          ...(runningCheckError ? { runningCheckError } : {}),
+        };
+        const releasedCount = structured.released;
+        const failedCount = releaseResults.length - releasedCount;
+        const humanText = `Released ${releasedCount} of ${orphaned.length} orphaned session(s)${failedCount ? ` (${failedCount} failed)` : ''}:\n${results.join('\n')}${busyText}${checkWarning}`;
         return respond(outputFormat, structured, humanText);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
