@@ -63,12 +63,12 @@ export function registerUnhealthyDevicesTool(server: McpServer): void {
     'Reads reporter runs from the last lookbackHours and, per device: fail ratio, how much of it the platform classified as ' +
     'device/environment/network/framework failures (infraShare), top causes, and tests that FAIL on this device but PASS on ' +
     'another one (the strongest sign the device, not the test, is at fault). Flags devices over failRatioThreshold (with at ' +
-    'least minRuns runs) or with tests that fail only there. Use it when NoSuchElement or timeouts appear on some runs but ' +
+    'least minRuns runs) or with tests that fail only there (that second flag also needs minRuns runs AND at least 2 failures on the device; below that bar the device stays unflagged and notFlaggedBecause says why). Use it when NoSuchElement or timeouts appear on some runs but ' +
     'not others. Optional: tag the flagged devices (e.g. "dirty") — pass tag to preview, then tag + confirmTagging: true to ' +
     'apply (a device change; like add_device_tag, available to Cloud Admin and Project Admin). Runs without a device (browser tests) are skipped.',
     {
       lookbackHours: z.number().int().min(1).max(336).optional().default(24).describe('How far back to look (default 24).'),
-      minRuns: z.number().int().min(1).max(100).optional().default(3).describe('Minimum runs on a device before its fail ratio counts (default 3).'),
+      minRuns: z.number().int().min(1).max(100).optional().default(3).describe('Minimum runs on a device before either flag counts — the fail ratio, or fails-only-here (default 3).'),
       failRatioThreshold: z.number().min(0.05).max(1).optional().default(0.5).describe('Flag devices whose fail ratio is at least this (default 0.5).'),
       projectName: z.string().optional().describe("Scope to one project's reports."),
       maxRecords: z.number().int().min(100).max(10000).optional().default(5000).describe('Most reporter runs to scan (default 5000).'),
@@ -153,6 +153,7 @@ export function registerUnhealthyDevicesTool(server: McpServer): void {
           lines.push(`   ${d.failures}/${d.runs} failed (${pct(d.failRatio)}), infrastructure share ${pct(d.infraShare)}${cats ? ` — ${cats}` : ''}`);
           if (d.reasons.length) lines.push(`   Why: ${d.reasons.join('; ')}`);
           if (d.failsOnlyHere.length) lines.push(`   Fails here, passes elsewhere: ${d.failsOnlyHere.slice(0, 5).join(', ')}`);
+          if (d.notFlaggedBecause) lines.push(`   Not flagged: ${d.notFlaggedBecause}`);
           for (const c of d.topCauses) lines.push(`   ${c.count}× ${c.cause}`);
           lines.push('');
         }

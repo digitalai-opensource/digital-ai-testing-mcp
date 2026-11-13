@@ -205,7 +205,10 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   // substrings but aren't placeholders.
   const PLACEHOLDER_KEYWORDS = /\b(resource-id|selector|element|value|visible text|udid|enter|your)\b/i;
   const BARE_PLACEHOLDER_WORDS = new Set(['resource-id', 'selector', 'element', 'value', 'udid']);
-  const angleCandidates = content.match(/<[^>\n]+>/g) || [];
+  // Comment lines are skipped: the scaffold's commented examples ("// await page.fill('<selector>', '<value>')") are not
+  // steps, and flagging them kept a filled-in test failing (UAT 2026-11-13 run 2, the Playwright scaffold).
+  const code = content.split('\n').filter((l) => !/^\s*(\/\/|#|\*|\/\*)/.test(l)).join('\n');
+  const angleCandidates = code.match(/<[^>\n]+>/g) || [];
   const angle = angleCandidates.filter((m) => {
     const inner = m.slice(1, -1).trim();
     if (!PLACEHOLDER_KEYWORDS.test(inner)) return false;
@@ -222,8 +225,14 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   }
 
   // 3. Credential placeholders / obvious fabricated logins.
-  const cred = content.match(/YOUR_ACCESS_KEY_HERE|YOUR_PASSWORD|<password>|\[Enter [^\]]*\]|changeme|password123/gi);
-  if (cred) add('high', 'placeholder credentials', `Credential placeholder(s): ${[...new Set(cred)].slice(0, 4).join(', ')}`);
+  const bracketed = content.match(/\[Enter [^\]]*\]/gi) || [];
+  const urlPlaceholders = bracketed.filter((b) => /\burl\b/i.test(b));
+  if (urlPlaceholders.length) add('high', 'placeholder URL', `Target URL never filled in: ${[...new Set(urlPlaceholders)].slice(0, 4).join(', ')}. Pass url to get_web_test_boilerplate, or replace it with the site under test.`);
+  const cred = [
+    ...(content.match(/YOUR_ACCESS_KEY_HERE|YOUR_PASSWORD|<password>|changeme|password123/gi) || []),
+    ...bracketed.filter((b) => !/\burl\b/i.test(b)),
+  ];
+  if (cred.length) add('high', 'placeholder credentials', `Credential placeholder(s): ${[...new Set(cred)].slice(0, 4).join(', ')}`);
 
   // 4. Known fabricated example IDs from the v43 post-mortem — illustrative, not exhaustive.
   const knownFab = content.match(/\b(nav_catalog|home_container)\b/g);

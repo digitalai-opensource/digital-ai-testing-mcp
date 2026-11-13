@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { adaptGradleForProjectType } from '../src/tools/boilerplate-tools.js';
+import { adaptGradleForProjectType, detectFabricationIssues } from '../src/tools/boilerplate-tools.js';
 
 const ROOT = join(__dirname, '..', 'resources', 'boilerplate');
 
@@ -198,5 +198,34 @@ describe('Page-object screen classes (release 4)', () => {
       if (/AppScreen\.java$|PlaceholderScreen\.js$/.test(p)) assert.match(src, /<resource-id from get_element_tree>/, p);
       else assert.doesNotMatch(src, /<[^>\n]*(resource-id|accessibility id)[^>\n]*>/, p);
     }
+  });
+});
+
+describe('detectFabricationIssues — comments and URL placeholders (UAT 2026-11-13 run 2, Playwright scaffold)', () => {
+  const scaffold = [
+    "test('x', async ({ page }) => {",
+    "  await page.goto('[Enter target URL here]');",
+    "  // await page.fill('<CSS selector from find_web_elements>', '<value>');",
+    "  throw new Error('PLACEHOLDER TEST BODY');",
+    '});',
+  ].join('\n');
+
+  it('ignores <…> tokens that only appear in comment lines', () => {
+    const labels = detectFabricationIssues(scaffold).map((i) => i.label);
+    assert.ok(!labels.includes('placeholder selectors'), labels.join(', '));
+  });
+
+  it('labels [Enter target URL here] as a placeholder URL, not a credential', () => {
+    const issues = detectFabricationIssues(scaffold);
+    assert.ok(issues.some((i) => i.label === 'placeholder URL' && i.severity === 'high'));
+    assert.ok(!issues.some((i) => i.label === 'placeholder credentials'));
+    assert.ok(issues.some((i) => i.label === 'scaffold guard present'));
+  });
+
+  it('still flags placeholders in code and credential brackets', () => {
+    const issues = detectFabricationIssues("driver.findElement(By.id(\"<resource-id from get_element_tree>\"));\nString key = \"[Enter Your Access key here]\";");
+    const labels = issues.map((i) => i.label);
+    assert.ok(labels.includes('placeholder selectors'));
+    assert.ok(labels.includes('placeholder credentials'));
   });
 });

@@ -23,9 +23,9 @@ let listFixture: 'trend' | 'incomplete' | 'failures' | 'failures-no-keys' | 'del
 let runningFixture: unknown = undefined; // undefined → 404 → list_active_test_executions falls back to the reporter heuristic
 
 // One run per `spacingMs`, newest first — 100 hourly records cover ~4 days of a 14-day window.
-const trendRows = (page: number) =>
-  Array.from({ length: 500 }, (_, i) => {
-    const n = (page - 1) * 500 + i;
+const trendRows = (page: number, limit = 500) =>
+  Array.from({ length: limit }, (_, i) => {
+    const n = (page - 1) * limit + i;
     return { test_id: n + 1, name: `t${n}`, status: 'Passed', start_time: new Date(NOW - n * spacingMs).toISOString() };
   });
 const INCOMPLETE = [
@@ -61,6 +61,7 @@ beforeAll(async () => {
   api = await startStubApi((req) => {
     if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
     if (req.path === '/api/v2/test-requests/running') return runningFixture;
+    if (req.path === '/reporter/api/projects') return [{ id: 1, name: 'Default' }, { id: 89, name: 'DigitalSSO' }];
     if (req.path === '/reporter/api/tests/grouped') {
       const groupBy: string[] = req.json.groupBy ?? [];
       return groupBy.includes('device.os')
@@ -84,7 +85,7 @@ beforeAll(async () => {
         return { count: null, data: FAILURES.map((r) => (withKeys ? r : { test_id: r.test_id, name: r.name, status: r.status, start_time: r.start_time })) };
       }
       return listFixture === 'trend'
-        ? { count: null, data: trendRows(req.json.page ?? 1) }
+        ? { count: null, data: trendRows(req.json.page ?? 1, req.json.limit ?? 500) }
         : { count: INCOMPLETE.length, data: INCOMPLETE };
     }
     const detail = req.path.match(/^\/reporter\/api\/tests\/(50[123])$/);
@@ -132,21 +133,46 @@ describe('get_grouped_test_reports totals', () => {
   });
 });
 
+describe('reporter projectId is the REPORTER id, sent as its name (UAT 2026-11-13 run 2)', () => {
+  // A numeric projectId param is CSRF-blocked and a project_id filter only filters inside the current context (verified
+  // live 2026-11-13), so the id used to be dropped silently — the call answered for the default project.
+  it('maps a reporter projectId to projectName on the request', async () => {
+    api.requests.length = 0;
+    await tools.callJson('get_grouped_test_reports', { groupBy: ['status'], projectId: 89 });
+    const sent = api.requests.find((r) => r.path === '/reporter/api/tests/grouped')!;
+    assert.equal(sent.query.get('projectName'), 'DigitalSSO');
+    assert.equal(sent.query.get('projectId'), null);
+  });
+
+  it('an id the credential cannot see is an error naming projectName, never a silent default-project answer', async () => {
+    const r = await tools.call('get_grouped_test_reports', { groupBy: ['status'], projectId: 2 });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /Reporter project ID 2 .*projectName/);
+  });
+
+  it('projectName wins over projectId and needs no lookup', async () => {
+    api.requests.length = 0;
+    await tools.callJson('get_grouped_test_reports', { groupBy: ['status'], projectId: 89, projectName: 'Default' });
+    assert.equal(api.requests.find((r) => r.path === '/reporter/api/tests/grouped')!.query.get('projectName'), 'Default');
+  });
+});
+
 describe('get_daily_execution_trend when maxRecords caps the window', () => {
   it('names the missing range and suggests a maxRecords value', async () => {
     const r = await tools.callJson('get_daily_execution_trend', { lookbackDays: 14, maxRecords: 100 });
     assert.equal(r.windowComplete, false);
     const missing = r.missingRange as { from: string; to: string };
     assert.ok(new Date(missing.from).getTime() < new Date(missing.to).getTime());
-    // ~24 runs/day × 14 days × 1.1, rounded up to 500 → 500
+    // 336 hourly runs in 14 days, measured, +5%, rounded up to 500 → 500
     assert.equal(r.suggestedMaxRecords, 500);
     assert.equal(r.fittingLookbackDays, undefined);
   });
 
   it('says when even the 25,000 maximum cannot cover the window', async () => {
-    // ~24.2 runs/day × 365 × 1.1 ≈ 9,733 → rounded up to the next 500
+    // Measured (sorted): 8,760 hourly runs in 365 days, +5% headroom, rounded up to the next 500 → 9,500.
     const r = await tools.callJson('get_daily_execution_trend', { lookbackDays: 365, maxRecords: 100 });
-    assert.equal(r.suggestedMaxRecords, 10000);
+    assert.equal(r.suggestionBasis, 'measured');
+    assert.equal(r.suggestedMaxRecords, 9500);
     // A busy project: one run every 10 minutes (~144/day) — 365 days would need ~58k records.
     spacingMs = 10 * 60_000;
     try {

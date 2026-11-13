@@ -75,6 +75,19 @@ export function normalizeVirtualDevice(raw: RawVirtualDevice): VirtualDeviceTemp
   return { ...t, deviceQuery: suggestedDeviceQuery(t) };
 }
 
+/**
+ * Templates that share a deviceQuery (same model, no templateName — e.g. pixel_4 on Android 13, 12 and 9) get
+ * `and @version='<osVersion>'`. Verified live 2026-11-13: "… @model='pixel_4' and @version='13'" allocated
+ * pixel_4_api_33 and "@version='99'" answered "No available device matching". Unique queries are left unchanged.
+ */
+export function disambiguateByVersion(templates: VirtualDeviceTemplate[]): VirtualDeviceTemplate[] {
+  const counts = new Map<string, number>();
+  for (const t of templates) counts.set(t.deviceQuery, (counts.get(t.deviceQuery) ?? 0) + 1);
+  return templates.map((t) => (counts.get(t.deviceQuery)! > 1 && t.osVersion
+    ? { ...t, deviceQuery: `${t.deviceQuery} and @version='${escapeDeviceQueryValue(t.osVersion)}'` }
+    : t));
+}
+
 /** Every template in the catalog, paged (the catalog is small — ~150 on a busy tenant). */
 export async function listVirtualDeviceTemplates(): Promise<VirtualDeviceTemplate[]> {
   try {
@@ -91,7 +104,7 @@ export async function listVirtualDeviceTemplates(): Promise<VirtualDeviceTemplat
       const newRows = byId.size - before;
       if (newRows === 0 || rows.length < PAGE_SIZE || (res.totalCount !== undefined && byId.size >= res.totalCount)) break;
     }
-    return [...byId.values()].map(normalizeVirtualDevice);
+    return disambiguateByVersion([...byId.values()].map(normalizeVirtualDevice));
   } catch (e) {
     throw new Error(`listVirtualDeviceTemplates failed: ${(e as Error).message}`);
   }

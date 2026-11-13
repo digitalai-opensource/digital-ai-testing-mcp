@@ -20,6 +20,7 @@ import {
   summarizeTestFailures,
 } from '../api/reporting.js';
 import { normaliseDeviceOs } from '../api/transactions.js';
+import { REPORTER_PROJECT_ID_DESC } from '../api/reporter-projects.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { checkDeleteAllowed, serverSortAvailable } from '../api/access-level.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -41,6 +42,38 @@ import { parseReportRef } from '../utils/report-ref.js';
 import { selectLogLines, DEFAULT_LOG_CONTEXT, DEFAULT_LOG_MAX_CHARS } from '../utils/log-view.js';
 import { getRunningTestRequests, type RunningTestRequest } from '../api/test-requests.js';
 import { countsFromPivotRow, tallyStatuses, passRate, statusOutcome, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
+
+/**
+ * Where does the lookback cutoff fall in the newest-first record order? Probes single records (limit 1, page = index+1)
+ * instead of extrapolating a rate. Returns neededRecords (rounded up, 5% headroom) when the window fits under maxCap,
+ * else fittingLookbackDays read from the record AT maxCap. About 10 tiny requests. Throws if the platform stops sorting.
+ */
+export async function measureTrendWindow(
+  cutoffTs: number, scannedUpTo: number, maxCap: number, projectId?: number, projectName?: string,
+): Promise<{ neededRecords?: number; fittingLookbackDays?: number }> {
+  const at = async (index: number): Promise<number | null> => {
+    const b = await listTests(
+      { limit: 1, page: index + 1, returnTotalCount: false, sort: [{ property: 'start_time', descending: true }] },
+      projectId, projectName,
+    );
+    if (b.sortApplied !== true) throw new Error('sort not applied');
+    const r = b.data?.[0];
+    return r ? new Date(r.start_time).getTime() : null;
+  };
+  const atCap = await at(maxCap - 1);
+  if (atCap !== null && atCap >= cutoffTs) {
+    return { fittingLookbackDays: Math.max(1, Math.floor((Date.now() - atCap) / 86_400_000)) };
+  }
+  // Records [0, scannedUpTo) are in the window; the record at hi is out of it (or past the end).
+  let lo = scannedUpTo;
+  let hi = maxCap - 1;
+  while (hi - lo > 50) {
+    const mid = Math.floor((lo + hi) / 2);
+    const t = await at(mid);
+    if (t !== null && t >= cutoffTs) lo = mid + 1; else hi = mid;
+  }
+  return { neededRecords: Math.min(maxCap, Math.ceil((hi * 1.05) / 500) * 500) };
+}
 
 export function registerReportingTools(server: McpServer): void {
   // ─── get_test_report ───────────────────────────────────────────────────────
@@ -366,7 +399,7 @@ export function registerReportingTools(server: McpServer): void {
         .string()
         .optional()
         .describe('ISO 8601 end of date range, e.g. "2025-06-01T00:00:00Z". Defaults to now when startDate is provided.'),
-      projectId: z.number().int().optional().describe('Scope results to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope results to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -522,7 +555,7 @@ export function registerReportingTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('If true, adds totalRecords — the number of test records across all groups (the response\x27s count is the number of groups).'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -589,7 +622,7 @@ export function registerReportingTools(server: McpServer): void {
         .array(z.string())
         .min(1)
         .describe('One or more key names, e.g. ["device.os", "browser", "environment"].'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -650,7 +683,7 @@ export function registerReportingTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Must be true to confirm the permanent deletion.'),
-      projectId: z.number().int().optional().describe('Ignored — reporter API CSRF-blocks numeric projectId. Use projectName instead.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the delete to a specific reporter instance.'),
     },
     async ({ ids, confirmDeletion, projectId, projectName }) => {
@@ -738,7 +771,7 @@ export function registerReportingTools(server: McpServer): void {
         .int()
         .optional()
         .describe('Maximum records to show in preview (confirmDeletion: false). Defaults to 50. The deletion itself (confirmDeletion: true) always processes all matching records regardless of this limit.'),
-      projectId: z.number().int().optional().describe('Ignored — the reporter API CSRF-blocks numeric projectId. Use projectName instead.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the search. Required when the target project has its own reporter instance separate from the default scope.'),
     },
     async ({ name, nameContains, confirmDeletion, maxPreviewResults, projectId, projectName }) => {
@@ -1017,7 +1050,7 @@ export function registerReportingTools(server: McpServer): void {
         .describe("Dimension to bucket by: 'errorClassification' (default, e.g. element_not_found), 'errorCategory' (e.g. assertion, device, network), or 'name'."),
       nameFilter: z.string().optional().describe('Only include failures whose test name contains this substring (e.g. "Login").'),
       maxReports: z.number().int().min(1).max(1000).optional().default(200).describe('Cap on failures analyzed (fan-out bound). Default 200. capped:true in the result means more failures exist beyond this.'),
-      projectId: z.number().int().optional().describe('Scope to a project by numeric ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to a project by name.'),
       outputFormat: outputFormatParam,
     },
@@ -1071,7 +1104,7 @@ export function registerReportingTools(server: McpServer): void {
     'Return the most recent execution record for a test by name. Answers "did the last run of X pass?" without requiring a full list_test_reports query.',
     {
       name: z.string().describe('Exact or partial test name to search for.'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1109,7 +1142,7 @@ export function registerReportingTools(server: McpServer): void {
         .string()
         .optional()
         .describe('ISO 8601 end of the window. Defaults to now if omitted.'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1201,7 +1234,7 @@ export function registerReportingTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('Must be true to confirm the permanent deletion. Omit or set false to preview what would be deleted.'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
     },
     async ({ beforeDate, confirmDeletion, projectId, projectName }) => {
@@ -1276,7 +1309,9 @@ export function registerReportingTools(server: McpServer): void {
         .optional()
         .default(12)
         .describe('Fallback (reporter heuristic) only: ignore Incomplete records that started longer ago than this — they are abandoned or never-finalised runs, not running ones (default 12; test runs time out after 4 h by default).'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(
+        'CLOUD project ID (as get_server_info / list_projects show) — matched against the platform\'s live list. ' +
+        'The reporter fallback cannot scope by it (its IDs differ); use projectName to scope both.'),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1290,6 +1325,7 @@ export function registerReportingTools(server: McpServer): void {
         liveError = (e as Error).message;
       }
       if (live) {
+        // Here projectId is the CLOUD project id — the live list carries that one.
         const scoped = live.filter((r) =>
           (projectName === undefined || (r.projectName ?? '').toLowerCase() === projectName.toLowerCase()) &&
           (projectId === undefined || r.projectId === projectId));
@@ -1324,7 +1360,7 @@ export function registerReportingTools(server: McpServer): void {
             returnTotalCount: false,
             filter: [{ property: 'status', operator: '=', value: 'Incomplete' }],
           },
-          projectId,
+          undefined, // projectId here is the cloud id — the reporter's ids differ
           projectName
         );
 
@@ -1390,7 +1426,7 @@ export function registerReportingTools(server: McpServer): void {
         .string()
         .default('appVersion')
         .describe('The test report metadata key that holds the app version, e.g. "appVersion" or "buildNumber".'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1419,7 +1455,7 @@ export function registerReportingTools(server: McpServer): void {
       testName: z.string().describe('Exact or partial test name to look up.'),
       maxRuns: z.number().int().min(1).max(200).optional().default(20)
         .describe('Number of most-recent runs to retrieve (default: 20, max: 200).'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1512,7 +1548,7 @@ export function registerReportingTools(server: McpServer): void {
         .describe('Minimum runs on each platform to include a test in the comparison (default: 3). Filters out tests barely run on one OS.'),
       minDivergencePct: z.number().min(0).max(100).optional().default(20)
         .describe('Minimum pass-rate gap (percentage points) to flag as divergent (default: 20).'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1605,7 +1641,7 @@ export function registerReportingTools(server: McpServer): void {
         .describe('Hard cap on records fetched to protect against very large datasets (default: 5 000, max: 25 000). Increase if your project runs >165 tests/day and lookbackDays > 30.'),
       bucketBy: z.enum(['day', 'week']).optional().default('day')
         .describe('"day" (default) or "week". Weekly buckets are cleaner for 90-day views.'),
-      projectId: z.number().int().optional().describe('Scope to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1617,6 +1653,7 @@ export function registerReportingTools(server: McpServer): void {
         let scanned = 0;
         let scanCapped = false;
         let done = false;
+        let lastSorted = false;
 
         while (!done && records.length < maxRecords) {
           const wantSort = serverSortAvailable();
@@ -1636,6 +1673,7 @@ export function registerReportingTools(server: McpServer): void {
           if (rows.length === 0) break;
           scanned += rows.length;
           const isSorted = batch.sortApplied === true;
+          lastSorted = isSorted;
 
           for (const r of rows) {
             const ts = new Date(r.start_time).getTime();
@@ -1689,10 +1727,17 @@ export function registerReportingTools(server: McpServer): void {
         const MAX_RECORDS = 25_000;
         const coveredDays = Math.max((Date.now() - new Date(coveredFrom).getTime()) / 86_400_000, 1 / 24);
         const estimatedNeeded = Math.ceil((records.length / coveredDays) * lookbackDays * 1.1 / 500) * 500;
-        const suggestedMaxRecords = scanCapped ? Math.min(estimatedNeeded, MAX_RECORDS) : null;
-        const fittingLookbackDays = scanCapped && estimatedNeeded > MAX_RECORDS
-          ? Math.max(1, Math.floor((MAX_RECORDS / (records.length / coveredDays)) / 1.1))
+        // On sorted data, MEASURE where the cutoff falls instead of extrapolating: a rate taken from the newest days
+        // missed a burst (UAT 2026-11-13 run 2 — the suggested 15,500 fell short because one older day had ~10k runs).
+        const measured = scanCapped && lastSorted
+          ? await measureTrendWindow(cutoffTs, maxRecords, MAX_RECORDS, projectId, projectName).catch(() => null)
           : null;
+        const suggestedMaxRecords = !scanCapped ? null
+          : measured?.neededRecords ?? (measured?.fittingLookbackDays != null ? MAX_RECORDS : Math.min(estimatedNeeded, MAX_RECORDS));
+        const fittingLookbackDays = !scanCapped ? null
+          : measured ? (measured.fittingLookbackDays ?? null)
+          : estimatedNeeded > MAX_RECORDS ? Math.max(1, Math.floor((MAX_RECORDS / (records.length / coveredDays)) / 1.1)) : null;
+        const suggestionBasis = measured ? 'measured' : 'estimated from the rate observed so far';
         const structured = {
           bucketBy,
           lookbackDays,
@@ -1706,6 +1751,7 @@ export function registerReportingTools(server: McpServer): void {
             ? {
                 missingRange: { from: new Date(cutoffTs).toISOString(), to: coveredFrom },
                 suggestedMaxRecords,
+                suggestionBasis,
                 ...(fittingLookbackDays != null ? { fittingLookbackDays } : {}),
               }
             : {}),
@@ -1737,7 +1783,7 @@ export function registerReportingTools(server: McpServer): void {
             `days before that are MISSING from this trend, not days with zero executions. ` +
             (fittingLookbackDays != null
               ? `At this project's rate even the 25,000 maximum won't cover ${lookbackDays} days — use lookbackDays: ${fittingLookbackDays} with maxRecords: 25000, or bucketBy "week" over several shorter calls.`
-              : `Re-run with maxRecords: ${suggestedMaxRecords} to cover the full ${lookbackDays}-day window (estimated from the rate observed so far).`)
+              : `Re-run with maxRecords: ${suggestedMaxRecords} to cover the full ${lookbackDays}-day window (${suggestionBasis}).`)
           );
         }
         return respond(outputFormat, structured, lines.join('\n'));

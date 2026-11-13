@@ -6,8 +6,8 @@
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { registerSession } from '../src/api/webdriver.js';
-import { certificateWarning } from '../src/api/browser-inspection.js';
+import { registerSession, captureScreenshot } from '../src/api/webdriver.js';
+import { certificateWarning, browserVersionFromUserAgent } from '../src/api/browser-inspection.js';
 import { normalizeBidiMessage, injectBrowserEventsForTests, type BrowserEvent } from '../src/api/browser-events.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
 import { registerWebInspectionTools } from '../src/tools/web-inspection-tools.js';
@@ -16,6 +16,7 @@ import { startStubApi, connectTools, accountInfo, reply, type StubApi, type Tool
 
 const sessionCaps: Array<Record<string, unknown>> = [];
 const jwpExecutes: string[] = [];
+const shotCalls: string[] = [];
 
 const ELEMENTS = [{ tag: 'a', href: 'https://www.iana.org/domains/example', text: 'More information...' }];
 
@@ -58,6 +59,15 @@ beforeAll(async () => {
     if (/\/wd\/hub\/session\/[^/]+\/url$/.test(req.path)) return { value: req.method === 'GET' ? 'https://self-signed.badssl.com/' : null };
     if (/\/wd\/hub\/session\/[^/]+\/title$/.test(req.path)) return { value: /badcert/.test(req.path) ? 'Privacy error' : 'self-signed.badssl.com' };
     if (/\/wd\/hub\/session\/[^/]+\/execute\/sync$/.test(req.path) && /readyState/.test(req.json.script ?? '')) return { value: 'complete' };
+    if (/\/wd\/hub\/session\/[^/]+\/execute\/sync$/.test(req.path) && /navigator\.userAgent/.test(req.json.script ?? '')) {
+      return { value: 'Mozilla/5.0 (Linux; Android 16; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.7727.55 Mobile Safari/537.36' };
+    }
+    // Screenshot path: record the order of window/screenshot calls.
+    if (/\/wd\/hub\/session\/sid-shot[^/]*\/(window|screenshot)$/.test(req.path)) {
+      shotCalls.push(`${req.method} ${req.path.split('/').pop()}`);
+      if (req.path.endsWith('/window')) return { value: req.method === 'GET' ? 'WINDOW-1' : null };
+      return { value: 'iVBORw0KCLASSIC' };
+    }
     if (/\/wd\/hub\/session\/[^/]+\/execute\/sync$/.test(req.path)) {
       const script: string = req.json.script ?? '';
       // Detection script → page meta; anything else is the element walker.
@@ -189,6 +199,44 @@ describe('browser log capture over WebDriver BiDi (verified live 2026-11-12 on C
   });
 });
 
+describe('desktop browser screenshots capture the session\'s own window (verified live 2026-11-13)', () => {
+  // The platform's classic screenshot is an OS capture of the agent's FRONT window — a concurrent session's about:blank
+  // came back instead of the driven page (UAT 2026-11-13 run 2, reproduced with two sessions).
+  it('with a BiDi socket: browsingContext.captureScreenshot on the current window, no classic capture', async () => {
+    shotCalls.length = 0;
+    registerSession({ ...webSession('WEB00030'), gridSessionId: 'sid-shot-bidi' });
+    const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
+    injectBrowserEventsForTests('WEB00030', [], 0, (m) => { sent.push(m); return { type: 'success', result: { data: 'iVBORw0KBIDI' } }; });
+    const shot = await captureScreenshot('WEB00030');
+    assert.equal(shot.data, 'iVBORw0KBIDI');
+    assert.deepEqual(sent.map((m) => [m.method, m.params]), [['browsingContext.captureScreenshot', { context: 'WINDOW-1' }]]);
+    assert.deepEqual(shotCalls, ['GET window']);
+  });
+
+  it('BiDi error → falls back to switch-to-window then the classic capture', async () => {
+    shotCalls.length = 0;
+    registerSession({ ...webSession('WEB00031'), gridSessionId: 'sid-shot-biderr' });
+    injectBrowserEventsForTests('WEB00031', [], 0, () => ({ type: 'error', error: 'unknown error', message: 'boom' }));
+    const shot = await captureScreenshot('WEB00031');
+    assert.equal(shot.data, 'iVBORw0KCLASSIC');
+    assert.deepEqual(shotCalls, ['GET window', 'POST window', 'GET screenshot']);
+  });
+
+  it('without BiDi: brings the window to the front before the classic capture', async () => {
+    shotCalls.length = 0;
+    registerSession({ ...webSession('WEB00032'), gridSessionId: 'sid-shot-plain' });
+    const shot = await captureScreenshot('WEB00032');
+    assert.equal(shot.data, 'iVBORw0KCLASSIC');
+    assert.deepEqual(shotCalls, ['GET window', 'POST window', 'GET screenshot']);
+  });
+
+  it('browserVersionFromUserAgent reads Chrome on Android and Safari on iOS', () => {
+    assert.equal(browserVersionFromUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1'), '17.6');
+    assert.equal(browserVersionFromUserAgent('… Chrome/147.0.7727.55 Mobile Safari/537.36'), '147.0.7727.55');
+    assert.equal(browserVersionFromUserAgent('curl/8'), null);
+  });
+});
+
 describe('mobile browser sessions (Chrome on Android / Safari on iOS — verified live 2026-11-12)', () => {
   it('mobilePlatform android opens Chrome on a phone: device query, wait timeout, no BiDi; result carries the device and live view', async () => {
     setAccessLevelOverrideForTests('cloud-admin');
@@ -201,6 +249,7 @@ describe('mobile browser sessions (Chrome on Android / Safari on iOS — verifie
       assert.ok(Number(caps['digitalai:newSessionWaitTimeout']) > 0);
       assert.equal(caps.webSocketUrl, undefined, 'BiDi is desktop-only');
       assert.deepEqual(j.device, { name: 'Pixel 7 sgdemo-0157', model: 'Pixel 7', os: 'Android', osVersion: '16', serialNumber: null });
+      assert.equal(j.browserVersion, '147.0.7727.55', 'Chrome version from the user agent, not the OS version (UAT 2026-11-13 run 2)');
       assert.equal(j.mobileStudioUrl, 'https://cloud/studio/y');
       assert.equal(j.protocol, 'w3c');
       assert.match(String(j.browserLog), /^unavailable: not on mobile browsers/);

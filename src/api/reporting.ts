@@ -3,6 +3,7 @@ import AdmZip from 'adm-zip';
 import { apiGet, apiPost, apiDownload, apiDownloadRange, getActiveUrl } from './client.js';
 import type { ReportRef } from '../utils/report-ref.js';
 import { serverSortAvailable, markActiveServerSortRefused } from './access-level.js';
+import { resolveReporterProjectName } from './reporter-projects.js';
 import type {
   TestReport,
   TestListRequest,
@@ -353,7 +354,8 @@ export async function listTests(
       finalRequest = { ...finalRequest, sort: undefined };
     }
 
-    // projectId (numeric) is CSRF-blocked on all reporter endpoints — only projectName works.
+    // projectId (numeric) is CSRF-blocked on all reporter endpoints — only projectName works; an id is mapped to its name.
+    projectName = await resolveReporterProjectName(projectId, projectName);
     const params: Record<string, unknown> = {};
     if (projectName) params['projectName'] = projectName;
     const post = (body: TestListRequest) => apiPost<TestListResponse>('/reporter/api/tests/list', body, params);
@@ -566,7 +568,8 @@ export async function getGroupedTests(
     if (request.filter && request.filter.length > 0) {
       finalRequest = { ...request, filter: sanitizeReporterFilter(request.filter) };
     }
-    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only.
+    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only; an id is mapped to its name.
+    projectName = await resolveReporterProjectName(projectId, projectName);
     const params: Record<string, unknown> = {};
     if (projectName) params['projectName'] = projectName;
     return await apiPost<unknown>('/reporter/api/tests/grouped', finalRequest, params);
@@ -584,7 +587,8 @@ export async function getDistinctKeyValues(
   projectName?: string
 ): Promise<Record<string, string[]>> {
   try {
-    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only.
+    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only; an id is mapped to its name.
+    projectName = await resolveReporterProjectName(projectId, projectName);
     const params: Record<string, unknown> = {};
     if (projectName) params['projectName'] = projectName;
     const raw = await apiPost<{ count: number | null; data: Record<string, unknown>[] }>(
@@ -622,7 +626,8 @@ export async function deleteTests(
   projectName?: string
 ): Promise<void> {
   try {
-    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only.
+    // projectId (numeric) is CSRF-blocked on reporter endpoints — use projectName only; an id is mapped to its name.
+    projectName = await resolveReporterProjectName(projectId, projectName);
     const params: Record<string, unknown> = {};
     if (projectName) params['projectName'] = projectName;
     await apiPost('/reporter/api/tests/delete', ids, params);

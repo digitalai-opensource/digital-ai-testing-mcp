@@ -171,6 +171,16 @@ export async function createBrowserInspectionSession(
 
   registerSession(session);
 
+  // A phone's caps carry no browser version (platformVersion is the OS) — read it from the user agent. Best effort.
+  if (mobile) {
+    try {
+      const ua = await client.post(`/session/${gridSessionId}/${execPath(session)}`,
+        { script: 'return navigator.userAgent', args: [] }, { timeout: 15_000 });
+      const v = browserVersionFromUserAgent(String(ua.data?.value ?? ''));
+      if (v) session.browserVersion = v;
+    } catch { /* leave it unknown */ }
+  }
+
   // Console/network capture. A failure here never fails the session — it is reported on the session instead.
   if (mobile) session.browserEvents = 'unavailable: not on mobile browsers (desktop chrome, MicrosoftEdge, firefox and opera only)';
   else if (opts.captureEvents === false) session.browserEvents = 'off';
@@ -181,6 +191,12 @@ export async function createBrowserInspectionSession(
     session.browserEvents = problem ? `unavailable: ${problem}` : 'on';
   }
   return session;
+}
+
+/** Chrome's version from an Android user agent, Safari's from an iOS one (Version/x — CriOS/FxiOS for other iOS browsers). */
+export function browserVersionFromUserAgent(ua: string): string | null {
+  const m = ua.match(/(?:Chrome|CriOS|FxiOS|EdgA|EdgiOS)\/([\d.]+)/) ?? ua.match(/Version\/([\d.]+).*Safari/);
+  return m ? m[1] : null;
 }
 
 /**

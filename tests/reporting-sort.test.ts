@@ -202,6 +202,31 @@ describe('early-exit scans never lose data when sort is refused', () => {
   });
 });
 
+describe('measureTrendWindow — where the lookback cutoff falls in newest-first order', () => {
+  // Regression (UAT 2026-11-13 run 2): the rate-based suggestion fell short when an older day was a burst.
+  it('finds the cutoff index with a handful of single-record probes', async () => {
+    const { measureTrendWindow } = await import('../src/tools/reporting-tools.js');
+    const cutoffTs = new Date(newestFirst[899].start_time).getTime(); // records 0..899 are in the window
+    const out = await measureTrendWindow(cutoffTs, 500, 25_000);
+    assert.ok(out.neededRecords! >= 900 && out.neededRecords! <= 1500, `neededRecords ${out.neededRecords}`);
+    assert.ok(requests.every((r) => r.limit === 1 && r.sorted), 'probes are single sorted records');
+    assert.ok(requests.length <= 12, `${requests.length} probes`);
+  });
+
+  it('window larger than the cap → fittingLookbackDays read from the record at the cap', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(BASE));
+    try {
+      const { measureTrendWindow } = await import('../src/tools/reporting-tools.js');
+      const out = await measureTrendWindow(BASE - 1000 * 24 * HOUR, 500, 1000);
+      assert.equal(out.fittingLookbackDays, Math.floor(999 / 24)); // record 999 is 999 h old
+      assert.equal(out.neededRecords, undefined);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('get_daily_execution_trend — a capped scan is never reported as a complete window', () => {
   // Regression (UAT 2026-10-09): with server sort applied, hitting maxRecords before the lookback cutoff returned
   // scanCapped: false — a 14-day trend silently showed only the newest 6 days.
@@ -229,6 +254,19 @@ describe('get_daily_execution_trend — a capped scan is never reported as a com
       assert.equal(out.windowComplete, false);
       assert.equal(out.recordsScanned, 500);
       assert.equal(out.coveredFrom, newestFirst[499].start_time);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('capped sorted scan measures the window instead of extrapolating (suggestionBasis: measured)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(BASE + HOUR));
+    try {
+      const out = await trend({ lookbackDays: 60, maxRecords: 500 });
+      assert.equal(out.suggestionBasis, 'measured');
+      // All 1,200 records are inside 60 days: the suggestion must cover them.
+      assert.ok(out.suggestedMaxRecords >= N, `suggested ${out.suggestedMaxRecords}`);
     } finally {
       vi.useRealTimers();
     }

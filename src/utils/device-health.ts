@@ -39,6 +39,8 @@ export interface DeviceHealth {
   lastFailure: string | null;
   flagged: boolean;
   reasons: string[];
+  /** Set when failsOnlyHere is non-empty but the device is below the bar for that flag. */
+  notFlaggedBecause?: string;
 }
 
 export interface DeviceHealthOptions {
@@ -104,6 +106,11 @@ export function analyzeDeviceHealth(records: RunRecord[], opts: DeviceHealthOpti
       lastFailure: latest,
       flagged: reasons.length > 0,
       reasons,
+      ...(reasons.length === 0 && failsOnlyHere.length > 0
+        ? { notFlaggedBecause: !enoughRuns
+            ? `only ${runs.length} run(s) — fails-only-here needs at least ${opts.minRuns} (minRuns)`
+            : `only ${failed.length} failure — fails-only-here needs at least 2 failures on the device` }
+        : {}),
     });
   }
 

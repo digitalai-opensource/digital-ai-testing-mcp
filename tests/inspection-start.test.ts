@@ -7,7 +7,7 @@
  */
 import { describe, it, beforeAll, afterAll, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
-import { registerInspectionTools } from '../src/tools/inspection-tools.js';
+import { registerInspectionTools, looksLikeTablet } from '../src/tools/inspection-tools.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
 import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_QUERY_MAX_LENGTH, newSessionWaitSeconds } from '../src/api/webdriver.js';
 import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
@@ -15,6 +15,9 @@ import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient 
 let foreground = '.makePaymentView';
 let foregroundPackage = 'com.experitest.ExperiBank';
 let sweepable = false;
+let orientation = 'PORTRAIT';
+let keyboardHidden = false;
+let keyboardStaysUp = false;
 let api: StubApi;
 let tools: ToolClient;
 
@@ -32,6 +35,9 @@ beforeAll(async () => {
     if (req.path === '/wd/hub/session/sid-1/appium/device/current_activity') return { value: foreground };
     if (req.path === '/wd/hub/session/sid-1/execute/sync' && req.json.script === 'mobile: getCurrentPackage') return { value: foregroundPackage };
     if (req.path === '/wd/hub/session/sid-1' && req.method === 'DELETE') return { value: null };
+    if (req.path === '/wd/hub/session/sid-1/orientation') return { value: orientation };
+    if (req.path === '/wd/hub/session/sid-1/execute/sync' && req.json.script === 'mobile: isKeyboardShown') return { value: keyboardStaysUp || !keyboardHidden };
+    if (req.path === '/wd/hub/session/sid-1/execute/sync' && req.json.script === 'mobile: hideKeyboard') { keyboardHidden = true; return { value: null }; }
     if (req.path === '/reporter/api/tests/list') {
       // After a timed-out start the platform may have created the session anyway — its report carries the test name.
       return sweepable
@@ -97,6 +103,43 @@ describe('start_inspection_session reports the screen in front', () => {
     const j = await start({ platform: 'android' });
     assert.equal('currentActivity' in j, false);
     assert.equal('screenNote' in j, false);
+  });
+
+  it('a phone left in LANDSCAPE gets an orientationNote; portrait and tablets do not (UAT 2026-11-13 run 2)', async () => {
+    orientation = 'LANDSCAPE';
+    try {
+      const j = await start({ platform: 'android' });
+      assert.equal(j.orientation, 'LANDSCAPE');
+      assert.match(String(j.orientationNote), /set_orientation", orientation: "PORTRAIT"/);
+    } finally {
+      orientation = 'PORTRAIT';
+    }
+    const p = await start({ platform: 'android' });
+    assert.equal(p.orientation, 'PORTRAIT');
+    assert.equal('orientationNote' in p, false);
+    assert.equal(looksLikeTablet('Galaxy Tab S7 Plus SM-T970'), true);
+    assert.equal(looksLikeTablet('iPad Pro 12.9'), true);
+    assert.equal(looksLikeTablet('Pixel 7 US-1 Pixel 7'), false);
+  });
+
+  it('hide_keyboard re-checks: a keyboard that stays up is a warning, not "Keyboard hidden" (UAT 2026-11-13 run 2)', async () => {
+    const j = await start({ platform: 'android' });
+    keyboardHidden = false;
+    keyboardStaysUp = true;
+    orientation = 'LANDSCAPE';
+    try {
+      const { res, text } = await tools.call('hide_keyboard', { handle: j.handle });
+      assert.notEqual(res.isError, true);
+      assert.match(text, /STILL shown/);
+      assert.match(text, /LANDSCAPE.*set_orientation/);
+      assert.doesNotMatch(text, /✅ Keyboard hidden/);
+    } finally {
+      keyboardStaysUp = false;
+      orientation = 'PORTRAIT';
+    }
+    keyboardHidden = false;
+    const ok = await tools.call('hide_keyboard', { handle: j.handle });
+    assert.match(ok.text, /✅ Keyboard hidden/);
   });
 
   it('isSameActivity compares the final segment, case-insensitively', () => {

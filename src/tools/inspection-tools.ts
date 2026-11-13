@@ -115,6 +115,11 @@ function requireMobileSession(
   return null;
 }
 
+/** Tablets are often used in landscape on purpose — only a phone in landscape earns a warning. */
+export function looksLikeTablet(nameAndModel: string): boolean {
+  return /\b(ipad|tab|tablet|pad)\b|galaxy tab|SM-[TX]\d/i.test(nameAndModel);
+}
+
 function sessionSummary(s: InspectionSession): string {
   const age = Math.round((Date.now() - s.startedAt) / 1000);
   const idle = Math.round((Date.now() - s.lastUsedAt) / 1000);
@@ -541,11 +546,28 @@ export function registerInspectionTools(server: McpServer): void {
           }
         }
 
+        // A shared phone can be left rotated by the previous user. In LANDSCAPE, element bounds rotate, typing lands in
+        // the wrong keys and the keyboard may not hide — 12 calls were lost before a manual get_orientation found it
+        // (UAT 2026-11-13 run 2). One cheap read; tablets and projection sessions are left alone.
+        let orientation: string | null = null;
+        let orientationNote: string | undefined;
+        if (!args.automotiveProjection) {
+          try { orientation = await getOrientation(session.handle); } catch { /* non-fatal */ }
+          if (orientation === 'LANDSCAPE' && !looksLikeTablet(`${session.deviceName} ${session.deviceModel}`)) {
+            orientationNote =
+              'This phone is in LANDSCAPE (left that way by a previous session). Taps, typing and hide_keyboard misbehave on ' +
+              'rotated phone screens — call device_control(action: "set_orientation", orientation: "PORTRAIT") first unless ' +
+              'the test needs landscape.';
+          }
+        }
+
         const structured: Record<string, unknown> = {
           handle: session.handle,
           platform: session.platform,
           ...(currentActivity !== null ? { currentActivity } : {}),
           ...(screenNote ? { screenNote } : {}),
+          ...(orientationNote ? { orientationNote } : {}),
+          ...(orientation ? { orientation } : {}),
           device: {
             id: deviceId,
             name: session.deviceName,
@@ -1465,6 +1487,24 @@ export function registerInspectionTools(server: McpServer): void {
           return { content: [{ type: 'text' as const, text: 'Keyboard is not shown — nothing to hide.' }] };
         }
         await hideKeyboard(args.handle);
+        // The hide command can "succeed" with the keyboard still up — an iOS number pad on a phone left in landscape
+        // stayed shown (UAT 2026-11-13 run 2). Check again rather than claim success.
+        let stillShown = false;
+        try { stillShown = await isKeyboardShown(args.handle); } catch { /* unknown — report the hide as done */ }
+        if (stillShown) {
+          let orientation = '';
+          try { orientation = await getOrientation(args.handle); } catch { /* ignore */ }
+          return {
+            content: [{
+              type: 'text' as const,
+              text: '⚠️ The hide command was sent, but the keyboard is STILL shown. ' +
+                (orientation === 'LANDSCAPE'
+                  ? 'The device is in LANDSCAPE — call device_control(action: "set_orientation", orientation: "PORTRAIT"), then hide_keyboard again. '
+                  : 'Numeric pads have no return key: tap a non-input area (a label or the screen title), or press_key ENTER on Android. ') +
+                'Elements under the keyboard cannot be tapped until it is gone.',
+            }],
+          };
+        }
         return { content: [{ type: 'text' as const, text: '✅ Keyboard hidden.' }] };
       } catch (e) {
         return { content: [{ type: 'text' as const, text: `Error hiding keyboard: ${(e as Error).message}` }], isError: true };

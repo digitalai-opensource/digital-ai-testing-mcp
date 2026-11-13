@@ -10,7 +10,7 @@
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { registerDeviceTools } from '../src/tools/device-tools.js';
-import { normalizeVirtualDevice } from '../src/api/virtual-devices.js';
+import { normalizeVirtualDevice, disambiguateByVersion } from '../src/api/virtual-devices.js';
 import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
 
 const TEMPLATES = [
@@ -82,6 +82,18 @@ describe('list_virtual_device_templates', () => {
     const quoted = normalizeVirtualDevice({ id: 10, imageName: "Joe's Pixel", os: 'ANDROID', deviceModel: "O'Brien 9" });
     assert.equal(quoted.deviceQuery, "@os='android' and @emulator='true' and contains(@name,'Joe\\'s Pixel')");
     assert.equal(normalizeVirtualDevice({ id: 11, name: 'ModelKey[x]', os: 'IOS', deviceModel: "O'Brien 9" }).deviceQuery, "@os='ios' and @emulator='true' and @model='O\\'Brien 9'");
+  });
+
+  it('templates that share a model get @version; a unique one is unchanged (verified live 2026-11-13)', () => {
+    const t = [
+      normalizeVirtualDevice({ id: 1, name: 'ModelKey[a]', os: 'ANDROID', deviceModel: 'pixel_4', osVersion: '13' }),
+      normalizeVirtualDevice({ id: 2, name: 'ModelKey[b]', os: 'ANDROID', deviceModel: 'pixel_4', osVersion: '12' }),
+      normalizeVirtualDevice({ id: 3, name: 'ModelKey[c]', os: 'ANDROID', deviceModel: 'pixel_7', osVersion: '14' }),
+    ];
+    const out = disambiguateByVersion(t);
+    assert.equal(out[0].deviceQuery, "@os='android' and @emulator='true' and @model='pixel_4' and @version='13'");
+    assert.equal(out[1].deviceQuery, "@os='android' and @emulator='true' and @model='pixel_4' and @version='12'");
+    assert.equal(out[2].deviceQuery, "@os='android' and @emulator='true' and @model='pixel_7'");
   });
 
   it('stops paging when a page brings no new ids (a platform that ignores skip)', async () => {

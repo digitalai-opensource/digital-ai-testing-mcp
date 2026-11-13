@@ -5,7 +5,7 @@ import { getMyAccountInfo } from './users.js';
 import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
 import { isEmulatorQuery } from '../utils/device-query.js';
-import { stopBrowserEventCapture } from './browser-events.js';
+import { stopBrowserEventCapture, hasBrowserEventCapture, bidiScreenshot } from './browser-events.js';
 
 // In-process session registry — cleared on MCP server restart
 const sessionRegistry = new Map<string, InspectionSession>();
@@ -361,6 +361,26 @@ export async function captureScreenshot(
 ): Promise<{ data: string; mimeType: string }> {
   const session = requireSession(handle);
   const client = makeClient();
+  // Desktop browser: the platform's classic screenshot is an OS capture of the agent's FRONT window, which can be another
+  // session's browser on a shared agent (verified live 2026-11-13 — about:blank from a concurrent session). Capture the
+  // session's own context over BiDi when the socket is open; otherwise bring the session's window to the front first.
+  if (session.platform === 'web' && !session.mobileOs) {
+    let windowHandle: string | undefined;
+    try {
+      const w = await client.get(`/session/${session.gridSessionId}/window`, { timeout: 10_000 });
+      windowHandle = typeof w.data?.value === 'string' ? w.data.value : undefined;
+    } catch { /* fall through to the classic capture */ }
+    if (windowHandle) {
+      if (hasBrowserEventCapture(handle)) {
+        try {
+          return { data: await bidiScreenshot(handle, windowHandle), mimeType: 'image/png' };
+        } catch { /* fall back to the classic capture */ }
+      }
+      try {
+        await client.post(`/session/${session.gridSessionId}/window`, { handle: windowHandle }, { timeout: 10_000 });
+      } catch { /* best effort */ }
+    }
+  }
   let res;
   try {
     res = await client.get(`/session/${session.gridSessionId}/screenshot`, {

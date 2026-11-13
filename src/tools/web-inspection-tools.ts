@@ -141,7 +141,8 @@ export function registerWebInspectionTools(server: McpServer): void {
         const structured: Record<string, unknown> = {
           handle: session.handle,
           browserName: session.browserName ?? args.inspectionBrowser,
-          browserVersion: session.deviceVersion || null,
+          // On a phone deviceVersion is the OS version (UAT 2026-11-13 run 2 showed Chrome "12" on Android 12).
+          browserVersion: (session.mobileOs ? session.browserVersion : session.deviceVersion) || null,
           reportUrl: session.reportUrl || null,
           browserLog: session.browserEvents ?? 'off',
           ...(session.mobileOs ? {

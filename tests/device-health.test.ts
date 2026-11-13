@@ -55,6 +55,18 @@ describe('analyzeDeviceHealth', () => {
     assert.equal(few.flagged, false, 'one run is not enough evidence');
   });
 
+  it('an unflagged device with fails-only-here tests says why (UAT 2026-11-13 run 2)', () => {
+    const few = devices.find((d) => d.serial === 'FEW')!;
+    assert.deepEqual(few.failsOnlyHere, ['login']);
+    assert.match(few.notFlaggedBecause!, /1 run\(s\).*minRuns/);
+    const oneFailure = analyzeDeviceHealth([
+      run('X', 'login', 'Failed', 1), run('X', 'a', 'Passed', 2), run('X', 'b', 'Passed', 3), run('Y', 'login', 'Passed', 4),
+    ], { minRuns: 3, failRatioThreshold: 0.9 }).devices.find((d) => d.serial === 'X')!;
+    assert.equal(oneFailure.flagged, false);
+    assert.match(oneFailure.notFlaggedBecause!, /only 1 failure.*at least 2 failures/);
+    assert.equal(bad.notFlaggedBecause, undefined, 'flagged devices carry no such note');
+  });
+
   it('a flaky test that passes and fails on every device flags none of them', () => {
     const flaky = ['A', 'B'].flatMap((s) => [run(s, 'flaky', 'Passed', 1), run(s, 'flaky', 'Failed', 2), run(s, 'ok', 'Passed', 3)]);
     const out = analyzeDeviceHealth(flaky, { minRuns: 3, failRatioThreshold: 0.5 });

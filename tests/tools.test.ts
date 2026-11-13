@@ -37,7 +37,10 @@ dotenv.config();
 // The delete gate reads the project's allowUsersDeleteTests via the reporter-projects API. Handlers run
 // against an unreachable host, so that response is mocked and set per test.
 const reporterProjects = vi.hoisted(() => ({ value: [] as Array<{ name: string; allowUsersDeleteTests: boolean }> }));
-vi.mock('../src/api/reporter-projects.js', () => ({ getReporterProjects: async () => reporterProjects.value }));
+vi.mock('../src/api/reporter-projects.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/reporter-projects.js')>()),
+  getReporterProjects: async () => reporterProjects.value,
+}));
 
 // Unreachable on purpose — any HTTP attempt fails fast instead of touching live data.
 const FAKE_URL = 'https://unreachable.invalid';

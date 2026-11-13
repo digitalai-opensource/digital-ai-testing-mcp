@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getAllDevices } from '../api/devices.js';
 import { getGroupedTests } from '../api/reporting.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
+import { REPORTER_PROJECT_ID_DESC } from '../api/reporter-projects.js';
 
 export function registerCoverageTools(server: McpServer): void {
   // ─── get_device_coverage_summary ─────────────────────────────────────────
@@ -14,7 +15,7 @@ export function registerCoverageTools(server: McpServer): void {
     'what is available in the farm. Also identifies devices that have never appeared in any test run. ' +
     'Use this to find coverage gaps before a release.',
     {
-      projectId: z.number().int().optional().describe('Scope test history to this project ID.'),
+      projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope test history to this project name.'),
       outputFormat: outputFormatParam,
     },
