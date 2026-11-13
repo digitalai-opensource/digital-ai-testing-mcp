@@ -381,6 +381,92 @@ describe('get_test_boilerplate — appiumVersion and reportKeys', () => {
   });
 });
 
+describe('get_test_boilerplate — appReset, deviceLanguage, autoAcceptAlerts, platformOptions', () => {
+  // Verified live 2026-11-12 (Appium Server): app: cloud:… reinstalls the app at every session start; package-only +
+  // noReset launches the installed app; appium:language/locale localise the iOS app (Android: whole device, persists);
+  // autoAcceptAlerts accepted a Safari JS alert on its own.
+  const test = (g: Gen) => g.files.map((f) => f.content).join('\n');
+  const notes = (g: Gen) => String((g as unknown as { capabilityNotes?: string[] }).capabilityNotes);
+  const LANGS = ['java-junit5', 'java-testng', 'python', 'nodejs', 'robot'];
+
+  it('keep-data drops the app capability and sets noReset in every language (Android and iOS)', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const platform of ['android', 'ios']) {
+      for (const language of LANGS) {
+        const plain = test((await gen({ platform, language, orchestration: 'off' })).json);
+        assert.match(plain, /cloud:com\.experitest\.ExperiBank/, `${platform}/${language} baseline has the app`);
+        const t = test((await gen({ platform, language, appReset: 'keep-data', orchestration: 'off' })).json);
+        assert.doesNotMatch(t, /cloud:com\.experitest/, `${platform}/${language}`);
+        assert.match(t, /appium:noReset['"]?(?:, |\] = |: |=)(?:true|True|\$\{True\})/, `${platform}/${language}`);
+        if (platform === 'ios') assert.match(t, /bundleId|BundleId/, `${platform}/${language} still names the app`);
+        else assert.match(t, /appPackage|AppPackage/, `${platform}/${language} still names the app`);
+      }
+    }
+  });
+
+  it('deviceLanguage maps to language + locale per platform; Android gets the persistence note', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const a = await gen({ platform: 'android', language: 'python', deviceLanguage: 'fr_FR', orchestration: 'off' });
+    assert.match(test(a.json), /'appium:language', 'fr'/);
+    assert.match(test(a.json), /'appium:locale', 'FR'/);
+    assert.match(notes(a.json), /whole device/);
+    const i = test((await gen({ platform: 'ios', language: 'nodejs', deviceLanguage: 'de-DE', orchestration: 'off' })).json);
+    assert.match(i, /'appium:language': 'de'/);
+    assert.match(i, /'appium:locale': 'de_DE'/);
+    const bad = await call('get_test_boilerplate', { platform: 'ios', language: 'python', deviceLanguage: 'french' });
+    assert.equal(bad.isError, true);
+  });
+
+  it('autoAcceptAlerts is iOS only; booleans are typed per language', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const expect: Record<string, RegExp> = {
+      'java-junit5': /setCapability\("appium:autoAcceptAlerts", true\)/,
+      python: /set_capability\('appium:autoAcceptAlerts', True\)/,
+      nodejs: /'appium:autoAcceptAlerts': true,/,
+      robot: /appium:autoAcceptAlerts=\$\{True\}/,
+    };
+    for (const [language, re] of Object.entries(expect)) {
+      assert.match(test((await gen({ platform: 'ios', language, autoAcceptAlerts: true, orchestration: 'off' })).json), re, language);
+    }
+    const a = await gen({ platform: 'android', language: 'python', autoAcceptAlerts: true, orchestration: 'off' });
+    assert.doesNotMatch(test(a.json), /autoAcceptAlerts/);
+    assert.match(notes(a.json), /autoAcceptAlerts ignored on Android/);
+  });
+
+  it('platformOptions become digitalai:* capabilities; unknown names are refused', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const g = await gen({ platform: 'android', language: 'java-junit5', platformOptions: { releaseDevice: false, reservationDuration: 30, devicePool: 'any', commandScreenshot: true }, orchestration: 'off' });
+    const t = test(g.json);
+    assert.match(t, /"digitalai:releaseDevice", false/);
+    assert.match(t, /"digitalai:reservationDuration", 30/);
+    assert.match(t, /"digitalai:devicePool", "any"/);
+    assert.match(t, /"digitalai:commandScreenshot", true/);
+    assert.match(notes(g.json), /stays reserved/);
+    const bad = await call('get_test_boilerplate', { platform: 'android', language: 'python', platformOptions: { releaseDevices: false } });
+    assert.equal(bad.isError, true);
+    const reserved = await call('get_test_boilerplate', { platform: 'android', language: 'python', reportKeys: { devicePool: 'x' } });
+    assert.equal(reserved.isError, true);
+  });
+
+  it('Appium Grid: the session options are ignored with a note, the template is unchanged', async () => {
+    account.isAppiumOss = false; account.fail = false;
+    const plain = test((await gen({ platform: 'android', language: 'python' })).json);
+    const g = await gen({ platform: 'android', language: 'python', appReset: 'keep-data', deviceLanguage: 'en_US', platformOptions: { releaseDevice: false } });
+    assert.equal(test(g.json), plain);
+    assert.match(notes(g.json), /appReset, deviceLanguage, platformOptions ignored/);
+    account.isAppiumOss = true;
+  });
+
+  it('iOS Java gets injected capabilities too (the anchor once matched only "iOSDriver", never the real IOSDriver)', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    for (const language of ['java-junit5', 'java-testng']) {
+      const t = test((await gen({ platform: 'ios', language, appiumVersion: '3.8.0', reportKeys: { runId: 'r1' }, orchestration: 'off' })).json);
+      assert.match(t, /setCapability\("digitalai:appiumVersion", "3\.8\.0"\)/, language);
+      assert.match(t, /setCapability\("digitalai:runId", "r1"\)/, language);
+    }
+  });
+});
+
 describe('get_test_boilerplate — template line endings never disable the step markers', () => {
   // Regression: on a Windows checkout (core.autocrlf) the NodeJS templates are CRLF and the "\n"-only marker patterns
   // never matched — a custom-app NodeJS boilerplate shipped ExperiBank's demo steps with the package swapped in.

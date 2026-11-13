@@ -453,25 +453,61 @@ export const REPORT_KEY_VALUE_RE = /^(?=.{1,100}$)[A-Za-z0-9_.:/@+-]+(?: [A-Za-z
 export const RESERVED_REPORT_KEYS = new Set([
   'accessKey', 'testName', 'deviceQuery', 'appiumVersion', 'newSessionWaitTimeout', 'automotiveProjection',
   'instrumentCluster', 'instrumentApp', 'reportTestId', 'reportUrl', 'releaseDevice', 'report.disable',
+  'reservationDuration', 'devicePool', 'commandScreenshot', 'dontGoHomeOnQuit',
 ].map((k) => k.toLowerCase()));
+
+type CapValue = string | number | boolean;
+
+/**
+ * Remove the `app` capability line (`options.setApp("cloud:…")`, `'appium:app': 'cloud:…'`, `appium:app=cloud:…`, …).
+ * With it the platform uninstalls and reinstalls the app at EVERY session start — firstInstallTime equalled the session
+ * start on two phones, with and without noReset (verified live 2026-11-12) — so keeping app data means launching the
+ * already-installed app by package / bundle id instead.
+ */
+export function removeAppCapability(content: string): string {
+  return content.replace(/\n[^\n]*(?:setApp\(|MobileCapabilityType\.APP,|['"](?:appium:)?app['"]\s*[:,\]]|appium:app=)[^\n]*cloud:[^\n]*/, '');
+}
+
+/** "en_US" / "en-US" → Android (language en + locale US) and iOS (language en + locale en_US) capabilities. */
+export const DEVICE_LANGUAGE_RE = /^([a-z]{2,3})[_-]([A-Z]{2})$/;
+export function languageCaps(platform: Platform, tag: string): Record<string, string> {
+  const m = DEVICE_LANGUAGE_RE.exec(tag);
+  if (!m) return {};
+  return { 'appium:language': m[1], 'appium:locale': platform === 'android' ? m[2] : `${m[1]}_${m[2]}` };
+}
+
+/**
+ * Platform options (digitalai:* session capabilities from the platform's supported-capabilities page) that generated
+ * tests may set. A typed allow-list, so a typo fails here instead of becoming a silently ignored capability.
+ */
+export const PLATFORM_OPTION_DESCRIPTIONS = {
+  releaseDevice: 'boolean (default true) — false keeps a SHARED device reserved after the test for the next test in a sequence; the last test sets true (or call release_device)',
+  reservationDuration: 'integer minutes — how long the shared device is reserved for this session; above the project maximum the start fails with "Reservation time in minutes too long"',
+  devicePool: '"shared" | "dedicated" | "any" — which device pool to allocate from ("any" prefers dedicated)',
+  commandScreenshot: 'boolean — a screenshot before and after every command in the report (slower, larger reports)',
+  dontGoHomeOnQuit: "boolean — leave the device on the app's last screen instead of going home at the end",
+} as const;
 
 /**
  * Add capabilities next to the existing ones, for every language and both server modes (the same anchors the Axe
  * option uses: the driver construction line for Java/Python, the deviceQuery entry in the wdio config for Node).
  * Values are strings or numbers; names must already be valid capability names.
  */
-function injectCapabilities(content: string, language: Language, isAppiumOss: boolean, caps: Record<string, string | number>): string {
+function injectCapabilities(content: string, language: Language, isAppiumOss: boolean, caps: Record<string, CapValue>): string {
   const entries = Object.entries(caps);
   if (entries.length === 0) return content;
-  const lit = (v: string | number, q: '"' | "'") => (typeof v === 'number' ? String(v) : `${q}${v}${q}`);
+  const lit = (v: CapValue, q: '"' | "'") =>
+    typeof v === 'boolean' ? (language === 'python' ? (v ? 'True' : 'False') : String(v))
+      : typeof v === 'number' ? String(v) : `${q}${v}${q}`;
   if (language === 'robot') {
-    // &{CAPABILITIES} dictionary rows; numbers as ${n} so Robot passes an int, not a string.
+    // &{CAPABILITIES} dictionary rows; numbers/booleans as ${…} so Robot passes an int/bool, not a string.
+    const robotLit = (v: CapValue) => (typeof v === 'number' ? `\${${v}}` : typeof v === 'boolean' ? `\${${v ? 'True' : 'False'}}` : v);
     return content.replace(/(\n(\.\.\. +)digitalai:deviceQuery=[^\n]*)/, (m, _line, cont) =>
-      m + entries.map(([k, v]) => `\n${cont}${k}=${typeof v === 'number' ? `\${${v}}` : v}`).join(''));
+      m + entries.map(([k, v]) => `\n${cont}${k}=${robotLit(v)}`).join(''));
   }
   if (language === 'java-junit5' || language === 'java-testng') {
     const obj = isAppiumOss ? 'options' : 'dc';
-    return content.replace(/\n( +)(driver = new (?:Android|iOS)Driver)/, (_m, sp, line) =>
+    return content.replace(/\n( +)(driver = new (?:Android|IOS|iOS)Driver)/, (_m, sp, line) =>
       '\n' + entries.map(([k, v]) => `${sp}${obj}.setCapability("${k}", ${lit(v, '"')});\n`).join('') + `${sp}${line}`);
   }
   if (language === 'python') {
@@ -572,6 +608,8 @@ function buildPlaceholder(language: Language, platform: Platform, indent: string
         // wdio 9 native gesture, verified live 2026-11-12 on Appium Server: without scrollableElement it looks for an
         // android.widget.ScrollView and fails on a ListView/RecyclerView ("Default scrollable element ... was not found").
         ...(isAppiumOss ? [`${indent}${c}   await driver.swipe({ direction: 'up', scrollableElement: await $('<scrollable list from get_element_tree>') });`] : []),
+        // element.scrollIntoView, verified live 2026-11-12 (Pixel 7, Android Settings): reached an off-screen item in 8.9 s.
+        ...(isAppiumOss ? [`${indent}${c}   await $('<off-screen item>').scrollIntoView({ direction: 'up', maxScrolls: 15, scrollableElement: $('<scrollable list>') });`] : []),
       ];
     } else {
       examples = [
@@ -642,8 +680,10 @@ function substitute(
     automotiveProjection?: AutomotiveResolution;
     /** Wrap the steps so the platform report shows the real outcome (and a steps group on Appium Server). */
     reportStatus?: boolean;
-    /** Extra capabilities (appiumVersion, newSessionWaitTimeout, report keys), already validated. */
-    extraCaps?: Record<string, string | number>;
+    /** Extra capabilities (appiumVersion, newSessionWaitTimeout, report keys, reset/language/alert/platform options), already validated. */
+    extraCaps?: Record<string, CapValue>;
+    /** appReset "keep-data": drop the app capability and launch the installed app instead of reinstalling it. */
+    keepAppData?: boolean;
     /** The test is the page-object variant (placeholder refers to the screen class). */
     pageObjects?: boolean;
   }
@@ -718,7 +758,7 @@ function substitute(
     if (language === 'java-junit5' || language === 'java-testng') {
       const obj = vars.isAppiumOss ? 'options' : 'dc';
       result = result.replace(
-        /\n( +)(driver = new (?:Android|iOS)Driver)/,
+        /\n( +)(driver = new (?:Android|IOS|iOS)Driver)/,
         (_m, sp, line) =>
           `\n${sp}${obj}.setCapability("appium:automationName", "${automationName}");\n` +
           `${sp}${obj}.setCapability("${vars.isAppiumOss ? 'digitalai:appiumVersion' : 'appiumVersion'}", "2.16.2");\n` +
@@ -757,7 +797,7 @@ function substitute(
     const res = vars.automotiveProjection;
     if (language === 'java-junit5' || language === 'java-testng') {
       result = result.replace(
-        /\n( +)(driver = new (?:Android|iOS)Driver)/,
+        /\n( +)(driver = new (?:Android|IOS|iOS)Driver)/,
         (_m, sp, line) => `\n${sp}options.setCapability("digitalai:automotiveProjection", "${res}");\n${sp}${line}`
       );
     } else if (language === 'python') {
@@ -773,7 +813,15 @@ function substitute(
     }
   }
 
-  if (vars.extraCaps) result = injectCapabilities(result, language, !!vars.isAppiumOss, vars.extraCaps);
+  let extraCaps = vars.extraCaps;
+  if (vars.keepAppData) {
+    result = removeAppCapability(result);
+    // The Java Appium Server iOS templates name the app only through setApp — keep-data needs the bundle id instead.
+    if (platform === 'ios' && !/bundleId|BundleId/.test(result)) {
+      extraCaps = { 'appium:bundleId': vars.bundleIdentifier ?? 'com.experitest.ExperiBank', ...(extraCaps ?? {}) };
+    }
+  }
+  if (extraCaps) result = injectCapabilities(result, language, !!vars.isAppiumOss, extraCaps);
 
   return result;
 }
@@ -1053,7 +1101,12 @@ export function registerBoilerplateTools(server: McpServer): void {
       mainActivity: z
         .string()
         .optional()
-        .describe('(Android only) Main activity, e.g. .MainActivity or com.mycompany.app.MainActivity. Pre-fills the appActivity capability. Requires packageName.'),
+        .describe(
+          '(Android only) Main activity, e.g. .MainActivity or com.mycompany.app.MainActivity. Pre-fills the appActivity capability. Requires packageName. ' +
+          'If the app shows a splash or login activity before the one Appium waits for, add appWaitActivity to the generated ' +
+          'capabilities (the real activity, a comma list, or "*"). A WRONG appWaitActivity fails the session start with an ' +
+          'opaque "The Appium server failed to respond" / "Could not forward request" (seen live) — check it first when that appears.'
+        ),
       bundleIdentifier: z
         .string()
         .optional()
@@ -1160,6 +1213,50 @@ export function registerBoilerplateTools(server: McpServer): void {
           'stored on the platform report — find the runs later with list_test_reports filter [{property: "runId", operator: "=", ' +
           'value: "nightly-42"}] (and keys: ["runId"] to see the value). Works on Appium Server and Appium Grid.'
         ),
+      appReset: z
+        .enum(['reinstall', 'keep-data'])
+        .optional()
+        .describe(
+          'Appium Server projects only. "reinstall" (default — what the templates do): the test names the app ' +
+          '(app: cloud:…) and the platform uninstalls and reinstalls it at EVERY session start, so each test starts ' +
+          'with clean app data — noReset cannot change that. "keep-data": the app capability is dropped and the ' +
+          'ALREADY-INSTALLED app is launched by package / bundle id with appium:noReset=true, so logins and settings ' +
+          'from the previous test survive; install it first (install_application, or one "reinstall" run). ' +
+          'fullReset is forced to false by the platform; there is no separate "clear data" mode — reinstall already clears it.'
+        ),
+      deviceLanguage: z
+        .string()
+        .regex(DEVICE_LANGUAGE_RE, 'Use language_COUNTRY, e.g. "en_US", "fr_FR", "de_DE".')
+        .optional()
+        .describe(
+          'Appium Server projects only: pin the language the app runs in, e.g. "en_US", so a shared device someone left ' +
+          'in French does not break text-based locators. iOS: applies to the app under test only (appium:language + ' +
+          'appium:locale; the next session is back to the device language). ANDROID: changes the WHOLE DEVICE and the ' +
+          'change PERSISTS after the test (verified live) — on shared devices pin the language you expect, usually ' +
+          'en_US, and pin it back after a localisation run.'
+        ),
+      autoAcceptAlerts: z
+        .boolean()
+        .optional()
+        .describe(
+          'iOS, Appium Server projects only — opt in: appium:autoAcceptAlerts accepts every native alert as it appears ' +
+          '(permission prompts, JavaScript alerts). Convenient for flows that are not ABOUT the alert, but it also hides ' +
+          'alerts the test should check, so it is off by default. The Android templates already dismiss alerts ' +
+          '(autoDismissAlerts) and grant permissions (autoGrantPermissions).'
+        ),
+      platformOptions: z
+        .strictObject({
+          releaseDevice: z.boolean().optional(),
+          reservationDuration: z.number().int().min(1).max(1440).optional(),
+          devicePool: z.enum(['shared', 'dedicated', 'any']).optional(),
+          commandScreenshot: z.boolean().optional(),
+          dontGoHomeOnQuit: z.boolean().optional(),
+        })
+        .optional()
+        .describe(
+          'Appium Server projects only: Digital.ai session options, each sent as digitalai:<name>. ' +
+          Object.entries(PLATFORM_OPTION_DESCRIPTIONS).map(([k, v]) => `${k}: ${v}`).join('. ') + '.'
+        ),
       automotiveProjection: z
         .enum(AUTOMOTIVE_RESOLUTIONS)
         .optional()
@@ -1205,7 +1302,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, structure, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
+    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, structure, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, appReset, deviceLanguage, autoAcceptAlerts, platformOptions, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
       // ── Inspection gate (v42) ────────────────────────────────────────────────
       // Advisory guards (warning text, a requiresVerifiedSelectors flag, an in-code
       // fail() guard) all lost to task-completion momentum: the agent stripped the
@@ -1306,7 +1403,7 @@ export function registerBoilerplateTools(server: McpServer): void {
       if (reserved.length) {
         return { content: [{ type: 'text', text: `Error: reportKeys ${reserved.join(', ')} ${reserved.length > 1 ? 'are' : 'is a'} reserved capability name${reserved.length > 1 ? 's' : ''} (it would override the generated digitalai:${reserved[0]}). Use a different key name, e.g. runId, build, suite.` }], isError: true };
       }
-      const extraCaps: Record<string, string | number> = {};
+      const extraCaps: Record<string, CapValue> = {};
       const capNotes: string[] = [];
       if (appiumVersion) {
         if (isAppiumOss) extraCaps['digitalai:appiumVersion'] = appiumVersion;
@@ -1314,6 +1411,32 @@ export function registerBoilerplateTools(server: McpServer): void {
       }
       if (newSessionWaitTimeout !== undefined) extraCaps['digitalai:newSessionWaitTimeout'] = newSessionWaitTimeout;
       for (const [k, v] of Object.entries(reportKeys ?? {})) extraCaps[`digitalai:${k}`] = v;
+      // Session options verified on Appium Server only (2026-11-12) — a Grid project gets the classic output with a note.
+      const serverOnly = [
+        appReset === 'keep-data' && 'appReset',
+        deviceLanguage && 'deviceLanguage',
+        autoAcceptAlerts && 'autoAcceptAlerts',
+        platformOptions && Object.keys(platformOptions).length > 0 && 'platformOptions',
+      ].filter(Boolean) as string[];
+      const keepAppData = isAppiumOss && appReset === 'keep-data';
+      if (!isAppiumOss && serverOnly.length) {
+        capNotes.push(`${serverOnly.join(', ')} ignored: verified on Appium Server projects only, and this project runs on Appium Grid.`);
+      } else {
+        if (keepAppData) {
+          extraCaps['appium:noReset'] = true;
+          capNotes.push('appReset keep-data: the app capability is removed and the INSTALLED app is launched with noReset — install it on the devices first (install_application), or the launch fails.');
+        }
+        if (deviceLanguage) {
+          Object.assign(extraCaps, languageCaps(platform, deviceLanguage));
+          if (platform === 'android') capNotes.push(`deviceLanguage ${deviceLanguage}: on Android this changes the whole device and stays after the test — on shared devices pin back to the usual language afterwards.`);
+        }
+        if (autoAcceptAlerts) {
+          if (platform === 'ios') extraCaps['appium:autoAcceptAlerts'] = true;
+          else capNotes.push('autoAcceptAlerts ignored on Android: the template already sets autoDismissAlerts and autoGrantPermissions.');
+        }
+        for (const [k, v] of Object.entries(platformOptions ?? {})) if (v !== undefined) extraCaps[`digitalai:${k}`] = v;
+        if (platformOptions?.releaseDevice === false) capNotes.push('releaseDevice false: the shared device stays reserved after the test — the last test of the sequence should set it true, or release it with release_device.');
+      }
       if (reportKeys && Object.keys(reportKeys).length > 0) {
         const [k, v] = Object.entries(reportKeys)[0];
         capNotes.push(`Report keys set (${Object.keys(reportKeys).join(', ')}). Find these runs with list_test_reports filter [{"property":"${k}","operator":"=","value":"${v}"}], keys ["${k}"].`);
@@ -1376,6 +1499,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         automotiveProjection: automotive?.applied ? automotive.resolution : undefined,
         reportStatus: reportStatus !== false,
         extraCaps,
+        keepAppData,
         pageObjects: pageObjectsApplied,
       };
 
