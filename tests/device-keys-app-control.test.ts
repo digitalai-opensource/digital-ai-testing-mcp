@@ -563,3 +563,45 @@ describe('best-practice inspection additions (verified live 2026-11-12)', () => 
     assert.doesNotMatch(r2.text, /simulated location/);
   });
 });
+
+describe('second best-practice pass (verified live 2026-11-12)', () => {
+  it('press_key longPress sends isLongPress on Android Appium Server; refused on iOS and the Grid', async () => {
+    const h = await session('android');
+    const r = await tools.call('press_key', { handle: h, key: 'HOME', longPress: true });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.match(r.text, /long press/);
+    assert.deepEqual(executed[0], { script: 'mobile: pressKey', args: [{ keycode: 3, isLongPress: true }] });
+    await tools.call('stop_inspection_session', { handle: h });
+    const i = await session('ios');
+    const ri = await tools.call('press_key', { handle: i, key: 'HOME', longPress: true });
+    assert.equal(ri.res.isError, true);
+    assert.match(ri.text, /Android Appium Server sessions only/);
+    await tools.call('stop_inspection_session', { handle: i });
+    const g = (await tools.callJson('start_inspection_session', { platform: 'android', deviceQuery: "@os='android' and @name='GRID'" })).handle as string;
+    const rg = await tools.call('press_key', { handle: g, key: 'HOME', longPress: true });
+    assert.equal(rg.res.isError, true);
+    await tools.call('stop_inspection_session', { handle: g });
+  });
+
+  it('launch_app launchArguments: iOS terminates, then launches with arguments; refused on Android', async () => {
+    const h = await session('ios');
+    const r = await tools.call('launch_app', { handle: h, packageName: 'com.apple.Preferences', launchArguments: ['-AppleLanguages', '(de)'] });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.deepEqual(executed.map((e) => e.script), ['mobile: terminateApp', 'mobile: launchApp']);
+    assert.deepEqual(executed[1].args, [{ bundleId: 'com.apple.Preferences', arguments: ['-AppleLanguages', '(de)'] }]);
+    await tools.call('stop_inspection_session', { handle: h });
+    const a = await session('android');
+    const ra = await tools.call('launch_app', { handle: a, packageName: 'com.x', activity: '.Main', launchArguments: ['-x'] });
+    assert.equal(ra.res.isError, true);
+    assert.match(ra.text, /iOS only/);
+    await tools.call('stop_inspection_session', { handle: a });
+  });
+
+  it('deep_link on iOS names the app that opens the URL (Safari opens web URLs with no prompt)', async () => {
+    const h = await session('ios');
+    const r = await tools.call('app_control', { handle: h, action: 'deep_link', url: 'https://example.com', packageName: 'com.apple.mobilesafari' });
+    assert.equal(r.res.isError, undefined, r.text);
+    assert.deepEqual(executed[0], { script: 'mobile: deepLink', args: [{ url: 'https://example.com', bundleId: 'com.apple.mobilesafari' }] });
+    await tools.call('stop_inspection_session', { handle: h });
+  });
+});

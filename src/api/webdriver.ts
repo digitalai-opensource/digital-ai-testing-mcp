@@ -999,11 +999,29 @@ export async function swipeScreen(
 export async function launchApp(
   handle: string,
   packageName: string,
-  activity?: string
+  activity?: string,
+  launchArguments?: string[]
 ): Promise<string> {
   const session = requireSession(handle);
   const client = makeClient();
   const sid = session.gridSessionId;
+
+  // iOS launch arguments (e.g. -AppleLanguages (de), feature flags) — XCUITest `mobile: launchApp {arguments}`. A RUNNING
+  // app ignores them (verified live 2026-11-12, iOS 26.6: Settings stayed French), so the app is terminated first;
+  // after the terminate the same call opened Settings in German. Appium Server only — the Grid has no equivalent.
+  if (launchArguments && launchArguments.length > 0) {
+    if (session.platform !== 'ios') throw new Error('launchArguments is iOS only. On Android, pass extras through the activity intent or a deep link.');
+    if (session.sessionFormat !== 'w3c') throw new Error('launchArguments needs an Appium Server session; Appium Grid has no launch-arguments command.');
+    try {
+      await client.post(`/session/${sid}/execute/sync`, { script: 'mobile: terminateApp', args: [{ bundleId: packageName }] }, { timeout: 30_000 });
+    } catch { /* not running — fine */ }
+    await client.post(
+      `/session/${sid}/execute/sync`,
+      { script: 'mobile: launchApp', args: [{ bundleId: packageName, arguments: launchArguments }] },
+      { timeout: 30_000 }
+    );
+    return `Relaunched ${packageName} with arguments ${JSON.stringify(launchArguments)} via mobile: launchApp (terminated first — a running app ignores launch arguments)`;
+  }
 
   // For app launch the Digital.ai Grid (proprietary JWP proxy) accepts only
   // seetest:client.* execute commands — the legacy start_activity / activate_app
@@ -1827,11 +1845,15 @@ const IOS_BUTTONS: Record<string, { w3c: string | null; grid: string }> = {
 export async function pressKey(
   handle: string,
   key?: string,
-  keycode?: number
+  keycode?: number,
+  longPress = false
 ): Promise<string> {
   const session = requireSession(handle);
   const client = makeClient();
   const sid = session.gridSessionId;
+  if (longPress && (session.platform === 'ios' || session.sessionFormat !== 'w3c')) {
+    throw new Error('longPress is available on Android Appium Server sessions only (mobile: pressKey isLongPress).');
+  }
 
   if (session.platform === 'ios') {
     const button = key ? IOS_BUTTONS[key] : undefined;
@@ -1877,7 +1899,12 @@ export async function pressKey(
   // Confirmed live: the Grid routes the legacy press_keycode endpoint.
   const jwp = () =>
     client.post(`/session/${sid}/appium/device/press_keycode`, { keycode: code }, { timeout: 15_000 });
-  const w3c = () => execScript(client, session, 'mobile: pressKey', [{ keycode: code }]);
+  // isLongPress verified live 2026-11-12: a long HOME opened Google Assistant on a Galaxy S21 (Android 12).
+  const w3c = () => execScript(client, session, 'mobile: pressKey', [longPress ? { keycode: code, isLongPress: true } : { keycode: code }]);
+  if (longPress) {
+    await w3c();
+    return `${key ?? `keycode ${code}`} (long press)`;
+  }
 
   const [primary, fallback] = session.sessionFormat === 'w3c' ? [w3c, jwp] : [jwp, w3c];
   try {
@@ -2064,8 +2091,10 @@ export async function appControl(
       if (!url) throw new Error('deep_link requires url.');
       if (isW3c) {
         const args: Record<string, unknown> = { url };
-        // Android needs the handler package; iOS routes through the system.
-        if (packageName && !isIos) args['package'] = packageName;
+        // Android: the handler package. iOS: the bundle id of the app that should open it — com.apple.mobilesafari
+        // opens a web URL straight in Safari with no "Open in …?" prompt (verified live 2026-11-12, iOS 26.6), so no
+        // address-bar typing is needed.
+        if (packageName) args[isIos ? 'bundleId' : 'package'] = packageName;
         await execScript(client, session, 'mobile: deepLink', [args]);
         return `Opened deep link ${url}.`;
       }

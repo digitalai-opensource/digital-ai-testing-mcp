@@ -820,7 +820,10 @@ export function registerInspectionTools(server: McpServer): void {
     'type, often returns many), "xpath" (most flexible, slowest — attribute matches only, never positional [1]/[2]), ' +
     '"css selector" (ONLY inside a WEBVIEW context — see webview_context). ' +
     'Prefer them in that order and copy the strategy you used into the generated test. Attributes are fetched for the first ' +
-    'maxResults matches (default 20); the rest are listed by elementId — narrow the selector rather than raising it.',
+    'maxResults matches (default 20); the rest are listed by elementId — narrow the selector rather than raising it. ' +
+    'Android TOASTS: find xpath //android.widget.Toast[contains(@text,\'<part of the message>\')] straight after the action ' +
+    'that shows it — the text check must be IN the locator: the toast element goes stale at once (reading its text ' +
+    'afterwards fails) and the toast is gone within a few seconds (verified live, UiAutomator2).',
     {
       handle: z
         .string()
@@ -1171,12 +1174,19 @@ export function registerInspectionTools(server: McpServer): void {
         .string()
         .optional()
         .describe("Android launch activity, e.g. '.LoginActivity' — from get_application_info mainActivity; effectively required on Android Grid sessions. Ignored on iOS."),
+      launchArguments: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'iOS, Appium Server only: process arguments for the app, e.g. ["-AppleLanguages", "(de)"] to open it in German, ' +
+          'or the app’s own feature-flag arguments. The app is terminated first — a running app ignores launch arguments.'
+        ),
     },
     async (args) => {
       const mobileErr = requireMobileSession(args.handle, 'launch_app');
       if (mobileErr) return mobileErr;
       try {
-        const result = await launchApp(args.handle, args.packageName, args.activity);
+        const result = await launchApp(args.handle, args.packageName, args.activity, args.launchArguments);
         return {
           content: [{
             type: 'text' as const,
@@ -1387,6 +1397,10 @@ export function registerInspectionTools(server: McpServer): void {
         .optional()
         .describe('Named key. Provide this OR keycode. iOS supports HOME, VOLUME_UP, VOLUME_DOWN, POWER.'),
       keycode: z.number().int().optional().describe('Raw Android keycode (e.g. 66 = ENTER). Android only. Provide this OR key.'),
+      longPress: z
+        .boolean()
+        .optional()
+        .describe('Android, Appium Server only: hold the key instead of tapping it (e.g. a long HOME opens the assistant).'),
     },
     async (args) => {
       const mobileErr = requireMobileSession(args.handle, 'press_key');
@@ -1395,7 +1409,7 @@ export function registerInspectionTools(server: McpServer): void {
         if (!args.key && args.keycode == null) {
           return { content: [{ type: 'text' as const, text: 'Error: provide either key (named) or keycode (number).' }], isError: true };
         }
-        const pressed = await pressKey(args.handle, args.key, args.keycode);
+        const pressed = await pressKey(args.handle, args.key, args.keycode, args.longPress === true);
         return {
           content: [{ type: 'text' as const, text: `✅ Pressed ${pressed}.\n\nCall take_inspection_screenshot to verify the result.` }],
         };
@@ -1455,7 +1469,7 @@ export function registerInspectionTools(server: McpServer): void {
       packageName: z
         .string()
         .optional()
-        .describe('Android package name or iOS bundle identifier. Required for terminate, clear_data, query_state, is_installed; optional Android handler hint for deep_link.'),
+        .describe('Android package name or iOS bundle identifier. Required for terminate, clear_data, query_state, is_installed; for deep_link: Android handler package, or the iOS bundle id that should open the URL — com.apple.mobilesafari opens a web URL straight in Safari (no address-bar typing).'),
       url: z.string().optional().describe('URL or URI scheme for deep_link, e.g. "myapp://orders/42" or "https://...".'),
       seconds: z.number().int().min(1).max(300).optional().describe('For background: how long to keep the app in the background. Default 3.'),
       appRef: z.string().optional().describe('For install: repository reference — "cloud:com.example.app" (Android may add "/.MainActivity"), "cloud:uniqueName=<name>", or "cloud:<package>:releaseVersion=<v>:buildVersion=<b>".'),

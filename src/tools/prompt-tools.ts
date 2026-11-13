@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { FAILURE_TRIAGE } from '../utils/failure-triage.js';
 
 export function registerPrompts(server: McpServer): void {
   // ─── Create POC Environment ────────────────────────────────────────────────
@@ -274,6 +275,9 @@ export function registerPrompts(server: McpServer): void {
               '  • A bullet list of the top failing tests with failure counts.',
               '  • Whether failures appear to be device/OS-specific or widespread.',
               '  • Recommended next steps (e.g. re-run, investigate a specific device, check a specific test).',
+              '',
+              'Triage table — map the failure message (get_test_report cause / get_test_log) to a likely cause before recommending anything:',
+              ...FAILURE_TRIAGE.map((r) => `  • "${r.message}" → ${r.cause}. ${r.action}`),
             ].join('\n'),
           },
         }],
