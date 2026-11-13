@@ -215,6 +215,12 @@ describe('list_test_reports keys', () => {
     listFixture = 'trend';
   });
 
+  it('compact text never prints "undefined" for a null name or start time', async () => {
+    const { formatCompactReportList } = await import('../src/utils/response-formatter.js');
+    const text = formatCompactReportList([{ test_id: 7, status: 'Failed', name: null, start_time: null } as never]);
+    assert.equal(text, '#7 Failed — (no name)');
+  });
+
   it('the description warns that custom-key filters and searchValue are slow', async () => {
     const { tools: list } = await tools.client.listTools();
     const d = list.find((t) => t.name === 'list_test_reports')!.description ?? '';

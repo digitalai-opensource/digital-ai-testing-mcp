@@ -12,10 +12,15 @@
  *  - PUT /api/v1/executions/{uuid}/actions/cancel → QUEUED → CANCELED; a second cancel answers (200) "Invalid request.
  *    This execution session is already canceled".
  *  - GET /api/v1/executions/{uuid}/logs → a zip (22-byte empty zip for a run that never started).
+ *  - The platform reads playwright.config.* from the ZIP ROOT at submit time (2026-11-13): the same project zipped
+ *    inside one top-level folder (myproj/playwright.config.js) → 400 "no browsers were found either in request
+ *    body/digitalai.json or in playwright configuration file"; a zip with no Playwright files gets the same 400; a
+ *    non-zip → 400 "Project folder is empty". With explicit conf.browsers the nested zip is ACCEPTED at submit — whether
+ *    it would run is unknown, so loadPlaywrightProject reports `nestedRoot` and the tool refuses it.
  * UNVERIFIED: every run on the dev tenant stayed QUEUED "Waiting for licenses" (two projects), so the states after
  * RUNNING, the browser counts of a real run and the log contents have not been seen. Re-probe when a license exists.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, join } from 'path';
 import FormData from 'form-data';
 import AdmZip from 'adm-zip';
@@ -43,6 +48,8 @@ export interface PlaywrightProject {
   /** @playwright/test version from package.json (devDependencies or dependencies), without ^/~, when exact enough. */
   detectedVersion: string | null;
   skipped: string[];
+  /** Set when everything sits inside ONE top-level folder that holds the config / package.json — the platform only looks at the zip root. */
+  nestedRoot: string | null;
 }
 
 function versionFromPackageJson(text: string): string | null {
@@ -67,7 +74,10 @@ export function loadPlaywrightProject(path: string): PlaywrightProject {
       for (const name of readdirSync(dir)) {
         const full = join(dir, name);
         const relPath = rel ? `${rel}/${name}` : name;
-        const st = statSync(full);
+        // lstat, not stat: a link is never followed — a link back to a parent would recurse without end, a dangling one
+        // would abort the whole upload, and one pointing outside the project would upload files that are not part of it.
+        const st = lstatSync(full);
+        if (st.isSymbolicLink()) { skipped.push(`${relPath} (link)`); continue; }
         if (st.isDirectory()) {
           if (SKIP_DIRS.has(name)) { skipped.push(`${relPath}/`); continue; }
           walk(full, relPath);
@@ -82,12 +92,29 @@ export function loadPlaywrightProject(path: string): PlaywrightProject {
   } else {
     if (!/\.zip$/i.test(path)) throw new Error('projectPath must be a Playwright project folder or a .zip of one.');
     try { zip = new AdmZip(path); } catch (e) { throw new Error(`Could not read ${path} as a ZIP: ${(e as Error).message}`); }
+    // A folder upload skips credential files; a supplied zip is refused instead of rewritten — what runs in the cloud
+    // must be exactly what the user handed over, and a credential file must never leave the machine unnoticed.
+    const secrets = zip.getEntries()
+      .filter((e) => !e.isDirectory && SECRET_FILE.test(e.entryName.replace(/\\/g, '/').split('/').pop() ?? ''))
+      .map((e) => e.entryName.replace(/\\/g, '/'));
+    if (secrets.length > 0) {
+      throw new Error(
+        `${basename(path)} contains credential file(s) that must not be uploaded: ${secrets.slice(0, 10).join(', ')}` +
+        `${secrets.length > 10 ? ` (+${secrets.length - 10} more)` : ''}. Remove them from the zip, or pass the project ` +
+        'folder as projectPath — a folder upload leaves these files out automatically.'
+      );
+    }
   }
   const files = zip.getEntries().filter((e) => !e.isDirectory).map((e) => e.entryName.replace(/\\/g, '/'));
   const hasConfig = files.some((f) => /^playwright\.config\.(js|ts|mjs|cjs)$/.test(f));
   const specCount = files.filter((f) => /\.(spec|test)\.(js|ts|mjs|cjs)$/.test(f) && !f.startsWith('node_modules/')).length;
   const pkg = zip.getEntry('package.json');
   const detectedVersion = pkg ? versionFromPackageJson(pkg.getData().toString('utf8')) : null;
+  const tops = new Set(files.map((f) => f.split('/')[0]));
+  const top = tops.size === 1 && files.every((f) => f.includes('/')) ? [...tops][0] : null;
+  const nestedRoot = top && !hasConfig && !pkg
+    && files.some((f) => f.startsWith(`${top}/`) && /^(package\.json|playwright\.config\.(js|ts|mjs|cjs))$/.test(f.slice(top.length + 1)))
+    ? top : null;
   return {
     zip: zip.toBuffer(),
     fileName: statSync(path).isDirectory() ? `${basename(path) || 'playwright-project'}.zip` : basename(path),
@@ -96,6 +123,7 @@ export function loadPlaywrightProject(path: string): PlaywrightProject {
     specCount,
     detectedVersion,
     skipped,
+    nestedRoot,
   };
 }
 

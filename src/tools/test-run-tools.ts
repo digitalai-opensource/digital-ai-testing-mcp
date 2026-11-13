@@ -270,7 +270,7 @@ export function registerTestRunTools(server: McpServer): void {
     'projectPath is the project folder (zipped here without node_modules, reports, .git or credential files) or a .zip ' +
     'of it. With a playwright.config.* its projects choose the browsers; otherwise pass browsers. ' + serverFsUploadNotice(),
     {
-      projectPath: z.string().describe('Playwright project folder or .zip (tests plus optional playwright.config.* and package.json). ' + serverFsInputParam()),
+      projectPath: z.string().describe('Playwright project folder or .zip (tests plus optional playwright.config.* and package.json — at the TOP LEVEL of a .zip, not inside a wrapping folder; a .zip that contains credential files such as .env or private keys is refused). ' + serverFsInputParam()),
       imageVersion: z
         .string()
         .optional()
@@ -289,6 +289,9 @@ export function registerTestRunTools(server: McpServer): void {
         project = loadPlaywrightProject(args.projectPath);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+      if (project.nestedRoot) {
+        return { content: [{ type: 'text', text: `Error: the project sits inside a "${project.nestedRoot}/" folder in ${args.projectPath}, but the platform only reads playwright.config.* and package.json from the top level of the zip (a nested zip is refused with "no browsers were found…"). Zip the CONTENTS of ${project.nestedRoot}/ instead, or pass the project folder itself as projectPath.` }], isError: true };
       }
       if (project.specCount === 0 && !project.hasConfig) {
         return { content: [{ type: 'text', text: `Error: no Playwright tests found in ${args.projectPath} (no *.spec.* / *.test.* files and no playwright.config.*). Files: ${project.files.slice(0, 15).join(', ') || '(none)'}.` }], isError: true };

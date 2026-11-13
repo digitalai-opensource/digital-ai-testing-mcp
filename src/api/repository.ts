@@ -36,20 +36,24 @@ export function invalidateRepositoryCache(): void {
   cache = null;
 }
 
-async function fetchAllFiles(fresh: boolean): Promise<RepositoryFile[]> {
+async function fetchAllFiles(fresh: boolean): Promise<{ files: RepositoryFile[]; fromCache: boolean }> {
   const credential = credentialFingerprint();
-  if (!fresh && cache && cache.credential === credential && Date.now() - cache.at < REPOSITORY_CACHE_TTL_MS) return cache.files;
+  if (!fresh && cache && cache.credential === credential && Date.now() - cache.at < REPOSITORY_CACHE_TTL_MS) {
+    return { files: cache.files, fromCache: true };
+  }
   const res = await apiGet<ApiResponse<RepositoryFile[]>>('/api/v1/files');
   cache = { credential, at: Date.now(), files: res.data ?? [] };
-  return cache.files;
+  return { files: cache.files, fromCache: false };
 }
 
 export async function listFiles(filters?: RepositoryFileFilters, opts: { fresh?: boolean } = {}): Promise<RepositoryFile[]> {
   try {
-    let all = await fetchAllFiles(opts.fresh === true);
-    // A file just created outside this MCP may not be in a cached list yet — a named lookup that misses checks again.
-    if (!opts.fresh && filters?.uniqueName && filterRepositoryFiles(all, { uniqueName: filters.uniqueName }).length === 0) {
-      all = await fetchAllFiles(true);
+    const first = await fetchAllFiles(opts.fresh === true);
+    let all = first.files;
+    // A file just created outside this MCP may not be in a CACHED list yet — a named lookup that misses there checks
+    // again (a list that was fetched just now is already current, so a miss in it is final).
+    if (first.fromCache && filters?.uniqueName && filterRepositoryFiles(all, { uniqueName: filters.uniqueName }).length === 0) {
+      all = (await fetchAllFiles(true)).files;
     }
     let projectName = filters?.projectName;
     if (filters?.projectId && !projectName) {

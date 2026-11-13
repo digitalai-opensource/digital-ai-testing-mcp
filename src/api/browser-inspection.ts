@@ -226,10 +226,16 @@ export async function navigateTo(handle: string, url: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   // Chrome/Edge/Safari answer a bad certificate with a warning page, not an error — surface it as one.
-  if (!session.acceptInsecureCerts) {
+  // iOS Safari does not honour acceptInsecureCerts (verified live 2026-11-12), so the check still runs there.
+  const iosSafari = session.mobileOs === 'ios';
+  if (!session.acceptInsecureCerts || iosSafari) {
     try {
       const t = await client.get(`/session/${session.gridSessionId}/title`, { timeout: 10_000 });
-      const hint = certificateWarning(String(t.data.value ?? ''));
+      let hint = certificateWarning(String(t.data.value ?? ''));
+      if (hint && iosSafari) {
+        hint = "The site's TLS certificate is self-signed, expired or from an untrusted CA, and iOS Safari does not honour " +
+          'acceptInsecureCerts. Inspect this site with a desktop browser, or with mobilePlatform "android" (Chrome), and acceptInsecureCerts: true.';
+      }
       if (hint) throw new Error(`navigate_to: the browser showed "${t.data.value}" for ${url}.\n${hint}`);
     } catch (e) {
       if ((e as Error).message.startsWith('navigate_to:')) throw e;

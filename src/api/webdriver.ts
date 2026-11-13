@@ -1015,11 +1015,16 @@ export async function launchApp(
     try {
       await client.post(`/session/${sid}/execute/sync`, { script: 'mobile: terminateApp', args: [{ bundleId: packageName }] }, { timeout: 30_000 });
     } catch { /* not running — fine */ }
-    await client.post(
-      `/session/${sid}/execute/sync`,
-      { script: 'mobile: launchApp', args: [{ bundleId: packageName, arguments: launchArguments }] },
-      { timeout: 30_000 }
-    );
+    try {
+      await client.post(
+        `/session/${sid}/execute/sync`,
+        { script: 'mobile: launchApp', args: [{ bundleId: packageName, arguments: launchArguments }] },
+        { timeout: 30_000 }
+      );
+    } catch (e) {
+      // Same shape as the other launch paths: the driver's own message, not a bare "status code 500".
+      throw new Error(`Could not launch ${packageName} with arguments: mobile: launchApp → ${describeWdError(e)}`);
+    }
     return `Relaunched ${packageName} with arguments ${JSON.stringify(launchArguments)} via mobile: launchApp (terminated first — a running app ignores launch arguments)`;
   }
 

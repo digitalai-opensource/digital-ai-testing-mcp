@@ -77,9 +77,13 @@ export async function startBrowserEventCapture(handle: string, wsUrl: string, ti
   try { socket = new WebSocket(wsUrl); } catch (e) { return `could not open the BiDi socket: ${(e as Error).message}`; }
   const cap: Capture = { socket, events: [], dropped: 0, okRequests: 0, subscribed: false };
   return new Promise((resolve) => {
-    const timer = setTimeout(() => { try { socket.close(); } catch { /* ignore */ } resolve('the BiDi socket did not answer within 10 s'); }, timeoutMs);
+    const timer = setTimeout(() => { try { socket.close(); } catch { /* ignore */ } resolve(`the BiDi socket did not answer within ${Math.round(timeoutMs / 1000)} s`); }, timeoutMs);
     socket.onerror = () => { clearTimeout(timer); if (!cap.subscribed) resolve('the BiDi socket refused the connection'); };
-    socket.onclose = () => { cap.closedReason = cap.closedReason ?? 'the browser closed the BiDi socket'; };
+    socket.onclose = () => {
+      cap.closedReason = cap.closedReason ?? 'the browser closed the BiDi socket';
+      // Closed before the subscribe reply (no error event): answer now instead of holding the session start for the timeout.
+      if (!cap.subscribed) { clearTimeout(timer); resolve('the BiDi socket closed before the subscription was confirmed'); }
+    };
     socket.onopen = () => socket.send(JSON.stringify({ id: 1, method: 'session.subscribe', params: { events: SUBSCRIBE_EVENTS } }));
     socket.onmessage = (m) => {
       const raw = String(m.data);

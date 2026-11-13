@@ -352,7 +352,9 @@ export function formatCompactReportList(reports: TestReport[], keys: string[] = 
     const r = compactReport(report, keys);
     const dur = typeof r.duration === 'number' ? ` ${(r.duration / 1000).toFixed(1)}s` : '';
     const extra = keys.filter((k) => r[k] !== undefined).map((k) => `${k}=${String(r[k])}`).join(' ');
-    return `#${r.test_id} ${r.status} ${r.start_time}${dur} — ${r.name}${extra ? ` [${extra}]` : ''}`;
+    // compactReport drops null fields — print what is there, never the word "undefined".
+    const head = [`#${r.test_id ?? '?'}`, r.status, r.start_time].filter((v) => v !== undefined).join(' ');
+    return `${head}${dur} — ${r.name ?? '(no name)'}${extra ? ` [${extra}]` : ''}`;
   }).join('\n');
 }
 

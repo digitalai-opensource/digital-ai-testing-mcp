@@ -23,7 +23,9 @@ describe('classifyShellCommand', () => {
       'pm clear com.x', 'pm grant com.x android.permission.CAMERA', 'cmd package install-existing com.x', 'rm -rf /sdcard/x',
       'am start -n com.x/.Main', 'am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS', 'wm size 1080x1920',
       'wm density reset', 'dumpsys battery set level 5', 'dumpsys battery unplug', 'svc wifi disable', 'input keyevent 26',
-      'logcat -c', 'ip link set wlan0 down',
+      'logcat -c', 'ip link set wlan0 down', 'ip addr add 10.0.0.2/24 dev wlan0', 'ip route del default', 'ip route flush table main',
+      'dumpsys batterystats --reset', 'dumpsys procstats --clear', 'dumpsys batterystats --enable full-wake-history',
+      'dumpsys deviceidle force-idle', 'dumpsys deviceidle whitelist +com.x',
     ]) assert.equal(ro(c), false, c);
   });
 

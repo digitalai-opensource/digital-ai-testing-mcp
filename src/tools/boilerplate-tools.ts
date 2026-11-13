@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { getApplicationInfo } from '../api/applications.js';
-import { getActiveAccessKey, getActiveUrl } from '../api/client.js';
+import { getActiveUrl } from '../api/client.js';
 import { listActiveSessions, AUTOMOTIVE_RESOLUTIONS, type AutomotiveResolution } from '../api/webdriver.js';
 import { outputFormatParam, respond } from '../utils/output-format.js';
 import { staleBuildRemedy, serverFsInstallNotice, serverFsProjectDirParam } from '../utils/locality.js';
@@ -662,7 +662,6 @@ function substitute(
   language: Language,
   platform: Platform,
   vars: {
-    accessKey: string;
     instanceUrl: string;
     instanceHost: string;
     testName: string;
@@ -1347,10 +1346,8 @@ export function registerBoilerplateTools(server: McpServer): void {
         return { ...respond(outputFormat, blocked, human), isError: true };
       }
 
-      // Active-profile accessors (not process.env) — generated boilerplate must
-      // embed the active profile's credential, not the default profile's. With
-      // env vars, switching to a project profile still embedded the admin credential.
-      const accessKey = getActiveAccessKey();
+      // Active-profile accessor (not process.env) — the generated files point at the active profile's cloud. No access
+      // key is read here: generated files never carry one (src/utils/credential-env.ts).
       const rawBaseUrl = getActiveUrl();
 
       let instanceHost = rawBaseUrl;
@@ -1482,7 +1479,6 @@ export function registerBoilerplateTools(server: McpServer): void {
         : undefined;
 
       const vars = {
-        accessKey,
         instanceUrl: rawBaseUrl,
         instanceHost,
         testName,

@@ -9,7 +9,11 @@
 const SHELL_OPERATORS = /[;&|`$<>\n\\]|\(|\)/;
 
 /** Subcommands of read-only tools that change device state (dumpsys battery set/unplug/reset, …). */
-const MUTATING_WORDS = new Set(['set', 'put', 'delete', 'reset', 'unplug', 'clear', 'enable', 'disable', 'install', 'uninstall', 'grant', 'revoke', 'kill', 'force-stop', 'start', 'stop', 'broadcast']);
+const MUTATING_WORDS = new Set([
+  'set', 'put', 'delete', 'reset', 'unplug', 'clear', 'enable', 'disable', 'install', 'uninstall', 'grant', 'revoke', 'kill', 'force-stop', 'start', 'stop', 'broadcast',
+  // ip addr|route add/del/flush/…; dumpsys deviceidle force-idle/step/whitelist; dumpsys batterystats/procstats --write/--checkin
+  'add', 'del', 'flush', 'change', 'replace', 'append', 'force-idle', 'force-inactive', 'unforce', 'step', 'whitelist', 'tempwhitelist', 'write', 'checkin',
+]);
 
 /** command → allowed first argument (null = any arguments that pass the other checks). */
 const READ_ONLY: Record<string, ReadonlySet<string> | null> = {
@@ -67,7 +71,8 @@ export function classifyShellCommand(command: string, args: string[] = []): Shel
   }
   if (tool === 'cmd' && !['list', 'path', 'resolve-activity'].includes(words[2] ?? '')) return change('only "cmd package list|path|resolve-activity" is treated as read-only');
   if (tool === 'wm' && words.length > 2) return change(`"wm ${first}" with a value changes the display`);
-  const mutating = words.slice(1).find((w) => MUTATING_WORDS.has(w.toLowerCase()));
+  // Flags count too: "dumpsys batterystats --reset", "dumpsys procstats --clear", "--enable full-wake-history".
+  const mutating = words.slice(1).find((w) => MUTATING_WORDS.has(w.toLowerCase().replace(/^-+/, '')));
   if (mutating) return change(`"${mutating}" changes device state`);
   return { readOnly: true, reason: '', commandLine };
 }

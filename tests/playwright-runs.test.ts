@@ -82,6 +82,39 @@ describe('playwright runs (pure)', () => {
     assert.equal(p.fileName, 'shop-tests.zip');
   });
 
+  it('a zip that wraps the project in one top-level folder is refused before any upload (verified live 2026-11-13)', async () => {
+    // The platform reads playwright.config.* from the zip root only: the nested layout got 400 "no browsers were found".
+    const nested = new AdmZip();
+    nested.addFile('myproj/package.json', Buffer.from(JSON.stringify({ devDependencies: { '@playwright/test': '1.49.0' } })));
+    nested.addFile('myproj/playwright.config.js', Buffer.from('module.exports = {};'));
+    nested.addFile('myproj/tests/a.spec.js', Buffer.from('x'));
+    const zipPath = join(dir, 'nested.zip');
+    writeFileSync(zipPath, nested.toBuffer());
+    assert.equal(loadPlaywrightProject(zipPath).nestedRoot, 'myproj');
+    assert.equal(loadPlaywrightProject(project).nestedRoot, null);
+    const before = submissions.length;
+    const r = await tools.call('execute_playwright_run', { projectPath: zipPath, imageVersion: '1.49.0', browsers: ['chromium'] });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /inside a "myproj\/" folder.*top level of the zip/);
+    assert.equal(submissions.length, before, 'nothing was uploaded');
+  });
+
+  it('a supplied zip that contains credential files is refused before any upload, naming them', async () => {
+    const z = new AdmZip();
+    z.addFile('package.json', Buffer.from('{}'));
+    z.addFile('playwright.config.js', Buffer.from('module.exports = {};'));
+    z.addFile('.env', Buffer.from('SECRET=1'));
+    z.addFile('config/id_rsa', Buffer.from('key'));
+    const zipPath = join(dir, 'with-secrets.zip');
+    writeFileSync(zipPath, z.toBuffer());
+    assert.throws(() => loadPlaywrightProject(zipPath), /credential file\(s\).*\.env, config\/id_rsa/);
+    const before = submissions.length;
+    const r = await tools.call('execute_playwright_run', { projectPath: zipPath, imageVersion: '1.49.0' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /Remove them from the zip, or pass the project folder/);
+    assert.equal(submissions.length, before, 'nothing was uploaded');
+  });
+
   it('builds conf: config projects pin only the image; explicit browsers list one entry each; bad versions refused', () => {
     assert.deepEqual(buildPlaywrightConf({ hasConfig: true }, '1.49.0'), { browsers: [{ imageVersion: '1.49.0' }] });
     assert.deepEqual(buildPlaywrightConf({ hasConfig: false }, '1.49.0', ['chromium', 'webkit']), { browsers: [{ browser: 'chromium', imageVersion: '1.49.0' }, { browser: 'webkit', imageVersion: '1.49.0' }] });
