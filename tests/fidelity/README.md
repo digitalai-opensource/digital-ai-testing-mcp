@@ -4,7 +4,7 @@ Checks that an AI agent uses this MCP **correctly from a plain user goal**: righ
 selectors, no unconfirmed destructive or public actions. It also checks that this still holds when `MCP_TOOLSETS`
 trims the tool list.
 
-It complements the scripted UAT (`docs/uat-test-suite.md`). The UAT names every tool and parameter, so it tests that
+It complements the scripted UAT (`uat-test-suite.md`, kept in the separate UAT project, not in this repository). The UAT names every tool and parameter, so it tests that
 tools *behave* correctly. This eval never names a tool, so it tests whether the agent *chooses* correctly — which is
 where tool descriptions and server instructions do their work.
 

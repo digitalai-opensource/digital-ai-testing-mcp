@@ -1,7 +1,7 @@
 /**
  * Fidelity eval runner — does an agent use this MCP CORRECTLY from a plain user goal, and does that hold up when
- * MCP_TOOLSETS trims the tool list? Complements the scripted UAT (docs/uat-test-suite.md), which names every tool and
- * therefore tests tool behaviour, not tool choice.
+ * MCP_TOOLSETS trims the tool list? Complements the scripted UAT (uat-test-suite.md, kept in the separate UAT project,
+ * not in this repository), which names every tool and therefore tests tool behaviour, not tool choice.
  *
  * Each scenario × toolset mode runs in a FRESH headless Claude Code session (`claude -p`):
  *  - empty temp working directory (no project CLAUDE.md, no auto-memory for that path)
