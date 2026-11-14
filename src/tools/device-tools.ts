@@ -195,7 +195,8 @@ export function registerDeviceTools(server: McpServer): void {
     'idle templates are not devices, so list_devices, list_agents and get_agent_devices never show them. ' +
     'Each entry carries a ready deviceQuery for start_inspection_session or a test\'s digitalai:deviceQuery. ' +
     'Region and serving agent are NOT available from the platform — to check a region, start a session with @region added to the query. ' +
-    'templateName is null on platform versions that do not expose it; the deviceQuery then targets @model. Works for every role.',
+    'templateName is null on platform versions that do not expose it; the deviceQuery then targets @model. ' +
+    'An entry with ambiguousQuery: true has a query that can also allocate another template — prefer a different template. Works for every role.',
     {
       os: osTypeTitle().optional().describe("Filter by OS: 'Android' or 'iOS'."),
       status: z
@@ -222,7 +223,7 @@ export function registerDeviceTools(server: McpServer): void {
         templates.sort((a, b) => a.os.localeCompare(b.os) || String(a.templateName ?? a.model).localeCompare(String(b.templateName ?? b.model)) || String(b.osVersion).localeCompare(String(a.osVersion), undefined, { numeric: true }));
         const paged = applyMaxResults(templates, maxResults);
         const lines = paged.items.map((t) =>
-          `- ${t.templateName ?? t.model ?? '(unnamed)'} — ${t.os} ${t.osVersion ?? '?'}, ${t.category ?? '?'}, ${t.status ?? '?'}\n  deviceQuery: ${t.deviceQuery}`
+          `- ${t.templateName ?? t.model ?? '(unnamed)'} — ${t.os} ${t.osVersion ?? '?'}, ${t.category ?? '?'}, ${t.status ?? '?'}\n  deviceQuery: ${t.deviceQuery}${t.queryNote ? `\n  ⚠️ ${t.queryNote}` : ''}`
         );
         const humanText = appendTruncationNotice(
           `Found ${paged.total} virtual device template(s). Region/agent are not available — add @region to the query and start a session to check one.\n\n` + lines.join('\n'),

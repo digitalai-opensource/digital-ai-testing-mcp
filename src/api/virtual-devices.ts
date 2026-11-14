@@ -40,6 +40,9 @@ export interface VirtualDeviceTemplate {
   status: string | null;
   /** Session device query that targets this template (see suggestedDeviceQuery). */
   deviceQuery: string;
+  /** Set when the deviceQuery can also match another template (no osVersion to tell them apart, or identical model + version). */
+  ambiguousQuery?: true;
+  queryNote?: string;
 }
 
 const MODEL_KEY_RE = /^ModelKey\[/;
@@ -79,13 +82,28 @@ export function normalizeVirtualDevice(raw: RawVirtualDevice): VirtualDeviceTemp
  * Templates that share a deviceQuery (same model, no templateName — e.g. pixel_4 on Android 13, 12 and 9) get
  * `and @version='<osVersion>'`. Verified live 2026-11-13: "… @model='pixel_4' and @version='13'" allocated
  * pixel_4_api_33 and "@version='99'" answered "No available device matching". Unique queries are left unchanged.
+ * A query that still cannot single out its template — the shared group's member without an osVersion (its query also
+ * matches the versioned ones), or two templates with the same model AND version — is flagged ambiguousQuery: no device
+ * query attribute separates them, so the agent is told rather than handed a query that may allocate the other one.
  */
 export function disambiguateByVersion(templates: VirtualDeviceTemplate[]): VirtualDeviceTemplate[] {
   const counts = new Map<string, number>();
   for (const t of templates) counts.set(t.deviceQuery, (counts.get(t.deviceQuery) ?? 0) + 1);
-  return templates.map((t) => (counts.get(t.deviceQuery)! > 1 && t.osVersion
+  const out = templates.map((t) => (counts.get(t.deviceQuery)! > 1 && t.osVersion
     ? { ...t, deviceQuery: `${t.deviceQuery} and @version='${escapeDeviceQueryValue(t.osVersion)}'` }
     : t));
+  const finalCounts = new Map<string, number>();
+  for (const t of out) finalCounts.set(t.deviceQuery, (finalCounts.get(t.deviceQuery) ?? 0) + 1);
+  return out.map((t, i) => {
+    const sharedBase = counts.get(templates[i].deviceQuery)! > 1;
+    if (finalCounts.get(t.deviceQuery)! > 1) {
+      return { ...t, ambiguousQuery: true, queryNote: 'Another template has the same model and OS version — this query may allocate either one.' };
+    }
+    if (sharedBase && !t.osVersion) {
+      return { ...t, ambiguousQuery: true, queryNote: 'No OS version on this template — this query also matches the other templates of the same model.' };
+    }
+    return t;
+  });
 }
 
 /** Every template in the catalog, paged (the catalog is small — ~150 on a busy tenant). */

@@ -3,6 +3,7 @@ import type { TestReport } from '../types/digital-ai.js';
 import { z } from 'zod';
 import {
   getTestById,
+  getScopedTest,
   getTestByUuid,
   shareTestReport,
   getRootCauseAnalysis,
@@ -20,7 +21,7 @@ import {
   summarizeTestFailures,
 } from '../api/reporting.js';
 import { normaliseDeviceOs } from '../api/transactions.js';
-import { REPORTER_PROJECT_ID_DESC } from '../api/reporter-projects.js';
+import { REPORTER_PROJECT_ID_DESC, resolveReporterProjectName } from '../api/reporter-projects.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { checkDeleteAllowed, serverSortAvailable } from '../api/access-level.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -41,6 +42,7 @@ import { commandPayload } from '../utils/command-payload.js';
 import { parseReportRef } from '../utils/report-ref.js';
 import { selectLogLines, DEFAULT_LOG_CONTEXT, DEFAULT_LOG_MAX_CHARS } from '../utils/log-view.js';
 import { getRunningTestRequests, type RunningTestRequest } from '../api/test-requests.js';
+import { getAllProjects } from '../api/projects.js';
 import { countsFromPivotRow, tallyStatuses, passRate, statusOutcome, unknownStatusCount, PASS_RATE_BASIS } from '../utils/test-status.js';
 
 /**
@@ -687,6 +689,13 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the delete to a specific reporter instance.'),
     },
     async ({ ids, confirmDeletion, projectId, projectName }) => {
+      // Resolve a reporter projectId to its name FIRST: the gate (and the delete) must look at the project the
+      // records are in, not the default scope.
+      try {
+        projectName = await resolveReporterProjectName(projectId, projectName);
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
       const denied = await checkDeleteAllowed(projectName);
       if (denied) {
         return { content: [{ type: 'text', text: denied }], isError: true };
@@ -697,7 +706,10 @@ export function registerReportingTools(server: McpServer): void {
           // Fetch details for all IDs so the guard shows a human-readable preview.
           // If any ID cannot be resolved, block the deletion entirely rather than
           // silently deleting records the caller cannot verify.
-          const results = await Promise.allSettled(ids.map(id => getTestById(id)));
+          // GET /tests/{id} always answers from the default reporter scope, so with a project the preview reads the
+          // records through the project-scoped list — the same scope the delete runs in. Otherwise the preview could
+          // show the Default project's report N while the confirmed delete removes the other project's report N.
+          const results = await Promise.allSettled(ids.map(id => projectName ? getScopedTest(id, projectName) : getTestById(id)));
           const failedIndices = results.reduce<number[]>(
             (acc, r, i) => (r.status === 'rejected' ? [...acc, i] : acc),
             []
@@ -710,7 +722,7 @@ export function registerReportingTools(server: McpServer): void {
                 type: 'text',
                 text:
                   `⛔ Cannot preview deletion: ${failedIndices.length} of the requested ID(s) could not be resolved ` +
-                  `in the current reporter scope: [${failedIds}].\n\n` +
+                  `in ${projectName ? `project "${projectName}"` : 'the current reporter scope'}: [${failedIds}].\n\n` +
                   `Verify these IDs exist and are accessible with the active credentials. ` +
                   `If they belong to a different project, switch to that project's profile ` +
                   `with switch_environment() and retry.\n\nNo changes were made.`,
@@ -752,7 +764,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'delete_test_reports_by_name',
-    'Find and permanently delete test execution records matching a name. Accepts exact match (name) or substring match (nameContains). Searches across all pages. Show a preview first via confirmDeletion: false, then re-call with confirmDeletion: true to execute. If you already have the numeric IDs (e.g. from a filtered list_test_reports call), use delete_test_reports instead — no name-matching ambiguity. Cloud Admin can always delete; a project-level key only when its project\x27s allowUsersDeleteTests setting is on (otherwise the tool refuses up front and explains how to get it enabled). IMPORTANT: always pass projectName (exact project name from list_projects) when using Cloud Admin access — without it the search spans the default reporter scope and tests from separate project reporter instances will not appear. The numeric projectId param is CSRF-blocked on reporter endpoints and is silently ignored.',
+    'Find and permanently delete test execution records matching a name. Accepts exact match (name) or substring match (nameContains). Searches across all pages. Show a preview first via confirmDeletion: false, then re-call with confirmDeletion: true to execute. If you already have the numeric IDs (e.g. from a filtered list_test_reports call), use delete_test_reports instead — no name-matching ambiguity. Cloud Admin can always delete; a project-level key only when its project\x27s allowUsersDeleteTests setting is on (otherwise the tool refuses up front and explains how to get it enabled). IMPORTANT: always pass projectName (exact project name from list_projects) when using Cloud Admin access — without it the search spans the default reporter scope and tests from separate project reporter instances will not appear. A reporter projectId is resolved to its project name.',
     {
       name: z
         .string()
@@ -775,6 +787,13 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Exact project name (from list_projects) to scope the search. Required when the target project has its own reporter instance separate from the default scope.'),
     },
     async ({ name, nameContains, confirmDeletion, maxPreviewResults, projectId, projectName }) => {
+      // Resolve a reporter projectId to its name FIRST: the gate (and the delete) must look at the project the
+      // records are in, not the default scope.
+      try {
+        projectName = await resolveReporterProjectName(projectId, projectName);
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
       const denied = await checkDeleteAllowed(projectName);
       if (denied) {
         return { content: [{ type: 'text', text: denied }], isError: true };
@@ -1238,6 +1257,13 @@ export function registerReportingTools(server: McpServer): void {
       projectName: z.string().optional().describe('Scope to this project name.'),
     },
     async ({ beforeDate, confirmDeletion, projectId, projectName }) => {
+      // Resolve a reporter projectId to its name FIRST: the gate (and the delete) must look at the project the
+      // records are in, not the default scope.
+      try {
+        projectName = await resolveReporterProjectName(projectId, projectName);
+      } catch (e) {
+        return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
+      }
       const denied = await checkDeleteAllowed(projectName);
       if (denied) {
         return { content: [{ type: 'text', text: denied }], isError: true };
@@ -1311,7 +1337,7 @@ export function registerReportingTools(server: McpServer): void {
         .describe('Fallback (reporter heuristic) only: ignore Incomplete records that started longer ago than this — they are abandoned or never-finalised runs, not running ones (default 12; test runs time out after 4 h by default).'),
       projectId: z.number().int().optional().describe(
         'CLOUD project ID (as get_server_info / list_projects show) — matched against the platform\'s live list. ' +
-        'The reporter fallback cannot scope by it (its IDs differ); use projectName to scope both.'),
+        'The reporter fallback (whose IDs differ) is scoped by the matching project name instead.'),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
@@ -1351,6 +1377,16 @@ export function registerReportingTools(server: McpServer): void {
       }
 
       try {
+        // The reporter cannot scope by the CLOUD projectId (its ids differ) — map it to the project name, which both
+        // sides share, so a projectId-only call is not silently answered for every project.
+        let fallbackProjectName = projectName;
+        if (!fallbackProjectName && projectId !== undefined) {
+          const project = (await getAllProjects()).find((p) => Number(p.id) === projectId);
+          if (!project) {
+            return { content: [{ type: 'text' as const, text: `Error: cloud project ID ${projectId} was not found in list_projects — pass projectName instead.` }], isError: true };
+          }
+          fallbackProjectName = project.name;
+        }
         // Fallback: active executions are Incomplete records with null duration.
         // We fetch more than needed since not all Incomplete records are still running.
         const result = await listTestsSortedDesc(
@@ -1360,8 +1396,8 @@ export function registerReportingTools(server: McpServer): void {
             returnTotalCount: false,
             filter: [{ property: 'status', operator: '=', value: 'Incomplete' }],
           },
-          undefined, // projectId here is the cloud id — the reporter's ids differ
-          projectName
+          undefined, // projectId here is the cloud id — the reporter's ids differ; scoped by name instead
+          fallbackProjectName
         );
 
         // Incomplete + null duration also matches runs that were abandoned or never finalised — the UAT (2026-10-09)

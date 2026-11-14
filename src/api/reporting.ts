@@ -263,6 +263,22 @@ export async function getTestById(testId: number): Promise<TestReport> {
   }
 }
 
+/**
+ * One record by test_id INSIDE a named project's reporter scope — through the project-scoped list, because
+ * GET /tests/{id} has no project parameter. Returns the list-record shape (no steps); throws when the project has no
+ * such id.
+ */
+export async function getScopedTest(testId: number, projectName: string): Promise<TestReport> {
+  const res = await listTests(
+    { filter: [{ property: 'test_id', operator: '=', value: testId }], limit: 1, page: 1 },
+    undefined,
+    projectName
+  );
+  const hit = res.data.find((t) => Number(t.test_id) === testId);
+  if (!hit) throw new Error(`test ${testId} not found in project "${projectName}"`);
+  return hit;
+}
+
 // Retrieve a test report using the report_api_id returned when a manual or
 // web-control session is created. This is NOT the same as the numeric test_id
 // from list results — report_api_id only exists on session-created tests.

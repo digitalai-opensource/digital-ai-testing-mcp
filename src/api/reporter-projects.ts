@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { apiGet, getActiveUrl, getActiveAccessKey } from './client.js';
+import { credentialFingerprint } from '../utils/access-level.js';
 import type { ReporterProject } from '../types/digital-ai.js';
 
 // Reporter API. Cloud Admin sees every project; a Project Admin sees its own project; a Project User gets an
@@ -22,6 +22,8 @@ export const REPORTER_PROJECT_ID_DESC =
   'was 2 there and 1 in the reporter). Resolved to the project name before the call; prefer projectName.';
 
 const nameCache = new Map<string, { at: number; names: Map<number, string> }>();
+/** In-flight lookups per credential, so parallel reporter calls on a cold cache share one /reporter/api/projects fetch. */
+const inflight = new Map<string, Promise<Map<number, string>>>();
 const CACHE_MS = 10 * 60_000;
 
 /**
@@ -33,18 +35,28 @@ const CACHE_MS = 10 * 60_000;
  */
 export async function resolveReporterProjectName(projectId?: number, projectName?: string): Promise<string | undefined> {
   if (projectName || projectId === undefined) return projectName;
-  const cacheKey = createHash('sha256').update(`${getActiveUrl()}|${getActiveAccessKey() ?? ''}`).digest('hex').slice(0, 16);
-  let entry = nameCache.get(cacheKey);
-  if (!entry || Date.now() - entry.at > CACHE_MS || !entry.names.has(projectId)) {
-    const projects = await getReporterProjects();
-    entry = { at: Date.now(), names: new Map(projects.map((p) => [Number(p.id), String(p.name)])) };
-    nameCache.set(cacheKey, entry);
+  const cacheKey = credentialFingerprint(getActiveUrl(), getActiveAccessKey() ?? '');
+  let names = nameCache.get(cacheKey)?.names;
+  const fresh = (nameCache.get(cacheKey)?.at ?? 0) > Date.now() - CACHE_MS;
+  if (!names || !fresh || !names.has(projectId)) {
+    let pending = inflight.get(cacheKey);
+    if (!pending) {
+      pending = getReporterProjects()
+        .then((projects) => {
+          const m = new Map(projects.map((p) => [Number(p.id), String(p.name)] as [number, string]));
+          nameCache.set(cacheKey, { at: Date.now(), names: m });
+          return m;
+        })
+        .finally(() => inflight.delete(cacheKey));
+      inflight.set(cacheKey, pending);
+    }
+    names = await pending;
   }
-  const name = entry.names.get(projectId);
+  const name = names.get(projectId);
   if (!name) {
     throw new Error(
       `Reporter project ID ${projectId} is not one this credential can see in the reporter ` +
-      `(${entry.names.size} visible). Pass projectName instead — note the reporter's project IDs differ from the cloud ` +
+      `(${names.size} visible). Pass projectName instead — note the reporter's project IDs differ from the cloud ` +
       'project IDs that get_server_info and list_projects show.'
     );
   }
@@ -54,4 +66,5 @@ export async function resolveReporterProjectName(projectId?: number, projectName
 /** Test seam. */
 export function clearReporterProjectNameCacheForTests(): void {
   nameCache.clear();
+  inflight.clear();
 }

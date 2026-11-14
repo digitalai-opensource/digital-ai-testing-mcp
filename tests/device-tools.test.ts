@@ -94,6 +94,24 @@ describe('list_virtual_device_templates', () => {
     assert.equal(out[0].deviceQuery, "@os='android' and @emulator='true' and @model='pixel_4' and @version='13'");
     assert.equal(out[1].deviceQuery, "@os='android' and @emulator='true' and @model='pixel_4' and @version='12'");
     assert.equal(out[2].deviceQuery, "@os='android' and @emulator='true' and @model='pixel_7'");
+    assert.ok(out.every((x) => !x.ambiguousQuery), 'every query is unique — nothing flagged');
+  });
+
+  it('flags a query that still matches another template (no osVersion, or same model + version)', () => {
+    const t = [
+      normalizeVirtualDevice({ id: 1, name: 'ModelKey[a]', os: 'ANDROID', deviceModel: 'pixel_4', osVersion: '13' }),
+      normalizeVirtualDevice({ id: 2, name: 'ModelKey[b]', os: 'ANDROID', deviceModel: 'pixel_4' }),
+      normalizeVirtualDevice({ id: 3, name: 'ModelKey[c]', os: 'ANDROID', deviceModel: 'pixel_6', osVersion: '14' }),
+      normalizeVirtualDevice({ id: 4, name: 'ModelKey[d]', os: 'ANDROID', deviceModel: 'pixel_6', osVersion: '14' }),
+    ];
+    const out = disambiguateByVersion(t);
+    assert.equal(out[0].ambiguousQuery, undefined, 'the versioned pixel_4 query is unique');
+    assert.equal(out[1].ambiguousQuery, true);
+    assert.match(out[1].queryNote!, /No OS version/);
+    assert.equal(out[1].deviceQuery, "@os='android' and @emulator='true' and @model='pixel_4'");
+    assert.equal(out[2].ambiguousQuery, true);
+    assert.equal(out[3].ambiguousQuery, true);
+    assert.match(out[2].queryNote!, /same model and OS version/);
   });
 
   it('stops paging when a page brings no new ids (a platform that ignores skip)', async () => {

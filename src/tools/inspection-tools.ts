@@ -117,7 +117,8 @@ function requireMobileSession(
 
 /** Tablets are often used in landscape on purpose — only a phone in landscape earns a warning. */
 export function looksLikeTablet(nameAndModel: string): boolean {
-  return /\b(ipad|tab|tablet|pad)\b|galaxy tab|SM-[TX]\d/i.test(nameAndModel);
+  // 'ipad' without a trailing \b: raw model identifiers read "iPad13,4". SM-T/X/P are Galaxy Tab model numbers.
+  return /\bipad|\b(tab|tablet|pad)\b|galaxy tab|SM-[TXP]\d/i.test(nameAndModel);
 }
 
 function sessionSummary(s: InspectionSession): string {
@@ -1489,8 +1490,13 @@ export function registerInspectionTools(server: McpServer): void {
         await hideKeyboard(args.handle);
         // The hide command can "succeed" with the keyboard still up — an iOS number pad on a phone left in landscape
         // stayed shown (UAT 2026-11-13 run 2). Check again rather than claim success.
+        // Re-check a few times: the hide animation can still be running on the first read.
         let stillShown = false;
-        try { stillShown = await isKeyboardShown(args.handle); } catch { /* unknown — report the hide as done */ }
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) await new Promise((r) => setTimeout(r, 400));
+          try { stillShown = await isKeyboardShown(args.handle); } catch { stillShown = false; /* unknown — report the hide as done */ }
+          if (!stillShown) break;
+        }
         if (stillShown) {
           let orientation = '';
           try { orientation = await getOrientation(args.handle); } catch { /* ignore */ }

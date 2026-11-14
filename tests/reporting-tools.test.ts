@@ -77,6 +77,13 @@ beforeAll(async () => {
         const rows = req.json.sort ? [...all].sort((a, b) => b.start_time.localeCompare(a.start_time)) : all;
         return { count: all.length, data: rows.slice(0, req.json.limit ?? 50) };
       }
+      const idFilter = (req.json.filter ?? []).find((f: { property: string }) => f.property === 'test_id');
+      if (idFilter) {
+        // Project-scoped lookup by id: only DigitalSSO has 501 (as a different record than the Default scope's 501).
+        return req.query.get('projectName') === 'DigitalSSO' && idFilter.value === 501
+          ? { count: 1, data: [{ test_id: 501, name: 'sso_record', status: 'Passed', start_time: '2026-11-01T00:00:00Z' }] }
+          : { count: 0, data: [] };
+      }
       if ((req.json.filter ?? []).some((f: { operator: string }) => f.operator === '>')) {
         return reply(400, { status: 'ERROR', message: 'Failed to retrieve data. Please check log for details.' });
       }
@@ -154,6 +161,34 @@ describe('reporter projectId is the REPORTER id, sent as its name (UAT 2026-11-1
     api.requests.length = 0;
     await tools.callJson('get_grouped_test_reports', { groupBy: ['status'], projectId: 89, projectName: 'Default' });
     assert.equal(api.requests.find((r) => r.path === '/reporter/api/tests/grouped')!.query.get('projectName'), 'Default');
+  });
+});
+
+describe('delete_test_reports preview reads the records from the project the delete runs in', () => {
+  // GET /tests/{id} always answers from the default scope; the same id is a different record in another project
+  // (verified live 2026-11-14: id 286 was two different tests). The preview must show what will actually be deleted.
+  it('with a projectId, previews through the project-scoped list — never the default-scope GET', async () => {
+    api.requests.length = 0;
+    const r = await tools.call('delete_test_reports', { ids: [501], projectId: 89 });
+    assert.notEqual(r.res.isError, true);
+    assert.match(r.text, /sso_record/);
+    assert.equal(api.requests.some((q) => q.path === '/reporter/api/tests/501'), false);
+    const list = api.requests.find((q) => q.path === '/reporter/api/tests/list')!;
+    assert.equal(list.query.get('projectName'), 'DigitalSSO');
+    assert.equal(api.requests.some((q) => q.path === '/reporter/api/tests/delete'), false, 'preview only');
+  });
+
+  it('an id absent from that project blocks the preview and names the project', async () => {
+    const r = await tools.call('delete_test_reports', { ids: [502], projectName: 'DigitalSSO' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /could not be resolved in project "DigitalSSO": \[502\]/);
+  });
+
+  it('without a project the preview still uses the single-record GET', async () => {
+    api.requests.length = 0;
+    const r = await tools.call('delete_test_reports', { ids: [501] });
+    assert.notEqual(r.res.isError, true);
+    assert.ok(api.requests.some((q) => q.path === '/reporter/api/tests/501'));
   });
 });
 

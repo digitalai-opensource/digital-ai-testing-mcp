@@ -120,6 +120,8 @@ describe('start_inspection_session reports the screen in front', () => {
     assert.equal(looksLikeTablet('Galaxy Tab S7 Plus SM-T970'), true);
     assert.equal(looksLikeTablet('iPad Pro 12.9'), true);
     assert.equal(looksLikeTablet('Pixel 7 US-1 Pixel 7'), false);
+    assert.equal(looksLikeTablet('US-0412 iPad13,4'), true);
+    assert.equal(looksLikeTablet('Galaxy Tab S6 Lite SM-P610'), true);
   });
 
   it('hide_keyboard re-checks: a keyboard that stays up is a warning, not "Keyboard hidden" (UAT 2026-11-13 run 2)', async () => {
