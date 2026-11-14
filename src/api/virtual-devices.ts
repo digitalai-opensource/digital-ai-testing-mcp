@@ -102,6 +102,14 @@ export function disambiguateByVersion(templates: VirtualDeviceTemplate[]): Virtu
     if (sharedBase && !t.osVersion) {
       return { ...t, ambiguousQuery: true, queryNote: 'No OS version on this template — this query also matches the other templates of the same model.' };
     }
+    // contains(@name,'iPhone 15') is a substring match, so it also fits a template named "iPhone 15 Pro". Flag only —
+    // an exact-name query form is not verified on a tenant that returns template names.
+    if (t.templateName) {
+      const longer = out.find((o) => o.id !== t.id && o.os === t.os && o.templateName && o.templateName !== t.templateName && o.templateName.includes(t.templateName!));
+      if (longer) {
+        return { ...t, ambiguousQuery: true, queryNote: `This template's name is part of another template's name ("${longer.templateName}") — the query may allocate that one instead.` };
+      }
+    }
     return t;
   });
 }

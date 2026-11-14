@@ -1,7 +1,8 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { resolveAgentSource, loadAgentBytes, sha256Hex } from '../../src/api/test-orchestrator.js';
-import { getGroupedTests, getTestByUuid, getRootCauseAnalysis } from '../../src/api/reporting.js';
+import { getGroupedTests, getTestByUuid, getRootCauseAnalysis, getScopedTest } from '../../src/api/reporting.js';
+import { getReporterProjects, resolveReporterProjectName } from '../../src/api/reporter-projects.js';
 import { getTestRunStatus } from '../../src/api/test-runs.js';
 import { getAllTestViews, getTestViewSummary } from '../../src/api/test-views.js';
 import { getMaxQueuedTests, getMaxAutomationMemory, getWebhookCleanup } from '../../src/api/projects.js';
@@ -118,6 +119,22 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
     const byUuid = await getTestByUuid(t.uuid);
     assert.equal(byUuid.test_id, t.test_id);
     assert.equal(byUuid.uuid, t.uuid);
+  });
+
+  // UAT 2026-11-13 run 2: a reporter projectId is mapped to its project name through /reporter/api/projects, and the
+  // delete_test_reports preview reads each record through the project-scoped list filtered by test_id (GET /tests/{id}
+  // has no project parameter). If the filter stops being honoured the preview blocks every scoped delete (fail-safe);
+  // if the id → name mapping breaks, every projectId call errors — revisit getScopedTest / resolveReporterProjectName.
+  it('a reporter project id maps to its name, and a test_id filter inside that project returns exactly that record', async (ctx) => {
+    const list = await listTests({ limit: 1, page: 1 });
+    const t = list.data[0];
+    assert.ok(t, 'precondition: at least one test must exist');
+    const project = (await getReporterProjects()).find((p) => Number(p.id) === Number(t.project_id));
+    if (!project) return ctx.skip(); // a Project User key gets an empty project list — nothing to map
+    assert.equal(await resolveReporterProjectName(Number(t.project_id)), project.name);
+    const scoped = await getScopedTest(t.test_id, project.name);
+    assert.equal(scoped.test_id, t.test_id);
+    assert.equal(scoped.uuid, t.uuid, 'the project-scoped lookup returned a different record for the same test_id');
   });
 
   // FINDING 10 (2026-10-09): v1 project setting GETTERS wrap the value in a one-key object of strings, and setters take

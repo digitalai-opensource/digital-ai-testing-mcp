@@ -222,6 +222,46 @@ describe('detectFabricationIssues — comments and URL placeholders (UAT 2026-11
     assert.ok(issues.some((i) => i.label === 'scaffold guard present'));
   });
 
+  it('ignores a bracketed URL placeholder that only appears in a commented example line', () => {
+    const filled = [
+      "test('x', async ({ page }) => {",
+      '  //   await page.goto("[Enter target URL here]");',
+      "  await page.goto('https://example.com');",
+      '});',
+    ].join('\n');
+    assert.deepEqual(detectFabricationIssues(filled).filter((i) => i.severity === 'high'), []);
+  });
+
+  it('guard stripped, example comments left, no steps → "scaffold with no steps"', () => {
+    const stripped = [
+      "test('x', async ({ page }) => {",
+      "  //   await page.locator('<CSS selector from find_web_elements>').click();",
+      "  await page.goto('https://example.com');",
+      '});',
+    ].join('\n');
+    const high = detectFabricationIssues(stripped).filter((i) => i.severity === 'high').map((i) => i.label);
+    assert.deepEqual(high, ['scaffold with no steps']);
+  });
+
+  it('a filled-in test that kept the example comments is clean in every step style', () => {
+    const comment = (c: string) => `${c}   find(By.id("<resource-id from get_element_tree>")).click();`;
+    const filled: Record<string, string> = {
+      java: `${comment('//')}\nfind(By.id("com.acme:id/login")).click();`,
+      javaConstant: `${comment('//')}\nfind(AppiumBy.accessibilityId(LOGIN)).click();`,
+      python: `${comment('#')}\nself.find(By.ID, "com.acme:id/login").click()`,
+      pythonGrid: `${comment('#')}\nself._find("com.acme:id/login").click()`,
+      wdio: `${comment('//')}\nawait $('~Login').click();`,
+      nodeHelper: `${comment('//')}\nconst btn = await find('id=com.acme:id/login'); await btn.click();`,
+      playwright: `${comment('//')}\nawait page.getByRole('button', { name: 'Login' }).click();`,
+      pageObjects: `${comment('//')}\nnew LoginScreen(driver).login(user, pass);`,
+      robot: `${comment('#')}\n    Wait And Click    id=com.acme:id/login`,
+      robotVariable: `${comment('#')}\n\${LOGIN}    accessibility_id=Login\n    Wait And Click    \${LOGIN}`,
+    };
+    for (const [style, script] of Object.entries(filled)) {
+      assert.deepEqual(detectFabricationIssues(script).filter((i) => i.severity === 'high'), [], style);
+    }
+  });
+
   it('still flags placeholders in code and credential brackets', () => {
     const issues = detectFabricationIssues("driver.findElement(By.id(\"<resource-id from get_element_tree>\"));\nString key = \"[Enter Your Access key here]\";");
     const labels = issues.map((i) => i.label);

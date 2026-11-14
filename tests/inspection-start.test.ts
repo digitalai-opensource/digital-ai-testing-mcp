@@ -7,7 +7,7 @@
  */
 import { describe, it, beforeAll, afterAll, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
-import { registerInspectionTools, looksLikeTablet } from '../src/tools/inspection-tools.js';
+import { registerInspectionTools, looksLikeTablet, isPhoneForOrientation } from '../src/tools/inspection-tools.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
 import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_QUERY_MAX_LENGTH, newSessionWaitSeconds } from '../src/api/webdriver.js';
 import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
@@ -18,6 +18,8 @@ let sweepable = false;
 let orientation = 'PORTRAIT';
 let keyboardHidden = false;
 let keyboardStaysUp = false;
+/** When set, the device record lookup answers with this platform category (otherwise the lookup fails, as before). */
+let deviceCategory: string | null = null;
 let api: StubApi;
 let tools: ToolClient;
 
@@ -31,6 +33,9 @@ beforeAll(async () => {
         'digitalai:reportTestId': 4242, 'digitalai:reportUrl': 'https://r/4242', deviceUDID: 'UDID-1',
         'digitalai:cloudDeviceName': 'Pixel 7 US-1', 'digitalai:publicModel': 'Pixel 7', platformName: 'Android', platformVersion: '14', appPackage: 'com.experitest.ExperiBank',
       } } };
+    }
+    if (req.path === '/api/v1/devices' && deviceCategory) {
+      return { status: 'SUCCESS', code: 'OK', data: [{ id: '77', deviceName: 'Pixel 7 US-1', udid: 'UDID-1', displayStatus: 'In Use', agentName: 'a', region: 'US1', deviceCategory }] };
     }
     if (req.path === '/wd/hub/session/sid-1/appium/device/current_activity') return { value: foreground };
     if (req.path === '/wd/hub/session/sid-1/execute/sync' && req.json.script === 'mobile: getCurrentPackage') return { value: foregroundPackage };
@@ -114,6 +119,14 @@ describe('start_inspection_session reports the screen in front', () => {
     } finally {
       orientation = 'PORTRAIT';
     }
+    // XCUITest reports landscape-right with its own constant, not "LANDSCAPE".
+    orientation = 'UIA_DEVICE_ORIENTATION_LANDSCAPERIGHT';
+    try {
+      const r = await start({ platform: 'android' });
+      assert.match(String(r.orientationNote), /set_orientation", orientation: "PORTRAIT"/);
+    } finally {
+      orientation = 'PORTRAIT';
+    }
     const p = await start({ platform: 'android' });
     assert.equal(p.orientation, 'PORTRAIT');
     assert.equal('orientationNote' in p, false);
@@ -122,6 +135,25 @@ describe('start_inspection_session reports the screen in front', () => {
     assert.equal(looksLikeTablet('Pixel 7 US-1 Pixel 7'), false);
     assert.equal(looksLikeTablet('US-0412 iPad13,4'), true);
     assert.equal(looksLikeTablet('Galaxy Tab S6 Lite SM-P610'), true);
+  });
+
+  it("the platform's device category decides the LANDSCAPE note when it is known; the name guess is only the fallback", async () => {
+    // The stub device is named "Pixel 7" — a phone by name. A FOLDABLE or TABLET record must still suppress the note.
+    orientation = 'LANDSCAPE';
+    try {
+      for (const [category, warned] of [['FOLDABLE', false], ['TABLET', false], ['PHONE', true], ['UNKNOWN', true]] as const) {
+        deviceCategory = category;
+        const j = await start({ platform: 'android' });
+        assert.equal('orientationNote' in j, warned, category);
+      }
+    } finally {
+      orientation = 'PORTRAIT';
+      deviceCategory = null;
+    }
+    assert.equal(isPhoneForOrientation('PHONE', 'Galaxy Tab S7'), true, 'a known category beats the name');
+    assert.equal(isPhoneForOrientation('tablet', 'Pixel 7'), false);
+    assert.equal(isPhoneForOrientation(undefined, 'iPad Pro 12.9'), false, 'no record: the name guess');
+    assert.equal(isPhoneForOrientation(undefined, 'Pixel 7'), true);
   });
 
   it('hide_keyboard re-checks: a keyboard that stays up is a warning, not "Keyboard hidden" (UAT 2026-11-13 run 2)', async () => {

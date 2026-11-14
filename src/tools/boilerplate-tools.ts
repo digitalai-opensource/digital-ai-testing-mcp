@@ -194,6 +194,21 @@ export interface ScriptIssue {
   detail: string;
 }
 
+/**
+ * A code line that locates an element — what a test with real steps has and a scaffold without its fail-guard has not.
+ * The templates' own helpers do not match: they take the locator as a parameter (`find(By by)`, `$(selector)`,
+ * `Click Element    ${locator}`), never a `By.x(…)` call or a literal.
+ */
+const SCRIPT_STEP_RE = new RegExp([
+  // Java By.id(…) / Python By.ID, … — but not the Python Grid template's own helper bodies, "self._wait(By.ID, …)".
+  String.raw`(?<!_wait\()\b(?:Appium|Mobile)?By\.\w+\s*[(,]`,
+  String.raw`\b_?find(?:_xpath|Elements?|_elements?)?\(\s*["'\x60]`,            // find('…'), _find("…"), findElement("…")
+  String.raw`\$\$?\(\s*["'\x60]`,                                               // WebdriverIO $('…')
+  String.raw`\bpage\.(?:locator|getBy\w+|click|fill|type|press|check)\(`,       // Playwright
+  String.raw`\bnew\s+\w+(?:Screen|Page)\(`,                                     // page objects
+  String.raw`\s{2,}(?:id|xpath|css|accessibility_id|identifier|link|android|chain|predicate)[=:]\S`, // Robot locators
+].join('|'));
+
 export function detectFabricationIssues(content: string): ScriptIssue[] {
   const issues: ScriptIssue[] = [];
   const add = (severity: ScriptIssue['severity'], label: string, detail: string) =>
@@ -207,9 +222,11 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   const BARE_PLACEHOLDER_WORDS = new Set(['resource-id', 'selector', 'element', 'value', 'udid']);
   // Comment lines are skipped: the scaffold's commented examples ("// await page.fill('<selector>', '<value>')") are not
   // steps, and flagging them kept a filled-in test failing (UAT 2026-11-13 run 2, the Playwright scaffold).
-  const code = content.split('\n').filter((l) => !/^\s*(\/\/|#|\*|\/\*)/.test(l)).join('\n');
-  const angleCandidates = code.match(/<[^>\n]+>/g) || [];
-  const angle = angleCandidates.filter((m) => {
+  const isComment = (l: string) => /^\s*(\/\/|#|\*|\/\*)/.test(l);
+  const lines = content.split('\n');
+  const code = lines.filter((l) => !isComment(l)).join('\n');
+  const comments = lines.filter(isComment).join('\n');
+  const placeholderTokens = (text: string) => (text.match(/<[^>\n]+>/g) || []).filter((m) => {
     const inner = m.slice(1, -1).trim();
     if (!PLACEHOLDER_KEYWORDS.test(inner)) return false;
     // A single token with no whitespace is only a placeholder if it's an exact, lowercase, known
@@ -217,15 +234,30 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
     if (!/\s/.test(inner)) return BARE_PLACEHOLDER_WORDS.has(inner);
     return true;
   });
+  const angle = placeholderTokens(code);
   if (angle.length) add('high', 'placeholder selectors', `Unreplaced placeholder token(s): ${[...new Set(angle)].slice(0, 4).join(', ')}`);
 
   // 2. The deliberate scaffold fail-guard / "not a real test" markers left in place.
-  if (/raise NotImplementedError|PLACEHOLDER TEST BODY|NOT A RUNNABLE TEST|NOT A FINISHED TEST|Replace this placeholder/i.test(content)) {
+  const guardPresent = /raise NotImplementedError|PLACEHOLDER TEST BODY|NOT A RUNNABLE TEST|NOT A FINISHED TEST|Replace this placeholder/i.test(content);
+  if (guardPresent) {
     add('high', 'scaffold guard present', 'The deliberate placeholder fail-guard is still in the body — the test was never filled in with real steps.');
   }
 
-  // 3. Credential placeholders / obvious fabricated logins.
-  const bracketed = content.match(/\[Enter [^\]]*\]/gi) || [];
+  // 2b. The guard was stripped but nothing replaced it: the scaffold's example comments (with their <…> tokens) are
+  //     still there and no code line locates an element. Skipping comment lines in check 1 would otherwise let this
+  //     through — and an agent deleting the fail() and delivering the scaffold is the failure this validator exists for.
+  //     A filled-in test that merely kept the example comments has locator steps, so it stays clean.
+  if (!guardPresent && placeholderTokens(comments).length && !SCRIPT_STEP_RE.test(code)) {
+    add('high', 'scaffold with no steps',
+      'The scaffold\'s example comments (with <…> placeholders) are still in the file and no code line locates an element — ' +
+      'the fail-guard was removed without real steps being written. Build the steps from inspected selectors. ' +
+      '(If the test does have real steps in a form this check cannot see, delete the leftover example comment lines.)');
+  }
+
+  // 3. Credential placeholders / obvious fabricated logins. Bracketed placeholders are read from code lines only, like
+  //    the <…> tokens: the web scaffold's "[Enter target URL here]" exists ONLY in its commented example lines, so
+  //    matching comments kept a filled-in test (examples left in place) failing as "placeholder URL".
+  const bracketed = code.match(/\[Enter [^\]]*\]/gi) || [];
   const urlPlaceholders = bracketed.filter((b) => /\burl\b/i.test(b));
   if (urlPlaceholders.length) add('high', 'placeholder URL', `Target URL never filled in: ${[...new Set(urlPlaceholders)].slice(0, 4).join(', ')}. Pass url to get_web_test_boilerplate, or replace it with the site under test.`);
   const cred = [
@@ -1838,7 +1870,8 @@ export function registerBoilerplateTools(server: McpServer): void {
     'validate_test_script',
     'Backstop check for a generated or hand-written mobile test BEFORE you present or save it. ' +
     'Pass the full script content; this scans for the markers of a non-functional test: unreplaced ' +
-    '<…> placeholder selectors, the deliberate scaffold fail-guard, placeholder/fabricated credentials, ' +
+    '<…> placeholder selectors, the deliberate scaffold fail-guard (or a scaffold whose guard was removed without any ' +
+    'real step being written), placeholder/fabricated credentials, ' +
     'and resource IDs from a known prior fabrication incident. Returns isError when any high-severity ' +
     'pattern is found — a test that fails this is NOT runnable and must not be delivered as finished. ' +
     'It also WARNS (never blocks) on flakiness patterns: fixed sleeps, index-based XPath, a static/suite-level ' +

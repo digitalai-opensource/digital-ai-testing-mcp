@@ -114,6 +114,18 @@ describe('list_virtual_device_templates', () => {
     assert.match(out[2].queryNote!, /same model and OS version/);
   });
 
+  it('flags a template whose name is a substring of another template name on the same OS (contains(@name) matches both)', () => {
+    const out = disambiguateByVersion([
+      normalizeVirtualDevice({ id: 1, imageName: 'iPhone 15', os: 'IOS', deviceModel: 'iPhone 15', osVersion: '17' }),
+      normalizeVirtualDevice({ id: 2, imageName: 'iPhone 15 Pro', os: 'IOS', deviceModel: 'iPhone 15 Pro', osVersion: '17' }),
+      normalizeVirtualDevice({ id: 3, imageName: 'iPhone 15', os: 'ANDROID', deviceModel: 'x', osVersion: '14' }),
+    ]);
+    assert.equal(out[0].ambiguousQuery, true);
+    assert.match(out[0].queryNote!, /"iPhone 15 Pro"/);
+    assert.equal(out[1].ambiguousQuery, undefined, 'the longer name is matched only by its own query');
+    assert.equal(out[2].ambiguousQuery, undefined, 'another OS is a different query');
+  });
+
   it('stops paging when a page brings no new ids (a platform that ignores skip)', async () => {
     ignoreSkip = true;
     api.requests.length = 0;

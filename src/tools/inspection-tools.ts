@@ -121,6 +121,17 @@ export function looksLikeTablet(nameAndModel: string): boolean {
   return /\bipad|\b(tab|tablet|pad)\b|galaxy tab|SM-[TXP]\d/i.test(nameAndModel);
 }
 
+/**
+ * Whether a LANDSCAPE screen deserves the "rotate it back" note. The platform's category decides when it is known:
+ * only a PHONE is warned — a tablet, an unfolded foldable (its own category since 26.10) or a watch is not. The
+ * name/model guess is the fallback for a device whose record could not be read (an emulator, a failed lookup).
+ */
+export function isPhoneForOrientation(deviceCategory: string | undefined, nameAndModel: string): boolean {
+  const category = (deviceCategory ?? '').toUpperCase();
+  if (category && category !== 'UNKNOWN') return category === 'PHONE';
+  return !looksLikeTablet(nameAndModel);
+}
+
 function sessionSummary(s: InspectionSession): string {
   const age = Math.round((Date.now() - s.startedAt) / 1000);
   const idle = Math.round((Date.now() - s.lastUsedAt) / 1000);
@@ -509,10 +520,12 @@ export function registerInspectionTools(server: McpServer): void {
         // connection causes a conflict error.
         let deviceId: string | null = null;
         let viewUrl: string | null = null;
+        let deviceCategory: string | undefined;
         if (session.deviceUDID) {
           try {
             const resolved = await resolveDevice(session.deviceUDID);
             deviceId = resolved.id;
+            deviceCategory = resolved.deviceCategory;
             const base = getActiveUrl().replace(/\/+$/, '');
             viewUrl = `${base}/#/open/device/${deviceId}/1`;
           } catch {
@@ -554,9 +567,10 @@ export function registerInspectionTools(server: McpServer): void {
         let orientationNote: string | undefined;
         if (!args.automotiveProjection) {
           try { orientation = await getOrientation(session.handle); } catch { /* non-fatal */ }
-          if (orientation === 'LANDSCAPE' && !looksLikeTablet(`${session.deviceName} ${session.deviceModel}`)) {
+          // includes(), not ===: XCUITest reports landscape-right as "UIA_DEVICE_ORIENTATION_LANDSCAPERIGHT".
+          if (orientation?.includes('LANDSCAPE') && isPhoneForOrientation(deviceCategory, `${session.deviceName} ${session.deviceModel}`)) {
             orientationNote =
-              'This phone is in LANDSCAPE (left that way by a previous session). Taps, typing and hide_keyboard misbehave on ' +
+              'This phone is in LANDSCAPE (usually left that way by a previous session; a landscape-only app in front does it too). Taps, typing and hide_keyboard misbehave on ' +
               'rotated phone screens — call device_control(action: "set_orientation", orientation: "PORTRAIT") first unless ' +
               'the test needs landscape.';
           }
@@ -1504,7 +1518,7 @@ export function registerInspectionTools(server: McpServer): void {
             content: [{
               type: 'text' as const,
               text: '⚠️ The hide command was sent, but the keyboard is STILL shown. ' +
-                (orientation === 'LANDSCAPE'
+                (orientation.includes('LANDSCAPE')
                   ? 'The device is in LANDSCAPE — call device_control(action: "set_orientation", orientation: "PORTRAIT"), then hide_keyboard again. '
                   : 'Numeric pads have no return key: tap a non-input area (a label or the screen title), or press_key ENTER on Android. ') +
                 'Elements under the keyboard cannot be tapped until it is gone.',

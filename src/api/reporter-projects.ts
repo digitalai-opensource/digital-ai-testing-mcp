@@ -54,6 +54,14 @@ export async function resolveReporterProjectName(projectId?: number, projectName
   }
   const name = names.get(projectId);
   if (!name) {
+    // A Project User key cannot list reporter projects at all (the endpoint answers [] — verified live), so the id can
+    // be neither mapped nor refuted. Saying "not one this credential can see" would be wrong for the key's OWN project.
+    if (names.size === 0) {
+      throw new Error(
+        `Reporter project ID ${projectId} cannot be resolved: this credential cannot list reporter projects (a Project ` +
+        'User key gets an empty list). The key is already scoped to its own project — omit projectId, or pass projectName.'
+      );
+    }
     throw new Error(
       `Reporter project ID ${projectId} is not one this credential can see in the reporter ` +
       `(${names.size} visible). Pass projectName instead — note the reporter's project IDs differ from the cloud ` +

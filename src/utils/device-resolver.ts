@@ -8,6 +8,8 @@ export interface ResolvedDevice {
   displayStatus: string;
   agentName: string;
   region: string;
+  /** The platform's category (PHONE / TABLET / WATCH / FOLDABLE / UNKNOWN) when the lookup read the device record. */
+  deviceCategory?: string;
 }
 
 /**
@@ -33,7 +35,7 @@ export async function resolveDevice(ref: string): Promise<ResolvedDevice> {
     const bySerial = await getDevicesByQuery(`@serialNumber='${escaped}'`);
     if (bySerial.length === 1) {
       const d = bySerial[0];
-      return { id: d.id, deviceName: d.deviceName, udid: d.udid, displayStatus: d.displayStatus, agentName: d.agentName, region: d.region };
+      return { id: d.id, deviceName: d.deviceName, udid: d.udid, displayStatus: d.displayStatus, agentName: d.agentName, region: d.region, deviceCategory: d.deviceCategory };
     }
     if (bySerial.length > 1) {
       throw new Error(
@@ -58,7 +60,7 @@ export async function resolveDevice(ref: string): Promise<ResolvedDevice> {
   );
   if (byUdid.length === 1) {
     const d = byUdid[0];
-    return { id: d.id, deviceName: d.deviceName, udid: d.udid, displayStatus: d.displayStatus, agentName: d.agentName, region: d.region };
+    return { id: d.id, deviceName: d.deviceName, udid: d.udid, displayStatus: d.displayStatus, agentName: d.agentName, region: d.region, deviceCategory: d.deviceCategory };
   }
   if (byUdid.length > 1) {
     throw new Error(
@@ -70,7 +72,7 @@ export async function resolveDevice(ref: string): Promise<ResolvedDevice> {
   const byName = all.filter(d => d.deviceName.toLowerCase().includes(norm));
   if (byName.length === 1) {
     const d = byName[0];
-    return { id: d.id, deviceName: d.deviceName, udid: d.udid, displayStatus: d.displayStatus, agentName: d.agentName, region: d.region };
+    return { id: d.id, deviceName: d.deviceName, udid: d.udid, displayStatus: d.displayStatus, agentName: d.agentName, region: d.region, deviceCategory: d.deviceCategory };
   }
   if (byName.length > 1) {
     const sample = byName.slice(0, 6).map(d => `${d.deviceName} (ID: ${d.id})`).join(', ');

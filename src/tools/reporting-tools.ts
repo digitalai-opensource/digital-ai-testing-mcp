@@ -77,6 +77,13 @@ export async function measureTrendWindow(
   return { neededRecords: Math.min(maxCap, Math.ceil((hi * 1.05) / 500) * 500) };
 }
 
+/**
+ * Names the project a delete runs in. A reporter projectId is resolved to a name before the delete, and reporter IDs
+ * differ from the cloud IDs list_projects shows — the preview must say which project the id landed on, so a mixed-up
+ * id is visible BEFORE confirmDeletion.
+ */
+const deleteScopeLabel = (projectName?: string): string => (projectName ? ` in project "${projectName}"` : '');
+
 export function registerReportingTools(server: McpServer): void {
   // ─── get_test_report ───────────────────────────────────────────────────────
 
@@ -740,19 +747,19 @@ export function registerReportingTools(server: McpServer): void {
           const sep = `  ${'-'.repeat(9)} ${'-'.repeat(11)} ${'-'.repeat(19)} ${'-'.repeat(30)}`;
           const table = [header, sep, ...rows].join('\n');
 
-          const guard = checkDestructiveGuard(confirmDeletion, `Delete ${ids.length} test report(s)`);
+          const guard = checkDestructiveGuard(confirmDeletion, `Delete ${ids.length} test report(s)${deleteScopeLabel(projectName)}`);
           return { content: [{ type: 'text', text: `${guard}\n\nRecords that would be deleted:\n${table}` }] };
         }
 
         // >50 IDs — skip detail fetch, return guard with ID list
-        const guard = checkDestructiveGuard(confirmDeletion, `Delete ${ids.length} test report(s): [${ids.join(', ')}]`);
+        const guard = checkDestructiveGuard(confirmDeletion, `Delete ${ids.length} test report(s)${deleteScopeLabel(projectName)}: [${ids.join(', ')}]`);
         return { content: [{ type: 'text', text: guard! }] };
       }
 
       try {
         await deleteTests(ids, projectId, projectName);
         return {
-          content: [{ type: 'text', text: `✅ Successfully deleted ${ids.length} test report(s).` }],
+          content: [{ type: 'text', text: `✅ Successfully deleted ${ids.length} test report(s)${deleteScopeLabel(projectName)}.` }],
         };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
@@ -822,7 +829,7 @@ export function registerReportingTools(server: McpServer): void {
             return { content: [{ type: 'text', text: `No test reports found matching ${criterion}.` }] };
           }
           const total = typeof newest.count === 'number' && newest.count >= rows.length ? newest.count : rows.length;
-          const guard = checkDestructiveGuard(false, `Delete ${total} test report(s) matching "${name ?? nameContains}"`)!;
+          const guard = checkDestructiveGuard(false, `Delete ${total} test report(s) matching "${name ?? nameContains}"${deleteScopeLabel(projectName)}`)!;
           const lines = rows.map((r) => `  ${r.test_id}: ${r.name} (${r.start_time?.slice(0, 10) ?? '?'})`);
           const more = total > rows.length
             ? `\n\n⚠️ Showing the newest ${rows.length} of ${total} matches. confirmDeletion: true deletes all ${total}; narrow nameContains to delete fewer.`
@@ -858,7 +865,7 @@ export function registerReportingTools(server: McpServer): void {
         }
 
         const countDesc = truncated ? `${previewCap}+ (preview capped at ${previewCap})` : `${allIds.length}`;
-        const guard = checkDestructiveGuard(confirmDeletion, `Delete ${countDesc} test report(s) matching "${name ?? nameContains}"`);
+        const guard = checkDestructiveGuard(confirmDeletion, `Delete ${countDesc} test report(s) matching "${name ?? nameContains}"${deleteScopeLabel(projectName)}`);
         if (guard) {
           const truncationNote = truncated
             ? `\n\n⚠️ Showing first ${previewCap} of ${previewCap}+ matches. Re-run with confirmDeletion: true to delete all matches, or use a more specific nameContains value to narrow the search.`
@@ -873,7 +880,7 @@ export function registerReportingTools(server: McpServer): void {
 
         await deleteTests(allIds, projectId, projectName);
         return {
-          content: [{ type: 'text', text: `✅ Deleted ${allIds.length} test report(s) matching "${name ?? nameContains}".` }],
+          content: [{ type: 'text', text: `✅ Deleted ${allIds.length} test report(s) matching "${name ?? nameContains}"${deleteScopeLabel(projectName)}.` }],
         };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
@@ -1293,7 +1300,7 @@ export function registerReportingTools(server: McpServer): void {
 
         const guard = checkDestructiveGuard(
           confirmDeletion,
-          `Delete ${allIds.length} test report(s) started before ${beforeDate}`
+          `Delete ${allIds.length} test report(s) started before ${beforeDate}${deleteScopeLabel(projectName)}`
         );
         if (guard) {
           return {
@@ -1303,7 +1310,7 @@ export function registerReportingTools(server: McpServer): void {
 
         await deleteTests(allIds, projectId, projectName);
         return {
-          content: [{ type: 'text', text: `✅ Deleted ${allIds.length} test report(s) started before ${beforeDate}.` }],
+          content: [{ type: 'text', text: `✅ Deleted ${allIds.length} test report(s) started before ${beforeDate}${deleteScopeLabel(projectName)}.` }],
         };
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

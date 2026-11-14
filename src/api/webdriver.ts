@@ -364,6 +364,10 @@ export async function captureScreenshot(
   // Desktop browser: the platform's classic screenshot is an OS capture of the agent's FRONT window, which can be another
   // session's browser on a shared agent (verified live 2026-11-13 — about:blank from a concurrent session). Capture the
   // session's own context over BiDi when the socket is open; otherwise bring the session's window to the front first.
+  // Re-probed 2026-11-14 with two Chrome sessions on ONE mac agent (three runs, log capture on and off): the classic
+  // capture showed the session's own window each time (title bar unfocused), and after POST /window it was byte-identical
+  // to the capture taken before the other session existed. Safari kept its own window with five other sessions running.
+  // The wrong-window capture did not reproduce that day, so its trigger is still unknown — keep both steps.
   if (session.platform === 'web' && !session.mobileOs) {
     let windowHandle: string | undefined;
     try {

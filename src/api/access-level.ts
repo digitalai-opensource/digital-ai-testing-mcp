@@ -152,8 +152,9 @@ export async function resolveProfileAccess(profileName: string): Promise<AccessI
  * Which project is "the one the delete will hit":
  *   - `projectName` given → exactly that project. If it is not in the visible list we do NOT substitute
  *     another one; the call proceeds and the platform decides.
- *   - no `projectName` → the credential's own project (reporter calls default to that scope; a numeric
- *     projectId is ignored by the reporter delete endpoint, so it cannot redirect the delete elsewhere).
+ *   - no `projectName` → the credential's own project (reporter calls default to that scope). A reporter
+ *     projectId DOES redirect the delete (deleteTests maps it to its project name), so callers that accept one
+ *     must resolve it with resolveReporterProjectName FIRST and pass the name here — the delete tools do.
  *     If that is not visible and exactly one project is, that one.
  * When the flag is true or unreadable the call proceeds (whether a project role succeeds once the flag is
  * true is NOT verified). Returns the refusal text, or null to proceed.

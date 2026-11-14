@@ -14,12 +14,14 @@ import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
 import AdmZip from 'adm-zip';
 import { registerReportingTools } from '../src/tools/reporting-tools.js';
+import { clearReporterProjectNameCacheForTests } from '../src/api/reporter-projects.js';
 import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 const HOUR = 3_600_000;
 const NOW = Date.now();
 let spacingMs = HOUR; // gap between consecutive runs in the fake reporter
 let listFixture: 'trend' | 'incomplete' | 'failures' | 'failures-no-keys' | 'delete-preview' = 'trend';
+let reporterProjectsFixture: Array<{ id: number; name: string }> = [{ id: 1, name: 'Default' }, { id: 89, name: 'DigitalSSO' }];
 let runningFixture: unknown = undefined; // undefined → 404 → list_active_test_executions falls back to the reporter heuristic
 
 // One run per `spacingMs`, newest first — 100 hourly records cover ~4 days of a 14-day window.
@@ -61,7 +63,7 @@ beforeAll(async () => {
   api = await startStubApi((req) => {
     if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
     if (req.path === '/api/v2/test-requests/running') return runningFixture;
-    if (req.path === '/reporter/api/projects') return [{ id: 1, name: 'Default' }, { id: 89, name: 'DigitalSSO' }];
+    if (req.path === '/reporter/api/projects') return reporterProjectsFixture;
     if (req.path === '/reporter/api/tests/grouped') {
       const groupBy: string[] = req.json.groupBy ?? [];
       return groupBy.includes('device.os')
@@ -157,6 +159,20 @@ describe('reporter projectId is the REPORTER id, sent as its name (UAT 2026-11-1
     assert.match(r.text, /Reporter project ID 2 .*projectName/);
   });
 
+  it('a key that cannot list reporter projects (Project User → []) is told so, not that the id is invisible', async () => {
+    const saved = reporterProjectsFixture;
+    reporterProjectsFixture = [];
+    clearReporterProjectNameCacheForTests();
+    try {
+      const r = await tools.call('get_grouped_test_reports', { groupBy: ['status'], projectId: 7 });
+      assert.equal(r.res.isError, true);
+      assert.match(r.text, /cannot list reporter projects.*omit projectId/);
+    } finally {
+      reporterProjectsFixture = saved;
+      clearReporterProjectNameCacheForTests();
+    }
+  });
+
   it('projectName wins over projectId and needs no lookup', async () => {
     api.requests.length = 0;
     await tools.callJson('get_grouped_test_reports', { groupBy: ['status'], projectId: 89, projectName: 'Default' });
@@ -172,6 +188,7 @@ describe('delete_test_reports preview reads the records from the project the del
     const r = await tools.call('delete_test_reports', { ids: [501], projectId: 89 });
     assert.notEqual(r.res.isError, true);
     assert.match(r.text, /sso_record/);
+    assert.match(r.text, /Delete 1 test report\(s\) in project "DigitalSSO"/, 'the preview names the project the id resolved to');
     assert.equal(api.requests.some((q) => q.path === '/reporter/api/tests/501'), false);
     const list = api.requests.find((q) => q.path === '/reporter/api/tests/list')!;
     assert.equal(list.query.get('projectName'), 'DigitalSSO');

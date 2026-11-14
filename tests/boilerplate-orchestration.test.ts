@@ -576,6 +576,48 @@ describe('generated demo tests pass their own validator with no warnings (releas
   }
 });
 
+describe('a scaffold whose fail-guard was stripped is still refused ("scaffold with no steps")', () => {
+  // The validator skips <…> tokens in comment lines (so a filled-in test that kept the example comments passes). Without
+  // this backstop, deleting the guard line and banner from ANY scaffold left a step-less test that validated clean.
+  const stripGuard = (s: string) => s.split('\n').filter((l) => !/PLACEHOLDER TEST BODY|Replace this placeholder|raise NotImplementedError/.test(l)).join('\n');
+  const labelsOf = async (content: string, filename: string) => {
+    const v = await call('validate_test_script', { scriptContent: content, fileName: filename, outputFormat: 'json' });
+    return (JSON.parse(v.content.map((c) => c.text ?? '').join('')) as { issues: Array<{ severity: string; label: string }> }).issues.filter((i) => i.severity === 'high').map((i) => i.label);
+  };
+  const scaffoldFiles = (files: Array<{ filename: string; content: string }>) => files.filter((f) => /PLACEHOLDER TEST BODY/.test(f.content) && /\.(py|java|js|ts|robot)$/.test(f.filename));
+
+  for (const isAppiumOss of [true, false]) {
+    for (const platform of ['android', 'ios'] as const) {
+      for (const language of ['python', 'java-junit5', 'java-testng', 'nodejs', 'robot'] as const) {
+        if (language === 'robot' && !isAppiumOss) continue;
+        it(`mobile ${isAppiumOss ? 'Appium Server' : 'Appium Grid'} ${platform} ${language}`, async () => {
+          account.isAppiumOss = isAppiumOss; account.fail = false;
+          const app = platform === 'android' ? { packageName: 'com.acme.app', mainActivity: '.Main' } : { bundleIdentifier: 'com.acme.app' };
+          const g = (await gen({ platform, language, orchestration: 'off', confirmSelectorsVerified: true, ...app })).json;
+          const files = scaffoldFiles(g.files);
+          assert.ok(files.length > 0, 'a scaffold file was generated');
+          for (const f of files) {
+            assert.deepEqual(await labelsOf(f.content, f.filename), ['scaffold guard present'], `${f.filename} unmodified`);
+            assert.deepEqual(await labelsOf(stripGuard(f.content), f.filename), ['scaffold with no steps'], `${f.filename} guard stripped`);
+          }
+        });
+      }
+    }
+  }
+
+  for (const language of ['java-junit5', 'java-testng', 'python', 'nodejs', 'robot', 'playwright']) {
+    it(`web ${language}`, async () => {
+      const r = await call('get_web_test_boilerplate', { language, outputFormat: 'json' });
+      const files = scaffoldFiles((JSON.parse(r.content.map((c) => c.text ?? '').join('')) as { files: Array<{ filename: string; content: string }> }).files);
+      assert.ok(files.length > 0, 'a scaffold file was generated');
+      for (const f of files) {
+        assert.deepEqual(await labelsOf(f.content, f.filename), ['scaffold guard present'], `${f.filename} unmodified`);
+        assert.deepEqual(await labelsOf(stripGuard(f.content), f.filename), ['scaffold with no steps'], `${f.filename} guard stripped`);
+      }
+    });
+  }
+});
+
 describe('get_test_boilerplate — structure: "page-objects" (release 4)', () => {
   it('Java on Appium Server: screens + a test that reads as the flow, clean in validate_test_script', async () => {
     account.isAppiumOss = true; account.fail = false;
