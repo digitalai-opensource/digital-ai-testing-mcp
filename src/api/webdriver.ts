@@ -196,6 +196,26 @@ export async function createInspectionSession(
     // Automotive projection failures have specific causes the generic advice below doesn't cover (UAT 2026-10-10).
     const automotive = automotiveSessionHint(detail);
     if (automotive) throw new Error(`Session creation failed: ${detail}. ${automotive}${leftover}`);
+    // An emulator/simulator query is not helped by the real-device advice below: idle templates are not devices, so
+    // find_available_device shows nothing for them, and "prefer a generic @os/@category query" leads to a real phone.
+    // Both platform answers handled here came back with that advice (intake 2026-11-14: "Failed to boot emulator" after
+    // 41 s, "No available device matching the query" after 227 s for an OS version no template has).
+    if (isEmulatorQuery(query)) {
+      const advice = /No available device matching/i.test(detail)
+        ? `The platform waited its whole ${newSessionWaitSeconds(timeout)} s for a match. Check the query against ` +
+          `list_virtual_device_templates and use a template's own deviceQuery (model AND OS version must exist) — idle ` +
+          `templates are not devices, so find_available_device and list_devices do not show them. If a template does ` +
+          `match, emulator capacity or the project's emulator license limit may be used up (get_license_utilization). ` +
+          `Do not repeat the query unchanged.`
+        : /Failed to boot/i.test(detail)
+          ? `The template was found but its boot failed on the platform side; an identical retry has failed the same ` +
+            `way before. Pick another OS version or model from list_virtual_device_templates, or use a real device.`
+          : `For an emulator/simulator: (1) check the query against list_virtual_device_templates — idle templates are ` +
+            `not devices, so find_available_device and list_devices do not show them; (2) if launching an app, verify ` +
+            `it is assigned to your ACTIVE project (get_application_info → projectsInfo); (3) a bare 500 usually means ` +
+            `platform load — retry shortly, or use a real device.`;
+      throw new Error(`Session creation failed: ${detail}. ${advice}${leftover}`);
+    }
     // The Grid often returns a bare 500 with no body when the device agent pool
     // is saturated (v36) — give the caller a diagnosis path instead of a status code.
     throw new Error(

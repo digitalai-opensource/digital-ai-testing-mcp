@@ -245,11 +245,15 @@ function writeEventLine(obj: unknown): void {
   if (!base || !canWriteLocally()) return;
   try {
     ensureRemediationDir();
-    if (!sessionHeaderWritten) {
+    // The header goes in whenever the file is missing, not once per process: an intake can archive (move away) the log
+    // of a server that is still running, and the events that followed landed in a file with no session line — the
+    // digest then listed that session with no machine, version or client (intake 2026-11-14).
+    const file = `${base}.events.jsonl`;
+    if (!existsSync(file)) {
+      appendFileSync(file, JSON.stringify({ type: 'session', ...sessionMeta(), ...(sessionHeaderWritten && { continued: true }) }) + '\n');
       sessionHeaderWritten = true;
-      appendFileSync(`${base}.events.jsonl`, JSON.stringify({ type: 'session', ...sessionMeta() }) + '\n');
     }
-    appendFileSync(`${base}.events.jsonl`, JSON.stringify(obj) + '\n');
+    appendFileSync(file, JSON.stringify(obj) + '\n');
   } catch (e) {
     console.error(`[debug-mode] could not write the event log: ${(e as Error).message}`);
   }
@@ -485,12 +489,14 @@ export function formatNote(note: RemediationNote, now: Date = new Date()): strin
 export function saveNote(note: RemediationNote): { written: string | null; markdown: string; fileName: string } {
   const fileName = `${session?.id ?? remediationStamp(new Date())}.md`;
   const entry = formatNote(note);
-  const markdown = notesWritten === 0 ? noteFileHeader() + entry : entry;
   if (!canWriteLocally()) {
+    const markdown = notesWritten === 0 ? noteFileHeader() + entry : entry;
     notesWritten++;
     return { written: null, markdown, fileName };
   }
   const path = join(remediationDir(), fileName);
+  // Front matter whenever the file is missing — like the event log, it may have been archived while the server ran.
+  const markdown = notesWritten === 0 || !existsSync(path) ? noteFileHeader() + entry : entry;
   try {
     ensureRemediationDir();
     appendFileSync(path, markdown);

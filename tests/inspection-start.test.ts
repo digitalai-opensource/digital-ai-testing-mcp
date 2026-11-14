@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { registerInspectionTools, looksLikeTablet, isPhoneForOrientation } from '../src/tools/inspection-tools.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
 import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_QUERY_MAX_LENGTH, newSessionWaitSeconds } from '../src/api/webdriver.js';
-import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
+import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 let foreground = '.makePaymentView';
 let foregroundPackage = 'com.experitest.ExperiBank';
@@ -27,7 +27,12 @@ beforeAll(async () => {
   api = await startStubApi((req) => {
     if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
     if (req.path === '/wd/hub/session' && req.method === 'POST') {
-      if (String(req.json.desiredCapabilities?.['digitalai:deviceQuery']).includes('SLOW')) return new Promise((r) => setTimeout(() => r({}), 400));
+      const requested = String(req.json.desiredCapabilities?.['digitalai:deviceQuery']);
+      if (requested.includes('SLOW')) return new Promise((r) => setTimeout(() => r({}), 400));
+      // The platform's own refusals, as they arrive (HTTP 500 with the reason in value.message).
+      if (requested.includes('NO_MATCH')) return reply(500, { value: { message: `Could not start appium test. Test request timed out. No available device matching the query: ${requested}` } });
+      if (requested.includes('BOOT_FAIL')) return reply(500, { value: { message: 'Could not start appium test. Failed to boot emulator.' } });
+      if (requested.includes('BARE_500')) return reply(500, {});
       // W3C (Appium Server) shape
       return { value: { sessionId: 'sid-1', capabilities: {
         'digitalai:reportTestId': 4242, 'digitalai:reportUrl': 'https://r/4242', deviceUDID: 'UDID-1',
@@ -259,5 +264,34 @@ describe('session start limits', () => {
     } finally {
       delete process.env.INSPECTION_SESSION_TIMEOUT_MS;
     }
+  });
+
+  it("an emulator start the platform refuses points at the template catalog, never at real-device advice (intake 2026-11-14)", async () => {
+    setAccessLevelOverrideForTests('cloud-admin');
+    const emulator = (marker: string) => `@os='android' and @emulator='true' and @model='pixel_4' and @name='${marker}'`;
+
+    const noMatch = await tools.call('start_inspection_session', { deviceQuery: emulator('NO_MATCH') });
+    assert.equal(noMatch.res.isError, true);
+    assert.match(noMatch.text, /No available device matching the query/, "the platform's reason is kept");
+    assert.match(noMatch.text, /list_virtual_device_templates/);
+    assert.match(noMatch.text, /waited its whole 225 s/);
+    assert.match(noMatch.text, /Do not repeat the query unchanged/);
+    assert.doesNotMatch(noMatch.text, /run find_available_device|prefer a generic @os/);
+
+    const bootFail = await tools.call('start_inspection_session', { deviceQuery: emulator('BOOT_FAIL') });
+    assert.equal(bootFail.res.isError, true);
+    assert.match(bootFail.text, /Failed to boot emulator/);
+    assert.match(bootFail.text, /another OS version or model from list_virtual_device_templates, or use a real device/);
+    assert.doesNotMatch(bootFail.text, /run find_available_device|prefer a generic @os|waited its whole/);
+
+    const bare = await tools.call('start_inspection_session', { deviceQuery: emulator('BARE_500') });
+    assert.match(bare.text, /HTTP 500\. For an emulator\/simulator: \(1\) check the query against list_virtual_device_templates/);
+    assert.doesNotMatch(bare.text, /run find_available_device/);
+
+    // A real-device query keeps the device-pool diagnostics.
+    const real = await tools.call('start_inspection_session', { deviceQuery: "@os='android' and @name='NO_MATCH'" });
+    assert.equal(real.res.isError, true);
+    assert.match(real.text, /run find_available_device\(os: "android"\)/);
+    assert.doesNotMatch(real.text, /list_virtual_device_templates/);
   });
 });

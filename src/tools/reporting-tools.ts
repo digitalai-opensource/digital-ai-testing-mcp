@@ -84,6 +84,18 @@ export async function measureTrendWindow(
  */
 const deleteScopeLabel = (projectName?: string): string => (projectName ? ` in project "${projectName}"` : '');
 
+/**
+ * A reporter project_id FILTER only matches inside the project the call is scoped to: for another project's id the
+ * platform answers 0 records with no reason (verified live 2026-11-13 — project_id = 89 from the Default scope gave 0,
+ * the same project by name 3.1M). An empty result with that filter therefore gets a note pointing at the parameters
+ * that do scope the call (intake 2026-11-14: the projectId PARAMETER was fixed, the filter still answered silently).
+ */
+export function projectIdFilterNote(filter: Array<{ property: string }> | undefined, resultCount: number): string | undefined {
+  if (resultCount > 0 || !filter?.some((f) => f.property === 'project_id')) return undefined;
+  return 'Note: a project_id filter only matches inside the project this call is scoped to — for another project it ' +
+    'returns nothing, as here. To query another project, drop the filter and pass projectId (the reporter project id) or projectName.';
+}
+
 export function registerReportingTools(server: McpServer): void {
   // ─── get_test_report ───────────────────────────────────────────────────────
 
@@ -353,7 +365,8 @@ export function registerReportingTools(server: McpServer): void {
               '"success" (boolean true/false), ' +
               '"accessibility_report" (JSON boolean true/false, NOT the string "true" — that 400s; true = runs with an Axe accessibility scan), ' +
               '"test_id" (number), ' +
-              '"project_id" (number), ' +
+              '"project_id" (number — matches only INSIDE the project the call is scoped to; for another project it ' +
+              'returns 0 records, so pass the projectId or projectName parameter instead), ' +
               '"device.os" ("Android"/"iOS" — case-sensitive), ' +
               '"test.framework" (exact, case-sensitive: "Appium Server", "Appium Grid", "Selenium", "Espresso", "XCUITest", ' +
               '"Maestro", "Playwright", "Cypress", "Mobile Studio Manual", … — get_distinct_test_key_values(["test.framework"]) ' +
@@ -487,13 +500,15 @@ export function registerReportingTools(server: McpServer): void {
           const header = matched.length === 0
             ? `${totalLine}No tests found in range ${rangeLabel} (date filter applied client-side).`
             : `${totalLine}${matched.length} test(s) shown for range ${rangeLabel} (date filter applied client-side):\n`;
+          const rangeNote = projectIdFilterNote(filter, matched.length);
           return respond(
             outputFormat,
             {
               reports: shape(matched),
               ...(wantTotal && { total: matchedCount, totalCapped: countCapped }),
+              ...(rangeNote && { note: rangeNote }),
             },
-            header + (matched.length > 0 ? '\n' + render(matched) : '')
+            header + (matched.length > 0 ? '\n' + render(matched) : '') + (rangeNote ? `\n\n${rangeNote}` : '')
           );
         }
 
@@ -515,10 +530,11 @@ export function registerReportingTools(server: McpServer): void {
           ? 'The platform refused server-side sort for this credential — these results are in platform order, NOT the order requested. ' +
             'For newest-first results use find_latest_test_for_name / list_active_test_executions, or pass startDate/endDate (scanned and ordered client-side).'
           : undefined;
+        const emptyNote = projectIdFilterNote(filter, reports.length);
         return respond(
           outputFormat,
-          { reports: shape(reports), total: result.count, ...(sortRefused && { sortApplied: false, warning: sortWarning }) },
-          (sortWarning ? `⚠️  ${sortWarning}\n\n` : '') + countLine + render(reports)
+          { reports: shape(reports), total: result.count, ...(sortRefused && { sortApplied: false, warning: sortWarning }), ...(emptyNote && { note: emptyNote }) },
+          (sortWarning ? `⚠️  ${sortWarning}\n\n` : '') + countLine + render(reports) + (emptyNote ? `\n\n${emptyNote}` : '')
         );
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };

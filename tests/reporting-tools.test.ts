@@ -86,6 +86,13 @@ beforeAll(async () => {
           ? { count: 1, data: [{ test_id: 501, name: 'sso_record', status: 'Passed', start_time: '2026-11-01T00:00:00Z' }] }
           : { count: 0, data: [] };
       }
+      const projectFilter = (req.json.filter ?? []).find((f: { property: string }) => f.property === 'project_id');
+      if (projectFilter) {
+        // As on the platform: the filter only matches the project the call is scoped to (reporter id 1 = Default here).
+        return projectFilter.value === 1
+          ? { count: 1, data: [{ test_id: 77, name: 'own_project', status: 'Passed', start_time: new Date(NOW - HOUR).toISOString(), project_id: 1 }] }
+          : { count: 0, data: [] };
+      }
       if ((req.json.filter ?? []).some((f: { operator: string }) => f.operator === '>')) {
         return reply(400, { status: 'ERROR', message: 'Failed to retrieve data. Please check log for details.' });
       }
@@ -271,6 +278,30 @@ describe('list_test_reports keys', () => {
     assert.deepEqual(lastListBody().keys, ['device.name']);
     await tools.call('list_test_reports', { searchValue: 't1', keys: ['start_time', 'duration'], limit: 5 });
     assert.equal('keys' in lastListBody(), false);
+  });
+
+  it("an empty result for a project_id filter says the filter cannot reach another project (intake 2026-11-14)", async () => {
+    const other = [{ property: 'project_id', operator: '=', value: 89 }];
+    const json = await tools.call('list_test_reports', { filter: other, limit: 1, outputFormat: 'json' });
+    const body = JSON.parse(json.text) as { reports: unknown[]; total: number; note?: string };
+    assert.equal(body.total, 0);
+    assert.match(body.note ?? '', /only matches inside the project this call is scoped to/);
+    assert.match(body.note ?? '', /pass projectId \(the reporter project id\) or projectName/);
+    assert.match((await tools.call('list_test_reports', { filter: other, limit: 1 })).text, /a project_id filter only matches inside/);
+    // the date-range scan path answers the same way
+    const ranged = await tools.call('list_test_reports', { filter: other, startDate: new Date(NOW - HOUR).toISOString(), limit: 1, outputFormat: 'json' });
+    assert.match((JSON.parse(ranged.text) as { note?: string }).note ?? '', /only matches inside the project/);
+
+    // The same filter with records, and an empty result from another filter, carry no note.
+    const own = await tools.call('list_test_reports', { filter: [{ property: 'project_id', operator: '=', value: 1 }], limit: 1, outputFormat: 'json' });
+    const ownBody = JSON.parse(own.text) as { reports: unknown[]; note?: string };
+    assert.equal(ownBody.reports.length, 1);
+    assert.equal(ownBody.note, undefined);
+    const noHit = await tools.call('list_test_reports', { filter: [{ property: 'test_id', operator: '=', value: 12345 }], limit: 1, outputFormat: 'json' });
+    assert.equal((JSON.parse(noHit.text) as { note?: string }).note, undefined);
+    // …and the filter's own description says it before the call is made.
+    const { tools: list } = await tools.client.listTools();
+    assert.match(JSON.stringify(list.find((t) => t.name === 'list_test_reports')!.inputSchema), /project_id\\" \(number — matches only INSIDE the project the call is scoped to/);
   });
 
   it('applies the same rule on the startDate scan path', async () => {

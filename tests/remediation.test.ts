@@ -173,6 +173,22 @@ describe('event log and nudges', () => {
     assert.deepEqual(lines[1].args, { os: 'android' });
   });
 
+  it('writes the session header again when the log was moved away while the server kept running', async () => {
+    await instrumentHandler('list_devices', async () => ok())({ os: 'android' });
+    const [file] = readdirSync(dir).filter((f) => f.endsWith('.events.jsonl'));
+    const first = readFileSync(join(dir, file), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(first[0].continued, undefined, 'the first header is not a continuation');
+    rmSync(join(dir, file)); // what an intake's archive does to it
+
+    await instrumentHandler('list_devices', async () => ok())({ os: 'ios' });
+    await instrumentHandler('list_devices', async () => ok())({ os: 'ios', maxResults: 5 });
+    const lines = readFileSync(join(dir, file), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(lines.map((l) => l.type), ['session', 'tool', 'tool'], 'one header, then the events');
+    assert.equal(lines[0].continued, true);
+    assert.equal(lines[0].mcpVersion, '9.9.9');
+    assert.equal(lines[0].session, file.replace('.events.jsonl', ''));
+  });
+
   it('keeps events in memory only under Docker', async () => {
     process.env.MCP_DEPLOYMENT_MODE = 'docker';
     await instrumentHandler('list_devices', async () => ok())({});
@@ -273,6 +289,18 @@ describe('notes', () => {
     assert.match(text, /## \[better-path\] Second/);
     assert.match(text, /Calls that did not move the task forward:\*\* 2/);
     assert.doesNotMatch(text, /aut_1_abcdef/);
+  });
+
+  it('local: a note saved after the notes file was moved away gets its own front matter', () => {
+    const first = saveNote(note);
+    rmSync(first.written!); // archived by an intake while the server kept running
+    const second = saveNote({ ...note, category: 'better-path', title: 'After the archive' });
+    assert.equal(second.written, first.written);
+    const text = readFileSync(second.written!, 'utf8');
+    assert.equal((text.match(/^---$/gm) ?? []).length, 2, 'one front-matter block in the new file');
+    assert.match(text, /mcpVersion: 9\.9\.9/);
+    assert.match(text, /## \[better-path\] After the archive/);
+    assert.doesNotMatch(text, /install_application 400 while reserved/);
   });
 
   it('Docker: returns the markdown (with server-observed events) instead of writing', async () => {
