@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { registerInspectionTools } from '../src/tools/inspection-tools.js';
 import { registerPerformanceTools } from '../src/tools/performance-tools.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
-import { mockAuthentication } from '../src/api/webdriver.js';
+import { mockAuthentication, describeBattery } from '../src/api/webdriver.js';
 import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 let api: StubApi;
@@ -28,6 +28,8 @@ const gridExecuted: Array<{ script: string; args: unknown[] }> = [];
 const netState: Record<string, boolean> = { wifi: true, bluetooth: false };
 const executed: Array<{ script: string; args: unknown[] }> = [];
 const sessionBodies: Array<Record<string, unknown>> = [];
+/** The account lookup answers an Appium Grid project (isAppiumOss: false) while set. */
+let gridProject = false;
 const DECLARED = ['android.permission.INTERNET', 'android.permission.READ_EXTERNAL_STORAGE', 'android.permission.RECORD_AUDIO'];
 const granted = new Set(['android.permission.INTERNET']);
 const findBodies: Array<{ using: string; value: string }> = [];
@@ -35,7 +37,9 @@ const actionBodies: unknown[] = [];
 
 beforeAll(async () => {
   api = await startStubApi((req) => {
-    if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
+    if (req.path === '/api/v1/users/my-account-info') {
+      return gridProject ? { status: 'SUCCESS', data: { ...accountInfo('Admin', 'Default').data, project: { id: 1, name: 'Default', isAppiumOss: false } } } : accountInfo('Admin', 'Default');
+    }
     if (req.path === '/wd/hub/session' && req.method === 'POST') {
       sessionBodies.push(req.json as Record<string, unknown>);
       const ios = String(req.json.desiredCapabilities?.platformName) === 'iOS';
@@ -214,6 +218,28 @@ describe('iOS session capabilities and element attributes', () => {
     assert.equal(always['appium:bundleId'], 'com.experitest.ExperiBank');
     assert.ok(!('appPackage' in desired) && !('appium:appPackage' in always) && !('appActivity' in desired));
     await tools.call('stop_inspection_session', { handle: h });
+  });
+
+  it('an iOS session without an app asks for every app\'s webviews on Appium Server projects; not with an app, on Android or on the Grid (UAT 2026-11-14)', async () => {
+    const capsOf = async (platform: 'ios' | 'android', args: Record<string, unknown>) => {
+      sessionBodies.length = 0;
+      const h = await session(platform, args);
+      const body = sessionBodies[0];
+      await tools.call('stop_inspection_session', { handle: h });
+      return { desired: body.desiredCapabilities as Record<string, unknown>, always: (body.capabilities as { alwaysMatch: Record<string, unknown> }).alwaysMatch };
+    };
+    const bare = await capsOf('ios', {});
+    // desiredCapabilities is the half the platform reads in this dual-protocol body (live 2026-11-14).
+    assert.deepEqual(bare.desired.additionalWebviewBundleIds, ['*']);
+    assert.deepEqual(bare.always['appium:additionalWebviewBundleIds'], ['*']);
+    gridProject = true;
+    try {
+      const grid = await capsOf('ios', {});
+      assert.ok(!('additionalWebviewBundleIds' in grid.desired) && !('appium:additionalWebviewBundleIds' in grid.always), 'never on an Appium Grid project');
+    } finally { gridProject = false; }
+    assert.ok(!('appium:additionalWebviewBundleIds' in (await capsOf('ios', { app: 'cloud:com.experitest.ExperiBank', appPackage: 'com.experitest.ExperiBank' })).always));
+    assert.ok(!('appium:additionalWebviewBundleIds' in (await capsOf('ios', { appPackage: 'com.experitest.ExperiBank' })).always));
+    assert.ok(!('appium:additionalWebviewBundleIds' in (await capsOf('android', {})).always));
   });
 
   it('Android sessions keep appPackage/appActivity', async () => {
@@ -607,5 +633,17 @@ describe('second best-practice pass (verified live 2026-11-12)', () => {
     assert.equal(r.res.isError, undefined, r.text);
     assert.deepEqual(executed[0], { script: 'mobile: deepLink', args: [{ url: 'https://example.com', bundleId: 'com.apple.mobilesafari' }] });
     await tools.call('stop_inspection_session', { handle: h });
+  });
+});
+
+describe('device_info battery (UAT 2026-11-14: {"level":1,"state":5} was read as 1 %)', () => {
+  it('adds percent and a state name, keeping the raw fields', () => {
+    assert.deepEqual(describeBattery({ level: 1, state: 5 }, 'android'), { level: 1, state: 5, percent: 100, stateName: 'full' });
+    assert.deepEqual(describeBattery({ level: 0.42, state: 3 }, 'android'), { level: 0.42, state: 3, percent: 42, stateName: 'discharging' });
+    assert.deepEqual(describeBattery({ level: 0.87, state: 2 }, 'ios'), { level: 0.87, state: 2, percent: 87, stateName: 'charging' });
+    assert.deepEqual(describeBattery({ level: 1, state: 3 }, 'ios'), { level: 1, state: 3, percent: 100, stateName: 'full' });
+    // An iOS simulator reports -1 / 0: unknown, so no percent.
+    assert.deepEqual(describeBattery({ level: -1, state: 0 }, 'ios'), { level: -1, state: 0, stateName: 'unknown' });
+    assert.equal(describeBattery(undefined, 'ios'), undefined);
   });
 });

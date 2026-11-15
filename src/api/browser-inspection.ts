@@ -6,7 +6,7 @@ import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
 import { registerSession, requireSession, listActiveSessions, deviceQueryLengthError, newSessionWaitSeconds, cleanUpFailedSessionReport } from './webdriver.js';
 import { extractApiErrorMessage } from '../utils/api-error.js';
-import { BIDI_BROWSERS, startBrowserEventCapture } from './browser-events.js';
+import { BIDI_BROWSERS, browserEventMark, mainDocumentError, startBrowserEventCapture } from './browser-events.js';
 
 function gridBase(): string {
   const base = getActiveUrl();
@@ -213,12 +213,13 @@ export function certificateWarning(errorOrTitle: string | null | undefined): str
     'get_web_test_boilerplate.';
 }
 
-export async function navigateTo(handle: string, url: string): Promise<void> {
+export async function navigateTo(handle: string, url: string): Promise<{ httpError?: { status: number; text: string; url: string } }> {
   const session = requireSession(handle);
   if (session.platform !== 'web') {
     throw new Error(`navigate_to is for browser sessions only. Use launch_app for mobile sessions.`);
   }
   const client = makeClient();
+  const mark = browserEventMark(handle);
   try {
     await client.post(`/session/${session.gridSessionId}/url`, { url }, { timeout: 60_000 });
   } catch (e) {
@@ -264,6 +265,8 @@ export async function navigateTo(handle: string, url: string): Promise<void> {
   } catch {
     session.currentUrl = url;
   }
+  const failed = mark === null ? null : mainDocumentError(handle, mark, [url, session.currentUrl ?? '']);
+  return failed ? { httpError: { status: failed.status ?? 0, text: failed.text, url: failed.url ?? url } } : {};
 }
 
 export async function getCurrentUrl(handle: string): Promise<string> {

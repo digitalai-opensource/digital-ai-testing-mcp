@@ -35,6 +35,8 @@ interface Capture {
   /** Replies awaited by bidiCommand, keyed by command id. */
   pending: Map<number, (reply: BidiReply) => void>;
   nextId: number;
+  /** Events ever buffered (not reset by clear or overflow) — lets a caller read only what arrived after a mark. */
+  total?: number;
 }
 
 interface BidiReply { id?: number; type?: string; result?: Record<string, unknown>; error?: string; message?: string }
@@ -117,6 +119,7 @@ export async function startBrowserEventCapture(handle: string, wsUrl: string, ti
       const ev = normalizeBidiMessage(raw);
       if (ev === 'ok-request') cap.okRequests++;
       else if (ev) {
+        cap.total = (cap.total ?? 0) + 1;
         cap.events.push(ev);
         if (cap.events.length > MAX_EVENTS) { cap.events.shift(); cap.dropped++; }
       }
@@ -193,6 +196,39 @@ export async function bidiScreenshot(handle: string, context: string): Promise<s
   const data = result['data'];
   if (typeof data !== 'string' || !data) throw new Error('browsingContext.captureScreenshot returned no data');
   return data;
+}
+
+/** Position in the session's event stream, for eventsSince. Null when the session has no capture. */
+export function browserEventMark(handle: string): number | null {
+  const cap = captures.get(handle);
+  return cap ? cap.total ?? 0 : null;
+}
+
+/** Events buffered after `mark` (oldest first), as far as the buffer still holds them. */
+export function browserEventsSince(handle: string, mark: number): BrowserEvent[] {
+  const cap = captures.get(handle);
+  if (!cap) return [];
+  const added = Math.max(0, (cap.total ?? 0) - mark);
+  return added ? cap.events.slice(-Math.min(added, cap.events.length)) : [];
+}
+
+/**
+ * The navigated page itself answered an HTTP error (the BiDi capture saw a >= 400 response for the URL navigate_to
+ * loaded). WebDriver navigation succeeds on a 404 page, so without this the agent saw "Navigated" and needed
+ * get_browser_log to learn the page was missing (UAT 2026-11-14). Sub-resource failures are not reported here.
+ */
+export function mainDocumentError(handle: string, mark: number, urls: string[]): BrowserEvent | null {
+  const norm = (u: string) => u.replace(/#.*$/, '').replace(/\/$/, '');
+  const wanted = new Set(urls.filter(Boolean).map(norm));
+  return browserEventsSince(handle, mark).find((e) => e.kind === 'network' && (e.status ?? 0) >= 400 && !!e.url && wanted.has(norm(e.url))) ?? null;
+}
+
+/** Test seam: append an event as if the socket had delivered it. */
+export function pushBrowserEventForTests(handle: string, ev: BrowserEvent): void {
+  const cap = captures.get(handle);
+  if (!cap) return;
+  cap.total = (cap.total ?? 0) + 1;
+  cap.events.push(ev);
 }
 
 export function stopBrowserEventCapture(handle: string): void {

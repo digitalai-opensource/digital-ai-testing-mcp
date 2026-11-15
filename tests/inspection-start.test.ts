@@ -109,6 +109,13 @@ describe('start_inspection_session reports the screen in front', () => {
     assert.equal(j.screenNote, undefined);
   });
 
+  it('the idle-timeout note does not name the Grid — Appium Server sessions expire the same way (UAT 2026-11-14)', async () => {
+    const r = await tools.callJson('start_inspection_session', { platform: 'android' });
+    handles.push(r.handle as string);
+    assert.match(String(r.idleTimeoutNote), /^Sessions expire after ~4 minutes without a command \(Appium Server and Appium Grid alike\)/);
+    assert.doesNotMatch(String(r.idleTimeoutNote), /Grid sessions/);
+  });
+
   it('a plain session (no app) adds nothing', async () => {
     const j = await start({ platform: 'android' });
     assert.equal('currentActivity' in j, false);

@@ -410,12 +410,12 @@ export function registerMetaTools(server: McpServer): void {
     'Project-scoped credentials are single-project scoped: there is no API call to change project within a key — the only way to work with a different project is to switch to a profile that holds that project\'s credentials. ' +
     'Use list_environments first to show the user available profiles so they can pick the right one. ' +
     'All subsequent tool calls use the new profile\'s URL and credentials immediately — no restart required. ' +
-    'Accepts either the exact profile name OR role-based aliases: "cloud admin" / "admin" / "full access" resolve to the Cloud Admin profile; "project" resolves to the only project-scoped profile (or lists options if multiple exist). ' +
+    'Accepts either the exact profile name OR role-based aliases: "cloud admin" / "admin" / "full access" resolve to the Cloud Admin profile; "project" resolves to the only project-scoped profile (or lists options if multiple exist); "project admin" / "project user" consider only profiles detected at that role. ' +
     'An exact profile name always wins over an alias: if a profile is literally named "admin", "admin" selects it even when it is not Cloud Admin — use "cloud admin" to be sure.',
     {
       profileName: z
         .string()
-        .describe('Profile name (case-insensitive) OR a role alias: "cloud admin", "admin", "full access" → first Cloud Admin profile; "project" → first/only project-level profile. Use list_environments to see available names.'),
+        .describe('Profile name (case-insensitive) OR a role alias: "cloud admin", "admin", "full access" → first Cloud Admin profile; "project" → first/only project-level profile; "project admin" / "project user" → the profile detected at that role. Use list_environments to see available names.'),
     },
     async ({ profileName }) => {
       const profiles = listProfiles();
@@ -444,13 +444,22 @@ export function registerMetaTools(server: McpServer): void {
             };
           }
         } else if (isProjectAlias) {
-          const projectProfiles = (await levelsOf()).filter(p => isKnownNotCloudAdmin(p.info.level));
+          // "project admin" / "project user" name a ROLE: narrow to the profiles detected at that level (UAT 2026-11-14 —
+          // "project admin" listed both Project User profiles too). "project" and the other generic aliases keep every
+          // project-scoped profile.
+          const wantedLevel = /admin/.test(lower) ? 'project-admin' : /user/.test(lower) ? 'project-user' : null;
+          const projectProfiles = (await levelsOf()).filter(p => isKnownNotCloudAdmin(p.info.level) && (!wantedLevel || p.info.level === wantedLevel));
           if (projectProfiles.length === 1) {
             resolvedName = projectProfiles[0].name;
           } else if (projectProfiles.length > 1) {
             const names = projectProfiles.map(p => `"${p.name}"`).join(', ');
             return {
               content: [{ type: 'text' as const, text: `Multiple project profiles found: ${names}. Which project do you want to switch to?` }],
+            };
+          } else if (wantedLevel) {
+            const available = (await levelsOf()).map(p => `"${p.name}" (${describeLevel(p.info)})`).join(', ');
+            return {
+              content: [{ type: 'text' as const, text: `No ${wantedLevel === 'project-admin' ? 'Project Admin' : 'Project User'} profile detected. Available profiles: ${available}.` }],
             };
           } else {
             return {

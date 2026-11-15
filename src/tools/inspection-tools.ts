@@ -49,6 +49,8 @@ import {
   getForegroundPackage,
   isSameActivity,
   listContexts,
+  nativeWebViewOnScreen,
+  WEBVIEW_NOT_EXPOSED,
   switchContext,
   getDeviceLog,
   getAlertInfo,
@@ -597,7 +599,7 @@ export function registerInspectionTools(server: McpServer): void {
           cloudViewLink: session.cloudViewLink,
           reportUrl: session.reportUrl,
           idleTimeoutNote:
-            'Grid sessions expire after ~4 minutes without a command. Before pausing to ask the user something, ' +
+            'Sessions expire after ~4 minutes without a command (Appium Server and Appium Grid alike). Before pausing to ask the user something, ' +
             'call take_inspection_screenshot — it resets the idle clock AND captures the state you are asking about. ' +
             'If the user takes longer than ~4 minutes, expect a 404 on your next call: stop_inspection_session to clean up, ' +
             'start a fresh session, and re-find elements (your noted selectors stay valid; raw elementIds do not survive sessions).',
@@ -1862,7 +1864,8 @@ export function registerInspectionTools(server: McpServer): void {
           const current = requireSession(args.handle).currentContext ?? 'NATIVE_APP';
           const lines = ctx.map((c) => `  ${c.id === current ? '▶' : ' '} ${c.id}${c.title ? ` — "${c.title}"` : ''}${c.url ? ` ${c.url}` : ''}${c.package ? ` (${c.package})` : ''}${c.bundleId ? ` (${c.bundleId})` : ''}`);
           const hasWeb = ctx.some((c) => /^WEBVIEW/i.test(c.id));
-          return { content: [{ type: 'text' as const, text: `Contexts (current: ${current}):\n${lines.join('\n')}${hasWeb ? '\n\nwebview_context(action: "switch") enters the first WEBVIEW.' : '\n\nNo WEBVIEW is registered on this screen.'}` }] };
+          const noWeb = hasWeb ? '' : (await nativeWebViewOnScreen(args.handle)) ? `\n\n${WEBVIEW_NOT_EXPOSED}` : '\n\nNo WEBVIEW is registered on this screen.';
+          return { content: [{ type: 'text' as const, text: `Contexts (current: ${current}):\n${lines.join('\n')}${hasWeb ? '\n\nwebview_context(action: "switch") enters the first WEBVIEW.' : noWeb}` }] };
         }
         const r = await switchContext(args.handle, args.action === 'native' ? 'native' : (args.name ?? 'auto'), args.waitMs ?? 3000);
         return { content: [{ type: 'text' as const, text: r.context === 'NATIVE_APP'

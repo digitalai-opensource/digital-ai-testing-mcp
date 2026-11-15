@@ -315,7 +315,8 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'list_test_reports',
-    'Search and list test execution reports. Supports filtering, sorting, and pagination. ' +
+    'Search and list test execution reports. Supports filtering, sorting, and pagination. Results are newest first ' +
+    '(start_time descending) unless you pass sort. ' +
     'For date-range filtering use startDate/endDate — server-side start_time filtering is CSRF-blocked. ' +
     'When the user asks for "my reports" / "reports linked to my account", filter by user immediately: ' +
     '[{"property":"user","operator":"=","value":"<email from get_my_account_info>"}] — do not return a global count first. ' +
@@ -521,7 +522,19 @@ export function registerReportingTools(server: McpServer): void {
           ...(sort && { sort }),
           ...(keys && { keys }),
         };
-        const result = await listTests(request, projectId, projectName);
+        // No sort given → newest first. Unsorted, the platform answered in storage order: "limit: 5" on a project that ran
+        // ~10k tests that day returned records from July and August (UAT 2026-11-14). Measured live the same day: the
+        // sorted request worked with every filter shape tried (plain, has_attachment, searchValue (+keys), custom key,
+        // status) and cost 1–1.5 s more. If the sorted request fails for any reason, the caller's unsorted request runs.
+        const defaultSort = !sort && serverSortAvailable();
+        let result: Awaited<ReturnType<typeof listTests>>;
+        try {
+          result = await listTests(defaultSort ? { ...request, sort: [{ property: 'start_time', descending: true }] } : request, projectId, projectName);
+        } catch (e) {
+          if (!defaultSort) throw e;
+          result = await listTests(request, projectId, projectName);
+          result = { ...result, sortApplied: false };
+        }
         const reports = result.data ?? [];
         const countLine = result.count !== undefined ? `Total matching: ${result.count}\n\n` : '';
         // A requested sort the platform refused must never be presented as sorted output.

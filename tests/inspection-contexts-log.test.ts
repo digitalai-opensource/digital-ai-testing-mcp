@@ -21,6 +21,8 @@ const executed: Array<{ script: string; args: unknown[] }> = [];
 let settingsStatus = 200;
 let context = 'NATIVE_APP';
 let chromeVisible = false;
+/** iOS: the app's webview is on screen in the native tree but the device lists no WEBVIEW context (UAT 2026-11-14). */
+let iosWebviewHidden = false;
 let scrollAnswers: boolean[] = [];
 let elementsFoundAfterSwipes = 0;
 let swipes = 0;
@@ -36,6 +38,11 @@ beforeAll(async () => {
     }
     const ios = req.path.includes('/ios-1/');
     if (path === '/appium/settings' && req.method === 'POST') return settingsStatus === 200 ? { value: null } : reply(settingsStatus, { value: { error: 'unknown command', message: 'no' } });
+    if (path === '/element' && req.json.using === 'class name') {
+      return ios && iosWebviewHidden && req.json.value === 'XCUIElementTypeWebView'
+        ? { value: { 'element-6066-11e4-a52e-4f735466cecf': 'wv-1' } }
+        : reply(404, { value: { error: 'no such element', message: 'not found' } });
+    }
     if (path === '/elements') {
       if (context !== 'NATIVE_APP') return { value: [{ 'element-6066-11e4-a52e-4f735466cecf': 'web-1' }] };
       if (swipes < elementsFoundAfterSwipes) return { value: [] };
@@ -59,7 +66,7 @@ beforeAll(async () => {
       const args = req.json.args as unknown[];
       executed.push({ script, args });
       if (script === 'mobile: getContexts') {
-        if (ios) return { value: [{ id: 'NATIVE_APP' }, { id: 'WEBVIEW_123.1', title: 'balance', url: 'file:///app/', bundleId: 'com.app' }] };
+        if (ios) return { value: iosWebviewHidden ? [{ id: 'NATIVE_APP' }] : [{ id: 'NATIVE_APP' }, { id: 'WEBVIEW_123.1', title: 'balance', url: 'file:///app/', bundleId: 'com.app' }] };
         return chromeVisible ? { value: [{ webview: 'WEBVIEW_chrome', info: { 'Android-Package': 'com.android.chrome' }, pages: [{ type: 'service_worker', title: 'sw' }, { type: 'page', title: 'Boost', url: 'https://wap.boostmobile.com/' }] }] } : { value: [] };
       }
       if (script === 'mobile: scrollGesture') { swipes++; return { value: scrollAnswers.shift() ?? false }; }
@@ -84,7 +91,7 @@ afterAll(async () => {
   await tools.close();
   await api.close();
 });
-beforeEach(() => { hits.length = 0; executed.length = 0; settingsStatus = 200; context = 'NATIVE_APP'; chromeVisible = false; scrollAnswers = []; elementsFoundAfterSwipes = 0; swipes = 0; });
+beforeEach(() => { hits.length = 0; executed.length = 0; settingsStatus = 200; context = 'NATIVE_APP'; chromeVisible = false; iosWebviewHidden = false; scrollAnswers = []; elementsFoundAfterSwipes = 0; swipes = 0; });
 
 const session = async (platform: 'ios' | 'android') => (await tools.callJson('start_inspection_session', { platform })).handle as string;
 const attrGets = () => hits.filter((h) => /GET \/element\/[^/]+\/attribute\//.test(h));
@@ -156,9 +163,25 @@ describe('webview_context', () => {
     assert.equal(none.res.isError, true);
     assert.match(none.text, /No WEBVIEW context is available/);
     assert.match(none.text, /setWebContentsDebuggingEnabled/);
+    assert.doesNotMatch(none.text, /IS on screen/, 'no WebView in the native tree → the generic explanation');
     chromeVisible = true;
     const list = await tools.call('webview_context', { handle: h, action: 'list', waitMs: 100 });
     assert.match(list.text, /WEBVIEW_chrome — "Boost" https:\/\/wap\.boostmobile\.com\/ \(com\.android\.chrome\)/);
+    await tools.call('stop_inspection_session', { handle: h });
+  });
+});
+
+describe('webview_context when the device does not expose an on-screen web view (UAT 2026-11-14)', () => {
+  it('list and switch say the web view IS on screen and name the build setting as the remaining cause', async () => {
+    iosWebviewHidden = true;
+    const h = await session('ios');
+    const list = await tools.call('webview_context', { handle: h, action: 'list', waitMs: 100 });
+    assert.match(list.text, /A web view IS on screen in the native tree, but it is not exposed as a WEBVIEW context/);
+    assert.match(list.text, /does not allow web inspection/);
+    const sw = await tools.call('webview_context', { handle: h, action: 'switch', waitMs: 100 });
+    assert.equal(sw.res.isError, true);
+    assert.match(sw.text, /No WEBVIEW context is available \(contexts: NATIVE_APP\)\. A web view IS on screen/);
+    assert.doesNotMatch(sw.text, /Navigate to the hybrid screen first/);
     await tools.call('stop_inspection_session', { handle: h });
   });
 });

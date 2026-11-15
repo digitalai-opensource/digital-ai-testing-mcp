@@ -280,6 +280,23 @@ describe('list_test_reports keys', () => {
     assert.equal('keys' in lastListBody(), false);
   });
 
+  it('without a sort the request asks for newest first; an explicit sort is sent as given (UAT 2026-11-14)', async () => {
+    await tools.call('list_test_reports', { limit: 5 });
+    assert.deepEqual(lastListBody().sort, [{ property: 'start_time', descending: true }]);
+    await tools.call('list_test_reports', { limit: 5, sort: [{ property: 'duration', descending: false }] });
+    assert.deepEqual(lastListBody().sort, [{ property: 'duration', descending: false }]);
+    const { tools: list } = await tools.client.listTools();
+    assert.match(list.find((t) => t.name === 'list_test_reports')!.description ?? '', /newest first \(start_time descending\) unless you pass sort/);
+  });
+
+  it('if the default-sorted request fails, the unsorted request still answers', async () => {
+    // The stub's ">" filter answers 400 whatever the sort, so both attempts fail and the error is the platform's.
+    const failing = await tools.call('list_test_reports', { limit: 5, filter: [{ property: 'name', operator: '>', value: 'x' }] });
+    assert.equal(failing.res.isError, true);
+    const bodies = api.requests.filter((r) => r.path === '/reporter/api/tests/list').slice(-2).map((r) => r.json);
+    assert.deepEqual(bodies.map((b) => !!b.sort), [true, false], 'sorted first, then the unsorted retry');
+  });
+
   it("an empty result for a project_id filter says the filter cannot reach another project (intake 2026-11-14)", async () => {
     const other = [{ property: 'project_id', operator: '=', value: 89 }];
     const json = await tools.call('list_test_reports', { filter: other, limit: 1, outputFormat: 'json' });

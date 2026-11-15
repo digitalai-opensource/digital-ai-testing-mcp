@@ -8,7 +8,7 @@ import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { registerSession, captureScreenshot } from '../src/api/webdriver.js';
 import { certificateWarning, browserVersionFromUserAgent } from '../src/api/browser-inspection.js';
-import { normalizeBidiMessage, injectBrowserEventsForTests, type BrowserEvent } from '../src/api/browser-events.js';
+import { normalizeBidiMessage, injectBrowserEventsForTests, pushBrowserEventForTests, type BrowserEvent } from '../src/api/browser-events.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
 import { registerWebInspectionTools } from '../src/tools/web-inspection-tools.js';
 import type { InspectionSession } from '../src/types/digital-ai.js';
@@ -55,6 +55,18 @@ beforeAll(async () => {
     if (/\/element\/el-1\/attribute\/id$/.test(req.path)) return { value: 'more' };
     if (/\/element\/el-1\/attribute\/class$/.test(req.path)) return { value: null };
     if (/\/element\/el-1\/rect$/.test(req.path)) return { value: { x: 165.238, y: 814.988, width: 81, height: 19 } };
+    // navigate_to on "sid-http-<status>": the BiDi capture sees the page itself answer that status during the navigation
+    // (a sub-resource failure on "sid-subres"). Handles are WEB000<status>.
+    const nav = req.path.match(/\/wd\/hub\/session\/sid-(http-(\d+)|subres)\/url$/);
+    if (nav) {
+      if (req.method === 'POST') {
+        const handle = nav[2] ? `WEB00${nav[2]}` : 'WEB00SUB';
+        const target = nav[2] ? String(req.json.url) : 'https://example.com/missing.css';
+        pushBrowserEventForTests(handle, { kind: 'network', level: 'error', text: `${nav[2] ?? 404} Not Found`, url: target, status: Number(nav[2] ?? 404), method: 'GET', time: Date.now() });
+        return { value: null };
+      }
+      return { value: 'https://example.com/uat-missing-page' };
+    }
     // navigate_to: sessions whose id contains "badcert" land on Chrome's certificate warning page.
     if (/\/wd\/hub\/session\/[^/]+\/url$/.test(req.path)) return { value: req.method === 'GET' ? 'https://self-signed.badssl.com/' : null };
     if (/\/wd\/hub\/session\/[^/]+\/title$/.test(req.path)) return { value: /badcert/.test(req.path) ? 'Privacy error' : 'self-signed.badssl.com' };
@@ -120,6 +132,26 @@ describe('self-signed / untrusted certificates (verified live 2026-11-12 against
     assert.equal(res.isError, true, text);
     assert.match(text, /"Privacy error"/);
     assert.match(text, /start_browser_inspection_session\(acceptInsecureCerts: true\)/);
+  });
+
+  it('navigate_to warns when the page itself answers an HTTP error (BiDi capture on) — not for a failed sub-resource (UAT 2026-11-14)', async () => {
+    registerSession({ ...webSession('WEB00404'), gridSessionId: 'sid-http-404' });
+    injectBrowserEventsForTests('WEB00404', []);
+    const missing = await tools.call('navigate_to', { handle: 'WEB00404', url: 'https://example.com/uat-missing-page' });
+    assert.notEqual(missing.res.isError, true, 'the browser did navigate — a warning, not an error');
+    assert.match(missing.text, /^⚠️ Navigated to: https:\/\/example\.com\/uat-missing-page, but the page itself answered HTTP 404 Not Found/);
+    assert.match(missing.text, /get_browser_log/);
+
+    registerSession({ ...webSession('WEB00SUB'), gridSessionId: 'sid-subres' });
+    injectBrowserEventsForTests('WEB00SUB', []);
+    const sub = await tools.call('navigate_to', { handle: 'WEB00SUB', url: 'https://example.com/uat-missing-page' });
+    assert.match(sub.text, /^✅ Navigated to/);
+
+    // An error left in the buffer from an EARLIER page does not taint the next navigation.
+    registerSession({ ...webSession('WEB00500'), gridSessionId: 'sid-subres' });
+    injectBrowserEventsForTests('WEB00500', [{ kind: 'network', level: 'error', text: '500', url: 'https://example.com/uat-missing-page', status: 500, time: 1 }]);
+    const stale = await tools.call('navigate_to', { handle: 'WEB00500', url: 'https://example.com/uat-missing-page' });
+    assert.match(stale.text, /^✅ Navigated to/);
   });
 
   it('navigate_to skips the check on a session started with acceptInsecureCerts', async () => {

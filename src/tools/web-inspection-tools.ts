@@ -247,7 +247,9 @@ export function registerWebInspectionTools(server: McpServer): void {
   server.tool(
     'navigate_to',
     'Navigate a browser inspection session to a URL. Waits for the page to reach readyState "complete" ' +
-    '(up to 30 seconds). Call take_inspection_screenshot after navigating to verify the page loaded correctly.',
+    '(up to 30 seconds). Call take_inspection_screenshot after navigating to verify the page loaded correctly. ' +
+    'With browser log capture on (desktop Chrome, Edge, Firefox, Opera), a page that answers an HTTP error (404, 500…) is ' +
+    'reported as a warning instead of a plain success.',
     {
       handle: z.string().describe('Session handle from start_browser_inspection_session.'),
       url: z.string().describe('URL to navigate to, e.g. "https://example.com/login".'),
@@ -264,14 +266,14 @@ export function registerWebInspectionTools(server: McpServer): void {
             isError: true,
           };
         }
-        await navigateTo(args.handle, args.url);
+        const { httpError } = await navigateTo(args.handle, args.url);
         const current = session.currentUrl || args.url;
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `✅ Navigated to: ${current}\nCall take_inspection_screenshot to verify the page loaded as expected.`,
-          }],
-        };
+        // The browser still "navigates" to an error page, so this is a warning, not isError.
+        const text = httpError
+          ? `⚠️ Navigated to: ${current}, but the page itself answered HTTP ${httpError.text || httpError.status} — ` +
+            'the browser is showing an error page, not the content you expected. Check the URL; get_browser_log lists the failed requests.'
+          : `✅ Navigated to: ${current}\nCall take_inspection_screenshot to verify the page loaded as expected.`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (e) {
         return {
           content: [{ type: 'text' as const, text: `Error navigating: ${(e as Error).message}` }],

@@ -110,8 +110,11 @@ export async function createInspectionSession(
   // Capture the active profile's project — the session's report is created in
   // this project's reporter instance and any later delete must scope to it.
   let projectName: string | undefined;
+  let appiumServerProject: boolean | undefined;
   try {
-    projectName = (await getMyAccountInfo()).project?.name;
+    const project = (await getMyAccountInfo()).project;
+    projectName = project?.name;
+    appiumServerProject = project?.isAppiumOss;
   } catch {
     // Non-fatal — deletes fall back to the default reporter scope
   }
@@ -137,6 +140,16 @@ export async function createInspectionSession(
   if (opts.instrumentCluster) desiredCapabilities['digitalai:instrumentCluster'] = opts.instrumentCluster;
   const timeout = sessionCreateTimeoutMs(query, !!opts.automotiveProjection);
   desiredCapabilities['digitalai:newSessionWaitTimeout'] = newSessionWaitSeconds(timeout);
+  // An iOS session started WITHOUT an app has no app under test, and XCUITest then lists no webview of an app opened
+  // later with launch_app (verified live 2026-11-14 on the UAT run's iPhone, iOS 17.6, Appium 3.5.2: ExperiBank launched
+  // mid-session → NATIVE_APP only; with additionalWebviewBundleIds ['*'] or the app's bundle id → WEBVIEW_<pid>.1
+  // "balance"). That is the documented way to keep app data (no app cap + launch_app), so such sessions ask for every
+  // app's webviews. It must be in desiredCapabilities: with this dual-protocol body the platform read only that half
+  // (the key only in alwaysMatch changed nothing, live). Appium Server projects only — the Grid lists NATIVE_APP anyway,
+  // and an unknown capability is not worth risking there; an unknown project mode (account lookup failed) skips it too.
+  if (platform === 'ios' && !opts.app && !opts.appPackage && appiumServerProject === true) {
+    desiredCapabilities['additionalWebviewBundleIds'] = ['*'];
+  }
 
   // Dual-protocol session request: the proprietary Grid (JWP) reads
   // desiredCapabilities; standard Appium Server (W3C) reads capabilities.alwaysMatch
@@ -442,7 +455,7 @@ function sessionAwareError(e: unknown, handle: string): string {
     const s = sessionRegistry.get(handle);
     const idleNote =
       s?.lastIdleMs != null && s.lastIdleMs > 60_000
-        ? ` The session was idle for ${Math.round(s.lastIdleMs / 60_000)} minute(s) before this command — Grid sessions expire after ~4 minutes of inactivity.`
+        ? ` The session was idle for ${Math.round(s.lastIdleMs / 60_000)} minute(s) before this command — sessions expire after ~4 minutes of inactivity.`
         : '';
     return (
       `${detail} — the Grid session has likely been terminated (idle timeout or agent crash).${idleNote} ` +
@@ -2573,13 +2586,34 @@ export async function clearWebCache(handle: string): Promise<void> {
 // NEVER use the "-image" locator strategy: a single find killed the agent's Appium process on both platforms (every
 // later command "Connection refused"); the image plugin is not loaded on the cloud agents.
 
+/**
+ * `mobile: batteryInfo` answers a 0–1 fraction and a numeric state ({"level":1,"state":5} on a full Android phone, which
+ * an agent read as 1 % — UAT 2026-11-14). The raw fields are kept; percent and stateName are added. States: iOS
+ * UIDeviceBatteryState (0 unknown, 1 unplugged, 2 charging, 3 full); Android BatteryManager (1 unknown, 2 charging,
+ * 3 discharging, 4 not charging, 5 full).
+ */
+export function describeBattery(raw: unknown, platform: 'android' | 'ios'): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const b = raw as { level?: unknown; state?: unknown };
+  const level = typeof b.level === 'number' ? b.level : undefined;
+  const states: Record<number, string> = platform === 'ios'
+    ? { 0: 'unknown', 1: 'unplugged', 2: 'charging', 3: 'full' }
+    : { 1: 'unknown', 2: 'charging', 3: 'discharging', 4: 'not charging', 5: 'full' };
+  return {
+    ...(raw as Record<string, unknown>),
+    // A negative level (-1) is "unknown" on iOS simulators.
+    ...(level !== undefined && level >= 0 && { percent: Math.round((level <= 1 ? level * 100 : level)) }),
+    ...(typeof b.state === 'number' && states[b.state] && { stateName: states[b.state] }),
+  };
+}
+
 export async function deviceDiagnostics(handle: string): Promise<Record<string, unknown>> {
   const session = requireSession(handle);
   if (session.sessionFormat !== 'w3c') throw new Error('device_info needs an Appium Server session (mobile: deviceInfo is not available on the Grid) — get_device_detail reads the platform record instead.');
   const client = makeClient();
   const call = async (script: string, args: unknown[] = [{}]) => { try { return (await execScript(client, session, script, args, 20_000)).data.value; } catch { return undefined; } };
   const info = (await call('mobile: deviceInfo')) as Record<string, unknown> | undefined;
-  const battery = (await call('mobile: batteryInfo')) as Record<string, unknown> | undefined;
+  const battery = describeBattery(await call('mobile: batteryInfo'), session.platform === 'ios' ? 'ios' : 'android');
   const locked = await call('mobile: isLocked');
   if (session.platform === 'ios') {
     const screen = (await call('mobile: deviceScreenInfo')) as Record<string, unknown> | undefined;
@@ -2697,6 +2731,31 @@ export async function listContexts(handle: string, waitMs = 3000): Promise<Conte
   return (Array.isArray(r.data.value) ? r.data.value : []).map((c: unknown) => ({ id: String(c) }));
 }
 
+/**
+ * No WEBVIEW context, but is a web view on screen in the native tree? Then the content exists and is not exposed for
+ * inspection — a different cause from "no web content here". Live 2026-11-14 (ExperiBank iOS, Appium 3.5.2): the UAT
+ * run's iPhone showed the XCUIElementTypeWebView but listed NATIVE_APP only because the session had been started without
+ * the app (fixed in createInspectionSession with additionalWebviewBundleIds). What remains: a build that does not allow
+ * web inspection. Null when it cannot tell (not in the native context, or the lookup failed).
+ */
+export async function nativeWebViewOnScreen(handle: string): Promise<boolean | null> {
+  const session = requireSession(handle);
+  if (isWebviewContext(session)) return null;
+  try {
+    const cls = session.platform === 'ios' ? 'XCUIElementTypeWebView' : 'android.webkit.WebView';
+    return (await findFirstElementId(handle, 'class name', cls)) !== null;
+  } catch {
+    return null;
+  }
+}
+
+export const WEBVIEW_NOT_EXPOSED =
+  'A web view IS on screen in the native tree, but it is not exposed as a WEBVIEW context, so its HTML cannot be ' +
+  'inspected here. The usual cause is a build that does not allow web inspection (iOS 16.4+: WKWebView.isInspectable; ' +
+  'Android: WebView.setWebContentsDebuggingEnabled(true)) — release builds usually do not. On iOS, a session that started ' +
+  'without the app and was started by an MCP older than 2.3.3 also hides it: start a new session. Meanwhile the native ' +
+  'tree (get_element_tree) shows the web view\'s text.';
+
 export async function switchContext(
   handle: string,
   target: 'native' | 'auto' | string,
@@ -2711,6 +2770,9 @@ export async function switchContext(
   else if (target === 'auto') {
     const web = ids.find((id) => /^WEBVIEW/i.test(id));
     if (!web) {
+      if (await nativeWebViewOnScreen(handle)) {
+        throw new Error(`No WEBVIEW context is available (contexts: ${ids.join(', ') || 'none'}). ${WEBVIEW_NOT_EXPOSED}`);
+      }
       throw new Error(
         `No WEBVIEW context is available (contexts: ${ids.join(', ') || 'none'}). The screen in front has no web content, ` +
         `or the webview is not debuggable (Android: WebView.setWebContentsDebuggingEnabled(true) in a debug build; ` +
