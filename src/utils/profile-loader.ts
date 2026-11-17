@@ -34,6 +34,8 @@ export interface EnvironmentProfile {
   name: string;
   url: string;
   source: ProfileSource;
+  /** Store profiles only: where the key is kept (OS keychain or the profiles file). */
+  keyStore?: 'os' | 'file';
 }
 
 interface FullProfile extends EnvironmentProfile {
@@ -83,7 +85,7 @@ function loadProfiles(): Loaded {
   const shadowed: string[] = [];
   for (const [name, p] of Object.entries(store.profiles)) {
     if (name in profiles) shadowed.push(name);
-    else profiles[name] = { name, url: p.url, key: p.key, source: 'store' };
+    else profiles[name] = { name, url: p.url, key: p.key, source: 'store', keyStore: p.keyStore };
   }
 
   return { profiles, store, shadowed };
@@ -108,7 +110,7 @@ export function resetProfilesForTests(): void {
 
 /** All configured profiles without their keys — safe to surface in tool responses. */
 export function listProfiles(): EnvironmentProfile[] {
-  return Object.values(getProfiles()).map(({ name, url, source }) => ({ name, url, source }));
+  return Object.values(getProfiles()).map(({ name, url, source, keyStore }) => ({ name, url, source, ...(keyStore ? { keyStore } : {}) }));
 }
 
 /** Retrieve a profile's full credentials by name (case-insensitive). */

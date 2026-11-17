@@ -6,22 +6,123 @@
  * MCP_CREDENTIAL_STORE=off disables it completely.
  *
  *   { "version": 1, "default": "admin",
- *     "profiles": { "admin": { "url": "https://tenant.experitest.com", "key": "…" } } }
+ *     "profiles": { "admin": { "url": "https://tenant.experitest.com", "keyStore": "os" },
+ *                   "qa":    { "url": "https://tenant.experitest.com", "key": "…" } } }
  *
  * The store is ADDITIVE: environment variables always win (profile-loader.ts applies the precedence). This module only
  * reads, validates and writes the file, and never throws on bad content: an unreadable file or a bad profile becomes
  * an error / skipped entry with a reason, so the server can still start and say what is wrong.
  *
- * Keys are stored in the file itself for now (plain-file mode: user-only folder, mode 0600 where the OS honours it —
- * on Windows the per-user %APPDATA% ACL is what protects it). OS keychain storage is a planned addition; a profile
- * without a usable `key` is skipped with a reason, so a future format can add another key location without breaking
- * this reader.
+ * Where a profile's key lives:
+ *   "keyStore": "os" — the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) under service
+ *                      KEYCHAIN_SERVICE, account = profile name, through the OPTIONAL dependency @napi-rs/keyring. It is
+ *                      loaded lazily, only when a profile needs it; if it cannot load (no prebuilt binary, Linux without a
+ *                      keyring service) or has no entry, that profile is skipped with the reason.
+ *   "key": "…"       — plain-file mode: the key is in this file (user-only folder, mode 0600 where the OS honours it — on
+ *                      Windows the per-user %APPDATA% ACL is what protects it).
+ * Measured on Windows 11 (2026-11-17): library load 11–161 ms once per process, a key read ~3 ms.
  *
  * Credential values never leave this module except through profile-loader.ts.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, chmodSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+// ─── OS keychain ──────────────────────────────────────────────────────────────
+
+export const KEYCHAIN_SERVICE = 'digital-ai-testing-mcp';
+
+/** The three calls the store needs; the real one wraps @napi-rs/keyring's synchronous Entry. */
+export interface Keychain {
+  get(account: string): string | null;
+  set(account: string, secret: string): void;
+  delete(account: string): boolean;
+}
+
+/** Local shape of the optional dependency — no type import, so type-checking never depends on it being installed. */
+interface KeyringModule {
+  Entry: new (service: string, username: string) => {
+    getPassword(): string | null;
+    setPassword(password: string): void;
+    deletePassword(): boolean;
+  };
+}
+
+let _keychain: { keychain?: Keychain; error?: string } | undefined;
+let _keychainOverride: Keychain | null | undefined;
+
+/** Test hook: a fake keychain, null for "unavailable", undefined to go back to the real one. */
+export function setKeychainForTests(k: Keychain | null | undefined): void {
+  _keychainOverride = k;
+}
+
+function shortError(e: unknown): string {
+  return (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
+}
+
+/** The OS keychain, loaded on first use. Never throws: an unusable keychain comes back as an error. */
+export function getKeychain(): { keychain?: Keychain; error?: string } {
+  if (_keychainOverride !== undefined) {
+    return _keychainOverride ? { keychain: _keychainOverride } : { error: 'the OS keychain is not available' };
+  }
+  if (!_keychain) {
+    try {
+      const { Entry } = createRequire(import.meta.url)('@napi-rs/keyring') as KeyringModule;
+      _keychain = {
+        keychain: {
+          get: (account) => new Entry(KEYCHAIN_SERVICE, account).getPassword(),
+          set: (account, secret) => new Entry(KEYCHAIN_SERVICE, account).setPassword(secret),
+          delete: (account) => new Entry(KEYCHAIN_SERVICE, account).deletePassword(),
+        },
+      };
+    } catch (e) {
+      _keychain = { error: `the OS keychain library could not be loaded (${shortError(e)})` };
+    }
+  }
+  return _keychain;
+}
+
+/** Reads one profile's key from the keychain: the key, or why there is none. */
+export type KeyLookup = (profile: string) => { key?: string; reason?: string };
+
+export const keychainLookup: KeyLookup = (profile) => {
+  const { keychain, error } = getKeychain();
+  if (!keychain) return { reason: `its key is in the OS keychain, which cannot be used here: ${error}` };
+  try {
+    const key = keychain.get(profile)?.trim();
+    return key
+      ? { key }
+      : { reason: `its key is in the OS keychain, but there is no entry for it (service "${KEYCHAIN_SERVICE}", account "${profile}")` };
+  } catch (e) {
+    return { reason: `its key is in the OS keychain, which could not be read (${shortError(e)})` };
+  }
+};
+
+/** Saves a profile's key in the keychain (for the setup command). Never throws. */
+export function saveKeyToKeychain(profile: string, key: string): { ok: boolean; error?: string } {
+  const { keychain, error } = getKeychain();
+  if (!keychain) return { ok: false, error };
+  try {
+    keychain.set(profile, key);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: `the OS keychain could not save it (${shortError(e)})` };
+  }
+}
+
+/** Removes a profile's key from the keychain. `existed` is false when there was no entry. Never throws. */
+export function deleteKeyFromKeychain(profile: string): { ok: boolean; existed?: boolean; error?: string } {
+  const { keychain, error } = getKeychain();
+  if (!keychain) return { ok: false, error };
+  try {
+    return { ok: true, existed: keychain.delete(profile) };
+  } catch (e) {
+    return { ok: false, error: `the OS keychain could not delete it (${shortError(e)})` };
+  }
+}
+
+// ─── The profiles file ────────────────────────────────────────────────────────
 
 export const STORE_FORMAT_VERSION = 1;
 export const STORE_FILE_NAME = 'profiles.json';
@@ -29,15 +130,20 @@ export const STORE_FILE_NAME = 'profiles.json';
 /** Same shape as env profile names after lowercasing (DAI_PROFILE_QA_TEAM_* → qa_team). */
 const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
+/** A usable profile after reading: the key is resolved, wherever it was kept. */
 export interface StoredProfile {
   url: string;
   key: string;
+  keyStore: 'os' | 'file';
 }
+
+/** A profile as written to the file: the key itself (plain-file mode) or a pointer to the OS keychain. */
+export type StoreFileProfile = { url: string; key: string } | { url: string; keyStore: 'os' };
 
 export interface StoreFile {
   version: number;
   default?: string;
-  profiles: Record<string, StoredProfile>;
+  profiles: Record<string, StoreFileProfile>;
 }
 
 export interface StoreReadResult {
@@ -81,8 +187,13 @@ function validUrl(u: unknown): string | null {
   }
 }
 
-/** Pure: validates parsed JSON. `raw` is whatever JSON.parse returned. */
-export function parseStore(raw: unknown, path: string): StoreReadResult {
+const NO_KEYCHAIN: KeyLookup = () => ({ reason: 'its key is in the OS keychain, which is not read here' });
+
+/**
+ * Validates parsed JSON (`raw` is whatever JSON.parse returned). `lookup` resolves "keyStore": "os" profiles — readStore
+ * passes the real keychain; tests pass a fake. Without one, such profiles are skipped.
+ */
+export function parseStore(raw: unknown, path: string, lookup: KeyLookup = NO_KEYCHAIN): StoreReadResult {
   const base: StoreReadResult = { enabled: true, path, exists: true, profiles: {}, skipped: [] };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...base, error: 'the file is not a JSON object' };
   const obj = raw as Record<string, unknown>;
@@ -93,18 +204,20 @@ export function parseStore(raw: unknown, path: string): StoreReadResult {
     return { ...base, error: 'the file has no "profiles" object' };
   }
 
+  const seen = new Set<string>();
   for (const [rawName, rawProfile] of Object.entries(obj.profiles as Record<string, unknown>)) {
     const name = rawName.trim().toLowerCase();
     if (!PROFILE_NAME_RE.test(name)) {
       base.skipped.push({ name: rawName, reason: 'invalid name (letters, digits, "_" and "-" only, up to 64)' });
       continue;
     }
-    if (name in base.profiles) {
+    if (seen.has(name)) {
       base.skipped.push({ name: rawName, reason: `duplicate of "${name}" (names are not case-sensitive)` });
       continue;
     }
+    seen.add(name);
     if (!rawProfile || typeof rawProfile !== 'object') {
-      base.skipped.push({ name, reason: 'not an object with "url" and "key"' });
+      base.skipped.push({ name, reason: 'not an object with "url" and "key" or "keyStore"' });
       continue;
     }
     const p = rawProfile as Record<string, unknown>;
@@ -113,11 +226,28 @@ export function parseStore(raw: unknown, path: string): StoreReadResult {
       base.skipped.push({ name, reason: '"url" is missing or not an http(s) URL' });
       continue;
     }
-    if (typeof p.key !== 'string' || !p.key.trim()) {
-      base.skipped.push({ name, reason: '"key" is missing or empty' });
+    if (p.keyStore !== undefined) {
+      if (p.keyStore !== 'os') {
+        base.skipped.push({ name, reason: `"keyStore" must be "os" (got ${JSON.stringify(String(p.keyStore)).slice(0, 40)})` });
+        continue;
+      }
+      if (p.key !== undefined) {
+        base.skipped.push({ name, reason: 'has both "key" and "keyStore" — keep one' });
+        continue;
+      }
+      const found = lookup(name);
+      if (!found.key) {
+        base.skipped.push({ name, reason: found.reason ?? 'its key is in the OS keychain, but it could not be read' });
+        continue;
+      }
+      base.profiles[name] = { url, key: found.key, keyStore: 'os' };
       continue;
     }
-    base.profiles[name] = { url, key: p.key.trim() };
+    if (typeof p.key !== 'string' || !p.key.trim()) {
+      base.skipped.push({ name, reason: '"key" is missing or empty (or set "keyStore": "os" for a key in the OS keychain)' });
+      continue;
+    }
+    base.profiles[name] = { url, key: p.key.trim(), keyStore: 'file' };
   }
 
   if (obj.default !== undefined) {
@@ -157,7 +287,7 @@ export function readStore(env: NodeJS.ProcessEnv = process.env): StoreReadResult
     // Only the position is reported: V8's JSON.parse messages can quote part of the input, which may be a key.
     return { enabled: true, path, exists: true, error: `the file is not valid JSON${jsonErrorPosition(e, text)}`, profiles: {}, skipped: [] };
   }
-  return parseStore(raw, path);
+  return parseStore(raw, path, keychainLookup);
 }
 
 /**

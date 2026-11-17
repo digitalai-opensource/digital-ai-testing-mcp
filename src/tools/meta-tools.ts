@@ -383,7 +383,7 @@ export function registerMetaTools(server: McpServer): void {
       );
       const lines = profiles.map(p => {
         const marker = p.name === active ? ' ← active' : '';
-        const from = p.source === 'store' ? ', credential store' : '';
+        const from = p.source === 'store' ? `, credential store, key in ${p.keyStore === 'os' ? 'the OS keychain' : 'the profiles file'}` : '';
         return `  ${p.name}${marker}: ${p.url} (${describeLevel({ level: p.accessLevel, role: p.role ?? undefined, source: 'role' })}${from})`;
       });
       // Store problems are listed so a profile that "should be there" is explained (never contains a key).

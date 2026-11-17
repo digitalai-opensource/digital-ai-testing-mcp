@@ -9,8 +9,15 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  deleteKeyFromKeychain,
+  getKeychain,
   isStoreEnabled,
   jsonErrorPosition,
+  KEYCHAIN_SERVICE,
+  keychainLookup,
+  saveKeyToKeychain,
+  setKeychainForTests,
+  type Keychain,
   parseStore,
   readStore,
   storeDir,
@@ -49,7 +56,7 @@ describe('parseStore', () => {
   it('accepts valid profiles, lowercases names and trims trailing slashes', () => {
     const r = parseStore({ version: 1, default: 'Admin', profiles: { Admin: { url: 'https://t.example.com/', key: KEY_A } } }, 'p');
     expect(r.error).toBeUndefined();
-    expect(r.profiles).toEqual({ admin: { url: 'https://t.example.com', key: KEY_A } });
+    expect(r.profiles).toEqual({ admin: { url: 'https://t.example.com', key: KEY_A, keyStore: 'file' } });
     expect(r.defaultProfile).toBe('admin');
     expect(r.skipped).toEqual([]);
   });
@@ -248,5 +255,140 @@ describe('profile-loader with the store', () => {
     store(twoProfiles({ default: 'bravo' }));
     expect(listProfiles()).toEqual([]);
     expect(startupCredentialProblem()).toEqual({ missing: ['DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY'], storeNote: undefined });
+  });
+});
+
+// ─── OS keychain ("keyStore": "os") ───────────────────────────────────────────
+// A fake keychain stands in for the OS one: tests never read or write a real entry.
+
+function fakeKeychain(entries: Record<string, string> = {}, opts: { throwOnGet?: string } = {}): Keychain & { entries: Record<string, string> } {
+  return {
+    entries,
+    get(account) {
+      if (opts.throwOnGet) throw new Error(opts.throwOnGet);
+      return entries[account] ?? null;
+    },
+    set(account, secret) {
+      entries[account] = secret;
+    },
+    delete(account) {
+      const had = account in entries;
+      delete entries[account];
+      return had;
+    },
+  };
+}
+
+describe('keyStore "os"', () => {
+  afterEach(() => setKeychainForTests(undefined));
+  const lookupWith = (k: Keychain | null) => {
+    setKeychainForTests(k);
+    return keychainLookup;
+  };
+  const osProfile = { profiles: { team: { url: 'https://t.example.com', keyStore: 'os' } } };
+
+  it('reads the key from the keychain (service digital-ai-testing-mcp, account = profile name)', () => {
+    const r = parseStore(osProfile, 'p', lookupWith(fakeKeychain({ team: KEY_A })));
+    expect(r.profiles).toEqual({ team: { url: 'https://t.example.com', key: KEY_A, keyStore: 'os' } });
+    expect(KEYCHAIN_SERVICE).toBe('digital-ai-testing-mcp');
+  });
+  it('no keychain entry → skipped, naming the service and account', () => {
+    const r = parseStore(osProfile, 'p', lookupWith(fakeKeychain()));
+    expect(r.skipped).toEqual([
+      { name: 'team', reason: 'its key is in the OS keychain, but there is no entry for it (service "digital-ai-testing-mcp", account "team")' },
+    ]);
+  });
+  it('keychain unavailable or failing → skipped with the reason; other profiles still load', () => {
+    const mixed = { profiles: { ...osProfile.profiles, plain: { url: 'https://p.example.com', key: KEY_B } } };
+    const unavailable = parseStore(mixed, 'p', lookupWith(null));
+    expect(Object.keys(unavailable.profiles)).toEqual(['plain']);
+    expect(unavailable.skipped[0].reason).toMatch(/^its key is in the OS keychain, which cannot be used here/);
+    const failing = parseStore(osProfile, 'p', lookupWith(fakeKeychain({}, { throwOnGet: 'Access denied' })));
+    expect(failing.skipped[0].reason).toBe('its key is in the OS keychain, which could not be read (Access denied)');
+  });
+  it('without a lookup (pure parse), keychain profiles are skipped, not guessed', () => {
+    expect(parseStore(osProfile, 'p').skipped[0].reason).toBe('its key is in the OS keychain, which is not read here');
+  });
+  it('rejects "key" together with "keyStore", and any keyStore other than "os"', () => {
+    const r = parseStore(
+      {
+        profiles: {
+          both: { url: 'https://t.example.com', keyStore: 'os', key: KEY_A },
+          other: { url: 'https://t.example.com', keyStore: 'vault' },
+        },
+      },
+      'p',
+      lookupWith(fakeKeychain({ both: KEY_A }))
+    );
+    expect(r.profiles).toEqual({});
+    expect(r.skipped.map((s) => s.reason)).toEqual(['has both "key" and "keyStore" — keep one', '"keyStore" must be "os" (got "vault")']);
+    expect(JSON.stringify(r.skipped)).not.toContain(KEY_A);
+  });
+  it('a default naming a keychain profile whose entry is missing is reported, never replaced', () => {
+    const r = parseStore(
+      { default: 'team', profiles: { ...osProfile.profiles, plain: { url: 'https://p.example.com', key: KEY_B } } },
+      'p',
+      lookupWith(fakeKeychain())
+    );
+    expect(r.defaultProfile).toBeUndefined();
+    expect(r.skipped.map((s) => s.name)).toEqual(['team', '(default)']);
+  });
+  it('saveKeyToKeychain / deleteKeyFromKeychain report the outcome and never throw', () => {
+    const k = fakeKeychain();
+    setKeychainForTests(k);
+    expect(saveKeyToKeychain('team', KEY_A)).toEqual({ ok: true });
+    expect(k.entries.team).toBe(KEY_A);
+    expect(deleteKeyFromKeychain('team')).toEqual({ ok: true, existed: true });
+    expect(deleteKeyFromKeychain('team')).toEqual({ ok: true, existed: false });
+    setKeychainForTests(null);
+    expect(saveKeyToKeychain('team', KEY_A)).toEqual({ ok: false, error: 'the OS keychain is not available' });
+    expect(deleteKeyFromKeychain('team').ok).toBe(false);
+  });
+  it('the real optional dependency loads on this platform (load only — no entry is read or written)', () => {
+    setKeychainForTests(undefined);
+    const { keychain, error } = getKeychain();
+    expect(error).toBeUndefined();
+    expect(typeof keychain?.get).toBe('function');
+  });
+});
+
+describe('profile-loader with keychain profiles', () => {
+  let dir: string;
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dai-loader-kc-'));
+    for (const k of ['MCP_CREDENTIAL_STORE', 'MCP_CREDENTIAL_STORE_DIR', 'DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY']) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.MCP_CREDENTIAL_STORE = 'on';
+    process.env.MCP_CREDENTIAL_STORE_DIR = dir;
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    setKeychainForTests(undefined);
+    resetProfilesForTests();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('starts on a keychain default and reports where each key is kept', () => {
+    setKeychainForTests(fakeKeychain({ team: KEY_A }));
+    writeStore(
+      { version: 1, default: 'team', profiles: { team: { url: 'https://t.example.com', keyStore: 'os' }, qa: { url: 'https://q.example.com', key: KEY_B } } },
+      { MCP_CREDENTIAL_STORE_DIR: dir }
+    );
+    resetProfilesForTests();
+    expect(getStartingProfile()).toMatchObject({ name: 'team', key: KEY_A, source: 'store' });
+    expect(listProfiles().map((p) => `${p.name}:${p.keyStore}`).sort()).toEqual(['qa:file', 'team:os']);
+    expect(JSON.stringify(listProfiles())).not.toContain('aut_1_');
+  });
+  it('a missing keychain entry for the default: setup mode explains it', () => {
+    setKeychainForTests(fakeKeychain());
+    writeStore({ version: 1, default: 'team', profiles: { team: { url: 'https://t.example.com', keyStore: 'os' } } }, { MCP_CREDENTIAL_STORE_DIR: dir });
+    resetProfilesForTests();
+    expect(startupCredentialProblem()?.storeNote).toContain('there is no entry for it (service "digital-ai-testing-mcp", account "team")');
   });
 });
