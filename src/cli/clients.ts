@@ -1,0 +1,431 @@
+/**
+ * AI-client configuration for `setup clients` — finds the AI clients on this machine and adds, replaces or removes the
+ * server's entry in each one's configuration file. The entry never contains a key: the server reads credentials from
+ * the credential store (or from whatever the user sets in the client themselves).
+ *
+ * The launch command (verified on Windows 2026-11-17, fnm-installed Node 22, PATH stripped to the system folder):
+ *   - plain `npx` fails twice when the client does not pass the user's PATH (Xcode's agents, macOS GUI apps, apps started
+ *     outside a shell that sets up a Node version manager): the client cannot find npx, and npx's second step cannot
+ *     find `node` ('"node" is not recognized');
+ *   - `<absolute node> <npm's npx-cli.js> -y digital-ai-testing-mcp@latest` with PATH = Node's folder + the system
+ *     folder starts the server; so does the same with fnm's stable `aliases/default` folder.
+ * So the entry runs Node by absolute path, keeps `@latest` (a new release arrives at the next start) and sets its own
+ * PATH. The server starts no other programs, so that PATH is enough. A version-specific Node path (nvm, volta, fnm
+ * without an alias) is used as is, with a note to run `setup clients` again after switching Node versions.
+ *
+ * Everything here takes a ClientContext so tests run against temp folders; nothing reads the real home folder directly.
+ */
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname } from 'node:path';
+
+export const SERVER_ENTRY_NAME = 'digital-ai-testing';
+export const PACKAGE_SPEC = 'digital-ai-testing-mcp@latest';
+const BACKUP_SUFFIX = '.digital-ai-testing.bak';
+
+export interface ClientContext {
+  platform: NodeJS.Platform;
+  env: NodeJS.ProcessEnv;
+  home: string;
+  /** process.execPath — the Node.js running setup. */
+  execPath: string;
+  exists(path: string): boolean;
+}
+
+export function defaultClientContext(): ClientContext {
+  return { platform: process.platform, env: process.env, home: homedir(), execPath: process.execPath, exists: existsSync };
+}
+
+// ─── The launch command ───────────────────────────────────────────────────────
+
+export interface LaunchEntry {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  /** Things the user should know about this entry (version-specific Node path, npx not found). */
+  notes: string[];
+}
+
+function pathJoin(ctx: ClientContext, ...parts: string[]): string {
+  // Build paths for the TARGET platform, not the host (tests build Windows paths on Linux CI and vice versa).
+  const sep = ctx.platform === 'win32' ? '\\' : '/';
+  return parts
+    .join(sep)
+    .replace(/[\\/]+/g, sep)
+    .replace(ctx.platform === 'win32' ? /\\[^\\]+\\\.\.(?=\\|$)/g : /\/[^/]+\/\.\.(?=\/|$)/g, '');
+}
+
+function parentDir(ctx: ClientContext, p: string): string {
+  const sep = ctx.platform === 'win32' ? '\\' : '/';
+  const i = p.replace(/[\\/]+$/, '').lastIndexOf(sep);
+  return i > 0 ? p.slice(0, i) : p;
+}
+
+/** The folder holding the node binary, swapped for a version manager's stable alias when one exists. */
+export function stableNodeDir(ctx: ClientContext): { dir: string; versionSpecific: boolean } {
+  const win = ctx.platform === 'win32';
+  const dir = parentDir(ctx, ctx.execPath);
+  const nodeExe = win ? 'node.exe' : 'node';
+
+  // fnm: <fnm dir>/node-versions/<v>/installation[/bin] → <fnm dir>/aliases/default[/bin]
+  const fnm = /^(.*[\\/])node-versions[\\/][^\\/]+[\\/]installation(?:[\\/]bin)?$/.exec(dir);
+  if (fnm) {
+    const alias = pathJoin(ctx, fnm[1], 'aliases', 'default', ...(win ? [] : ['bin']));
+    if (ctx.exists(pathJoin(ctx, alias, nodeExe))) return { dir: alias, versionSpecific: false };
+    return { dir, versionSpecific: true };
+  }
+  // nvm (~/.nvm/versions/node/<v>/bin), volta (…/volta/tools/image/node/<v>[/bin]), nvm-windows (…\nvm\v<x>) — no stable
+  // folder that also holds npm, so the versioned one is used.
+  const versioned = /[\\/]\.nvm[\\/]versions[\\/]|[\\/]volta[\\/]tools[\\/]image[\\/]node[\\/]|[\\/]nvm[\\/]v\d/i.test(dir);
+  return { dir, versionSpecific: versioned };
+}
+
+/** System folders the server's PATH keeps (npx's helpers live there). */
+function systemPath(ctx: ClientContext): string[] {
+  if (ctx.platform === 'win32') return [pathJoin(ctx, ctx.env.SystemRoot?.trim() || 'C:\\Windows', 'System32')];
+  return ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+}
+
+export function buildLaunchEntry(ctx: ClientContext): LaunchEntry {
+  const win = ctx.platform === 'win32';
+  const notes: string[] = [];
+  const { dir, versionSpecific } = stableNodeDir(ctx);
+  const node = pathJoin(ctx, dir, win ? 'node.exe' : 'node');
+  const npxCli = win ? pathJoin(ctx, dir, 'node_modules', 'npm', 'bin', 'npx-cli.js') : pathJoin(ctx, dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js');
+  const env: Record<string, string> = { PATH: [dir, ...systemPath(ctx)].join(win ? ';' : ':'), MCP_DEPLOYMENT_MODE: 'local' };
+
+  if (versionSpecific) {
+    notes.push(`Node.js is at a version-specific path (${dir}). After switching Node versions, run "digital-ai-testing-mcp setup clients add" again.`);
+  }
+  if (!ctx.exists(npxCli)) {
+    // Unusual layout: fall back to plain npx and rely on the client's PATH.
+    notes.push(`npm's npx was not found next to Node.js (${npxCli}); the entry starts "npx" from the client's PATH instead.`);
+    return win
+      ? { command: 'cmd', args: ['/c', 'npx', '-y', PACKAGE_SPEC], env: { MCP_DEPLOYMENT_MODE: 'local' }, notes }
+      : { command: 'npx', args: ['-y', PACKAGE_SPEC], env: { MCP_DEPLOYMENT_MODE: 'local' }, notes };
+  }
+  return { command: node, args: [npxCli, '-y', PACKAGE_SPEC], env, notes };
+}
+
+// ─── Clients ──────────────────────────────────────────────────────────────────
+
+export type ClientFormat = 'mcpServers' | 'vscode' | 'opencode' | 'codex-toml';
+
+export interface ClientTarget {
+  id: string;
+  label: string;
+  format: ClientFormat;
+  /** The configuration file the entry goes in. */
+  file: string;
+  /** Present when the client is installed (its own folder exists), whether or not the file does. */
+  detected: boolean;
+}
+
+/** Clients the user configures by hand (shown by `setup clients`, never written). */
+export interface ManualClient {
+  id: string;
+  label: string;
+  how: string;
+}
+
+function appData(ctx: ClientContext): string {
+  return ctx.env.APPDATA?.trim() || pathJoin(ctx, ctx.home, 'AppData', 'Roaming');
+}
+
+/** Claude Desktop from the Microsoft Store keeps its folder inside the package's virtualised AppData. */
+function claudeDesktopDirs(ctx: ClientContext): string[] {
+  if (ctx.platform === 'darwin') return [pathJoin(ctx, ctx.home, 'Library', 'Application Support', 'Claude')];
+  if (ctx.platform !== 'win32') return [];
+  const dirs = [pathJoin(ctx, appData(ctx), 'Claude')];
+  const packages = pathJoin(ctx, ctx.env.LOCALAPPDATA?.trim() || pathJoin(ctx, ctx.home, 'AppData', 'Local'), 'Packages');
+  try {
+    for (const p of readdirSync(packages)) {
+      if (/^Claude_/i.test(p)) dirs.push(pathJoin(ctx, packages, p, 'LocalCache', 'Roaming', 'Claude'));
+    }
+  } catch {
+    /* no Packages folder */
+  }
+  return dirs;
+}
+
+function vscodeUserDir(ctx: ClientContext, product: 'Code' | 'Code - Insiders'): string {
+  if (ctx.platform === 'win32') return pathJoin(ctx, appData(ctx), product, 'User');
+  if (ctx.platform === 'darwin') return pathJoin(ctx, ctx.home, 'Library', 'Application Support', product, 'User');
+  return pathJoin(ctx, ctx.env.XDG_CONFIG_HOME?.trim() || pathJoin(ctx, ctx.home, '.config'), product, 'User');
+}
+
+/** Every client whose configuration file setup can edit, in display order. */
+export function knownClients(ctx: ClientContext): ClientTarget[] {
+  const t = (id: string, label: string, format: ClientFormat, dir: string, file: string): ClientTarget => ({
+    id,
+    label,
+    format,
+    file: pathJoin(ctx, dir, file),
+    detected: ctx.exists(dir),
+  });
+  const out: ClientTarget[] = [];
+  const desktopDirs = claudeDesktopDirs(ctx);
+  const desktop = desktopDirs.find((d) => ctx.exists(d)) ?? desktopDirs[0];
+  if (desktop) out.push(t('claude-desktop', 'Claude Desktop', 'mcpServers', desktop, 'claude_desktop_config.json'));
+  out.push(t('vscode', 'VS Code (GitHub Copilot agent mode)', 'vscode', vscodeUserDir(ctx, 'Code'), 'mcp.json'));
+  out.push(t('vscode-insiders', 'VS Code Insiders', 'vscode', vscodeUserDir(ctx, 'Code - Insiders'), 'mcp.json'));
+  out.push(t('cursor', 'Cursor', 'mcpServers', pathJoin(ctx, ctx.home, '.cursor'), 'mcp.json'));
+  out.push(t('windsurf', 'Windsurf', 'mcpServers', pathJoin(ctx, ctx.home, '.codeium', 'windsurf'), 'mcp_config.json'));
+  out.push(t('codex', 'OpenAI Codex (CLI, IDE extension, ChatGPT desktop)', 'codex-toml', ctx.env.CODEX_HOME?.trim() || pathJoin(ctx, ctx.home, '.codex'), 'config.toml'));
+  out.push(t('opencode', 'OpenCode', 'opencode', pathJoin(ctx, ctx.env.XDG_CONFIG_HOME?.trim() || pathJoin(ctx, ctx.home, '.config'), 'opencode'), 'opencode.json'));
+  out.push(t('gemini-cli', 'Gemini CLI', 'mcpServers', pathJoin(ctx, ctx.home, '.gemini'), 'settings.json'));
+  return out;
+}
+
+/** Clients setup does not edit (yet) — listed with what to do instead. */
+export function manualClients(): ManualClient[] {
+  return [
+    {
+      id: 'claude-code',
+      label: 'Claude Code (terminal, VS Code and JetBrains/Android Studio extensions)',
+      how: 'Claude Code rewrites its own settings file while it runs, so setup prints a "claude mcp add" command for you to run instead (see below).',
+    },
+    {
+      id: 'xcode',
+      label: 'Xcode 26.3+ (Claude Agent, Codex)',
+      how: 'Not edited yet: the location of Xcode\'s agent settings is not verified. Use the same entry in Xcode\'s agent MCP settings.',
+    },
+    {
+      id: 'android-studio-gemini',
+      label: 'Gemini in Android Studio',
+      how: 'Accepts only HTTP MCP servers, so it cannot start this server. Use Claude Code\'s JetBrains plugin in Android Studio instead.',
+    },
+  ];
+}
+
+/**
+ * The `claude mcp add` command for Claude Code (printed, not run). On Windows every path uses forward slashes: Claude
+ * Code strips backslashes when it saves a server entry, and the entry was verified to start with forward slashes in
+ * the command, the script path and PATH (2026-11-17).
+ */
+export function claudeCodeCommand(entry: LaunchEntry, platform: NodeJS.Platform): string {
+  const win = platform === 'win32';
+  const q = (raw: string) => {
+    const s = win ? raw.replace(/\\/g, '/') : raw;
+    return win ? `"${s.replace(/"/g, '\\"')}"` : `'${s.replace(/'/g, `'\\''`)}'`;
+  };
+  const envFlags = Object.entries(entry.env).map(([k, v]) => `-e ${q(`${k}=${v}`)}`);
+  return ['claude mcp add --scope user', ...envFlags, SERVER_ENTRY_NAME, '--', q(entry.command), ...entry.args.map(q)].join(' ');
+}
+
+// ─── Reading and editing configuration files ──────────────────────────────────
+
+export interface EntryStatus {
+  /** The file exists. */
+  fileExists: boolean;
+  /** The file could not be parsed (JSON with comments, invalid JSON/TOML) — setup will not edit it. */
+  unreadable?: string;
+  /** An entry named SERVER_ENTRY_NAME exists. */
+  hasEntry: boolean;
+  /** That entry sets an access key itself (it then wins over the credential store). */
+  entryHasKeys: boolean;
+  /** That entry is exactly what setup would write now. */
+  upToDate: boolean;
+  /** Other entries that start this package under another name. */
+  otherNames: string[];
+}
+
+const KEY_VAR_RE = /^(DIGITAL_AI_ACCESS_KEY|DAI_PROFILE_.+_KEY)$/;
+const RUNS_PACKAGE_RE = /digital-ai-testing-mcp/;
+
+type Json = Record<string, unknown>;
+
+function containerKey(format: ClientFormat): 'mcpServers' | 'servers' | 'mcp' {
+  return format === 'vscode' ? 'servers' : format === 'opencode' ? 'mcp' : 'mcpServers';
+}
+
+/** The entry object in this client's format. */
+export function entryFor(format: ClientFormat, e: LaunchEntry): Json {
+  switch (format) {
+    case 'vscode':
+      return { type: 'stdio', command: e.command, args: e.args, env: e.env };
+    case 'opencode':
+      return { type: 'local', command: [e.command, ...e.args], environment: e.env, enabled: true };
+    default:
+      return { command: e.command, args: e.args, env: e.env };
+  }
+}
+
+function readJson(file: string): { data?: Json; error?: string; exists: boolean } {
+  if (!existsSync(file)) return { exists: false, data: {} };
+  const text = readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  if (!text.trim()) return { exists: true, data: {} };
+  try {
+    const data = JSON.parse(text);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return { exists: true, error: 'it is not a JSON object' };
+    return { exists: true, data: data as Json };
+  } catch {
+    // Comments or trailing commas (JSONC): rewriting would drop the user's comments, so it is left alone.
+    return { exists: true, error: 'it contains comments or is not valid JSON, and setup does not rewrite such files' };
+  }
+}
+
+function envOf(format: ClientFormat, entry: unknown): Record<string, unknown> {
+  if (!entry || typeof entry !== 'object') return {};
+  const e = entry as Json;
+  const env = format === 'opencode' ? e.environment : e.env;
+  return env && typeof env === 'object' ? (env as Record<string, unknown>) : {};
+}
+
+function jsonStatus(target: ClientTarget, wanted: Json): EntryStatus {
+  const r = readJson(target.file);
+  if (r.error) return { fileExists: r.exists, unreadable: r.error, hasEntry: false, entryHasKeys: false, upToDate: false, otherNames: [] };
+  const container = (r.data?.[containerKey(target.format)] ?? {}) as Json;
+  const entry = container[SERVER_ENTRY_NAME];
+  const otherNames = Object.entries(container)
+    .filter(([name, e]) => name !== SERVER_ENTRY_NAME && RUNS_PACKAGE_RE.test(JSON.stringify(e)))
+    .map(([name]) => name);
+  return {
+    fileExists: r.exists,
+    hasEntry: entry !== undefined,
+    entryHasKeys: Object.keys(envOf(target.format, entry)).some((k) => KEY_VAR_RE.test(k)),
+    upToDate: entry !== undefined && JSON.stringify(entry) === JSON.stringify(wanted),
+    otherNames,
+  };
+}
+
+// Codex: TOML. Setup only ever touches its own [mcp_servers.digital-ai-testing] table (and its .env sub-table).
+
+const CODEX_HEADER_RE = new RegExp(`^\\[mcp_servers\\.(?:"${SERVER_ENTRY_NAME}"|${SERVER_ENTRY_NAME})(?:\\.env)?\\]\\s*$`);
+
+function tomlString(s: string): string {
+  return JSON.stringify(s); // a JSON string is a valid TOML basic string for paths and simple values
+}
+
+export function codexBlock(e: LaunchEntry): string {
+  const envPairs = Object.entries(e.env).map(([k, v]) => `${k} = ${tomlString(v)}`);
+  return [
+    `[mcp_servers.${SERVER_ENTRY_NAME}]`,
+    `command = ${tomlString(e.command)}`,
+    `args = [${e.args.map(tomlString).join(', ')}]`,
+    '',
+    `[mcp_servers.${SERVER_ENTRY_NAME}.env]`,
+    ...envPairs,
+  ].join('\n');
+}
+
+/** Splits a TOML file into our tables (header + body lines) and everything else, keeping order. */
+function splitCodex(text: string): { before: string[]; ours: string[]; after: string[] } {
+  const lines = text.split(/\r?\n/);
+  const before: string[] = [];
+  const ours: string[] = [];
+  const after: string[] = [];
+  let state: 'before' | 'ours' | 'after' = 'before';
+  for (const line of lines) {
+    const isHeader = /^\s*\[/.test(line);
+    if (isHeader && CODEX_HEADER_RE.test(line.trim())) {
+      // Our table (or its .env sub-table), even if another table sits between them: all of it is replaced together.
+      ours.push(line);
+      state = 'ours';
+      continue;
+    }
+    if (isHeader && state === 'ours') state = 'after';
+    (state === 'before' ? before : state === 'ours' ? ours : after).push(line);
+  }
+  return { before, ours, after };
+}
+
+function codexStatus(target: ClientTarget, block: string): EntryStatus {
+  if (!existsSync(target.file)) return { fileExists: false, hasEntry: false, entryHasKeys: false, upToDate: false, otherNames: [] };
+  const text = readFileSync(target.file, 'utf8');
+  const { ours } = splitCodex(text);
+  const oursText = ours.join('\n').trim();
+  const otherNames = [...text.matchAll(/^\[mcp_servers\.("?)([^\].]+)\1\]\s*$/gm)]
+    .map((m) => m[2])
+    .filter((n) => n !== SERVER_ENTRY_NAME)
+    .filter((n) => {
+      const start = text.indexOf(`[mcp_servers.${n}]`);
+      const next = text.indexOf('\n[', start + 1);
+      return RUNS_PACKAGE_RE.test(text.slice(start, next === -1 ? undefined : next));
+    });
+  return {
+    fileExists: true,
+    hasEntry: ours.length > 0,
+    entryHasKeys: /^\s*(DIGITAL_AI_ACCESS_KEY|DAI_PROFILE_\w+_KEY)\s*=/m.test(oursText),
+    upToDate: oursText === block.trim(),
+    otherNames,
+  };
+}
+
+export function clientStatus(target: ClientTarget, e: LaunchEntry): EntryStatus {
+  return target.format === 'codex-toml' ? codexStatus(target, codexBlock(e)) : jsonStatus(target, entryFor(target.format, e));
+}
+
+function backup(file: string): string | undefined {
+  if (!existsSync(file)) return undefined;
+  const b = file + BACKUP_SUFFIX;
+  copyFileSync(file, b);
+  return b;
+}
+
+export interface EditResult {
+  ok: boolean;
+  /** The backup made before the change, when the file existed. */
+  backup?: string;
+  error?: string;
+}
+
+/** Adds or replaces the entry. Leaves every other entry and setting untouched. */
+export function writeClientEntry(target: ClientTarget, e: LaunchEntry): EditResult {
+  try {
+    if (target.format === 'codex-toml') {
+      const text = existsSync(target.file) ? readFileSync(target.file, 'utf8') : '';
+      const { before, after } = splitCodex(text);
+      const head = before.join('\n').replace(/\s+$/, '');
+      const tail = after.join('\n').replace(/^\s+/, '').replace(/\s+$/, '');
+      const body = [head, codexBlock(e), tail].filter((s) => s).join('\n\n') + '\n';
+      const b = backup(target.file);
+      mkdirSync(dirname(target.file), { recursive: true });
+      writeFileSync(target.file, body, 'utf8');
+      return { ok: true, backup: b };
+    }
+    const r = readJson(target.file);
+    if (r.error || !r.data) return { ok: false, error: `${target.file}: ${r.error}` };
+    const key = containerKey(target.format);
+    const container = (r.data[key] && typeof r.data[key] === 'object' ? r.data[key] : {}) as Json;
+    container[SERVER_ENTRY_NAME] = entryFor(target.format, e);
+    r.data[key] = container;
+    const b = backup(target.file);
+    mkdirSync(dirname(target.file), { recursive: true });
+    writeFileSync(target.file, JSON.stringify(r.data, null, 2) + '\n', 'utf8');
+    return { ok: true, backup: b };
+  } catch (err) {
+    return { ok: false, error: `${target.file}: ${(err as Error).message}` };
+  }
+}
+
+/** Removes the entry (and nothing else). `removed` is false when there was none. */
+export function removeClientEntry(target: ClientTarget): EditResult & { removed?: boolean } {
+  try {
+    if (!existsSync(target.file)) return { ok: true, removed: false };
+    if (target.format === 'codex-toml') {
+      const text = readFileSync(target.file, 'utf8');
+      const { before, ours, after } = splitCodex(text);
+      if (ours.length === 0) return { ok: true, removed: false };
+      const b = backup(target.file);
+      const body = [before.join('\n').replace(/\s+$/, ''), after.join('\n').replace(/^\s+/, '').replace(/\s+$/, '')].filter((s) => s).join('\n\n');
+      writeFileSync(target.file, body ? body + '\n' : '', 'utf8');
+      return { ok: true, removed: true, backup: b };
+    }
+    const r = readJson(target.file);
+    if (r.error || !r.data) return { ok: false, error: `${target.file}: ${r.error}` };
+    const container = r.data[containerKey(target.format)] as Json | undefined;
+    if (!container || !(SERVER_ENTRY_NAME in container)) return { ok: true, removed: false };
+    delete container[SERVER_ENTRY_NAME];
+    const b = backup(target.file);
+    writeFileSync(target.file, JSON.stringify(r.data, null, 2) + '\n', 'utf8');
+    return { ok: true, removed: true, backup: b };
+  } catch (err) {
+    return { ok: false, error: `${target.file}: ${(err as Error).message}` };
+  }
+}
+
+/** The entry as JSON for a person to paste (Xcode, a JSONC file setup will not rewrite). */
+export function pasteSnippet(format: ClientFormat, e: LaunchEntry): string {
+  return JSON.stringify({ [containerKey(format)]: { [SERVER_ENTRY_NAME]: entryFor(format, e) } }, null, 2);
+}

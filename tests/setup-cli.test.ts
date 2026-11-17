@@ -69,6 +69,8 @@ function scripted(s: Script = {}) {
       verifyCalls.push(url);
       return (s.verify ?? (async () => CLOUD_ADMIN))(url, key);
     },
+    // An empty home: no AI client is "installed", so `add` never offers to edit a real configuration file.
+    clients: { platform: process.platform, env: {}, home: join(dir, 'home'), execPath: process.execPath, exists: existsSync },
   };
   return { io, out, err, asked, verifyCalls, all: () => [...out, ...err].join('\n') };
 }

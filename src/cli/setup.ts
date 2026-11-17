@@ -29,6 +29,21 @@ import {
   type RawStoreFile,
 } from '../utils/credential-store.js';
 import { existsSync } from 'node:fs';
+import {
+  buildLaunchEntry,
+  claudeCodeCommand,
+  clientStatus,
+  defaultClientContext,
+  knownClients,
+  manualClients,
+  pasteSnippet,
+  removeClientEntry,
+  writeClientEntry,
+  SERVER_ENTRY_NAME,
+  type ClientContext,
+  type ClientTarget,
+  type LaunchEntry,
+} from './clients.js';
 
 export interface SetupIO {
   out(text: string): void;
@@ -43,6 +58,8 @@ export interface SetupIO {
   interactive: boolean;
   /** Credential check; tests replace it with a stub. */
   verify(url: string, key: string): Promise<CredentialCheck>;
+  /** Where AI-client configuration files are looked for; tests point it at temp folders. */
+  clients?: ClientContext;
 }
 
 const USAGE = `Manage the Digital.ai Testing connection profiles this MCP server can use.
@@ -59,6 +76,9 @@ Commands:
   path                Show where the profiles file is
   repair              Restore the profiles file from its backup
   reset               Delete the profiles file, its backups and the keys it keeps in the OS keychain
+  clients             Show which AI clients are set up to start this server
+  clients add [client…]     Add the server to AI clients (every one installed, or the ones named)
+  clients remove [client…]  Remove it from AI clients
   help                Show this help
 
 Options for add:
@@ -141,6 +161,7 @@ export function terminalIO(): SetupIO {
     readStdin,
     interactive: Boolean(process.stdin.isTTY),
     verify: verifyCredential,
+    clients: defaultClientContext(),
   };
 }
 
@@ -336,6 +357,8 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
   }
   io.out(`Profiles file: ${path}`);
   io.out('If your AI client\'s configuration sets DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY, those still win — remove them to use these profiles.');
+  if (io.interactive && !flags.yes) await offerClients(io);
+  else io.out('To add the server to your AI clients: digital-ai-testing-mcp setup clients add');
   io.out(RESTART);
 }
 
@@ -484,6 +507,146 @@ async function cmdReset(io: SetupIO, flags: Flags) {
   io.out(RESTART);
 }
 
+// ─── AI clients ───────────────────────────────────────────────────────────────
+
+const RESTART_CLIENTS = 'Restart the AI clients you changed (or reconnect the server in them) to use the change.';
+
+function describeEntry(io: SetupIO, entry: LaunchEntry) {
+  io.out(`Entry "${SERVER_ENTRY_NAME}" (no access key in it — the server reads the credential store):`);
+  io.out(`  ${entry.command} ${entry.args.join(' ')}`);
+  for (const n of entry.notes) io.out(`  Note: ${n}`);
+}
+
+function statusLine(t: ClientTarget, entry: LaunchEntry): string {
+  if (!t.detected) return 'not installed';
+  const s = clientStatus(t, entry);
+  const others = s.otherNames.length ? ` It also starts this server as "${s.otherNames.join('", "')}" — remove that entry to avoid two copies.` : '';
+  if (s.unreadable) return `not changed by setup — ${s.unreadable}. "setup clients add ${t.id}" prints the entry to paste.${others}`;
+  if (!s.hasEntry) return `installed, not set up${others}`;
+  if (s.entryHasKeys) return `set up with its own access key in the entry (that key wins over the credential store)${others}`;
+  return (s.upToDate ? 'set up' : 'set up with a different launch command ("setup clients add" updates it)') + others;
+}
+
+function cmdClientsList(io: SetupIO, ctx: ClientContext) {
+  const entry = buildLaunchEntry(ctx);
+  describeEntry(io, entry);
+  io.out('');
+  for (const t of knownClients(ctx)) io.out(`  ${t.id.padEnd(22)} ${t.label}: ${statusLine(t, entry)}`);
+  io.out('');
+  io.out('Set up by hand:');
+  for (const m of manualClients()) io.out(`  ${m.id.padEnd(22)} ${m.label}: ${m.how}`);
+  io.out('');
+  io.out('Claude Code — run once in a terminal:');
+  io.out(`  ${claudeCodeCommand(entry, ctx.platform)}`);
+}
+
+/** The named clients, or every installed one when none is named. */
+function pickTargets(ctx: ClientContext, ids: string[]): ClientTarget[] {
+  const known = knownClients(ctx);
+  if (ids.length === 0) return known.filter((t) => t.detected);
+  return ids.map((id) => {
+    const t = known.find((k) => k.id === id.toLowerCase());
+    if (t) return t;
+    const manual = manualClients().find((m) => m.id === id.toLowerCase());
+    if (manual) throw new SetupError(`${manual.label}: ${manual.how} See: digital-ai-testing-mcp setup clients`, 2);
+    throw new SetupError(`Unknown client "${id}". Known: ${known.map((k) => k.id).join(', ')}.`, 2);
+  });
+}
+
+/** Adds or updates the entry in each target. Returns how many were left unchanged and need attention. */
+async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarget[], yes: boolean): Promise<number> {
+  const entry = buildLaunchEntry(ctx);
+  let attention = 0;
+  for (const t of targets) {
+    const s = clientStatus(t, entry);
+    if (s.unreadable) {
+      io.out(`${t.label}: not changed — ${s.unreadable}. Add this to ${t.file} by hand:`);
+      io.out(pasteSnippet(t.format, entry));
+      attention++;
+      continue;
+    }
+    if (s.upToDate) {
+      io.out(`${t.label}: already set up.`);
+      continue;
+    }
+    if (s.hasEntry) {
+      const question = s.entryHasKeys
+        ? `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with its own access key. Replace it with one that uses the credential store? [y/N] `
+        : `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with a different launch command. Replace it? [y/N] `;
+      const replace = yes || (io.interactive && /^y(es)?$/i.test(await io.ask(question)));
+      if (!replace) {
+        io.out(`${t.label}: not changed${io.interactive ? '' : ' — add --yes to replace its existing entry'}.`);
+        attention++;
+        continue;
+      }
+    }
+    const r = writeClientEntry(t, entry);
+    if (!r.ok) {
+      io.err(`${t.label}: not changed — ${r.error}`);
+      attention++;
+      continue;
+    }
+    io.out(`${t.label}: ${s.hasEntry ? 'updated' : 'added'} (${t.file}${r.backup ? `; previous version kept as ${r.backup}` : ''}).`);
+    for (const n of s.otherNames) io.out(`  It also starts this server as "${n}" — remove that entry in ${t.file} to avoid two copies.`);
+  }
+  return attention;
+}
+
+/** After a guided `setup`: offer the installed clients that are not set up yet. */
+async function offerClients(io: SetupIO) {
+  const ctx = io.clients ?? defaultClientContext();
+  const entry = buildLaunchEntry(ctx);
+  const pending = knownClients(ctx).filter((t) => t.detected && !clientStatus(t, entry).upToDate);
+  if (pending.length === 0) return;
+  const answer = await io.ask(`Add the server to your AI clients too (${pending.map((t) => t.label).join(', ')})? [Y/n] `);
+  if (/^n(o)?$/i.test(answer)) {
+    io.out('Later: digital-ai-testing-mcp setup clients add');
+    return;
+  }
+  await addToClients(io, ctx, pending, false);
+  io.out(`Claude Code: run this once in a terminal: ${claudeCodeCommand(entry, ctx.platform)}`);
+}
+
+async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], flags: Flags) {
+  const ctx = io.clients ?? defaultClientContext();
+  if (sub === undefined || sub === 'list') {
+    if (ids.length) throw new SetupError(`Unexpected argument: ${ids[0]}`, 2);
+    cmdClientsList(io, ctx);
+    return;
+  }
+  if (sub === 'add') {
+    const targets = pickTargets(ctx, ids);
+    if (targets.length === 0) {
+      throw new SetupError('No AI clients were found on this machine. Name one: digital-ai-testing-mcp setup clients add <client> (list: setup clients)', 1);
+    }
+    describeEntry(io, buildLaunchEntry(ctx));
+    const attention = await addToClients(io, ctx, targets, !!flags.yes);
+    io.out(RESTART_CLIENTS);
+    if (attention > 0) throw new SetupError(`${attention} client${attention === 1 ? ' was' : 's were'} not changed (see above).`, 1);
+    return;
+  }
+  if (sub === 'remove') {
+    const entry = buildLaunchEntry(ctx);
+    const targets = pickTargets(ctx, ids).filter((t) => clientStatus(t, entry).hasEntry);
+    if (targets.length === 0) {
+      io.out(`No AI client has a "${SERVER_ENTRY_NAME}" entry to remove.`);
+      return;
+    }
+    const names = targets.map((t) => t.label).join(', ');
+    if (!(await confirm(io, !!flags.yes, `Remove the "${SERVER_ENTRY_NAME}" entry from ${names}? [y/N] `, 'Add --yes to remove it.'))) {
+      throw new SetupError('Nothing was changed.', 1);
+    }
+    for (const t of targets) {
+      const r = removeClientEntry(t);
+      if (!r.ok) io.err(`${t.label}: not changed — ${r.error}`);
+      else io.out(`${t.label}: removed${r.backup ? ` (previous version kept as ${r.backup})` : ''}.`);
+    }
+    io.out(RESTART_CLIENTS);
+    return;
+  }
+  throw new SetupError(`Unknown clients command: ${sub}. Use: setup clients | setup clients add [client…] | setup clients remove [client…]`, 2);
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 /** Runs `setup` with the arguments after it. Returns the process exit code: 0 done, 1 failed, 2 usage error. */
@@ -509,6 +672,10 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
       throw new SetupError(`${(e as Error).message}\n\n${USAGE}`, 2);
     }
     const [command, name, ...extra] = parsed.positionals;
+    if (command === 'clients' && !parsed.values.help) {
+      await cmdClients(io, name, extra, parsed.values as Flags);
+      return 0;
+    }
     const flags = parsed.values as Flags & { help?: boolean };
     if (flags.help || command === 'help') {
       io.out(USAGE);
