@@ -43,27 +43,32 @@ import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
 import { isUpdateCheckEnabled, updateSteps, withUpdateNotice } from './utils/update-check.js';
 import { runUpdateCheck } from './api/update-check.js';
+import { listProfiles, missingDefaultCredentialVars } from './utils/profile-loader.js';
+import { detectSetupContext, setupGuidance, setupInstructionsBlock, setupRequiredResult } from './utils/setup-guidance.js';
 
 dotenv.config({ quiet: true });
-
-const REQUIRED_ENV = ['DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY'];
-const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length > 0) {
-  console.error(
-    `[digital-ai-mcp] FATAL: Missing required environment variables: ${missing.join(', ')}`
-  );
-  console.error(
-    `[digital-ai-mcp] Copy .env.example to .env and fill in the required values.`
-  );
-  process.exit(1);
-}
 
 const name = process.env.MCP_SERVER_NAME ?? 'digital-ai-testing-mcp';
 const version = getServerVersion();
 
 console.error(`[${name}] v${version} starting...`);
-console.error(`[${name}] Target: ${process.env.DIGITAL_AI_BASE_URL}`);
+console.error(`[${name}] Target: ${process.env.DIGITAL_AI_BASE_URL || '(not set)'}`);
 console.error(`[${name}] Deployment mode: ${getDeploymentMode()}`);
+
+// Missing credentials no longer stop the process (the client showed only "-32000 Failed to reconnect"). The server
+// starts in setup mode: the instructions open with SETUP REQUIRED and every tool returns setup instructions for this
+// kind of install instead of running (src/utils/setup-guidance.ts). Nothing calls the API in this state.
+const missingCredentials = missingDefaultCredentialVars();
+const setupText =
+  missingCredentials.length > 0
+    ? setupGuidance(missingCredentials, detectSetupContext(), listProfiles().map((p) => p.name))
+    : null;
+if (setupText) {
+  console.error(
+    `[${name}] NOT CONFIGURED: ${missingCredentials.join(', ')} not set. Starting in setup mode — every tool returns ` +
+      'setup instructions. Set the variables and restart the server.'
+  );
+}
 
 // Server instructions are delivered to the client at connect time — BEFORE the agent
 // forms a plan — so they carry more weight than tool descriptions (which are read at
@@ -98,7 +103,8 @@ PROJECT CONTEXT: each Project Admin / Project User key is scoped to exactly one 
 
 const debugMode = isDebugMode();
 const server = new McpServer({ name, version }, // Debug block goes FIRST: clients truncate long instructions, and at the end it was the part that got cut (2026-10-10).
-  { instructions: (debugMode ? debugInstructions() : '') + SERVER_INSTRUCTIONS });
+  // Setup mode puts its block before everything, for the same reason.
+  { instructions: (setupText ? setupInstructionsBlock(missingCredentials) : '') + (debugMode ? debugInstructions() : '') + SERVER_INSTRUCTIONS });
 
 // Capture every module first, then register through the toolset layer (src/utils/toolsets.ts), which also applies
 // strict input schemas and annotations. With MCP_TOOLSETS unset this registers everything in full; with it set, tools outside the chosen toolsets become
@@ -169,11 +175,15 @@ setToolCatalog(captured.tools); // get_server_info reports real per-area counts 
 // notice goes OUTSIDE the debug instrumentation so the event log measures the tool's own response.
 // With both switches off no wrapper is passed, so registration is byte-for-byte what it was.
 const updateCheck = isUpdateCheckEnabled();
+// Setup mode: every tool (and placeholder) keeps its name and schema but answers with the setup instructions.
+const setupModeHandler = setupText ? () => setupRequiredResult(setupText) : undefined;
 const controller = registerWithToolsets(
   server,
   captured,
   toolsetSelection,
-  debugMode || updateCheck
+  setupModeHandler
+    ? () => setupModeHandler
+    : debugMode || updateCheck
     ? (tool, callback, placeholder) => {
         const handler = debugMode ? instrumentHandler(tool, callback, { placeholder }) : callback;
         return updateCheck && !placeholder ? withUpdateNotice(handler) : handler;

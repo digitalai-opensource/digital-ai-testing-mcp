@@ -998,6 +998,7 @@ More checks run before any request leaves the server:
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Every tool answers "SETUP REQUIRED" | `DIGITAL_AI_BASE_URL` or `DIGITAL_AI_ACCESS_KEY` is not set where the server can see it | Add the variable the message names: in the client's `env` block (npm), or in the `.env` file passed with `--env-file` (Docker). Then restart the client or reconnect the server. See [Configuration](#configuration) |
 | `403 Forbidden` on admin tools (agents, regions, license) | Active profile has a project-level role (Project Admin or Project User) — v2 endpoints require Cloud Admin access | Ask the AI: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one. See [Using multiple keys](#using-multiple-keys) |
 | Report delete tools refuse with "Reporter deletes are disabled for project …" | The project's `allowUsersDeleteTests` setting is false, so project-level roles can't delete reports | Ask a Cloud Admin to enable it for the project, or switch to a Cloud Admin profile |
 | `install_application` returns 400 on a device you can see | Device is reserved via an rdb (remote debug) session | Install **first**, then run `get_remote_debug_command` — not the other way around |
