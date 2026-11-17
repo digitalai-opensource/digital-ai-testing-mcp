@@ -37,11 +37,16 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # A prerelease version (2.4.0-beta.1) becomes a GitHub prerelease, never "Latest" — the update check and the
+        # README's releases/latest links must keep pointing at the newest stable release. release.yml then
+        # publishes it to npm/Docker `next` only (.github/scripts/release-channel.sh).
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
+          version="${{ steps.version.outputs.version }}"
+          if [[ $version == *-* ]]; then flags=(--prerelease --latest=false); else flags=(--latest); fi
+          gh release create "v$version" \
+            --title "v$version" \
             --generate-notes \
-            --latest
+            "${flags[@]}"
 
   # Releases created above use GITHUB_TOKEN, which suppresses the
   # `release: published` event (GitHub recursion prevention) — so release.yml
