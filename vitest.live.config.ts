@@ -10,5 +10,7 @@ export default defineConfig({
     include: ['tests/live/**/*.live.ts'],
     testTimeout: 30000,
     hookTimeout: 30000,
+    // Live probes use the .env credentials only, never the developer's credential store.
+    env: { MCP_CREDENTIAL_STORE: 'off' },
   },
 });

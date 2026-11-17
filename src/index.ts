@@ -43,7 +43,7 @@ import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
 import { isUpdateCheckEnabled, updateSteps, withUpdateNotice } from './utils/update-check.js';
 import { runUpdateCheck } from './api/update-check.js';
-import { listProfiles, missingDefaultCredentialVars } from './utils/profile-loader.js';
+import { describeStartingProfile, listProfiles, startupCredentialProblem } from './utils/profile-loader.js';
 import { detectSetupContext, setupGuidance, setupInstructionsBlock, setupRequiredResult } from './utils/setup-guidance.js';
 
 dotenv.config({ quiet: true });
@@ -52,17 +52,20 @@ const name = process.env.MCP_SERVER_NAME ?? 'digital-ai-testing-mcp';
 const version = getServerVersion();
 
 console.error(`[${name}] v${version} starting...`);
-console.error(`[${name}] Target: ${process.env.DIGITAL_AI_BASE_URL || '(not set)'}`);
+const starting = describeStartingProfile();
+console.error(
+  `[${name}] Target: ${starting ? `${starting.url} (profile "${starting.name}" from ${starting.source === 'store' ? 'the credential store' : 'environment variables'})` : '(not set)'}`
+);
 console.error(`[${name}] Deployment mode: ${getDeploymentMode()}`);
 
 // Missing credentials no longer stop the process (the client showed only "-32000 Failed to reconnect"). The server
 // starts in setup mode: the instructions open with SETUP REQUIRED and every tool returns setup instructions for this
 // kind of install instead of running (src/utils/setup-guidance.ts). Nothing calls the API in this state.
-const missingCredentials = missingDefaultCredentialVars();
-const setupText =
-  missingCredentials.length > 0
-    ? setupGuidance(missingCredentials, detectSetupContext(), listProfiles().map((p) => p.name))
-    : null;
+const credentialProblem = startupCredentialProblem();
+const missingCredentials = credentialProblem?.missing ?? [];
+const setupText = credentialProblem
+  ? setupGuidance(missingCredentials, detectSetupContext(), listProfiles().filter((p) => p.source === 'env').map((p) => p.name), credentialProblem.storeNote)
+  : null;
 if (setupText) {
   console.error(
     `[${name}] NOT CONFIGURED: ${missingCredentials.join(', ')} not set. Starting in setup mode — every tool returns ` +

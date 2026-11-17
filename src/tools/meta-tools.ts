@@ -7,7 +7,7 @@ import { debugStatusLine } from '../utils/remediation.js';
 import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
 import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
-import { listProfiles, getProfileCredentials, profileCount } from '../utils/profile-loader.js';
+import { listProfiles, getProfileCredentials, profileCount, getStoreStatus } from '../utils/profile-loader.js';
 import { computeWorkflowReadiness, WORKFLOW_DEPS } from '../utils/tool-registry.js';
 import { staleBuildRemedy } from '../utils/locality.js';
 import { updateStatusLine } from '../utils/update-check.js';
@@ -383,18 +383,32 @@ export function registerMetaTools(server: McpServer): void {
       );
       const lines = profiles.map(p => {
         const marker = p.name === active ? ' ← active' : '';
-        return `  ${p.name}${marker}: ${p.url} (${describeLevel({ level: p.accessLevel, role: p.role ?? undefined, source: 'role' })})`;
+        const from = p.source === 'store' ? ', credential store' : '';
+        return `  ${p.name}${marker}: ${p.url} (${describeLevel({ level: p.accessLevel, role: p.role ?? undefined, source: 'role' })}${from})`;
       });
+      // Store problems are listed so a profile that "should be there" is explained (never contains a key).
+      const store = getStoreStatus();
+      const storeLines: string[] = [];
+      if (store.enabled && store.exists) {
+        storeLines.push(`Credential store: ${store.path}`);
+        if (store.error) storeLines.push(`  Not used: ${store.error}.`);
+        for (const s of store.skipped) storeLines.push(`  Skipped ${s.name}: ${s.reason}.`);
+        for (const n of store.shadowed) storeLines.push(`  ${n}: the environment variables define this name, so the store's entry is ignored.`);
+      }
       const structured = {
         activeProfile: active,
         profiles: profiles.map(p => ({ ...p, active: p.name === active })),
+        ...(store.enabled && store.exists
+          ? { credentialStore: { path: store.path, error: store.error ?? null, skipped: store.skipped, shadowed: store.shadowed } }
+          : {}),
       };
       return {
         content: [{
           type: 'text',
           text: JSON.stringify(structured) + '\n\n' +
             `Configured profiles (${profiles.length}):\n` + lines.join('\n') +
-            (profiles.length === 1 ? '\n\nNo named profiles found. Add DAI_PROFILE_*_URL / DAI_PROFILE_*_KEY pairs to your .env to configure additional environments.' : ''),
+            (storeLines.length > 0 ? '\n\n' + storeLines.join('\n') : '') +
+            (profiles.length === 1 && !(store.enabled && store.exists) ? '\n\nNo named profiles found. Add DAI_PROFILE_*_URL / DAI_PROFILE_*_KEY pairs to your .env to configure additional environments.' : ''),
         }],
       };
     }

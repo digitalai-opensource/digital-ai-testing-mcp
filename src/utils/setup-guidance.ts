@@ -61,8 +61,11 @@ function whereToSet(ctx: SetupContext): string {
   }
 }
 
-/** The text every tool returns in setup mode. `namedProfiles` are DAI_PROFILE_* names that were found (no keys). */
-export function setupGuidance(missing: string[], ctx: SetupContext, namedProfiles: string[] = []): string {
+/**
+ * The text every tool returns in setup mode. `namedProfiles` are DAI_PROFILE_* names that were found (no keys);
+ * `storeNote` says why the credential store did not supply a starting connection (never contains a key).
+ */
+export function setupGuidance(missing: string[], ctx: SetupContext, namedProfiles: string[] = [], storeNote?: string): string {
   const lines = [
     `SETUP REQUIRED — the Digital.ai Testing MCP server is not configured: ${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} not set, so no tool can run.`,
     'Tell the user what to do (below). Do not ask them to paste an access key into this chat.',
@@ -82,6 +85,7 @@ export function setupGuidance(missing: string[], ctx: SetupContext, namedProfile
         'DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY to the connection to use at start.'
     );
   }
+  if (storeNote) lines.push('', storeNote);
   lines.push('', `Configuration reference: ${CONFIG_DOCS}`);
   return lines.join('\n');
 }
