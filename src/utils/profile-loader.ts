@@ -90,6 +90,14 @@ export function profileExists(name: string): boolean {
   return name.toLowerCase() in getProfiles();
 }
 
+/**
+ * Default-profile variables that are not set. Checks presence only and never returns a value — used at startup to
+ * decide whether the server runs normally or in setup mode (src/utils/setup-guidance.ts).
+ */
+export function missingDefaultCredentialVars(): string[] {
+  return ['DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY'].filter((k) => !process.env[k]?.trim());
+}
+
 /** Number of configured profiles (including default). */
 export function profileCount(): number {
   return Object.keys(getProfiles()).length;
