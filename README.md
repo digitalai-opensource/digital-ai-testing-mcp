@@ -21,20 +21,14 @@ node --version
 npm --version
 ```
 
-**2. Install the MCP server.**
-
-```bash
-npm install -g digital-ai-testing-mcp
-```
-
-**3. Add it to your AI client** with your tenant URL and [access key](#access-keys). Claude Desktop is shown here; see [Connecting AI Clients](#connecting-ai-clients) for VS Code, JetBrains, Copilot and Cursor.
+**2. Add the server to your AI client** with your tenant URL and [access key](#access-keys). Claude Desktop is shown here; see [Connecting AI Clients](#connecting-ai-clients) for VS Code, JetBrains, Copilot and Cursor.
 
 ```json
 {
   "mcpServers": {
     "digital-ai-testing": {
-      "command": "digital-ai-testing-mcp",
-      "args": [],
+      "command": "npx",
+      "args": ["-y", "digital-ai-testing-mcp@latest"],
       "env": {
         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
         "DIGITAL_AI_ACCESS_KEY": "your-access-key",
@@ -45,7 +39,9 @@ npm install -g digital-ai-testing-mcp
 }
 ```
 
-**4. Restart the client and ask:** *"Show me the overall health of the device farm."*
+**3. Restart the client and ask:** *"Show me the overall health of the device farm."*
+
+There is nothing to install. npx downloads the server the first time the client starts it (about 20 seconds), and starts the newest release every time after that. To stay on one version instead, see [Automatic updates](#automatic-updates).
 
 > Prefer a container? See [Option B — Pull from GitHub Container Registry](#option-b--pull-from-github-container-registry).
 
@@ -87,15 +83,16 @@ npm install -g digital-ai-testing-mcp
 
 ### Option A — Install via npm (Recommended)
 
-No Docker required — the server runs directly under Node.js.
+No Docker required — the server runs directly under Node.js, and there is no install command. Your AI client starts the server through npx:
 
-```bash
-npm install -g digital-ai-testing-mcp
+```json
+"command": "npx",
+"args": ["-y", "digital-ai-testing-mcp@latest"]
 ```
 
-This puts a `digital-ai-testing-mcp` command on your `PATH`. Use it as the `"command"` in your [AI client configuration](#connecting-ai-clients). You don't need an image name or a `.env` file: settings go in the client's `env` block (see [Configuration](#configuration)).
+npx downloads the package the first time the client starts the server, and a new release the first time it starts after one is published, so you always run the newest version. [Connecting AI Clients](#connecting-ai-clients) has the full entry for each client. You don't need an image name or a `.env` file: settings go in the client's `env` block (see [Configuration](#configuration)).
 
-To run without a global install, use `"command": "npx"` with `"args": ["-y", "digital-ai-testing-mcp"]` instead — npx downloads and runs the latest published version.
+**Prefer a fixed install?** Run `npm install -g digital-ai-testing-mcp`, then use `"command": "digital-ai-testing-mcp"` with `"args": []` in the client configuration. That version stays until you [upgrade](#upgrading) it yourself, and the server starts without reaching the npm registry.
 
 Set `MCP_DEPLOYMENT_MODE=local` alongside your credentials (the client examples below already include it). It tells the server that its filesystem is your own machine, so tool descriptions and a few upload/download behaviors drop the Docker-specific caveats and path warnings.
 
@@ -139,11 +136,15 @@ Use `digital-ai-testing-mcp:latest` as the image name in your [Docker client con
 
 ### Upgrading
 
+With the client configurations in this README there is no upgrade command: the client starts the newest release each time it starts the server (see [Automatic updates](#automatic-updates)). Restart your AI client, or reconnect the MCP server from its settings panel, to pick up a release — a server that is already running keeps its version.
+
+If you chose a fixed install, upgrade it yourself:
+
 | Install | Upgrade command | Then |
 |---|---|---|
-| npm (Option A) | `npm install -g digital-ai-testing-mcp@latest` | Restart your AI client, or reconnect the MCP server from its settings panel. Installing a new version doesn't affect a server that is already running. |
-| GHCR image (Option B) | `docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` | Nothing to stop or remove: the client configs start the server with `docker run --rm`, so the next start uses the new image. |
-| From source (Option C) | `git pull` then `docker build -t digital-ai-testing-mcp:latest .` | Same as Option B. |
+| Global npm install (`npm install -g`) | `npm install -g digital-ai-testing-mcp@latest` | Restart your AI client, or reconnect the MCP server from its settings panel. |
+| GHCR image started without `--pull=always` | `docker pull ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` | Nothing to stop or remove: the client configs start the server with `docker run --rm`, so the next start uses the new image. |
+| From source (Option C) | `git pull` then `docker build -t digital-ai-testing-mcp:latest .` | Same as the GHCR image. |
 
 To confirm the upgrade, ask your AI to call `get_server_info`, which reports the running version.
 
@@ -158,17 +159,28 @@ When the server starts, it asks GitHub whether a newer release exists — at mos
 
 #### Automatic updates
 
-The server does not replace itself: an upgrade always takes effect the next time your AI client starts it. To get every release without running a command, have the client start the newest version each time.
+The client configurations in this README start the newest release every time, so you get each release without running a command:
+
+| Install | How |
+|---|---|
+| npm (Option A) | `npx -y digital-ai-testing-mcp@latest` — npx downloads a new release the first time the server starts after it is published. |
+| GHCR image (Option B) | `docker run --pull=always …` — Docker checks the registry at every start and pulls `latest` when it has changed. |
+
+The server does not replace itself: a release takes effect the next time your AI client starts the server.
+
+What this means for you:
+
+- The server starts only when the npm registry or GHCR can be reached, and the first start after a release takes longer.
+- You run each release as soon as it is published.
+
+**To stay on a version you choose** — for example when your organization reviews versions before use:
 
 | Install | Change in the client configuration |
 |---|---|
-| npm | Start the server through npx: `"command": "npx"`, `"args": ["-y", "digital-ai-testing-mcp@latest"]`. npx downloads a new release the first time the server starts after it is published. |
-| GHCR image | Add `"--pull=always"` after `"run"` in `args` (`docker run --pull=always --rm -i …`). Docker then checks the registry at every start and pulls `latest` when it has changed. |
+| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.3.4"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.3.4` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
+| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.3.4`. |
 
-Two things to weigh before you switch:
-
-- The server then starts only when the npm registry or GHCR can be reached, and the first start after a release takes longer.
-- You run each release as soon as it is published. If your organization reviews versions before use, keep a pinned install (`digital-ai-testing-mcp@2.3.4`, or the image tag `:2.3.4`) and upgrade when the update notice appears.
+The [update notice](#update-notices) then tells you when a newer release exists.
 
 [↑ Back to top](#table-of-contents)
 
@@ -176,7 +188,7 @@ Two things to weigh before you switch:
 
 ## Connecting AI Clients
 
-The examples below use the npm install ([Option A](#option-a--install-via-npm-recommended)): credentials go directly in the client's `env` block. If you run the server in Docker (Options B/C), use the [Docker client configuration](#docker-client-configuration) instead.
+The examples below use the npm package ([Option A](#option-a--install-via-npm-recommended)): the client starts the server through npx, and credentials go directly in the client's `env` block. If you run the server in Docker (Options B/C), use the [Docker client configuration](#docker-client-configuration) instead.
 
 ### Claude Desktop
 
@@ -188,8 +200,8 @@ Find your config file:
 {
   "mcpServers": {
     "digital-ai-testing": {
-      "command": "digital-ai-testing-mcp",
-      "args": [],
+      "command": "npx",
+      "args": ["-y", "digital-ai-testing-mcp@latest"],
       "env": {
         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
         "DIGITAL_AI_ACCESS_KEY": "your-access-key",
@@ -206,7 +218,7 @@ Restart Claude Desktop after editing — the tools appear automatically.
 
 1. Open the Claude Code extension panel
 2. Go to **Settings → MCP Servers**
-3. Add a new server with command `digital-ai-testing-mcp`, no args, and `DIGITAL_AI_BASE_URL`/`DIGITAL_AI_ACCESS_KEY`/`MCP_DEPLOYMENT_MODE=local` set in the server's environment variables
+3. Add a new server with command `npx`, args `-y digital-ai-testing-mcp@latest`, and `DIGITAL_AI_BASE_URL`/`DIGITAL_AI_ACCESS_KEY`/`MCP_DEPLOYMENT_MODE=local` set in the server's environment variables. On Windows, use command `cmd` with args `/c npx -y digital-ai-testing-mcp@latest`
 
 Using Docker? Add the Docker command from [Docker client configuration](#docker-client-configuration) instead.
 
@@ -215,7 +227,11 @@ Using Docker? Add the Docker command from [Docker client configuration](#docker-
 Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then open your project and run this command from the project root:
 
 ```bash
-claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key --env MCP_DEPLOYMENT_MODE=local -- digital-ai-testing-mcp
+# macOS / Linux
+claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key --env MCP_DEPLOYMENT_MODE=local -- npx -y digital-ai-testing-mcp@latest
+
+# Windows (Claude Code needs the cmd /c wrapper to start npx)
+claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key --env MCP_DEPLOYMENT_MODE=local -- cmd /c npx -y digital-ai-testing-mcp@latest
 ```
 
 This stores the server configuration in `~/.claude.json`, scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same command used for [Claude Desktop](#claude-desktop).
@@ -235,8 +251,8 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
 {
   "servers": {
     "digital-ai-testing": {
-      "command": "digital-ai-testing-mcp",
-      "args": [],
+      "command": "npx",
+      "args": ["-y", "digital-ai-testing-mcp@latest"],
       "env": {
         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
         "DIGITAL_AI_ACCESS_KEY": "your-access-key",
@@ -263,8 +279,8 @@ Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → M
 {
   "mcpServers": {
     "digital-ai-testing": {
-      "command": "digital-ai-testing-mcp",
-      "args": [],
+      "command": "npx",
+      "args": ["-y", "digital-ai-testing-mcp@latest"],
       "env": {
         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
         "DIGITAL_AI_ACCESS_KEY": "your-access-key",
@@ -283,10 +299,11 @@ Using Docker? See [Docker client configuration](#docker-client-configuration).
 
 ### Docker client configuration
 
-For [Option B](#option-b--pull-from-github-container-registry) or [Option C](#option-c--build-from-source), the client starts the container instead of the `digital-ai-testing-mcp` command, and credentials come from your `.env` file. In every example:
+For [Option B](#option-b--pull-from-github-container-registry) or [Option C](#option-c--build-from-source), the client starts the container instead of npx, and credentials come from your `.env` file. In every example:
 
 - Replace `/ABSOLUTE/PATH/TO/.env` with the full path to your `.env` file.
-- **Built from source (Option C)?** Replace `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest`.
+- `--pull=always` makes Docker fetch the newest image at each start — see [Automatic updates](#automatic-updates) to stay on one version instead.
+- **Built from source (Option C)?** Replace `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest` with `digital-ai-testing-mcp:latest` and remove `--pull=always`: an image you built yourself is not in a registry, so the pull would fail.
 
 **Claude Desktop and Cursor** (`mcpServers` format):
 
@@ -296,7 +313,7 @@ For [Option B](#option-b--pull-from-github-container-registry) or [Option C](#op
     "digital-ai-testing": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
+        "run", "--pull=always", "--rm", "-i",
         "--env-file", "/ABSOLUTE/PATH/TO/.env",
         "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
       ]
@@ -311,7 +328,7 @@ For [Option B](#option-b--pull-from-github-container-registry) or [Option C](#op
 {
   "command": "docker",
   "args": [
-    "run", "--rm", "-i",
+    "run", "--pull=always", "--rm", "-i",
     "--env-file", "/ABSOLUTE/PATH/TO/.env",
     "ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"
   ]
@@ -322,10 +339,10 @@ For [Option B](#option-b--pull-from-github-container-registry) or [Option C](#op
 
 ```bash
 # macOS / Linux
-claude mcp add digital-ai-testing -- docker run --rm -i --env-file /absolute/path/to/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+claude mcp add digital-ai-testing -- docker run --pull=always --rm -i --env-file /absolute/path/to/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 
 # Windows (use forward slashes — backslashes are stripped by Claude Code)
-claude mcp add digital-ai-testing -- docker run --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+claude mcp add digital-ai-testing -- docker run --pull=always --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
 ```
 
 > **Windows users on Docker:** always use forward slashes (`C:/path/to/.env`), never backslashes — whether you register via the CLI command above or through the Claude Code panel. Claude Code silently strips backslashes when it writes the configuration to `~/.claude.json`, which breaks the path and causes a cryptic `-32000` reconnection error ([how to fix it](#failed-to-reconnect-to-digital-ai-testing--32000)).
@@ -989,6 +1006,7 @@ More checks run before any request leaves the server:
 | Tests missing from `list_test_reports` results | Project has its own reporter instance — unscoped queries search the default scope | Pass `projectName` (exact name from `list_projects`) |
 | rdb fails: `validation error / Failed to reserve device` | With a project-level role, the serial lookup returned an internal device ID instead of the real serial (the `get_remote_debug_command` response warns about this) | Ask the AI: *"switch to Cloud Admin"* → regenerate the rdb script → switch back. See [limitation 13](docs/limitations.md#13-get_remote_debug_command-requires-cloud-admin-for-reliable-serial-resolution) |
 | Device query returns nothing for `@manufacturer` / `@tag` | These fields are silently ignored server-side | Use the `manufacturer`/`tags` parameters on `find_available_device` — they filter client-side |
+| The server doesn't start while the machine is offline, or the first start after a release is slow | The client configuration fetches the newest release at each start (`npx … @latest`, `docker run --pull=always`) | Wait for the first start to finish. For offline use, switch to a fixed install — see [Automatic updates](#automatic-updates) |
 | A downloaded file isn't on your machine, or an upload can't find your file (Docker) | Under Docker, file tools use the container's filesystem | See [Local File Transfer](#local-file-transfer-docker--remote-deployments-only) |
 
 ### `Failed to reconnect to digital-ai-testing: -32000`
