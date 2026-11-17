@@ -11,6 +11,7 @@ import {
   claudeCodeCommand,
   clientStatus,
   codexBlock,
+  packageSpec,
   knownClients,
   removeClientEntry,
   writeClientEntry,
@@ -63,6 +64,18 @@ describe('buildLaunchEntry', () => {
     expect(e.command).toBe('/opt/homebrew/bin/node');
     expect(e.args[0]).toBe('/opt/homebrew/lib/node_modules/npm/bin/npx-cli.js');
     expect(e.env.PATH).toBe('/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin');
+  });
+
+  it('a beta setup writes the beta channel (@next); a release writes @latest', () => {
+    expect(packageSpec('2.4.0-beta.1')).toBe('digital-ai-testing-mcp@next');
+    expect(packageSpec('2.4.0')).toBe('digital-ai-testing-mcp@latest');
+    expect(packageSpec(undefined)).toBe('digital-ai-testing-mcp@latest');
+    const present = ['/opt/homebrew/lib/node_modules/npm/bin/npx-cli.js'];
+    const beta = buildLaunchEntry({ ...fakeCtx('darwin', '/opt/homebrew/bin/node', present), version: '2.4.0-beta.1' });
+    expect(beta.args).toEqual([present[0], '-y', 'digital-ai-testing-mcp@next']);
+    expect(beta.notes[0]).toMatch(/^This is a beta \(2\.4\.0-beta\.1\)/);
+    const fallback = buildLaunchEntry({ ...fakeCtx('linux', '/odd/node', []), version: '2.4.0-rc.1' });
+    expect(fallback.args).toEqual(['-y', 'digital-ai-testing-mcp@next']);
   });
 
   it('nvm: versioned path with a note; npx-cli.js missing: plain npx from the client PATH', () => {

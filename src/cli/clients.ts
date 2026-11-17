@@ -18,9 +18,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
+import { getServerVersion } from '../utils/version.js';
 
 export const SERVER_ENTRY_NAME = 'digital-ai-testing';
-export const PACKAGE_SPEC = 'digital-ai-testing-mcp@latest';
+export const PACKAGE_NAME = 'digital-ai-testing-mcp';
+
+/**
+ * The package the entry starts: `@latest` normally; `@next` when setup itself is a prerelease (2.4.0-beta.1) — a beta
+ * tester's clients then stay on the beta channel (release-channel.sh publishes prereleases to npm `next` only).
+ */
+export function packageSpec(version: string | undefined): string {
+  return `${PACKAGE_NAME}@${version && version.includes('-') ? 'next' : 'latest'}`;
+}
 const BACKUP_SUFFIX = '.digital-ai-testing.bak';
 
 export interface ClientContext {
@@ -29,11 +38,13 @@ export interface ClientContext {
   home: string;
   /** process.execPath — the Node.js running setup. */
   execPath: string;
+  /** The version of the running setup (package.json) — a prerelease selects the `next` channel. */
+  version?: string;
   exists(path: string): boolean;
 }
 
 export function defaultClientContext(): ClientContext {
-  return { platform: process.platform, env: process.env, home: homedir(), execPath: process.execPath, exists: existsSync };
+  return { platform: process.platform, env: process.env, home: homedir(), execPath: process.execPath, exists: existsSync, version: getServerVersion() };
 }
 
 // ─── The launch command ───────────────────────────────────────────────────────
@@ -89,6 +100,13 @@ function systemPath(ctx: ClientContext): string[] {
 export function buildLaunchEntry(ctx: ClientContext): LaunchEntry {
   const win = ctx.platform === 'win32';
   const notes: string[] = [];
+  const spec = packageSpec(ctx.version);
+  if (spec.endsWith('@next')) {
+    notes.push(
+      `This is a beta (${ctx.version}), so the entry starts the beta channel (${spec}) and updates with each beta. ` +
+        `Once a release includes setup, "npx -y ${PACKAGE_NAME}@latest setup clients add --yes" moves the entries back to releases.`
+    );
+  }
   const { dir, versionSpecific } = stableNodeDir(ctx);
   const node = pathJoin(ctx, dir, win ? 'node.exe' : 'node');
   const npxCli = win ? pathJoin(ctx, dir, 'node_modules', 'npm', 'bin', 'npx-cli.js') : pathJoin(ctx, dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js');
@@ -101,10 +119,10 @@ export function buildLaunchEntry(ctx: ClientContext): LaunchEntry {
     // Unusual layout: fall back to plain npx and rely on the client's PATH.
     notes.push(`npm's npx was not found next to Node.js (${npxCli}); the entry starts "npx" from the client's PATH instead.`);
     return win
-      ? { command: 'cmd', args: ['/c', 'npx', '-y', PACKAGE_SPEC], env: { MCP_DEPLOYMENT_MODE: 'local' }, notes }
-      : { command: 'npx', args: ['-y', PACKAGE_SPEC], env: { MCP_DEPLOYMENT_MODE: 'local' }, notes };
+      ? { command: 'cmd', args: ['/c', 'npx', '-y', spec], env: { MCP_DEPLOYMENT_MODE: 'local' }, notes }
+      : { command: 'npx', args: ['-y', spec], env: { MCP_DEPLOYMENT_MODE: 'local' }, notes };
   }
-  return { command: node, args: [npxCli, '-y', PACKAGE_SPEC], env, notes };
+  return { command: node, args: [npxCli, '-y', spec], env, notes };
 }
 
 // ─── Clients ──────────────────────────────────────────────────────────────────
