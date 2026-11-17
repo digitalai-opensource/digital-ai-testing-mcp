@@ -10,6 +10,7 @@ import { getServerVersion } from '../utils/version.js';
 import { listProfiles, getProfileCredentials, profileCount } from '../utils/profile-loader.js';
 import { computeWorkflowReadiness, WORKFLOW_DEPS } from '../utils/tool-registry.js';
 import { staleBuildRemedy } from '../utils/locality.js';
+import { updateStatusLine } from '../utils/update-check.js';
 
 // Canonical list of every tool registered by this server.
 // Update this when adding or removing tools so get_server_info stays accurate.
@@ -189,7 +190,7 @@ export function registerMetaTools(server: McpServer): void {
 
   server.tool(
     'get_server_info',
-    'Returns the running server version, target API URL, registered tool count, and capability domains. Call this first to verify the running build matches the expected version — if tools are missing, update it: ' + staleBuildRemedy(),
+    'Returns the running server version (and, when a newer release exists, how to update to it), target API URL, registered tool count, and capability domains. Call this first to verify the running build matches the expected version — if tools are missing, update it: ' + staleBuildRemedy(),
     {},
     async () => {
       const name = process.env['MCP_SERVER_NAME'] ?? 'digital-ai-testing-mcp';
@@ -217,7 +218,7 @@ export function registerMetaTools(server: McpServer): void {
 
       const lines = [
         `Server:           ${name} v${version}`,
-        ...[debugStatusLine()].filter((l): l is string => l !== null),
+        ...[updateStatusLine(), debugStatusLine()].filter((l): l is string => l !== null),
         `Target API:       ${activeUrl}`,
         envLine,
         projectLine,
@@ -288,7 +289,7 @@ export function registerMetaTools(server: McpServer): void {
           `   Authenticated as: ${info.username} (${info.firstName} ${info.lastName})`,
           `   Role: ${info.role}`,
           `   Project context: ${info.project?.name ?? 'none'} (ID: ${info.project?.id ?? 'n/a'})`,
-          ...[debugStatusLine()].filter((l): l is string => l !== null).map((l) => `   ${l.replace(/\s{2,}/, ' ')}`),
+          ...[updateStatusLine(), debugStatusLine()].filter((l): l is string => l !== null).map((l) => `   ${l.replace(/\s{2,}/, ' ')}`),
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       } catch (e) {

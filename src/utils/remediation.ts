@@ -369,15 +369,16 @@ export function debugStatusLine(): string | null {
 /**
  * Put the reminder where it is read: inside a JSON payload as a "_debugMode" field (structured data is acted on), or
  * as the FIRST text item otherwise. A trailing footer was skimmed past as boilerplate for a whole 71-test run.
+ * `field` names the JSON field — the update notice (src/utils/update-check.ts) is delivered the same way.
  */
-export function withNudge<T extends { content?: Array<{ type: string; text?: string }> }>(result: T, nudge: string): T {
+export function withNudge<T extends { content?: Array<{ type: string; text?: string }> }>(result: T, nudge: string, field = '_debugMode'): T {
   const content = result.content ?? [];
   const first = content[0];
   if (first?.type === 'text' && first.text) {
     try {
       const parsed: unknown = JSON.parse(first.text);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const text = JSON.stringify({ _debugMode: nudge, ...(parsed as Record<string, unknown>) }, null, first.text.includes('\n') ? 2 : 0);
+        const text = JSON.stringify({ [field]: nudge, ...(parsed as Record<string, unknown>) }, null, first.text.includes('\n') ? 2 : 0);
         return { ...result, content: [{ ...first, text }, ...content.slice(1)] };
       }
     } catch {

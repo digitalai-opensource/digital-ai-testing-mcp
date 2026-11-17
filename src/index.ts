@@ -41,6 +41,8 @@ import { setToolCatalog } from './utils/tool-catalog.js';
 import { computeWorkflowReadiness } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
+import { isUpdateCheckEnabled, updateSteps, withUpdateNotice } from './utils/update-check.js';
+import { runUpdateCheck } from './api/update-check.js';
 
 dotenv.config({ quiet: true });
 
@@ -162,11 +164,21 @@ if (debugMode) {
 }
 const captured = captureRegistrations(modules);
 setToolCatalog(captured.tools); // get_server_info reports real per-area counts from this
+// Update check (on unless MCP_UPDATE_CHECK=false): the first successful tool result after a newer release was found
+// carries a notice, at most once a day. Placeholders are skipped (their reply is guidance for the next call), and the
+// notice goes OUTSIDE the debug instrumentation so the event log measures the tool's own response.
+// With both switches off no wrapper is passed, so registration is byte-for-byte what it was.
+const updateCheck = isUpdateCheckEnabled();
 const controller = registerWithToolsets(
   server,
   captured,
   toolsetSelection,
-  debugMode ? (tool, callback, placeholder) => instrumentHandler(tool, callback, { placeholder }) : undefined
+  debugMode || updateCheck
+    ? (tool, callback, placeholder) => {
+        const handler = debugMode ? instrumentHandler(tool, callback, { placeholder }) : callback;
+        return updateCheck && !placeholder ? withUpdateNotice(handler) : handler;
+      }
+    : undefined
 );
 if (!toolsetSelection.all) {
   toolsetController = controller;
@@ -200,6 +212,14 @@ process.on('SIGINT', () => {
   console.error(`[${name}] Shutting down.`);
   process.exit(0);
 });
+
+// Asks GitHub for the newest release at most once per 24 h (src/api/update-check.ts). Not awaited: startup never waits
+// for it, and it never throws.
+if (updateCheck) {
+  void runUpdateCheck({ current: version }).then((r) => {
+    if (r.updateAvailable) console.error(`[${name}] Update available: v${r.latest} (running v${r.current}). ${updateSteps()}`);
+  });
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -194,7 +194,7 @@ Always loaded, even when `MCP_TOOLSETS` limits the other toolsets.
 
 | Tool | What it does | Admin Required? |
 |---|---|---|
-| `get_server_info` | Server version, active profile, URL, tool count, and capability domains | Any |
+| `get_server_info` | Server version (and how to update when a newer release exists), active profile, URL, tool count, and capability domains | Any |
 | `check_connectivity` | Verify the MCP server can reach the Digital.ai API | Any |
 | `check_workflow_readiness` | Readiness report for all workflow tools — which dependency tools are present or missing. Call this first when diagnosing workflow failures. | Any |
 | `list_environments` | List all named connection profiles — name, URL, and the access level detected from the API (role). Marks the active profile. Credentials are never exposed. | Any |

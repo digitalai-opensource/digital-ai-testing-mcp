@@ -35,15 +35,16 @@ export interface StubRequest {
 }
 
 class Reply {
-  constructor(public readonly status: number, public readonly body: unknown) {}
+  constructor(public readonly status: number, public readonly body: unknown, public readonly headers: Record<string, string> = {}) {}
 }
 
 /**
  * Answer with a specific status. A string body is sent verbatim; a `Buffer[]` is written one element per tick so the
- * client sees separate 'data' events (for stream-consumer tests); anything else is JSON-encoded.
+ * client sees separate 'data' events (for stream-consumer tests); anything else is JSON-encoded. `headers` adds
+ * response headers (e.g. `Location` for a redirect).
  */
-export function reply(status: number, body: unknown = {}): Reply {
-  return new Reply(status, body);
+export function reply(status: number, body: unknown = {}, headers: Record<string, string> = {}): Reply {
+  return new Reply(status, body, headers);
 }
 
 async function writeChunked(res: http.ServerResponse, chunks: Buffer[]): Promise<void> {
@@ -97,6 +98,7 @@ export async function startStubApi(handler: StubHandler, opts: StubOptions = {})
       if (out === undefined) { res.statusCode = 404; return void res.end('{}'); }
       const r = out instanceof Reply ? out : new Reply(200, out);
       res.statusCode = r.status;
+      for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
       if (Array.isArray(r.body) && r.body.every((c) => Buffer.isBuffer(c))) return void writeChunked(res, r.body as Buffer[]);
       res.end(typeof r.body === 'string' ? r.body : JSON.stringify(r.body));
     });

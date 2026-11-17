@@ -55,7 +55,7 @@ npm install -g digital-ai-testing-mcp
 
 **Get started**
 - [Quick Start](#quick-start)
-- [Installation](#installation) — [npm](#option-a--install-via-npm-recommended) · [Docker image](#option-b--pull-from-github-container-registry) · [from source](#option-c--build-from-source) · [Upgrading](#upgrading)
+- [Installation](#installation) — [npm](#option-a--install-via-npm-recommended) · [Docker image](#option-b--pull-from-github-container-registry) · [from source](#option-c--build-from-source) · [Upgrading](#upgrading) · [update notices](#update-notices) · [automatic updates](#automatic-updates)
 - [Connecting AI Clients](#connecting-ai-clients) — [Claude Desktop](#claude-desktop) · [Claude Code (VS Code)](#claude-code-vs-code) · [Claude Code (JetBrains)](#claude-code-jetbrains--android-studio) · [GitHub Copilot](#github-copilot-vs-code) · [Cursor](#cursor) · [Docker configs](#docker-client-configuration)
 - [Access Keys](#access-keys) — access levels, finding your key, multiple profiles
 - [Configuration](#configuration) — [Toolsets](#toolsets-reducing-context-size) · [Debug mode](#debug-mode-remediation-notes)
@@ -146,6 +146,29 @@ Use `digital-ai-testing-mcp:latest` as the image name in your [Docker client con
 | From source (Option C) | `git pull` then `docker build -t digital-ai-testing-mcp:latest .` | Same as Option B. |
 
 To confirm the upgrade, ask your AI to call `get_server_info`, which reports the running version.
+
+#### Update notices
+
+When the server starts, it asks GitHub whether a newer release exists — at most once every 24 hours. If there is one, your AI assistant tells you, with the upgrade command for your install (npm, npx, a source checkout or Docker). You are told at most once a day, and `get_server_info` shows the pending update until you upgrade.
+
+- The request carries no access key and nothing about you, your tenant or your machine.
+- Startup never waits for it, and nothing happens if GitHub cannot be reached.
+- Set `MCP_UPDATE_CHECK=false` to turn it off.
+- With Docker, a `docker run --rm` container keeps nothing between starts, so the check and the notice happen once per start instead of once per day.
+
+#### Automatic updates
+
+The server does not replace itself: an upgrade always takes effect the next time your AI client starts it. To get every release without running a command, have the client start the newest version each time.
+
+| Install | Change in the client configuration |
+|---|---|
+| npm | Start the server through npx: `"command": "npx"`, `"args": ["-y", "digital-ai-testing-mcp@latest"]`. npx downloads a new release the first time the server starts after it is published. |
+| GHCR image | Add `"--pull=always"` after `"run"` in `args` (`docker run --pull=always --rm -i …`). Docker then checks the registry at every start and pulls `latest` when it has changed. |
+
+Two things to weigh before you switch:
+
+- The server then starts only when the npm registry or GHCR can be reached, and the first start after a release takes longer.
+- You run each release as soon as it is published. If your organization reviews versions before use, keep a pinned install (`digital-ai-testing-mcp@2.3.4`, or the image tag `:2.3.4`) and upgrade when the update notice appears.
 
 [↑ Back to top](#table-of-contents)
 
@@ -373,6 +396,7 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `DIGITAL_AI_ACCESS_KEY` | ✅ | — | Access key — see [Access Keys](#access-keys) for the three access levels and key formats |
 | `MCP_DEPLOYMENT_MODE` | Optional | `docker` | `docker` (default) or `local`. Set `local` when running via the npm package ([Option A](#option-a--install-via-npm-recommended)) so tool descriptions and upload/download behavior reflect that the server's filesystem is your own machine, not a container's |
 | `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
+| `MCP_UPDATE_CHECK` | Optional | `true` | `false` turns off the daily check for a newer release and its notice. See [Update notices](#update-notices) |
 | `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. See [Debug mode](#debug-mode-remediation-notes) |
 | `MCP_REMEDIATION_DIR` | Optional | — | Debug mode only: folder to write remediation files to (overrides project detection) |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |

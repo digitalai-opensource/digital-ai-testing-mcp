@@ -42,6 +42,10 @@ This server reads a `DIGITAL_AI_ACCESS_KEY` from environment variables or a `.en
 - Credentials are resolved through the active connection profile (`switch_environment`), never raw environment variables — generated artifacts (boilerplate, rdb scripts) always carry the currently active profile's key, so a project-scoped key can be used for customer-facing output.
 - The access level of each profile is read from the platform (`GET /api/v1/users/my-account-info`), never guessed from the key, and `list_environments` shows it. Role restrictions are enforced by the platform itself; give an AI assistant the least-privileged profile that covers the task.
 
+### Update check (`MCP_UPDATE_CHECK`)
+
+On by default. At startup, at most once every 24 hours, the server sends one unauthenticated request to GitHub (`api.github.com`, falling back to `github.com`) to read the version of the newest release of this server. The request contains no access key and nothing about the user, tenant or machine. The server only compares version numbers: it downloads and installs nothing, and the upgrade is a command the user runs. The time of the last check is kept in a small file in the operating system's temp folder. Set `MCP_UPDATE_CHECK=false` to make no request at all, for example on a network without internet access.
+
 ### Debug mode (`MCP_DEBUG_MODE`)
 
 Off by default. When set to `true`, the server captures remediation notes and a tool-call event log. With the npm package it writes them to a `remediation/` folder in the root of the project the AI is working in (or in `MCP_REMEDIATION_DIR`); with Docker the event log stays in memory and each note is returned to the AI assistant, which saves it to that folder itself. The folder gets its own `.gitignore` so it is not committed. Each session file records the machine name and OS user name. Access keys, tokens, emails and signed-URL parameters are redacted, but notes can still contain customer data such as app, device, project and test names, on-screen text and error messages. Review them before sharing them outside your organization, and leave debug mode off on customer tenants unless that has been agreed.
