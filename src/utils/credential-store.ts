@@ -24,7 +24,7 @@
  *
  * Credential values never leave this module except through profile-loader.ts.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, chmodSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -128,7 +128,7 @@ export const STORE_FORMAT_VERSION = 1;
 export const STORE_FILE_NAME = 'profiles.json';
 
 /** Same shape as env profile names after lowercasing (DAI_PROFILE_QA_TEAM_* → qa_team). */
-const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 /** A usable profile after reading: the key is resolved, wherever it was kept. */
 export interface StoredProfile {
@@ -176,7 +176,8 @@ export function storePath(env: NodeJS.ProcessEnv = process.env, platform: NodeJS
   return join(storeDir(env, platform), STORE_FILE_NAME);
 }
 
-function validUrl(u: unknown): string | null {
+/** An http(s) URL without trailing slashes, or null. */
+export function validUrl(u: unknown): string | null {
   if (typeof u !== 'string' || !u.trim()) return null;
   try {
     const parsed = new URL(u.trim());
@@ -294,7 +295,7 @@ export function readStore(env: NodeJS.ProcessEnv = process.env): StoreReadResult
  * Writes the store atomically (temp file + rename) and keeps the previous version as profiles.json.bak.
  * The folder and file are created user-only where the OS honours POSIX modes.
  */
-export function writeStore(data: StoreFile, env: NodeJS.ProcessEnv = process.env): string {
+export function writeStore(data: StoreFile | RawStoreFile, env: NodeJS.ProcessEnv = process.env): string {
   const dir = storeDir(env);
   const path = storePath(env);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -312,4 +313,85 @@ export function writeStore(data: StoreFile, env: NodeJS.ProcessEnv = process.env
     }
   }
   return path;
+}
+
+// ─── Editing helpers (the setup command) ──────────────────────────────────────
+
+/** The file as written, for editing: unknown fields and broken profiles are kept, not dropped. */
+export interface RawStoreFile {
+  version?: number;
+  default?: string;
+  profiles: Record<string, Record<string, unknown>>;
+  [other: string]: unknown;
+}
+
+/**
+ * Reads the file for editing. A missing file is an empty store. An unreadable file, invalid JSON, a wrong shape or a
+ * newer format version is an error: the caller must not write over it (setup offers `repair` instead).
+ */
+export function readStoreFileRaw(env: NodeJS.ProcessEnv = process.env): { exists: boolean; data?: RawStoreFile; error?: string } {
+  const path = storePath(env);
+  if (!existsSync(path)) return { exists: false, data: { version: STORE_FORMAT_VERSION, profiles: {} } };
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (e) {
+    return { exists: true, error: `the file could not be read (${(e as NodeJS.ErrnoException).code ?? 'error'})` };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text.replace(/^﻿/, ''));
+  } catch (e) {
+    return { exists: true, error: `the file is not valid JSON${jsonErrorPosition(e, text)}` };
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { exists: true, error: 'the file is not a JSON object' };
+  const obj = raw as RawStoreFile;
+  if (typeof obj.version === 'number' && obj.version > STORE_FORMAT_VERSION) {
+    return { exists: true, error: `the file uses format version ${obj.version}, newer than this version reads — update first` };
+  }
+  if (obj.profiles === undefined) obj.profiles = {};
+  if (!obj.profiles || typeof obj.profiles !== 'object' || Array.isArray(obj.profiles)) {
+    return { exists: true, error: 'the file\'s "profiles" is not an object' };
+  }
+  return { exists: true, data: obj };
+}
+
+/** Finds a profile entry by name, ignoring case (names are case-insensitive). */
+export function findRawProfileName(data: RawStoreFile, name: string): string | undefined {
+  const wanted = name.trim().toLowerCase();
+  return Object.keys(data.profiles).find((k) => k.trim().toLowerCase() === wanted);
+}
+
+/** Restores profiles.json from profiles.json.bak; the replaced file is kept as profiles.json.before-repair. */
+export function restoreStoreBackup(env: NodeJS.ProcessEnv = process.env): { ok: boolean; error?: string; keptAs?: string } {
+  const path = storePath(env);
+  const bak = `${path}.bak`;
+  if (!existsSync(bak)) return { ok: false, error: `there is no backup (${bak})` };
+  let keptAs: string | undefined;
+  if (existsSync(path)) {
+    keptAs = `${path}.before-repair`;
+    copyFileSync(path, keptAs);
+  }
+  copyFileSync(bak, path);
+  for (const f of [path, keptAs]) {
+    try {
+      if (f) chmodSync(f, 0o600);
+    } catch {
+      /* best effort */
+    }
+  }
+  return { ok: true, keptAs };
+}
+
+/** Deletes profiles.json and every copy setup made of it (backup, before-repair). Returns the files removed. */
+export function deleteStoreFiles(env: NodeJS.ProcessEnv = process.env): string[] {
+  const path = storePath(env);
+  const removed: string[] = [];
+  for (const f of [path, `${path}.bak`, `${path}.before-repair`]) {
+    if (existsSync(f)) {
+      rmSync(f, { force: true });
+      removed.push(f);
+    }
+  }
+  return removed;
 }

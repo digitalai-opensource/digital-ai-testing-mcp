@@ -46,6 +46,16 @@ import { runUpdateCheck } from './api/update-check.js';
 import { describeStartingProfile, listProfiles, startupCredentialProblem } from './utils/profile-loader.js';
 import { detectSetupContext, setupGuidance, setupInstructionsBlock, setupRequiredResult } from './utils/setup-guidance.js';
 
+// `digital-ai-testing-mcp setup …` manages the local credential store and exits (src/cli/setup.ts); anything else
+// starts the server. Checked before dotenv on purpose: setup acts on the user's own shell environment, not on a .env
+// file that happens to be in the current folder. Every AI client starts the server with no arguments.
+if (process.argv[2] === 'setup') {
+  const { runSetupCli } = await import('./cli/setup.js');
+  const code = await runSetupCli(process.argv.slice(3));
+  await new Promise<void>((r) => process.stdout.write('', () => r())); // flush before exiting
+  process.exit(code);
+}
+
 dotenv.config({ quiet: true });
 
 const name = process.env.MCP_SERVER_NAME ?? 'digital-ai-testing-mcp';
