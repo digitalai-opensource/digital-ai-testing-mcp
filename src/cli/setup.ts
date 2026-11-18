@@ -19,6 +19,7 @@ import {
   findRawProfileName,
   isStoreEnabled,
   KEYCHAIN_SERVICE,
+  keychainAccount,
   PROFILE_NAME_RE,
   readStore,
   readStoreFileRaw,
@@ -47,6 +48,7 @@ import {
   removeClientEntry,
   writeClientEntry,
   SERVER_ENTRY_NAME,
+  setupCommand,
   type ClientContext,
   type ClientTarget,
   type LaunchEntry,
@@ -185,13 +187,19 @@ async function confirm(io: SetupIO, yes: boolean, question: string, nonInteracti
   return /^y(es)?$/i.test(await io.ask(question));
 }
 
+/** What to do about an unreadable profiles file: offer repair only when there is a backup to restore. */
+function brokenFileFix(): string {
+  return existsSync(`${storePath()}.bak`)
+    ? `fix it in a text editor, or run "${setupCommand()} repair" to restore the last version setup saved`
+    : `fix it in a text editor (there is no backup to restore), or start over with "${setupCommand()} reset"`;
+}
+
+const capital = (t: string) => t[0].toUpperCase() + t.slice(1);
+
 function loadForEdit(): RawStoreFile {
   const raw = readStoreFileRaw();
   if (!raw.data) {
-    throw new SetupError(
-      `The profiles file ${storePath()} cannot be changed: ${raw.error}.\n` +
-        `Fix it in a text editor, or run "digital-ai-testing-mcp setup repair" to restore its backup.`
-    );
+    throw new SetupError(`The profiles file ${storePath()} cannot be changed: ${raw.error}.\n${capital(brokenFileFix())}.`);
   }
   return raw.data;
 }
@@ -359,7 +367,7 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
     throw new SetupError(`The profile was written to ${path}, but reading it back failed: ${why}.`);
   }
   io.out(
-    `Saved profile "${name}" (${url}) — key in ${keyLocation === 'os' ? `the OS keychain (service "${KEYCHAIN_SERVICE}", account "${name}")` : 'the profiles file'}.`
+    `Saved profile "${name}" (${url}) — key in ${keyLocation === 'os' ? `the OS keychain (service "${KEYCHAIN_SERVICE}", account "${keychainAccount(name)}")` : 'the profiles file'}.`
   );
   io.out(makeDefault ? `The server starts on "${name}".` : `The server still starts on "${currentDefault}"; switch with switch_environment("${name}").`);
   // A Cloud-Admin-sounding name on a project key: "switch to admin" would land here, not on a Cloud Admin profile.
@@ -372,7 +380,7 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
   io.out(`Profiles file: ${path}`);
   io.out('If your AI client\'s configuration sets DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY, those still win — remove them to use these profiles.');
   if (io.interactive && !flags.yes) await offerClients(io);
-  else io.out('To add the server to your AI clients: digital-ai-testing-mcp setup clients add');
+  else io.out(`To add the server to your AI clients: ${setupCommand()} clients add`);
   io.out(RESTART);
 }
 
@@ -381,17 +389,17 @@ function cmdList(io: SetupIO) {
   storeOffNote(io);
   const raw = readStoreFileRaw();
   if (!raw.exists) {
-    io.out(`No profiles yet (${path} does not exist). Add one with: digital-ai-testing-mcp setup`);
+    io.out(`No profiles yet (${path} does not exist). Add one with: ${setupCommand()}`);
     return;
   }
   io.out(`Profiles file: ${path}`);
   if (!raw.data) {
-    io.out(`It cannot be used: ${raw.error}. Fix it in a text editor, or run "digital-ai-testing-mcp setup repair".`);
+    io.out(`It cannot be used: ${raw.error}. ${capital(brokenFileFix())}.`);
     return;
   }
   const store = readStore();
   const names = Object.keys(raw.data.profiles);
-  if (names.length === 0) io.out('No profiles in it. Add one with: digital-ai-testing-mcp setup');
+  if (names.length === 0) io.out(`No profiles in it. Add one with: ${setupCommand()}`);
   for (const rawName of names) {
     const n = rawName.trim().toLowerCase();
     const ok = store.profiles[n];
@@ -401,19 +409,19 @@ function cmdList(io: SetupIO) {
     io.out(`  ${rawName}${isDefault ? ' (default)' : ''}: ${ok ? `${ok.url} — ${where}` : `NOT USABLE — ${problem ?? 'unknown reason'}`}`);
   }
   const defaultProblem = store.skipped.find((s) => s.name === '(default)');
-  if (defaultProblem) io.out(`  Default: ${defaultProblem.reason}. Fix with: digital-ai-testing-mcp setup default <name>`);
+  if (defaultProblem) io.out(`  Default: ${defaultProblem.reason}. Fix with: ${setupCommand()} default <name>`);
 }
 
 function cmdDefault(io: SetupIO, nameArg: string | undefined) {
   if (!nameArg) throw new SetupError('Which profile? Usage: digital-ai-testing-mcp setup default <name>', 2);
   const data = loadForEdit();
   const name = normalizeName(nameArg);
-  if (!findRawProfileName(data, name)) throw new SetupError(`There is no profile named "${name}". See: digital-ai-testing-mcp setup list`);
+  if (!findRawProfileName(data, name)) throw new SetupError(`There is no profile named "${name}". See: ${setupCommand()} list`);
   data.default = name;
   writeStore(data);
   const usable = readStore().profiles[name];
   io.out(`The server now starts on "${name}".`);
-  if (!usable) io.err(`Warning: "${name}" is not usable at the moment — see: digital-ai-testing-mcp setup list`);
+  if (!usable) io.err(`Warning: "${name}" is not usable at the moment — see: ${setupCommand()} list`);
   io.out(RESTART);
 }
 
@@ -422,7 +430,7 @@ async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags)
   const data = loadForEdit();
   const name = normalizeName(nameArg);
   const existing = findRawProfileName(data, name);
-  if (!existing) throw new SetupError(`There is no profile named "${name}". See: digital-ai-testing-mcp setup list`);
+  if (!existing) throw new SetupError(`There is no profile named "${name}". See: ${setupCommand()} list`);
   if (!(await confirm(io, !!flags.yes, `Remove profile "${name}"? [y/N] `, 'Add --yes to remove it.'))) throw new SetupError('Nothing was changed.', 1);
 
   const entry = data.profiles[existing];
@@ -433,7 +441,7 @@ async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags)
   io.out(`Removed profile "${name}".`);
   if (entry.keyStore === 'os') {
     const del = deleteKeyFromKeychain(name);
-    if (!del.ok) io.err(`Its key could not be removed from the OS keychain: ${del.error}. Remove "${KEYCHAIN_SERVICE}" / "${name}" there by hand.`);
+    if (!del.ok) io.err(`Its key could not be removed from the OS keychain: ${del.error}. Remove "${KEYCHAIN_SERVICE}" / "${keychainAccount(name)}" there by hand.`);
     else if (del.existed) io.out('Its key was removed from the OS keychain.');
   }
   if (wasDefault) {
@@ -443,7 +451,7 @@ async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags)
         ? `It was the default; the server now starts on the only profile left, "${left[0]}".`
         : left.length === 0
           ? 'It was the last profile.'
-          : `It was the default. Choose another: digital-ai-testing-mcp setup default <name> (${left.join(', ')})`
+          : `It was the default. Choose another: ${setupCommand()} default <name> (${left.join(', ')})`
     );
   }
   io.out(RESTART);
@@ -479,7 +487,7 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
   say(`Credential store: ${store.path}${store.enabled ? (store.exists ? '' : ' (no file yet)') : ' — turned off (MCP_CREDENTIAL_STORE)'}`);
   say(`  OS keychain: ${keychain.keychain ? 'available' : `NOT available — ${keychain.error}`}`);
   if (store.error) {
-    say(`  PROBLEM: the file cannot be used — ${store.error}. Fix: digital-ai-testing-mcp setup repair, or edit it.`);
+    say(`  PROBLEM: the file cannot be used — ${store.error}. Fix: ${brokenFileFix()}.`);
     problems++;
   }
   for (const [name, p] of Object.entries(store.profiles)) {
@@ -498,7 +506,7 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
     problems++;
   }
   if (store.enabled && store.exists && !store.error && Object.keys(store.profiles).length > 1 && !store.defaultProfile) {
-    say('  PROBLEM: several profiles and no default — fix: digital-ai-testing-mcp setup default <name>');
+    say(`  PROBLEM: several profiles and no default — fix: ${setupCommand()} default <name>`);
     problems++;
   }
 
@@ -524,7 +532,7 @@ async function cmdTest(io: SetupIO, nameArg: string | undefined) {
   const wanted = nameArg ? normalizeName(nameArg) : undefined;
   const names = wanted ? [wanted] : Object.keys(store.profiles);
   if (names.length === 0 && store.skipped.length === 0) {
-    io.out('No profiles to check. Add one with: digital-ai-testing-mcp setup');
+    io.out(`No profiles to check. Add one with: ${setupCommand()}`);
     return;
   }
   let failed = 0;
@@ -532,7 +540,7 @@ async function cmdTest(io: SetupIO, nameArg: string | undefined) {
     const p = store.profiles[n];
     if (!p) {
       const reason = store.skipped.find((s) => s.name.toLowerCase() === n)?.reason;
-      if (!reason && wanted) throw new SetupError(`There is no profile named "${n}". See: digital-ai-testing-mcp setup list`);
+      if (!reason && wanted) throw new SetupError(`There is no profile named "${n}". See: ${setupCommand()} list`);
       io.out(`  ${n}: NOT USABLE — ${reason}`);
       failed++;
       continue;
@@ -563,7 +571,7 @@ async function cmdRepair(io: SetupIO, flags: Flags) {
   const r = restoreStoreBackup();
   if (!r.ok) throw new SetupError(`Not restored: ${r.error}.`);
   io.out(`Restored the profiles file from its backup.${r.keptAs ? ` The replaced file is kept as ${r.keptAs}.` : ''}`);
-  io.out('Keys in the OS keychain are not affected. Check the result with: digital-ai-testing-mcp setup list');
+  io.out(`Keys in the OS keychain are not affected. Check the result with: ${setupCommand()} list`);
   io.out(RESTART);
 }
 
@@ -582,7 +590,7 @@ async function cmdReset(io: SetupIO, flags: Flags) {
     : [];
   for (const n of keychainNames) {
     const del = deleteKeyFromKeychain(n);
-    if (!del.ok) io.err(`The key of "${n}" could not be removed from the OS keychain: ${del.error}. Remove "${KEYCHAIN_SERVICE}" / "${n}" there by hand.`);
+    if (!del.ok) io.err(`The key of "${n}" could not be removed from the OS keychain: ${del.error}. Remove "${KEYCHAIN_SERVICE}" / "${keychainAccount(n)}" there by hand.`);
   }
   const removed = deleteStoreFiles();
   io.out(`Removed ${removed.length} file${removed.length === 1 ? '' : 's'}${keychainNames.length ? ` and ${keychainNames.length} OS keychain entr${keychainNames.length === 1 ? 'y' : 'ies'}` : ''}.`);
@@ -615,7 +623,7 @@ function describeChoices(files: string[]): string {
 
 const CHOOSE_HINT = (t: ClientTarget) =>
   `Claude Desktop keeps its config in different places on Windows, and setup cannot tell which one this install reads. ` +
-  `Candidates: ${describeChoices(t.choices ?? [])}. Pick it with: digital-ai-testing-mcp setup clients add ${t.id} --config "<file>"`;
+  `Candidates: ${describeChoices(t.choices ?? [])}. Pick it with: ${setupCommand()} clients add ${t.id} --config "<file>"`;
 
 function statusLine(t: ClientTarget, entry: LaunchEntry): string {
   if (!t.detected) return 'not installed';
@@ -659,7 +667,7 @@ function pickTargets(ctx: ClientContext, ids: string[], config?: string): Client
     const t = known.find((k) => k.id === id.toLowerCase());
     if (t) return t;
     const manual = manualClients().find((m) => m.id === id.toLowerCase());
-    if (manual) throw new SetupError(`${manual.label}: ${manual.how} See: digital-ai-testing-mcp setup clients`, 2);
+    if (manual) throw new SetupError(`${manual.label}: ${manual.how} See: ${setupCommand()} clients`, 2);
     throw new SetupError(`Unknown client "${id}". Known: ${known.map((k) => k.id).join(', ')}.`, 2);
   });
 }
@@ -717,7 +725,7 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
       io.out(
         '  To confirm Claude Desktop reads this file: quit it completely (also from the system tray / menu bar), start it again, ' +
           `and check that "${SERVER_ENTRY_NAME}" appears and is running in its MCP settings (Settings → Developer). If it does not appear, ` +
-          `this install reads another file: ${r.backup ? `put back ${r.backup}, then ` : ''}run "digital-ai-testing-mcp setup clients add claude-desktop --config <file>" with the file it uses.`
+          `this install reads another file: ${r.backup ? `put back ${r.backup}, then ` : ''}run "${setupCommand()} clients add claude-desktop --config <file>" with the file it uses.`
       );
     }
   }
@@ -732,7 +740,7 @@ async function offerClients(io: SetupIO) {
   if (pending.length === 0) return;
   const answer = await io.ask(`Add the server to your AI clients too (${pending.map((t) => t.label).join(', ')})? [Y/n] `);
   if (/^n(o)?$/i.test(answer)) {
-    io.out('Later: digital-ai-testing-mcp setup clients add');
+    io.out(`Later: ${setupCommand()} clients add`);
     return;
   }
   await addToClients(io, ctx, pending, false);
@@ -749,7 +757,7 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
   if (sub === 'add') {
     const targets = pickTargets(ctx, ids, flags.config);
     if (targets.length === 0) {
-      throw new SetupError('No AI clients were found on this machine. Name one: digital-ai-testing-mcp setup clients add <client> (list: setup clients)', 1);
+      throw new SetupError(`No AI clients were found on this machine. Name one: ${setupCommand()} clients add <client> (list: setup clients)`, 1);
     }
     describeEntry(io, buildLaunchEntry(ctx));
     const attention = await addToClients(io, ctx, targets, !!flags.yes);

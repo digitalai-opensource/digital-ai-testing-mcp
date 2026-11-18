@@ -15,7 +15,8 @@
  *
  * Where a profile's key lives:
  *   "keyStore": "os" — the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) under service
- *                      KEYCHAIN_SERVICE, account = profile name, through the OPTIONAL dependency @napi-rs/keyring. It is
+ *                      KEYCHAIN_SERVICE, account = keychainAccount() — the profile name, plus "@<folder>" when
+ *                      MCP_CREDENTIAL_STORE_DIR moves the store — through the OPTIONAL dependency @napi-rs/keyring. It is
  *                      loaded lazily, only when a profile needs it; if it cannot load (no prebuilt binary, Linux without a
  *                      keyring service) or has no entry, that profile is skipped with the reason.
  *   "key": "…"       — plain-file mode: the key is in this file (user-only folder, mode 0600 where the OS honours it — on
@@ -27,7 +28,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, chmodSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 
 // ─── OS keychain ──────────────────────────────────────────────────────────────
 
@@ -83,28 +84,46 @@ export function getKeychain(): { keychain?: Keychain; error?: string } {
   return _keychain;
 }
 
+/**
+ * The keychain account that holds a profile's key. The OS keychain has ONE list per user, whichever profiles file a
+ * profile came from — so with the default store location the account is the profile name (unchanged since the first
+ * beta), and with MCP_CREDENTIAL_STORE_DIR pointing elsewhere it is "<profile>@<that folder>". Without this, a second
+ * store (a test, say) with a profile named like a real one overwrote the real key, and its remove/reset deleted it.
+ */
+export function keychainAccount(profile: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  const dir = normalizeDir(storeDir(env, platform), platform);
+  const defaultDir = normalizeDir(storeDir({ ...env, MCP_CREDENTIAL_STORE_DIR: '' }, platform), platform);
+  return dir === defaultDir ? profile : `${profile}@${dir}`;
+}
+
+function normalizeDir(dir: string, platform: NodeJS.Platform): string {
+  const r = (platform === 'win32' ? win32 : posix).resolve(dir).replace(/[\\/]+$/, '');
+  return platform === 'win32' ? r.toLowerCase() : r;
+}
+
 /** Reads one profile's key from the keychain: the key, or why there is none. */
 export type KeyLookup = (profile: string) => { key?: string; reason?: string };
 
-export const keychainLookup: KeyLookup = (profile) => {
+export function keychainLookup(profile: string, env: NodeJS.ProcessEnv = process.env): { key?: string; reason?: string } {
   const { keychain, error } = getKeychain();
   if (!keychain) return { reason: `its key is in the OS keychain, which cannot be used here: ${error}` };
+  const account = keychainAccount(profile, env);
   try {
-    const key = keychain.get(profile)?.trim();
+    const key = keychain.get(account)?.trim();
     return key
       ? { key }
-      : { reason: `its key is in the OS keychain, but there is no entry for it (service "${KEYCHAIN_SERVICE}", account "${profile}")` };
+      : { reason: `its key is in the OS keychain, but there is no entry for it (service "${KEYCHAIN_SERVICE}", account "${account}")` };
   } catch (e) {
     return { reason: `its key is in the OS keychain, which could not be read (${shortError(e)})` };
   }
-};
+}
 
 /** Saves a profile's key in the keychain (for the setup command). Never throws. */
-export function saveKeyToKeychain(profile: string, key: string): { ok: boolean; error?: string } {
+export function saveKeyToKeychain(profile: string, key: string, env: NodeJS.ProcessEnv = process.env): { ok: boolean; error?: string } {
   const { keychain, error } = getKeychain();
   if (!keychain) return { ok: false, error };
   try {
-    keychain.set(profile, key);
+    keychain.set(keychainAccount(profile, env), key);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: `the OS keychain could not save it (${shortError(e)})` };
@@ -112,11 +131,11 @@ export function saveKeyToKeychain(profile: string, key: string): { ok: boolean; 
 }
 
 /** Removes a profile's key from the keychain. `existed` is false when there was no entry. Never throws. */
-export function deleteKeyFromKeychain(profile: string): { ok: boolean; existed?: boolean; error?: string } {
+export function deleteKeyFromKeychain(profile: string, env: NodeJS.ProcessEnv = process.env): { ok: boolean; existed?: boolean; error?: string } {
   const { keychain, error } = getKeychain();
   if (!keychain) return { ok: false, error };
   try {
-    return { ok: true, existed: keychain.delete(profile) };
+    return { ok: true, existed: keychain.delete(keychainAccount(profile, env)) };
   } catch (e) {
     return { ok: false, error: `the OS keychain could not delete it (${shortError(e)})` };
   }
@@ -288,12 +307,14 @@ export function readStore(env: NodeJS.ProcessEnv = process.env): StoreReadResult
     // Only the position is reported: V8's JSON.parse messages can quote part of the input, which may be a key.
     return { enabled: true, path, exists: true, error: `the file is not valid JSON${jsonErrorPosition(e, text)}`, profiles: {}, skipped: [] };
   }
-  return parseStore(raw, path, keychainLookup);
+  return parseStore(raw, path, (profile) => keychainLookup(profile, env));
 }
 
 /**
- * Writes the store atomically (temp file + rename) and keeps the previous version as profiles.json.bak.
- * The folder and file are created user-only where the OS honours POSIX modes.
+ * Writes the store atomically (temp file + rename) and keeps a copy of what it wrote as profiles.json.bak — the last
+ * version setup saved, so `setup repair` can undo a hand edit that broke the file, even after the very first save.
+ * (It held the PREVIOUS version until 2026-11-18: after one save there was no backup, and a repair also dropped the
+ * latest change.) The folder and file are created user-only where the OS honours POSIX modes.
  */
 export function writeStore(data: StoreFile | RawStoreFile, env: NodeJS.ProcessEnv = process.env): string {
   const dir = storeDir(env);
@@ -302,8 +323,8 @@ export function writeStore(data: StoreFile | RawStoreFile, env: NodeJS.ProcessEn
   const body = JSON.stringify({ ...data, version: STORE_FORMAT_VERSION }, null, 2) + '\n';
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, body, { encoding: 'utf8', mode: 0o600 });
-  if (existsSync(path)) copyFileSync(path, `${path}.bak`);
   renameSync(tmp, path);
+  copyFileSync(path, `${path}.bak`);
   // The backup holds keys too, and a copy does not keep the source's mode.
   for (const f of [path, `${path}.bak`]) {
     try {

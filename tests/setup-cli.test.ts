@@ -6,13 +6,13 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { runSetupCli, type SetupIO } from '../src/cli/setup.js';
 import { verifyCredential, type CredentialCheck } from '../src/api/access-level.js';
 import { clearAccessInfoCache } from '../src/utils/access-level.js';
-import { setKeychainForTests, type Keychain } from '../src/utils/credential-store.js';
+import { keychainAccount, setKeychainForTests, type Keychain } from '../src/utils/credential-store.js';
 import { startStubApi, accountInfo, reply } from './helpers/offline.js';
 
 const KEY = 'aut_1_setupCliTestKey';
@@ -78,14 +78,19 @@ function scripted(s: Script = {}) {
 let dir: string;
 let kc: ReturnType<typeof fakeKeychain>;
 const saved: Record<string, string | undefined> = {};
-const storeFile = () => join(dir, 'profiles.json');
+// The store sits at its DEFAULT location (APPDATA / XDG_CONFIG_HOME pointed at a temp folder), as for a customer, so
+// keychain accounts are plain profile names. The MCP_CREDENTIAL_STORE_DIR naming has its own test.
+const storeFile = () => join(dir, 'digital-ai-testing', 'profiles.json');
 const readFile = () => JSON.parse(readFileSync(storeFile(), 'utf8'));
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'dai-setup-cli-'));
-  for (const k of ['MCP_CREDENTIAL_STORE', 'MCP_CREDENTIAL_STORE_DIR']) saved[k] = process.env[k];
+  for (const k of ['MCP_CREDENTIAL_STORE', 'MCP_CREDENTIAL_STORE_DIR', 'APPDATA', 'XDG_CONFIG_HOME']) saved[k] = process.env[k];
   process.env.MCP_CREDENTIAL_STORE = 'on';
-  process.env.MCP_CREDENTIAL_STORE_DIR = dir;
+  delete process.env.MCP_CREDENTIAL_STORE_DIR;
+  process.env.APPDATA = dir;
+  process.env.XDG_CONFIG_HOME = dir;
+  mkdirSync(dirname(storeFile()), { recursive: true });
   kc = fakeKeychain();
   setKeychainForTests(kc);
 });
@@ -236,12 +241,12 @@ describe('setup add', () => {
     expect(existsSync(storeFile())).toBe(false);
   });
 
-  it('never writes over a file it cannot read; points at repair', async () => {
+  it('never writes over a file it cannot read; points at a fix that can work', async () => {
     writeFileSync(storeFile(), `{"profiles": {"x": {"key": ${KEY}}}}`);
     const r = await add(['team', '--url', URL_A, '--key-stdin']);
     expect(r.code).toBe(1);
     expect(r.all()).toContain('cannot be changed: the file is not valid JSON');
-    expect(r.all()).toContain('setup repair');
+    expect(r.all()).toMatch(/no backup to restore\), or start over with ".* reset"/); // no .bak: repair could not help
     expect(r.all()).not.toContain(KEY);
     expect(readFileSync(storeFile(), 'utf8')).toContain(KEY); // untouched
   });
@@ -363,13 +368,57 @@ describe('setup repair / reset', () => {
   it('repair restores the backup and keeps the broken file', async () => {
     expect(await runSetupCli(['repair', '--yes'], scripted().io)).toBe(1); // no backup yet
     await add(['a', '--url', URL_A, '--key-stdin']);
-    await add(['b', '--url', URL_A, '--key-stdin']); // a .bak now holds the "a only" version
+    await add(['b', '--url', URL_A, '--key-stdin']); // the .bak holds the last saved version (a + b)
     writeFileSync(storeFile(), '{broken');
     expect(await runSetupCli(['repair'], scripted().io)).toBe(2); // needs confirmation
     const t = scripted();
     expect(await runSetupCli(['repair', '--yes'], t.io)).toBe(0);
-    expect(Object.keys(readFile().profiles)).toEqual(['a']);
+    expect(Object.keys(readFile().profiles)).toEqual(['a', 'b']); // the hand edit is undone, the latest change kept
     expect(readFileSync(`${storeFile()}.before-repair`, 'utf8')).toBe('{broken');
+  });
+
+  it('a file broken after ONE save can be repaired (live 2026-11-18: there was no backup until the second save)', async () => {
+    await add(['a', '--url', URL_A, '--key-stdin']);
+    writeFileSync(storeFile(), readFileSync(storeFile(), 'utf8') + '{ broken\n');
+    const list = scripted();
+    await runSetupCli(['list'], list.io);
+    expect(list.all()).toMatch(/repair" to restore the last version setup saved/);
+    expect(await runSetupCli(['repair', '--yes'], scripted().io)).toBe(0);
+    expect(Object.keys(readFile().profiles)).toEqual(['a']);
+  });
+
+  it('a broken file with no backup: the hint offers reset, not a repair that cannot work', async () => {
+    mkdirSync(dirname(storeFile()), { recursive: true });
+    writeFileSync(storeFile(), '{ hand-made and broken');
+    const list = scripted();
+    await runSetupCli(['list'], list.io);
+    expect(list.all()).toMatch(/there is no backup to restore\), or start over with ".* reset"/);
+    expect(list.all()).not.toMatch(/repair/);
+    const remove = scripted();
+    expect(await runSetupCli(['remove', 'a'], remove.io)).not.toBe(0);
+    expect(remove.all()).toMatch(/start over with ".* reset"/);
+  });
+
+  it('a store moved with MCP_CREDENTIAL_STORE_DIR keeps its keys apart from the default store\'s, same profile names', async () => {
+    await add(['admin', '--url', URL_A, '--key-stdin']); // the default store: account "admin"
+    const other = mkdtempSync(join(tmpdir(), 'dai-setup-other-'));
+    try {
+      process.env.MCP_CREDENTIAL_STORE_DIR = other;
+      const t = await add(['admin', '--url', URL_A, '--key-stdin'], { stdin: 'aut_1_other-store-key' });
+      expect(t.code).toBe(0);
+      const moved = Object.keys(kc.entries).find((a) => a !== 'admin')!;
+      expect(moved).toMatch(/^admin@.+dai-setup-other-/i);
+      expect(kc.entries.admin).toBe(KEY); // the real key is untouched
+      expect(t.all()).toContain(`account "${moved}"`);
+      expect(await runSetupCli(['remove', 'admin', '--yes'], scripted().io)).toBe(0);
+      expect(kc.entries).toEqual({ admin: KEY }); // removing the test profile left the real key alone
+      // the same folder given as the default location's own path is NOT an override
+      process.env.MCP_CREDENTIAL_STORE_DIR = `${dirname(storeFile())}${process.platform === 'win32' ? '\\' : '/'}`;
+      expect(keychainAccount('admin')).toBe('admin');
+    } finally {
+      delete process.env.MCP_CREDENTIAL_STORE_DIR;
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it('reset removes the files and the keychain entries they point to', async () => {
@@ -441,7 +490,7 @@ function runEntry(args: string[], stdin: string, env: Record<string, string>): P
 
 describe('setup through the entry point (child process)', () => {
   it('runs the command and exits instead of starting the server', async () => {
-    const r = await runEntry(['setup', 'path'], '', { MCP_CREDENTIAL_STORE_DIR: dir });
+    const r = await runEntry(['setup', 'path'], '', { MCP_CREDENTIAL_STORE_DIR: dirname(storeFile()) });
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe(storeFile());
     expect(r.stderr).not.toContain('starting...');
@@ -450,7 +499,7 @@ describe('setup through the entry point (child process)', () => {
   it('add with a piped key checks it against the API and saves it (plain file — no real keychain in tests)', async () => {
     const api = await startStubApi((req) => (req.path === '/api/v1/users/my-account-info' ? accountInfo('Admin', 'Default') : undefined), { noResetClient: true });
     try {
-      const r = await runEntry(['setup', 'add', 'ci', '--url', api.baseUrl, '--key-stdin', '--plain-file'], KEY + '\n', { MCP_CREDENTIAL_STORE_DIR: dir });
+      const r = await runEntry(['setup', 'add', 'ci', '--url', api.baseUrl, '--key-stdin', '--plain-file'], KEY + '\n', { MCP_CREDENTIAL_STORE_DIR: dirname(storeFile()) });
       expect(r.code).toBe(0);
       expect(r.stdout).toContain('Saved profile "ci"');
       expect(r.stdout + r.stderr).not.toContain(KEY);

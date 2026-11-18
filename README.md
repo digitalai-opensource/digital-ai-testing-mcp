@@ -386,7 +386,7 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 
 ### Where your key is kept
 
-- **In your operating system's keychain** by default: Windows Credential Manager (Windows Credentials → Generic Credentials, named `<profile>.digital-ai-testing-mcp`), the macOS Keychain, or the Linux Secret Service. The service name is `digital-ai-testing-mcp` and the account is the profile name.
+- **In your operating system's keychain** by default: Windows Credential Manager (Windows Credentials → Generic Credentials, named `<profile>.digital-ai-testing-mcp`), the macOS Keychain, or the Linux Secret Service. The service name is `digital-ai-testing-mcp` and the account is the profile name. If you move the profiles file with `MCP_CREDENTIAL_STORE_DIR`, the account is `<profile>@<that folder>` instead, so a second set of profiles (for testing, say) can never overwrite or delete the keys of your usual ones.
 - **The list of profiles** — names, URLs and the default, no keys — is in `profiles.json`: `%APPDATA%\digital-ai-testing\` on Windows, `~/.config/digital-ai-testing/` on macOS and Linux. `setup path` prints the location.
 - With `--plain-file`, the key is kept in `profiles.json` instead, readable only by your user account. `setup` offers this when the keychain can't be used, for example on a Linux machine without a keyring service.
 - The key is typed at a hidden prompt (or piped in with `--key-stdin`), never as a command-line argument, and it is never shown. `setup` checks it with Digital.ai Testing before saving it.
@@ -495,7 +495,7 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `DIGITAL_AI_ACCESS_KEY` | ✅ unless saved with [setup](#the-setup-command) | — | Access key — see [Access Keys](#access-keys) for the three access levels and key formats. Variables take precedence over profiles saved with setup |
 | `MCP_DEPLOYMENT_MODE` | Optional | `local`, or `docker` inside a container | Where the server runs: `local` (your own machine — file tools read and write your files) or `docker` (a container, whose filesystem is not yours). You rarely need to set it: the server detects a container, and the published Docker image sets `docker` |
 | `MCP_CREDENTIAL_STORE` | Optional | on | `off` makes the server ignore the profiles saved with [setup](#the-setup-command) |
-| `MCP_CREDENTIAL_STORE_DIR` | Optional | `%APPDATA%digital-ai-testing` (Windows), `~/.config/digital-ai-testing` (macOS, Linux) | Folder of the saved profiles file (`profiles.json`) |
+| `MCP_CREDENTIAL_STORE_DIR` | Optional | `%APPDATA%\digital-ai-testing` (Windows), `~/.config/digital-ai-testing` (macOS, Linux) | Folder of the saved profiles file (`profiles.json`). Keys that profiles in a moved folder keep in the OS keychain are named `<profile>@<folder>`, apart from your usual ones |
 | `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
 | `MCP_UPDATE_CHECK` | Optional | `true` | `false` turns off the daily check for a newer release and its notice. See [Update notices](#update-notices) |
 | `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. See [Debug mode](#debug-mode-remediation-notes) |

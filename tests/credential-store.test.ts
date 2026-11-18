@@ -5,7 +5,7 @@
  * developer's own profiles.json is never read.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,6 +14,7 @@ import {
   isStoreEnabled,
   jsonErrorPosition,
   KEYCHAIN_SERVICE,
+  keychainAccount,
   keychainLookup,
   saveKeyToKeychain,
   setKeychainForTests,
@@ -42,6 +43,18 @@ const KEY_B = 'aut_1_storeTestKeyBravo';
 const KEY_ENV = 'aut_1_envTestKey';
 
 describe('store location and switch', () => {
+  it('keychain account: the profile name at the default location, "<name>@<folder>" when the store is moved', () => {
+    const win = { APPDATA: 'C:\\Users\\u\\AppData\\Roaming' };
+    expect(keychainAccount('admin', win, 'win32')).toBe('admin');
+    expect(keychainAccount('admin', { ...win, MCP_CREDENTIAL_STORE_DIR: '  ' }, 'win32')).toBe('admin');
+    // the default folder named explicitly (any case, trailing slash) is not a move
+    expect(keychainAccount('admin', { ...win, MCP_CREDENTIAL_STORE_DIR: 'c:\\users\\U\\AppData\\Roaming\\Digital-AI-Testing\\' }, 'win32')).toBe('admin');
+    expect(keychainAccount('admin', { ...win, MCP_CREDENTIAL_STORE_DIR: 'D:\\Temp\\dai-store-test' }, 'win32')).toBe('admin@d:\\temp\\dai-store-test');
+    const posixEnv = { XDG_CONFIG_HOME: '/home/u/.config' };
+    expect(keychainAccount('qa', posixEnv, 'linux')).toBe('qa');
+    expect(keychainAccount('qa', { ...posixEnv, MCP_CREDENTIAL_STORE_DIR: '/tmp/Store/' }, 'linux')).toBe('qa@/tmp/Store');
+  });
+
   it('uses %APPDATA% on Windows and XDG / ~/.config elsewhere; MCP_CREDENTIAL_STORE_DIR overrides', () => {
     expect(storeDir({ APPDATA: 'C:\\Users\\u\\AppData\\Roaming' }, 'win32')).toBe(join('C:\\Users\\u\\AppData\\Roaming', 'digital-ai-testing'));
     expect(storeDir({ XDG_CONFIG_HOME: '/home/u/.cfg' }, 'linux')).toBe(join('/home/u/.cfg', 'digital-ai-testing'));
@@ -135,13 +148,13 @@ describe('readStore / writeStore', () => {
     writeFileSync(join(dir, STORE_FILE_NAME), '\uFEFF' + JSON.stringify({ profiles: { a: { url: 'https://t.example.com', key: KEY_A } } }));
     expect(readStore(env()).profiles.a?.key).toBe(KEY_A);
   });
-  it('writes atomically, stamps the version, keeps the previous file as .bak', () => {
+  it('writes atomically, stamps the version, keeps a copy of what it wrote as .bak (from the first save)', () => {
     const path = writeStore({ version: 0, default: 'a', profiles: { a: { url: 'https://t.example.com', key: KEY_A } } }, env());
     expect(JSON.parse(readFileSync(path, 'utf8')).version).toBe(1);
-    expect(existsSync(`${path}.bak`)).toBe(false);
+    expect(readFileSync(`${path}.bak`, 'utf8')).toBe(readFileSync(path, 'utf8'));
     writeStore({ version: 1, default: 'b', profiles: { b: { url: 'https://t.example.com', key: KEY_B } } }, env());
     expect(readStore(env())).toMatchObject({ defaultProfile: 'b', profiles: { b: { key: KEY_B } } });
-    expect(JSON.parse(readFileSync(`${path}.bak`, 'utf8')).default).toBe('a');
+    expect(JSON.parse(readFileSync(`${path}.bak`, 'utf8')).default).toBe('b');
     if (process.platform !== 'win32') {
       expect(statSync(path).mode & 0o777).toBe(0o600);
       expect(statSync(`${path}.bak`).mode & 0o777).toBe(0o600);
@@ -359,12 +372,14 @@ describe('profile-loader with keychain profiles', () => {
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'dai-loader-kc-'));
-    for (const k of ['MCP_CREDENTIAL_STORE', 'MCP_CREDENTIAL_STORE_DIR', 'DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY']) {
+    for (const k of ['MCP_CREDENTIAL_STORE', 'MCP_CREDENTIAL_STORE_DIR', 'DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY', 'APPDATA', 'XDG_CONFIG_HOME']) {
       saved[k] = process.env[k];
       delete process.env[k];
     }
     process.env.MCP_CREDENTIAL_STORE = 'on';
-    process.env.MCP_CREDENTIAL_STORE_DIR = dir;
+    // default location (keychain account = profile name), as for a customer
+    process.env.APPDATA = dir;
+    process.env.XDG_CONFIG_HOME = dir;
   });
   afterEach(() => {
     for (const [k, v] of Object.entries(saved)) {
@@ -380,7 +395,7 @@ describe('profile-loader with keychain profiles', () => {
     setKeychainForTests(fakeKeychain({ team: KEY_A }));
     writeStore(
       { version: 1, default: 'team', profiles: { team: { url: 'https://t.example.com', keyStore: 'os' }, qa: { url: 'https://q.example.com', key: KEY_B } } },
-      { MCP_CREDENTIAL_STORE_DIR: dir }
+      { APPDATA: dir, XDG_CONFIG_HOME: dir }
     );
     resetProfilesForTests();
     expect(getStartingProfile()).toMatchObject({ name: 'team', key: KEY_A, source: 'store' });
@@ -389,7 +404,7 @@ describe('profile-loader with keychain profiles', () => {
   });
   it('a missing keychain entry for the default: setup mode explains it', () => {
     setKeychainForTests(fakeKeychain());
-    writeStore({ version: 1, default: 'team', profiles: { team: { url: 'https://t.example.com', keyStore: 'os' } } }, { MCP_CREDENTIAL_STORE_DIR: dir });
+    writeStore({ version: 1, default: 'team', profiles: { team: { url: 'https://t.example.com', keyStore: 'os' } } }, { APPDATA: dir, XDG_CONFIG_HOME: dir });
     resetProfilesForTests();
     expect(startupCredentialProblem()?.storeNote).toContain('there is no entry for it (service "digital-ai-testing-mcp", account "team")');
   });
