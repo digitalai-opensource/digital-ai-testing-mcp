@@ -181,7 +181,7 @@ because it can tag devices. Unknown parameters are rejected rather than ignored.
 and load themselves when called, so toolsets are not an access control.
 
 **File paths depend on how the server is installed.** With the npm install
-(`MCP_DEPLOYMENT_MODE=local`), file tools read and write your own machine. Under Docker they read
+(local mode, the default outside a container), file tools read and write your own machine. Under Docker they read
 and write the container's filesystem, so the agent should use the `get_*_command` tools (which
 produce a command you run locally) or `summarize_usage_report` instead. Each tool's description
 states which applies.
