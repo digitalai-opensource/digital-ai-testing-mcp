@@ -127,6 +127,46 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 const entry = () => buildLaunchEntry(ctx);
 
+describe('Claude Desktop on Windows (faked file system, any OS)', () => {
+  const L = 'C:\\Users\\u\\AppData\\Local';
+  const R = 'C:\\Users\\u\\AppData\\Roaming';
+  const data = `${L}\\Claude-Data\\claude_pzs8sxrjxfjjc`;
+  const store = `${L}\\Packages\\Claude_pzs8sxrjxfjjc\\LocalCache\\Roaming\\Claude`;
+  const desktopFile = (present: string[]) =>
+    knownClients({
+      ...fakeCtx('win32', 'C:\\n\\node.exe', present, { LOCALAPPDATA: L, APPDATA: R }),
+      listDir: (p) => (p === `${L}\\Claude-Data` ? ['claude_pzs8sxrjxfjjc', 'README.txt'] : p === `${L}\\Packages` ? ['Claude_pzs8sxrjxfjjc', 'Other_x'] : []),
+    }).find((t) => t.id === 'claude-desktop')!;
+
+  it('uses Claude-Data\\claude_<id> (current versions), where the config file is', () => {
+    const t = desktopFile([data, `${data}\\claude_desktop_config.json`, store, `${R}\\Claude`]);
+    expect(t.file).toBe(`${data}\\claude_desktop_config.json`);
+    expect(t.detected).toBe(true);
+  });
+  it('exactly one config file decides, whichever layout it is in (the old %APPDATA% one too)', () => {
+    const t = desktopFile([store, `${R}\\Claude`, `${R}\\Claude\\claude_desktop_config.json`]);
+    expect(t.file).toBe(`${R}\\Claude\\claude_desktop_config.json`);
+    expect(t.choices).toBeUndefined();
+  });
+
+  it('several config files, or none yet: no guess — the candidates are listed for --config', () => {
+    const two = desktopFile([data, `${data}\\claude_desktop_config.json`, `${R}\\Claude`, `${R}\\Claude\\claude_desktop_config.json`]);
+    expect(two.choices).toEqual([`${data}\\claude_desktop_config.json`, `${R}\\Claude\\claude_desktop_config.json`]);
+    const none = desktopFile([data, store]);
+    expect(none).toMatchObject({ detected: true, choices: [`${data}\\claude_desktop_config.json`, `${store}\\claude_desktop_config.json`] });
+    expect(desktopFile([]).detected).toBe(false);
+  });
+
+  it('also looks in the Anthropic.Claude_<id>\\LocalCache\\Local\\Claude variant', () => {
+    const variant = `${L}\\Packages\\Anthropic.Claude_abc\\LocalCache\\Local\\Claude`;
+    const t = knownClients({
+      ...fakeCtx('win32', 'C:\\n\\node.exe', [variant, `${variant}\\claude_desktop_config.json`], { LOCALAPPDATA: L, APPDATA: R }),
+      listDir: (p) => (p === `${L}\\Packages` ? ['Anthropic.Claude_abc'] : []),
+    }).find((c) => c.id === 'claude-desktop')!;
+    expect(t.file).toBe(`${variant}\\claude_desktop_config.json`);
+  });
+});
+
 describe('client detection', () => {
   it('a client counts as installed when its own folder exists, whether or not the file does', () => {
     expect(knownClients(ctx).filter((t) => t.detected)).toEqual([]);
@@ -319,6 +359,51 @@ describe('setup clients commands', () => {
     expect(await runSetupCli(['clients', 'add', 'cursor'], t.s)).toBe(1);
     expect(t.all()).toContain('"mcpServers"');
     expect(t.all()).toContain('"digital-ai-testing"');
+  });
+
+  it('--config names the file for one client; it must be that client\'s file name in an existing folder', async () => {
+    mkdirSync(join(home, 'custom'));
+    const file = join(home, 'custom', 'mcp.json');
+    expect(await runSetupCli(['clients', 'add', 'cursor', '--config', file], io().s)).toBe(0);
+    expect(json(file).mcpServers['digital-ai-testing']).toBeDefined();
+    const wrongName = io();
+    expect(await runSetupCli(['clients', 'add', 'cursor', '--config', join(home, 'custom', 'other.json')], wrongName.s)).toBe(2);
+    expect(wrongName.all()).toContain('must point to a file named mcp.json');
+    expect(await runSetupCli(['clients', 'add', 'cursor', '--config', join(home, 'missing', 'mcp.json')], io().s)).toBe(2);
+    expect(await runSetupCli(['clients', 'add', 'cursor', 'windsurf', '--config', file], io().s)).toBe(2);
+  });
+
+  it.runIf(process.platform === 'win32')('Windows: two Claude Desktop config files → nothing written, candidates listed; --config + a yes writes it', async () => {
+    const data = join(home, 'AppData', 'Local', 'Claude-Data', 'claude_test');
+    const legacy = join(home, 'AppData', 'Roaming', 'Claude');
+    mkdirSync(data, { recursive: true });
+    mkdirSync(legacy, { recursive: true });
+    const original = JSON.stringify({ mcpServers: { mine: { command: 'x' } } });
+    writeFileSync(join(data, 'claude_desktop_config.json'), original);
+    writeFileSync(join(legacy, 'claude_desktop_config.json'), original);
+
+    const ambiguous = io();
+    expect(await runSetupCli(['clients', 'add', 'claude-desktop'], ambiguous.s)).toBe(1);
+    expect(ambiguous.all()).toContain('setup cannot tell which one this install reads');
+    expect(ambiguous.all()).toContain(join(data, 'claude_desktop_config.json'));
+    expect(readFileSync(join(data, 'claude_desktop_config.json'), 'utf8')).toBe(original);
+    expect(readFileSync(join(legacy, 'claude_desktop_config.json'), 'utf8')).toBe(original);
+
+    const chosen = join(data, 'claude_desktop_config.json');
+    const declined = io(['n'], true);
+    expect(await runSetupCli(['clients', 'add', 'claude-desktop', '--config', chosen], declined.s)).toBe(1);
+    expect(readFileSync(chosen, 'utf8')).toBe(original);
+
+    const noTerminal = io();
+    expect(await runSetupCli(['clients', 'add', 'claude-desktop', '--config', chosen], noTerminal.s)).toBe(1);
+    expect(noTerminal.all()).toContain(`add --yes to edit ${chosen}`);
+
+    const accepted = io(['y'], true);
+    expect(await runSetupCli(['clients', 'add', 'claude-desktop', '--config', chosen], accepted.s)).toBe(0);
+    expect(json(chosen).mcpServers).toHaveProperty('mine');
+    expect(json(chosen).mcpServers).toHaveProperty('digital-ai-testing');
+    expect(accepted.all()).toContain('To confirm Claude Desktop reads this file');
+    expect(readFileSync(join(legacy, 'claude_desktop_config.json'), 'utf8')).toBe(original); // the other file untouched
   });
 
   it('nothing installed: add says so', async () => {

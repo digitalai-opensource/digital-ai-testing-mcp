@@ -41,6 +41,8 @@ export interface ClientContext {
   /** The version of the running setup (package.json) — a prerelease selects the `next` channel. */
   version?: string;
   exists(path: string): boolean;
+  /** Folder listing (default readdirSync); tests fake it to check Windows layouts on any OS. */
+  listDir?(path: string): string[];
 }
 
 export function defaultClientContext(): ClientContext {
@@ -137,6 +139,11 @@ export interface ClientTarget {
   file: string;
   /** Present when the client is installed (its own folder exists), whether or not the file does. */
   detected: boolean;
+  /**
+   * Set when setup cannot tell which file the client reads (Claude Desktop on Windows with several config files, or
+   * none yet): nothing is written until the user names one with --config. Lists the candidate files.
+   */
+  choices?: string[];
 }
 
 /** Clients the user configures by hand (shown by `setup clients`, never written). */
@@ -150,20 +157,57 @@ function appData(ctx: ClientContext): string {
   return ctx.env.APPDATA?.trim() || pathJoin(ctx, ctx.home, 'AppData', 'Roaming');
 }
 
-/** Claude Desktop from the Microsoft Store keeps its folder inside the package's virtualised AppData. */
+/**
+ * Claude Desktop's folders on Windows, newest layout first (found on a real install 2026-11-17):
+ *   %LOCALAPPDATA%\Claude-Data\claude_<package id>\ — where current versions keep settings and the config file (the
+ *       folder's own README.txt says so, and that "older files of Claude's may also be left in %APPDATA%\Claude");
+ *   %LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude — the Store package's virtualised AppData (empty there);
+ *   %APPDATA%\Claude — older versions and the documented path.
+ */
 function claudeDesktopDirs(ctx: ClientContext): string[] {
   if (ctx.platform === 'darwin') return [pathJoin(ctx, ctx.home, 'Library', 'Application Support', 'Claude')];
   if (ctx.platform !== 'win32') return [];
-  const dirs = [pathJoin(ctx, appData(ctx), 'Claude')];
-  const packages = pathJoin(ctx, ctx.env.LOCALAPPDATA?.trim() || pathJoin(ctx, ctx.home, 'AppData', 'Local'), 'Packages');
-  try {
-    for (const p of readdirSync(packages)) {
-      if (/^Claude_/i.test(p)) dirs.push(pathJoin(ctx, packages, p, 'LocalCache', 'Roaming', 'Claude'));
-    }
-  } catch {
-    /* no Packages folder */
+  const local = ctx.env.LOCALAPPDATA?.trim() || pathJoin(ctx, ctx.home, 'AppData', 'Local');
+  const dirs: string[] = [];
+  const dataRoot = pathJoin(ctx, local, 'Claude-Data');
+  for (const d of listDir(ctx, dataRoot)) if (/^claude_/i.test(d)) dirs.push(pathJoin(ctx, dataRoot, d));
+  const packages = pathJoin(ctx, local, 'Packages');
+  for (const p of listDir(ctx, packages)) {
+    if (/^Claude_/i.test(p)) dirs.push(pathJoin(ctx, packages, p, 'LocalCache', 'Roaming', 'Claude'));
+    // A variant reported for some installs: Anthropic.Claude_<id>\LocalCache\Local\Claude.
+    if (/^Anthropic\.Claude_/i.test(p)) dirs.push(pathJoin(ctx, packages, p, 'LocalCache', 'Local', 'Claude'));
   }
+  dirs.push(pathJoin(ctx, appData(ctx), 'Claude'));
   return dirs;
+}
+
+export const CLAUDE_DESKTOP_FILE = 'claude_desktop_config.json';
+
+/**
+ * Claude Desktop's target. macOS has one documented folder. On Windows the location differs by install type and
+ * version — and the app's own "Edit Config" button has been reported to open a different file than the MSIX build reads
+ * (community bug reports, 2026) — so the file is chosen only when EXACTLY ONE candidate folder holds a config file.
+ * Several files, or none yet: `choices` lists them and nothing is written until the user picks one with --config.
+ */
+function claudeDesktopTarget(ctx: ClientContext): ClientTarget | undefined {
+  const dirs = claudeDesktopDirs(ctx);
+  if (dirs.length === 0) return undefined;
+  const base = { id: 'claude-desktop', label: 'Claude Desktop', format: 'mcpServers' as const };
+  const files = dirs.map((d) => pathJoin(ctx, d, CLAUDE_DESKTOP_FILE));
+  if (ctx.platform !== 'win32') return { ...base, file: files[0], detected: ctx.exists(dirs[0]) };
+  const withFile = files.filter((f) => ctx.exists(f));
+  if (withFile.length === 1) return { ...base, file: withFile[0], detected: true };
+  const existingDirs = dirs.filter((d) => ctx.exists(d));
+  const choices = withFile.length > 1 ? withFile : existingDirs.map((d) => pathJoin(ctx, d, CLAUDE_DESKTOP_FILE));
+  return { ...base, file: choices[0] ?? files[0], detected: existingDirs.length > 0, choices };
+}
+
+function listDir(ctx: ClientContext, dir: string): string[] {
+  try {
+    return (ctx.listDir ?? readdirSync)(dir);
+  } catch {
+    return [];
+  }
 }
 
 function vscodeUserDir(ctx: ClientContext, product: 'Code' | 'Code - Insiders'): string {
@@ -182,9 +226,8 @@ export function knownClients(ctx: ClientContext): ClientTarget[] {
     detected: ctx.exists(dir),
   });
   const out: ClientTarget[] = [];
-  const desktopDirs = claudeDesktopDirs(ctx);
-  const desktop = desktopDirs.find((d) => ctx.exists(d)) ?? desktopDirs[0];
-  if (desktop) out.push(t('claude-desktop', 'Claude Desktop', 'mcpServers', desktop, 'claude_desktop_config.json'));
+  const desktop = claudeDesktopTarget(ctx);
+  if (desktop) out.push(desktop);
   out.push(t('vscode', 'VS Code (GitHub Copilot agent mode)', 'vscode', vscodeUserDir(ctx, 'Code'), 'mcp.json'));
   out.push(t('vscode-insiders', 'VS Code Insiders', 'vscode', vscodeUserDir(ctx, 'Code - Insiders'), 'mcp.json'));
   out.push(t('cursor', 'Cursor', 'mcpServers', pathJoin(ctx, ctx.home, '.cursor'), 'mcp.json'));

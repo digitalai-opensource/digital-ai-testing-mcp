@@ -28,7 +28,8 @@ import {
   writeStore,
   type RawStoreFile,
 } from '../utils/credential-store.js';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import {
   buildLaunchEntry,
   claudeCodeCommand,
@@ -87,6 +88,8 @@ Options for add:
   --plain-file        Keep the key in the profiles file instead of the OS keychain
   --default           Make it the profile the server starts on
   --skip-check        Save without checking the key against the API
+Options for clients add:
+  --config <file>     The config file to edit, for ONE named client (Claude Desktop on Windows, when setup cannot tell)
 Options for every command:
   --yes, -y           Answer yes to confirmations (replace, remove, repair, reset)
 
@@ -250,6 +253,7 @@ interface Flags {
   'plain-file'?: boolean;
   default?: boolean;
   'skip-check'?: boolean;
+  config?: string;
   yes?: boolean;
 }
 
@@ -517,8 +521,26 @@ function describeEntry(io: SetupIO, entry: LaunchEntry) {
   for (const n of entry.notes) io.out(`  Note: ${n}`);
 }
 
+/** "path (modified 2026-11-17 18:50)" for each candidate file, or "path (no file yet)". */
+function describeChoices(files: string[]): string {
+  return files
+    .map((f) => {
+      try {
+        return `${f} (modified ${statSync(f).mtime.toISOString().slice(0, 16).replace('T', ' ')})`;
+      } catch {
+        return `${f} (no file yet)`;
+      }
+    })
+    .join('; ');
+}
+
+const CHOOSE_HINT = (t: ClientTarget) =>
+  `Claude Desktop keeps its config in different places on Windows, and setup cannot tell which one this install reads. ` +
+  `Candidates: ${describeChoices(t.choices ?? [])}. Pick it with: digital-ai-testing-mcp setup clients add ${t.id} --config "<file>"`;
+
 function statusLine(t: ClientTarget, entry: LaunchEntry): string {
   if (!t.detected) return 'not installed';
+  if (t.choices) return `installed — ${CHOOSE_HINT(t)}`;
   const s = clientStatus(t, entry);
   const others = s.otherNames.length ? ` It also starts this server as "${s.otherNames.join('", "')}" — remove that entry to avoid two copies.` : '';
   if (s.unreadable) return `not changed by setup — ${s.unreadable}. "setup clients add ${t.id}" prints the entry to paste.${others}`;
@@ -541,8 +563,18 @@ function cmdClientsList(io: SetupIO, ctx: ClientContext) {
 }
 
 /** The named clients, or every installed one when none is named. */
-function pickTargets(ctx: ClientContext, ids: string[]): ClientTarget[] {
+function pickTargets(ctx: ClientContext, ids: string[], config?: string): ClientTarget[] {
   const known = knownClients(ctx);
+  if (config !== undefined) {
+    // --config names the file for ONE client: it must be that client's file name, in a folder that exists.
+    if (ids.length !== 1) throw new SetupError('--config needs exactly one client, e.g. setup clients add claude-desktop --config "<file>"', 2);
+    const t = known.find((k) => k.id === ids[0].toLowerCase());
+    if (!t) throw new SetupError(`Unknown client "${ids[0]}". Known: ${known.map((k) => k.id).join(', ')}.`, 2);
+    const wanted = basename(t.file);
+    if (basename(config) !== wanted) throw new SetupError(`--config must point to a file named ${wanted} (got ${config}).`, 2);
+    if (!existsSync(dirname(config))) throw new SetupError(`The folder of ${config} does not exist.`, 2);
+    return [{ ...t, file: config, detected: true, choices: undefined }];
+  }
   if (ids.length === 0) return known.filter((t) => t.detected);
   return ids.map((id) => {
     const t = known.find((k) => k.id === id.toLowerCase());
@@ -558,6 +590,11 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
   const entry = buildLaunchEntry(ctx);
   let attention = 0;
   for (const t of targets) {
+    if (t.choices) {
+      io.out(`${t.label}: not changed — ${CHOOSE_HINT(t)}`);
+      attention++;
+      continue;
+    }
     const s = clientStatus(t, entry);
     if (s.unreadable) {
       io.out(`${t.label}: not changed — ${s.unreadable}. Add this to ${t.file} by hand:`);
@@ -568,6 +605,15 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
     if (s.upToDate) {
       io.out(`${t.label}: already set up.`);
       continue;
+    }
+    // Claude Desktop on Windows: always show the exact file and get a yes for it (its location varies by install).
+    if (t.id === 'claude-desktop' && ctx.platform === 'win32' && !yes) {
+      const ok = io.interactive && /^y(es)?$/i.test(await io.ask(`Edit Claude Desktop's config file ${t.file}? [y/N] `));
+      if (!ok) {
+        io.out(`${t.label}: not changed${io.interactive ? '' : ` — add --yes to edit ${t.file}`}.`);
+        attention++;
+        continue;
+      }
     }
     if (s.hasEntry) {
       const question = s.entryHasKeys
@@ -588,6 +634,13 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
     }
     io.out(`${t.label}: ${s.hasEntry ? 'updated' : 'added'} (${t.file}${r.backup ? `; previous version kept as ${r.backup}` : ''}).`);
     for (const n of s.otherNames) io.out(`  It also starts this server as "${n}" — remove that entry in ${t.file} to avoid two copies.`);
+    if (t.id === 'claude-desktop') {
+      io.out(
+        '  To confirm Claude Desktop reads this file: quit it completely (also from the system tray / menu bar), start it again, ' +
+          `and check that "${SERVER_ENTRY_NAME}" appears and is running in its MCP settings (Settings → Developer). If it does not appear, ` +
+          `this install reads another file: ${r.backup ? `put back ${r.backup}, then ` : ''}run "digital-ai-testing-mcp setup clients add claude-desktop --config <file>" with the file it uses.`
+      );
+    }
   }
   return attention;
 }
@@ -615,7 +668,7 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
     return;
   }
   if (sub === 'add') {
-    const targets = pickTargets(ctx, ids);
+    const targets = pickTargets(ctx, ids, flags.config);
     if (targets.length === 0) {
       throw new SetupError('No AI clients were found on this machine. Name one: digital-ai-testing-mcp setup clients add <client> (list: setup clients)', 1);
     }
@@ -627,12 +680,14 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
   }
   if (sub === 'remove') {
     const entry = buildLaunchEntry(ctx);
-    const targets = pickTargets(ctx, ids).filter((t) => clientStatus(t, entry).hasEntry);
+    const picked = pickTargets(ctx, ids, flags.config);
+    for (const t of picked.filter((p) => p.choices && ids.length > 0)) io.out(`${t.label}: not changed — ${CHOOSE_HINT(t).replace('setup clients add', 'setup clients remove')}`);
+    const targets = picked.filter((t) => !t.choices && clientStatus(t, entry).hasEntry);
+    const names = targets.map((t) => `${t.label} (${t.file})`).join(', ');
     if (targets.length === 0) {
       io.out(`No AI client has a "${SERVER_ENTRY_NAME}" entry to remove.`);
       return;
     }
-    const names = targets.map((t) => t.label).join(', ');
     if (!(await confirm(io, !!flags.yes, `Remove the "${SERVER_ENTRY_NAME}" entry from ${names}? [y/N] `, 'Add --yes to remove it.'))) {
       throw new SetupError('Nothing was changed.', 1);
     }
@@ -664,6 +719,7 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
           'plain-file': { type: 'boolean' },
           default: { type: 'boolean' },
           'skip-check': { type: 'boolean' },
+          config: { type: 'string' },
           yes: { type: 'boolean', short: 'y' },
           help: { type: 'boolean', short: 'h' },
         },
