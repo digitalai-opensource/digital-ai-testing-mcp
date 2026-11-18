@@ -114,7 +114,7 @@ export function isWithinInterval(at: number | undefined, now: number): boolean {
 export type InstallKind = 'npm' | 'npx' | 'source' | 'docker';
 
 /**
- * docker — anything but MCP_DEPLOYMENT_MODE=local. Under local, the path of the running code tells the rest:
+ * docker — any deployment mode but local (an unset mode is local outside a container). Under local, the path of the running code tells the rest:
  * npx runs from <npm cache>/_npx/…, an npm install from …/node_modules/digital-ai-testing-mcp/…, and anything else is a
  * source checkout (git clone + npm run build).
  */

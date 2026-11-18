@@ -15,6 +15,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { getServerVersion, packageSpec } from './version.js';
 
 export type SetupContext = 'client-config' | 'docker' | 'source';
 
@@ -44,9 +45,10 @@ function whereToSet(ctx: SetupContext): string {
   switch (ctx) {
     case 'client-config':
       return (
-        "Add them to the `env` block of this server's entry in the AI client's MCP configuration (for example " +
-        'claude_desktop_config.json, .vscode/mcp.json, .cursor/mcp.json, ~/.claude.json or ~/.codex/config.toml), ' +
-        'together with MCP_DEPLOYMENT_MODE=local.'
+        `Easiest: run "npx -y ${packageSpec(getServerVersion())} setup" in a terminal — it checks the key and saves it in ` +
+        'the credential store (the OS keychain), where this server finds it. Or add them to the `env` block of this ' +
+        "server's entry in the AI client's MCP configuration (for example claude_desktop_config.json, .vscode/mcp.json, " +
+        '.cursor/mcp.json, ~/.claude.json or ~/.codex/config.toml).'
       );
     case 'docker':
       return (
@@ -55,8 +57,9 @@ function whereToSet(ctx: SetupContext): string {
       );
     case 'source':
       return (
-        "Add them to the `env` block of this server's entry in the AI client's MCP configuration, or to a .env file in " +
-        'the folder the server starts from.'
+        'Easiest: in the checkout, run "node dist/index.js setup" in a terminal — it checks the key and saves it in the ' +
+        "credential store. Or add them to the `env` block of this server's entry in the AI client's MCP configuration, " +
+        'or to a .env file in the folder the server starts from.'
       );
   }
 }

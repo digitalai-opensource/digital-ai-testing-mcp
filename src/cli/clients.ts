@@ -18,18 +18,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
-import { getServerVersion } from '../utils/version.js';
+import { getServerVersion, PACKAGE_NAME, packageSpec } from '../utils/version.js';
 
 export const SERVER_ENTRY_NAME = 'digital-ai-testing';
-export const PACKAGE_NAME = 'digital-ai-testing-mcp';
-
-/**
- * The package the entry starts: `@latest` normally; `@next` when setup itself is a prerelease (2.4.0-beta.1) — a beta
- * tester's clients then stay on the beta channel (release-channel.sh publishes prereleases to npm `next` only).
- */
-export function packageSpec(version: string | undefined): string {
-  return `${PACKAGE_NAME}@${version && version.includes('-') ? 'next' : 'latest'}`;
-}
+// The entry starts packageSpec(version): @latest, or @next when setup itself is a prerelease (see utils/version.ts).
+export { PACKAGE_NAME, packageSpec };
 const BACKUP_SUFFIX = '.digital-ai-testing.bak';
 
 export interface ClientContext {

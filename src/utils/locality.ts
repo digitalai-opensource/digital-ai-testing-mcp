@@ -11,6 +11,7 @@
 // correct for however this server instance is actually running — the agent
 // never sees the env var or has to reason about it itself.
 import { getDeploymentMode } from './deployment-mode.js';
+import { installKind, updateSteps } from './update-check.js';
 
 /** Append to the DESCRIPTION of any tool that writes a file to a local path. */
 export function serverFsDownloadNotice(): string {
@@ -120,11 +121,13 @@ export function serverFsProjectDirParam(): string {
 }
 
 /** One-line remedy for "tools are missing / build looks stale" diagnostics. */
+/**
+ * How to get a current build, for THIS install: the same steps the update notice gives (updateSteps by installKind —
+ * npx, npm, a source checkout, Docker). It used to say `npm install -g` for every local install, which is wrong for
+ * npx (a restart is enough) and for a source checkout (git pull + build).
+ */
 export function staleBuildRemedy(): string {
-  if (isLocal()) {
-    return 'Run `npm install -g digital-ai-testing-mcp` again to update to the latest published version.';
-  }
-  return 'Rebuild: docker build -t digital-ai-testing-mcp:latest .';
+  return updateSteps(installKind());
 }
 
 function isLocal(): boolean {

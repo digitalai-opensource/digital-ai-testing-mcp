@@ -20,3 +20,14 @@ export function getServerVersion(): string {
   }
   return cached;
 }
+
+export const PACKAGE_NAME = 'digital-ai-testing-mcp';
+
+/**
+ * The npm spec to start or point people at: `@latest` normally; `@next` when the running version is a prerelease
+ * (2.4.0-beta.1) — prereleases are published to npm `next` only (.github/scripts/release-channel.sh), so a beta keeps
+ * its users on the beta channel.
+ */
+export function packageSpec(version: string | undefined): string {
+  return `${PACKAGE_NAME}@${version && version.includes('-') ? 'next' : 'latest'}`;
+}

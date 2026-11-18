@@ -40,7 +40,7 @@ describe('setupGuidance', () => {
     );
   });
   it('says where to set them for each kind of install', () => {
-    expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'client-config')).toContain('MCP_DEPLOYMENT_MODE=local');
+    expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'client-config')).toMatch(/Easiest: run "npx -y digital-ai-testing-mcp@(latest|next) setup"/);
     expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'docker')).toContain('--env-file');
     expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'source')).toContain('.env file in the folder the server starts from');
   });
