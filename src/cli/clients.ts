@@ -469,6 +469,60 @@ function codexStatus(target: ClientTarget, block: string): EntryStatus {
   };
 }
 
+/** A connection profile written into a client's existing entry (environment variables). */
+export interface EntryProfile {
+  /** The name the server gives it: "default" for DIGITAL_AI_BASE_URL/ACCESS_KEY, else DAI_PROFILE_<NAME> lowercased. */
+  name: string;
+  url?: string;
+  key?: string;
+}
+
+/** The credential variables of our entry, as strings (JSON env/environment, or Codex's .env table). */
+function entryEnv(target: ClientTarget): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!existsSync(target.file)) return out;
+  if (target.format === 'codex-toml') {
+    const { ours } = splitCodex(readFileSync(target.file, 'utf8'));
+    for (const line of ours) {
+      const m = /^\s*([A-Za-z0-9_]+)\s*=\s*("(?:[^"\\]|\\.)*"|'[^']*')\s*$/.exec(line);
+      if (!m) continue;
+      try {
+        out[m[1]] = m[2].startsWith("'") ? m[2].slice(1, -1) : (JSON.parse(m[2]) as string);
+      } catch {
+        // an escape TOML allows but JSON does not: leave that variable out
+      }
+    }
+    return out;
+  }
+  const r = readJson(target.file);
+  const container = (r.data?.[containerKey(target.format)] ?? {}) as Json;
+  for (const [k, v] of Object.entries(envOf(target.format, container[SERVER_ENTRY_NAME]))) if (typeof v === 'string') out[k] = v;
+  return out;
+}
+
+/**
+ * The profiles our existing entry defines, read the way the server reads its environment. A profile with only a URL or
+ * only a key is returned too (incomplete), so the caller can say so. Keys are returned for importing — never print them.
+ */
+export function entryProfiles(target: ClientTarget): EntryProfile[] {
+  const env = entryEnv(target);
+  const clean = (v: string | undefined) => v?.trim() || undefined;
+  const out: EntryProfile[] = [];
+  const defUrl = clean(env.DIGITAL_AI_BASE_URL);
+  const defKey = clean(env.DIGITAL_AI_ACCESS_KEY);
+  if (defUrl || defKey) out.push({ name: 'default', url: defUrl?.replace(/\/+$/, ''), key: defKey });
+  const names = new Set<string>();
+  for (const k of Object.keys(env)) {
+    const m = /^DAI_PROFILE_(.+)_(URL|KEY)$/.exec(k);
+    if (m) names.add(m[1]);
+  }
+  for (const raw of names) {
+    const url = clean(env[`DAI_PROFILE_${raw}_URL`]);
+    out.push({ name: raw.toLowerCase(), url: url?.replace(/\/+$/, ''), key: clean(env[`DAI_PROFILE_${raw}_KEY`]) });
+  }
+  return out;
+}
+
 export function clientStatus(target: ClientTarget, e: LaunchEntry): EntryStatus {
   return target.format === 'codex-toml' ? codexStatus(target, codexBlock(e)) : jsonStatus(target, entryFor(target.format, e));
 }

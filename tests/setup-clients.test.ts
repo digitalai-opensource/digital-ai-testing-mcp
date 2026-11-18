@@ -11,6 +11,7 @@ import {
   claudeCodeCommand,
   clientStatus,
   codexBlock,
+  entryProfiles,
   packageSpec,
   knownClients,
   removeClientEntry,
@@ -299,6 +300,20 @@ describe('Codex (TOML)', () => {
     expect(readFileSync(file, 'utf8')).toBe(existing);
   });
 
+  it('entryProfiles reads the profiles of our env table (not another table\'s)', () => {
+    mkdirSync(join(home, '.codex'));
+    writeFileSync(
+      target('codex').file,
+      '[mcp_servers.digital-ai-testing]\ncommand = "npx"\n\n[mcp_servers.digital-ai-testing.env]\n' +
+        'DIGITAL_AI_BASE_URL = "https://a.example.com/"\nDIGITAL_AI_ACCESS_KEY = \'aut_1_x\'\nDAI_PROFILE_QA_URL = "https://b.example.com"\nDAI_PROFILE_QA_KEY = "k2"\n\n' +
+        '[mcp_servers.old.env]\nDAI_PROFILE_OTHER_KEY = "k3"\n'
+    );
+    expect(entryProfiles(target('codex'))).toEqual([
+      { name: 'default', url: 'https://a.example.com', key: 'aut_1_x' },
+      { name: 'qa', url: 'https://b.example.com', key: 'k2' },
+    ]);
+  });
+
   it('reports a key in our env table and another table that runs the package', () => {
     mkdirSync(join(home, '.codex'));
     writeFileSync(
@@ -371,7 +386,7 @@ describe('setup clients commands', () => {
   it('in a terminal, replacing asks first and says the entry holds its own key', async () => {
     mkdirSync(join(home, '.cursor'));
     writeFileSync(join(home, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { 'digital-ai-testing': { command: 'npx', env: { DIGITAL_AI_ACCESS_KEY: 'k' } } } }));
-    const t = io(['n'], true);
+    const t = io(['n', 'n'], true); // no import, no replace
     expect(await runSetupCli(['clients', 'add', 'cursor'], t.s)).toBe(1);
     expect(t.all()).toMatch(/Cursor: not changed\./);
   });

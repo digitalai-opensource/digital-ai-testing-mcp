@@ -434,6 +434,90 @@ describe('setup repair / reset', () => {
   });
 });
 
+describe('setup clients add — importing the profiles of an entry it replaces', () => {
+  const URL_B = 'https://other.example.com';
+  const KEY_U = 'aut_1_entryProjectUserKey';
+  const cfg = () => join(dir, 'home', 'custom', 'mcp.json');
+  const writeEntry = (env: Record<string, string>) => {
+    mkdirSync(dirname(cfg()), { recursive: true });
+    writeFileSync(cfg(), JSON.stringify({ mcpServers: { mine: { command: 'x' }, 'digital-ai-testing': { command: 'npx', env } } }));
+  };
+  const multi = () => ({
+    DIGITAL_AI_BASE_URL: `${URL_A}/`,
+    DIGITAL_AI_ACCESS_KEY: KEY,
+    DAI_PROFILE_PROJECT_USER_URL: URL_B,
+    DAI_PROFILE_PROJECT_USER_KEY: KEY_U,
+  });
+  const byKey = async (_url: string, key: string) => (key === KEY_U ? PROJECT_USER : key === KEY ? CLOUD_ADMIN : ({ ok: false, problem: 'rejected', status: 401 } as CredentialCheck));
+  const clientsAdd = (extra: string[], s: Script) => {
+    const t = scripted({ verify: byKey, ...s });
+    return runSetupCli(['clients', 'add', 'cursor', '--config', cfg(), ...extra], t.io).then((code) => ({ code, ...t }));
+  };
+  const entryEnv = () => JSON.parse(readFileSync(cfg(), 'utf8')).mcpServers['digital-ai-testing'].env;
+
+  it('imports the profiles the store lacks (keys to the keychain, never printed), then replaces the entry', async () => {
+    writeEntry(multi());
+    const r = await clientsAdd([], { interactive: true, answers: ['', 'y'] });
+    expect(r.code).toBe(0);
+    expect(r.asked[0]).toContain('Import them into the credential store');
+    expect(r.all()).toContain('does not have: its default connection (DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY), "project_user"');
+    expect(r.all()).toContain('→ profile "admin" (Cloud Admin)');
+    expect(r.all()).toContain('→ profile "project_user" (Project User of project "Mobile QA")');
+    expect(readFile().profiles).toEqual({ admin: { url: URL_A, keyStore: 'os' }, project_user: { url: URL_B, keyStore: 'os' } });
+    expect(readFile().default).toBe('admin');
+    expect(kc.entries).toEqual({ admin: KEY, project_user: KEY_U });
+    expect(entryEnv().DIGITAL_AI_ACCESS_KEY).toBeUndefined();
+    expect(JSON.parse(readFileSync(cfg(), 'utf8')).mcpServers.mine).toEqual({ command: 'x' });
+    expect(r.all()).not.toContain(KEY);
+    expect(r.all()).not.toContain(KEY_U);
+  });
+
+  it('profiles the store already holds (same URL and key, any name) are not asked about', async () => {
+    await add(['cloud', '--url', URL_A, '--key-stdin']);
+    writeEntry({ DIGITAL_AI_BASE_URL: URL_A, DIGITAL_AI_ACCESS_KEY: KEY });
+    const r = await clientsAdd([], { interactive: true, answers: ['y'] });
+    expect(r.code).toBe(0);
+    expect(r.all()).toContain('holds a profile the credential store already has');
+    expect(r.asked.some((q) => q.includes('Import'))).toBe(false);
+    expect(Object.keys(readFile().profiles)).toEqual(['cloud']);
+  });
+
+  it('outside a terminal without --yes: nothing imported, the add commands listed, the file unchanged', async () => {
+    writeEntry(multi());
+    const before = readFileSync(cfg(), 'utf8');
+    const r = await clientsAdd([], {});
+    expect(r.code).toBe(1);
+    expect(r.all()).toContain(`add project_user --url ${URL_B}`);
+    expect(r.all()).toContain(`add <name> --url ${URL_A}`);
+    expect(readFileSync(cfg(), 'utf8')).toBe(before);
+    expect(existsSync(storeFile())).toBe(false);
+    expect(kc.entries).toEqual({});
+  });
+
+  it('declining the import makes the replace question name what would be lost', async () => {
+    writeEntry(multi());
+    const r = await clientsAdd([], { interactive: true, answers: ['n', 'n'] });
+    expect(r.code).toBe(1);
+    expect(r.asked[1]).toContain('It would lose: default, project_user');
+    expect(entryEnv().DAI_PROFILE_PROJECT_USER_KEY).toBe(KEY_U);
+  });
+
+  it('--yes imports what checks out, reports the rest, and an existing name with other credentials is kept', async () => {
+    await add(['project_user', '--url', URL_B, '--key-stdin'], { stdin: KEY2 });
+    writeEntry({ ...multi(), DAI_PROFILE_STALE_URL: URL_A, DAI_PROFILE_STALE_KEY: 'aut_1_revoked', DAI_PROFILE_HALF_URL: URL_A });
+    const r = await clientsAdd(['--yes'], {});
+    expect(r.code).toBe(0);
+    expect(r.all()).toContain('"stale": not imported — the access key was refused (HTTP 401)');
+    expect(r.all()).toContain('"half": not imported — the entry has no access key for it');
+    expect(r.all()).toContain('"project_user": not imported — the credential store already has a profile named "project_user"');
+    expect(readFile().profiles.admin).toEqual({ url: URL_A, keyStore: 'os' });
+    expect(kc.entries.project_user).toBe(KEY2); // the store's own key, untouched
+    expect(readFile().default).toBe('project_user'); // the store already had a default
+    expect(r.all()).toContain('setup default admin');
+    expect(entryEnv().DIGITAL_AI_ACCESS_KEY).toBeUndefined();
+  });
+});
+
 describe('setup usage', () => {
   it('help, unknown commands and no command outside a terminal', async () => {
     const help = scripted();

@@ -407,6 +407,7 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 - Each file is copied to `<file>.digital-ai-testing.bak` before it is changed, and every other server and setting in it stays as it was.
 - A file that contains comments is not rewritten. `setup` prints the entry for you to paste instead.
 - If the client already has a `digital-ai-testing` entry, `setup` asks before replacing it and tells you when that entry holds its own key.
+- If that entry defines profiles of its own (`DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY`, `DAI_PROFILE_*`) that your saved profiles don't include, `setup` offers to import them first. It checks each key, keeps it in the OS keychain and never shows it. A profile it cannot import is listed with the command to add it yourself.
 - The entry starts Node.js and npx by their full paths and sets its own PATH, so it also works in clients that don't pass your terminal's PATH to the server, such as macOS apps and Xcode. If you switch Node.js versions with nvm or volta, run `setup clients add` again.
 - **Claude Code** rewrites its own settings while it runs, so `setup clients` prints a `claude mcp add` command for you to run instead.
 - **Claude Desktop on Windows** keeps its configuration in different places depending on how it was installed. `setup` edits it only when it finds exactly one configuration file, shows you the path and asks first. If it finds several, or none, it lists them and you choose one with `--config "<file>"`.

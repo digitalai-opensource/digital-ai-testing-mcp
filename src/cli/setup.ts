@@ -42,6 +42,8 @@ import {
   claudeCodeCommand,
   clientStatus,
   defaultClientContext,
+  entryProfiles,
+  type EntryProfile,
   knownClients,
   manualClients,
   pasteSnippet,
@@ -672,6 +674,110 @@ function pickTargets(ctx: ClientContext, ids: string[], config?: string): Client
   });
 }
 
+/**
+ * An entry about to be replaced holds its own profiles (URL + key variables). The new entry has none, so any profile the
+ * credential store does not already hold (same URL and key, any name) would be lost. Offers to import those into the
+ * store — each key checked first, keys to the OS keychain, never printed. Returns the profiles still missing afterwards.
+ */
+async function importEntryProfiles(io: SetupIO, t: ClientTarget, yes: boolean): Promise<string[]> {
+  const found = entryProfiles(t);
+  if (found.length === 0) return [];
+  const store = readStore();
+  const held = Object.values(store.profiles);
+  const missing = found.filter((p) => !(p.url && p.key && held.some((h) => h.url.replace(/\/+$/, '') === p.url && h.key === p.key)));
+  if (missing.length === 0) {
+    io.out(`${t.label}'s entry holds ${found.length === 1 ? 'a profile' : `${found.length} profiles`} the credential store already has.`);
+    return [];
+  }
+  const label = (p: EntryProfile) => (p.name === 'default' ? 'its default connection (DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY)' : `"${p.name}"`);
+  io.out(`${t.label}'s entry holds ${missing.length === 1 ? 'a profile' : `${missing.length} profiles`} the credential store does not have: ${missing.map(label).join(', ')}.`);
+  io.out(`  The new entry reads only the credential store, so ${t.label} would lose ${missing.length === 1 ? 'it' : 'them'}.`);
+  const raw = readStoreFileRaw();
+  if (raw.exists && !raw.data) {
+    io.out(`  They cannot be imported: the profiles file ${storePath()} is unreadable (${raw.error}). ${capital(brokenFileFix())}.`);
+    return missing.map((p) => p.name);
+  }
+  const doImport =
+    yes || (io.interactive && !/^n(o)?$/i.test(await io.ask('Import them into the credential store (each key is checked first; keys go to the OS keychain)? [Y/n] ')));
+  if (!doImport) {
+    io.out('  Not imported. To add them yourself:');
+    for (const p of missing) io.out(`    ${setupCommand()} add ${p.name === 'default' ? '<name>' : p.name}${p.url ? ` --url ${p.url}` : ''}`);
+    return missing.map((p) => p.name);
+  }
+
+  const data = loadForEdit();
+  const notImported: string[] = [];
+  const imported: string[] = [];
+  let importedDefault: string | undefined;
+  for (const p of missing) {
+    const url = p.url ? validUrl(p.url) : null;
+    if (!url || !p.key) {
+      io.out(`  ${label(p)}: not imported — the entry has ${!p.key ? 'no access key' : p.url ? `an invalid URL (${p.url})` : 'no URL'} for it.`);
+      notImported.push(p.name);
+      continue;
+    }
+    const check = await io.verify(url, p.key);
+    if (!check.ok) {
+      io.out(`  ${label(p)}: not imported — ${describeCheck(check, url)}.`);
+      notImported.push(p.name);
+      continue;
+    }
+    // The env default has no name of its own in the store: name it after its role ("admin", the project), else "default".
+    let name = p.name;
+    if (p.name === 'default') {
+      const suggested = suggestName(check);
+      name = findRawProfileName(data, suggested) ? 'default' : suggested;
+    }
+    if (!PROFILE_NAME_RE.test(name)) {
+      io.out(`  ${label(p)}: not imported — "${name}" is not a valid profile name. Add it with: ${setupCommand()} add <name> --url ${url}`);
+      notImported.push(p.name);
+      continue;
+    }
+    if (findRawProfileName(data, name)) {
+      io.out(
+        `  ${label(p)}: not imported — the credential store already has a profile named "${name}" with a different URL or key. ` +
+          `Kept the store's. To keep both: ${setupCommand()} add <other name> --url ${url}`
+      );
+      notImported.push(p.name);
+      continue;
+    }
+    const saved = saveKeyToKeychain(name, p.key);
+    if (!saved.ok) {
+      io.out(`  ${label(p)}: not imported — the OS keychain could not store the key (${saved.error}). Add it with: ${setupCommand()} add ${name} --url ${url} --plain-file`);
+      notImported.push(p.name);
+      continue;
+    }
+    data.profiles[name] = { url, keyStore: 'os' };
+    imported.push(name);
+    if (p.name === 'default') importedDefault = name;
+    io.out(`  ${label(p)} → profile "${name}" (${roleLine(check.info)}).`);
+  }
+  if (imported.length === 0) return notImported;
+
+  // The old entry started on its default connection: keep that, unless the store already has a usable default.
+  const currentDefault = typeof data.default === 'string' ? data.default.trim().toLowerCase() : undefined;
+  const defaultExists = !!currentDefault && !!findRawProfileName(data, currentDefault);
+  const startOn = importedDefault ?? (defaultExists ? undefined : imported[0]);
+  if (startOn && !defaultExists) data.default = startOn;
+  writeStore(data);
+
+  const back = readStore();
+  for (const name of imported) {
+    if (!back.profiles[name]) {
+      const why = back.skipped.find((s) => s.name === name)?.reason ?? back.error ?? 'unknown reason';
+      io.out(`  "${name}" was written to ${storePath()}, but reading it back failed: ${why}.`);
+      notImported.push(name);
+    }
+  }
+  io.out(`Imported ${imported.length} profile${imported.length === 1 ? '' : 's'} into ${storePath()}.`);
+  if (importedDefault && defaultExists && currentDefault !== importedDefault) {
+    io.out(`  The server still starts on "${currentDefault}" (the store's default). To start on the entry's old default instead: ${setupCommand()} default ${importedDefault}`);
+  } else if (back.defaultProfile) {
+    io.out(`  The server starts on "${back.defaultProfile}".`);
+  }
+  return notImported;
+}
+
 /** Adds or updates the entry in each target. Returns how many were left unchanged and need attention. */
 async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarget[], yes: boolean): Promise<number> {
   const entry = buildLaunchEntry(ctx);
@@ -703,9 +809,12 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
       }
     }
     if (s.hasEntry) {
-      const question = s.entryHasKeys
-        ? `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with its own access key. Replace it with one that uses the credential store? [y/N] `
-        : `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with a different launch command. Replace it? [y/N] `;
+      const lost = s.entryHasKeys ? await importEntryProfiles(io, t, yes) : [];
+      const question = lost.length
+        ? `Replace ${t.label}'s entry anyway? It would lose: ${lost.join(', ')}. [y/N] `
+        : s.entryHasKeys
+          ? `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with its own access key. Replace it with one that uses the credential store? [y/N] `
+          : `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with a different launch command. Replace it? [y/N] `;
       const replace = yes || (io.interactive && /^y(es)?$/i.test(await io.ask(question)));
       if (!replace) {
         io.out(`${t.label}: not changed${io.interactive ? '' : ' — add --yes to replace its existing entry'}.`);
