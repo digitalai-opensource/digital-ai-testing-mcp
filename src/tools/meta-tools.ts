@@ -212,9 +212,16 @@ export function registerMetaTools(server: McpServer): void {
       }
 
       const keyLabel = describeLevel(await getAccessInfo());
+      // Where the active credential comes from — a store profile is otherwise indistinguishable here (intake 2026-11-17).
+      const active = listProfiles().find((p) => p.name === activeProfile);
+      const from = !active
+        ? ''
+        : active.source === 'store'
+          ? ` · from the credential store (key in ${active.keyStore === 'os' ? 'the OS keychain' : 'the profiles file'})`
+          : ' · from environment variables';
       const envLine = envCount > 1
-        ? `Active profile:   "${activeProfile}" — ${keyLabel} (${envCount} profiles — use list_environments / switch_environment)`
-        : `Active profile:   "${activeProfile}" — ${keyLabel}`;
+        ? `Active profile:   "${activeProfile}" — ${keyLabel}${from} (${envCount} profiles — use list_environments / switch_environment)`
+        : `Active profile:   "${activeProfile}" — ${keyLabel}${from}`;
 
       const lines = [
         `Server:           ${name} v${version}`,

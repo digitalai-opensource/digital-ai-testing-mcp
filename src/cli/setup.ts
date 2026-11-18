@@ -15,6 +15,7 @@ import { isKnownNotCloudAdmin, type AccessInfo } from '../utils/access-level.js'
 import {
   deleteKeyFromKeychain,
   deleteStoreFiles,
+  getKeychain,
   findRawProfileName,
   isStoreEnabled,
   KEYCHAIN_SERVICE,
@@ -29,6 +30,11 @@ import {
   type RawStoreFile,
 } from '../utils/credential-store.js';
 import { existsSync, statSync } from 'node:fs';
+import { getServerVersion } from '../utils/version.js';
+import { getDeploymentMode, runningInContainer } from '../utils/deployment-mode.js';
+import { installKind } from '../utils/update-check.js';
+import { redact } from '../utils/remediation.js';
+import { credentialEnvPresence } from '../utils/profile-loader.js';
 import { basename, dirname } from 'node:path';
 import {
   buildLaunchEntry,
@@ -74,6 +80,7 @@ Commands:
   default <name>      Make <name> the profile the server starts on
   remove <name>       Delete a profile (and its key in the OS keychain)
   test [name]         Check one profile, or all, against the API
+  doctor              A report for support: install, profiles, keychain and AI clients (never a key)
   path                Show where the profiles file is
   repair              Restore the profiles file from its backup
   reset               Delete the profiles file, its backups and the keys it keeps in the OS keychain
@@ -90,6 +97,8 @@ Options for add:
   --skip-check        Save without checking the key against the API
 Options for clients add:
   --config <file>     The config file to edit, for ONE named client (Claude Desktop on Windows, when setup cannot tell)
+Options for doctor:
+  --offline           Skip checking each profile against the API
 Options for every command:
   --yes, -y           Answer yes to confirmations (replace, remove, repair, reset)
 
@@ -250,6 +259,7 @@ function storeOffNote(io: SetupIO) {
 interface Flags {
   url?: string;
   'key-stdin'?: boolean;
+  offline?: boolean;
   'plain-file'?: boolean;
   default?: boolean;
   'skip-check'?: boolean;
@@ -437,6 +447,75 @@ async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags)
     );
   }
   io.out(RESTART);
+}
+
+/**
+ * One report for a support ticket: install, deployment mode, credential variables in this terminal (names only),
+ * the credential store (each profile checked against the API unless --offline), the OS keychain, and every AI client.
+ * Everything goes through redact() as a safety net; no key is ever printed in the first place. Exit 1 when a check
+ * failed, so scripts can use it.
+ */
+async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
+  const lines: string[] = [];
+  const say = (s = '') => lines.push(s);
+  let problems = 0;
+
+  say('Digital.ai Testing MCP — setup doctor (safe to share: it never contains an access key)');
+  say(`Version ${getServerVersion()} · Node ${process.version} (${process.execPath}) · ${process.platform} ${process.arch} · install: ${installKind()}`);
+  const modeVar = process.env.MCP_DEPLOYMENT_MODE?.trim();
+  say(`Deployment mode: ${getDeploymentMode()} (MCP_DEPLOYMENT_MODE ${modeVar ? `= ${modeVar}` : `not set; ${runningInContainer() ? 'in a container' : 'not in a container'}`})`);
+
+  say('');
+  say('This terminal\'s environment (an AI client starts the server with ITS OWN, from its configuration):');
+  const env = credentialEnvPresence();
+  say(`  DIGITAL_AI_BASE_URL: ${env.baseUrl ?? 'not set'} · DIGITAL_AI_ACCESS_KEY: ${env.accessKeySet ? 'set' : 'not set'}`);
+  say(`  DAI_PROFILE_* profiles: ${env.namedProfiles.length ? env.namedProfiles.join(', ') : 'none'}`);
+  const settings = Object.keys(process.env).filter((k) => /^MCP_/.test(k) && !/(KEY|TOKEN|SECRET|PASSWORD)/i.test(k)).sort();
+  say(`  MCP_* settings: ${settings.length ? settings.map((k) => `${k}=${process.env[k]}`).join(' ') : 'none'}`);
+
+  say('');
+  const store = readStore();
+  const keychain = getKeychain();
+  say(`Credential store: ${store.path}${store.enabled ? (store.exists ? '' : ' (no file yet)') : ' — turned off (MCP_CREDENTIAL_STORE)'}`);
+  say(`  OS keychain: ${keychain.keychain ? 'available' : `NOT available — ${keychain.error}`}`);
+  if (store.error) {
+    say(`  PROBLEM: the file cannot be used — ${store.error}. Fix: digital-ai-testing-mcp setup repair, or edit it.`);
+    problems++;
+  }
+  for (const [name, p] of Object.entries(store.profiles)) {
+    const where = p.keyStore === 'os' ? 'key in the OS keychain' : 'key in the file';
+    const isDefault = store.defaultProfile === name ? ' (default)' : '';
+    if (flags.offline) {
+      say(`  ${name}${isDefault}: ${p.url} — ${where}`);
+      continue;
+    }
+    const check = await io.verify(p.url, p.key);
+    if (!check.ok) problems++;
+    say(`  ${name}${isDefault}: ${p.url} — ${where} — ${check.ok ? 'OK' : 'FAILED'}: ${describeCheck(check, p.url)}`);
+  }
+  for (const s of store.skipped) {
+    say(`  PROBLEM ${s.name}: ${s.reason}`);
+    problems++;
+  }
+  if (store.enabled && store.exists && !store.error && Object.keys(store.profiles).length > 1 && !store.defaultProfile) {
+    say('  PROBLEM: several profiles and no default — fix: digital-ai-testing-mcp setup default <name>');
+    problems++;
+  }
+
+  say('');
+  const ctx = io.clients ?? defaultClientContext();
+  const entry = buildLaunchEntry(ctx);
+  say('AI clients:');
+  say(`  Entry setup writes: ${entry.command} ${entry.args.join(' ')}`);
+  for (const n of entry.notes) say(`  Note: ${n}`);
+  for (const t of knownClients(ctx)) {
+    say(`  ${t.id.padEnd(22)} ${statusLine(t, entry)}${t.detected && !t.choices ? ` — ${t.file}` : ''}`);
+  }
+  say('');
+  say(problems ? `${problems} problem${problems === 1 ? '' : 's'} found (marked PROBLEM or FAILED above).` : 'No problems found.');
+
+  for (const l of lines) io.out(redact(l));
+  return problems === 0;
 }
 
 async function cmdTest(io: SetupIO, nameArg: string | undefined) {
@@ -720,6 +799,7 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
           default: { type: 'boolean' },
           'skip-check': { type: 'boolean' },
           config: { type: 'string' },
+          offline: { type: 'boolean' },
           yes: { type: 'boolean', short: 'y' },
           help: { type: 'boolean', short: 'h' },
         },
@@ -761,6 +841,9 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
         break;
       case 'test':
         await cmdTest(io, name);
+        break;
+      case 'doctor':
+        if (!(await cmdDoctor(io, flags))) return 1;
         break;
       case 'path':
         cmdPath(io);

@@ -209,3 +209,20 @@ export function getStoreStatus(): StoreStatus {
   const { store, shadowed } = getLoaded();
   return { enabled: store.enabled, path: store.path, exists: store.exists, error: store.error, skipped: store.skipped, shadowed };
 }
+
+/**
+ * Which credential variables are set in this process — for `setup doctor`. Names and the base URL only (a URL is not
+ * a secret); never a key.
+ */
+export function credentialEnvPresence(): { baseUrl?: string; accessKeySet: boolean; namedProfiles: string[] } {
+  const namedProfiles = Object.keys(process.env)
+    .map((k) => /^DAI_PROFILE_(.+)_URL$/.exec(k)?.[1])
+    .filter((n): n is string => !!n && !!process.env[`DAI_PROFILE_${n}_KEY`]?.trim())
+    .map((n) => n.toLowerCase())
+    .sort();
+  return {
+    baseUrl: process.env.DIGITAL_AI_BASE_URL?.trim() || undefined,
+    accessKeySet: !!process.env.DIGITAL_AI_ACCESS_KEY?.trim(),
+    namedProfiles,
+  };
+}

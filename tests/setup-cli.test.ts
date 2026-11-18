@@ -316,6 +316,49 @@ describe('setup list / default / remove / test / path', () => {
   });
 });
 
+describe('setup doctor', () => {
+  const ENV_KEY = 'aut_1_doctorEnvKeyValue';
+  afterEach(() => {
+    delete process.env.DIGITAL_AI_ACCESS_KEY;
+    delete process.env.DIGITAL_AI_BASE_URL;
+  });
+
+  it('reports install, environment (names only), store profiles with their check, and AI clients — never a key', async () => {
+    await add(['admin', '--url', URL_A, '--key-stdin']); // keychain
+    await add(['qa', '--url', URL_A, '--key-stdin', '--plain-file'], { stdin: KEY2 }); // file
+    process.env.DIGITAL_AI_BASE_URL = 'https://env.example.com';
+    process.env.DIGITAL_AI_ACCESS_KEY = ENV_KEY;
+    const t = scripted();
+    expect(await runSetupCli(['doctor'], t.io)).toBe(0);
+    const text = t.all();
+    expect(text).toMatch(/^Digital\.ai Testing MCP — setup doctor/);
+    expect(text).toMatch(/Deployment mode: (local|docker)/);
+    expect(text).toContain('DIGITAL_AI_BASE_URL: https://env.example.com · DIGITAL_AI_ACCESS_KEY: set');
+    expect(text).toContain('OS keychain: available');
+    expect(text).toMatch(/admin \(default\): https:\/\/tenant\.example\.com — key in the OS keychain — OK: Cloud Admin/);
+    expect(text).toMatch(/qa: https:\/\/tenant\.example\.com — key in the file — OK/);
+    expect(text).toContain('AI clients:');
+    expect(text).toContain('No problems found.');
+    for (const secret of [KEY, KEY2, ENV_KEY]) expect(text).not.toContain(secret);
+    expect(t.verifyCalls).toEqual([URL_A, URL_A]);
+  });
+
+  it('marks failures and broken profiles, exits 1; --offline makes no API call', async () => {
+    await add(['admin', '--url', URL_A, '--key-stdin']);
+    const f = readFile();
+    f.profiles.ghost = { url: URL_A, keyStore: 'os' };
+    writeFileSync(storeFile(), JSON.stringify(f));
+    const t = scripted({ verify: async () => ({ ok: false, problem: 'rejected', status: 401 }) });
+    expect(await runSetupCli(['doctor'], t.io)).toBe(1);
+    expect(t.all()).toContain('FAILED: the access key was refused (HTTP 401)');
+    expect(t.all()).toContain('PROBLEM ghost: its key is in the OS keychain, but there is no entry for it');
+    expect(t.all()).toContain('2 problems found');
+    const offline = scripted();
+    await runSetupCli(['doctor', '--offline'], offline.io);
+    expect(offline.verifyCalls).toEqual([]);
+  });
+});
+
 describe('setup repair / reset', () => {
   it('repair restores the backup and keeps the broken file', async () => {
     expect(await runSetupCli(['repair', '--yes'], scripted().io)).toBe(1); // no backup yet

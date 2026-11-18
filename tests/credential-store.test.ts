@@ -34,6 +34,8 @@ import {
   startupCredentialProblem,
 } from '../src/utils/profile-loader.js';
 import { getActiveAccessKey, getActiveProfileName, getActiveUrl } from '../src/api/client.js';
+import { registerMetaTools } from '../src/tools/meta-tools.js';
+import { startStubApi, accountInfo, connectTools } from './helpers/offline.js';
 
 const KEY_A = 'aut_1_storeTestKeyAlpha';
 const KEY_B = 'aut_1_storeTestKeyBravo';
@@ -390,5 +392,41 @@ describe('profile-loader with keychain profiles', () => {
     writeStore({ version: 1, default: 'team', profiles: { team: { url: 'https://t.example.com', keyStore: 'os' } } }, { MCP_CREDENTIAL_STORE_DIR: dir });
     resetProfilesForTests();
     expect(startupCredentialProblem()?.storeNote).toContain('there is no entry for it (service "digital-ai-testing-mcp", account "team")');
+  });
+});
+
+describe('get_server_info names where the active credential comes from', () => {
+  let dir: string;
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dai-info-'));
+    for (const k of ['MCP_CREDENTIAL_STORE', 'MCP_CREDENTIAL_STORE_DIR', 'DIGITAL_AI_BASE_URL', 'DIGITAL_AI_ACCESS_KEY']) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.MCP_CREDENTIAL_STORE = 'on';
+    process.env.MCP_CREDENTIAL_STORE_DIR = dir;
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    resetProfilesForTests();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a store profile: "from the credential store (key in …)"', async () => {
+    const api = await startStubApi((req) => (req.path === '/api/v1/users/my-account-info' ? accountInfo('Admin', 'Default') : undefined), { noResetClient: true });
+    try {
+      writeStore({ version: 1, default: 'team', profiles: { team: { url: api.baseUrl, key: KEY_A } } }, { MCP_CREDENTIAL_STORE_DIR: dir });
+      resetProfilesForTests();
+      const tools = await connectTools(registerMetaTools);
+      const text = (await tools.call('get_server_info', {})).text;
+      expect(text).toMatch(/Active profile: +"team" — .* · from the credential store \(key in the profiles file\)/);
+      expect(text).not.toContain(KEY_A);
+    } finally {
+      await api.close();
+    }
   });
 });
