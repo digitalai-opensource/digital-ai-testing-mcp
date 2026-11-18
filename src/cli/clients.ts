@@ -15,14 +15,26 @@
  *
  * Everything here takes a ClientContext so tests run against temp folders; nothing reads the real home folder directly.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { getServerVersion, PACKAGE_NAME, packageSpec } from '../utils/version.js';
+import { installKind, type InstallKind } from '../utils/update-check.js';
 
 export const SERVER_ENTRY_NAME = 'digital-ai-testing';
 // The entry starts packageSpec(version): @latest, or @next when setup itself is a prerelease (see utils/version.ts).
 export { PACKAGE_NAME, packageSpec };
+
+/**
+ * How to run setup again from THIS install, for the hints setup prints. A bare `digital-ai-testing-mcp setup` can start
+ * a different, older global install (seen live 2026-11-18: an old global copy answered with its pre-setup FATAL
+ * error) — so a setup started through npx names npx, and a source checkout names its own entry point.
+ */
+export function setupCommand(kind: InstallKind = installKind(), version: string | undefined = getServerVersion()): string {
+  if (kind === 'npx') return `npx -y ${packageSpec(version)} setup`;
+  if (kind === 'source') return 'node dist/index.js setup';
+  return `${PACKAGE_NAME} setup`;
+}
 const BACKUP_SUFFIX = '.digital-ai-testing.bak';
 
 export interface ClientContext {
@@ -36,10 +48,26 @@ export interface ClientContext {
   exists(path: string): boolean;
   /** Folder listing (default readdirSync); tests fake it to check Windows layouts on any OS. */
   listDir?(path: string): string[];
+  /** Resolves links (default realpathSync; undefined on failure) — follows fnm's per-terminal link to the real Node. */
+  realPath?(path: string): string | undefined;
 }
 
 export function defaultClientContext(): ClientContext {
-  return { platform: process.platform, env: process.env, home: homedir(), execPath: process.execPath, exists: existsSync, version: getServerVersion() };
+  return {
+    platform: process.platform,
+    env: process.env,
+    home: homedir(),
+    execPath: process.execPath,
+    exists: existsSync,
+    version: getServerVersion(),
+    realPath: (p) => {
+      try {
+        return realpathSync(p);
+      } catch {
+        return undefined;
+      }
+    },
+  };
 }
 
 // ─── The launch command ───────────────────────────────────────────────────────
@@ -67,17 +95,47 @@ function parentDir(ctx: ClientContext, p: string): string {
   return i > 0 ? p.slice(0, i) : p;
 }
 
-/** The folder holding the node binary, swapped for a version manager's stable alias when one exists. */
-export function stableNodeDir(ctx: ClientContext): { dir: string; versionSpecific: boolean } {
+const FNM_MULTISHELL_RE = /[\\/]fnm_multishells[\\/][^\\/]+(?:[\\/]bin)?$/i;
+
+/** Where fnm keeps its versions and aliases: FNM_DIR, else fnm's default folders for the platform. */
+function fnmDirCandidates(ctx: ClientContext): string[] {
+  const e = ctx.env;
+  const list = [e.FNM_DIR?.trim()];
+  if (ctx.platform === 'win32') list.push(e.APPDATA && pathJoin(ctx, e.APPDATA, 'fnm'), pathJoin(ctx, ctx.home, 'AppData', 'Roaming', 'fnm'));
+  else list.push(e.XDG_DATA_HOME && pathJoin(ctx, e.XDG_DATA_HOME, 'fnm'), pathJoin(ctx, ctx.home, '.local', 'share', 'fnm'), pathJoin(ctx, ctx.home, 'Library', 'Application Support', 'fnm'));
+  list.push(pathJoin(ctx, ctx.home, '.fnm'));
+  return [...new Set(list.filter((d): d is string => !!d))];
+}
+
+function fnmAlias(ctx: ClientContext, fnmDir: string): string | undefined {
   const win = ctx.platform === 'win32';
+  const alias = pathJoin(ctx, fnmDir, 'aliases', 'default', ...(win ? [] : ['bin']));
+  return ctx.exists(pathJoin(ctx, alias, win ? 'node.exe' : 'node')) ? alias : undefined;
+}
+
+/** The folder holding the node binary, swapped for a version manager's stable alias when one exists. */
+export function stableNodeDir(ctx: ClientContext): { dir: string; versionSpecific: boolean; temporary?: boolean } {
   const dir = parentDir(ctx, ctx.execPath);
-  const nodeExe = win ? 'node.exe' : 'node';
+
+  // fnm's per-terminal link (<state dir>/fnm_multishells/<id>[/bin]) — set up by `fnm env` in every shell and deleted
+  // later, so it must never reach a client's config (seen live 2026-11-18: npx from an fnm shell ran node from there).
+  if (FNM_MULTISHELL_RE.test(dir)) {
+    for (const fnmDir of fnmDirCandidates(ctx)) {
+      const alias = fnmAlias(ctx, fnmDir);
+      if (alias) return { dir: alias, versionSpecific: false };
+    }
+    const real = ctx.realPath?.(dir);
+    if (real && !FNM_MULTISHELL_RE.test(real)) {
+      return stableNodeDir({ ...ctx, execPath: pathJoin(ctx, real, ctx.platform === 'win32' ? 'node.exe' : 'node') });
+    }
+    return { dir, versionSpecific: true, temporary: true };
+  }
 
   // fnm: <fnm dir>/node-versions/<v>/installation[/bin] → <fnm dir>/aliases/default[/bin]
   const fnm = /^(.*[\\/])node-versions[\\/][^\\/]+[\\/]installation(?:[\\/]bin)?$/.exec(dir);
   if (fnm) {
-    const alias = pathJoin(ctx, fnm[1], 'aliases', 'default', ...(win ? [] : ['bin']));
-    if (ctx.exists(pathJoin(ctx, alias, nodeExe))) return { dir: alias, versionSpecific: false };
+    const alias = fnmAlias(ctx, fnm[1]);
+    if (alias) return { dir: alias, versionSpecific: false };
     return { dir, versionSpecific: true };
   }
   // nvm (~/.nvm/versions/node/<v>/bin), volta (…/volta/tools/image/node/<v>[/bin]), nvm-windows (…\nvm\v<x>) — no stable
@@ -102,13 +160,18 @@ export function buildLaunchEntry(ctx: ClientContext): LaunchEntry {
         `Once a release includes setup, "npx -y ${PACKAGE_NAME}@latest setup clients add --yes" moves the entries back to releases.`
     );
   }
-  const { dir, versionSpecific } = stableNodeDir(ctx);
+  const { dir, versionSpecific, temporary } = stableNodeDir(ctx);
   const node = pathJoin(ctx, dir, win ? 'node.exe' : 'node');
   const npxCli = win ? pathJoin(ctx, dir, 'node_modules', 'npm', 'bin', 'npx-cli.js') : pathJoin(ctx, dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js');
   const env: Record<string, string> = { PATH: [dir, ...systemPath(ctx)].join(win ? ';' : ':'), MCP_DEPLOYMENT_MODE: 'local' };
 
-  if (versionSpecific) {
-    notes.push(`Node.js is at a version-specific path (${dir}). After switching Node versions, run "digital-ai-testing-mcp setup clients add" again.`);
+  if (temporary) {
+    notes.push(
+      `Node.js is running from fnm's per-terminal link (${dir}), which fnm deletes later, and no fnm default was found. ` +
+        `Run "fnm default <version>", then "${setupCommand()} clients add" again.`
+    );
+  } else if (versionSpecific) {
+    notes.push(`Node.js is at a version-specific path (${dir}). After switching Node versions, run "${setupCommand()} clients add" again.`);
   }
   if (!ctx.exists(npxCli)) {
     // Unusual layout: fall back to plain npx and rely on the client's PATH.

@@ -14,6 +14,7 @@ import {
   packageSpec,
   knownClients,
   removeClientEntry,
+  setupCommand,
   writeClientEntry,
   type ClientContext,
   type ClientTarget,
@@ -57,6 +58,46 @@ describe('buildLaunchEntry', () => {
     );
     expect(noAlias.command).toContain('v22.22.3');
     expect(noAlias.notes[0]).toMatch(/version-specific path/);
+  });
+
+  it('fnm per-terminal link (npx from an fnm shell): never written — swapped for the stable alias', () => {
+    const fnm = 'C:\\Users\\u\\AppData\\Roaming\\fnm';
+    const alias = `${fnm}\\aliases\\default`;
+    const link = 'C:\\Users\\u\\AppData\\Local\\fnm_multishells\\38400_1794907852984';
+    const present = [`${alias}\\node.exe`, `${alias}\\node_modules\\npm\\bin\\npx-cli.js`];
+
+    // Default location (live layout 2026-11-18), with and without FNM_DIR
+    for (const env of [{}, { FNM_DIR: fnm }]) {
+      const e = buildLaunchEntry(fakeCtx('win32', `${link}\\node.exe`, present, env));
+      expect(e.command).toBe(`${alias}\\node.exe`);
+      expect(JSON.stringify(e)).not.toContain('fnm_multishells');
+      expect(e.notes).toEqual([]);
+    }
+    // FNM_DIR elsewhere wins over the default folder
+    const custom = 'D:\\tools\\fnm';
+    const c = buildLaunchEntry(fakeCtx('win32', `${link}\\node.exe`, [`${custom}\\aliases\\default\\node.exe`, `${custom}\\aliases\\default\\node_modules\\npm\\bin\\npx-cli.js`], { FNM_DIR: custom }));
+    expect(c.command).toBe(`${custom}\\aliases\\default\\node.exe`);
+
+    // No alias anywhere: the link's real target is used (version-specific)
+    const real = `${fnm}\\node-versions\\v22.22.3\\installation`;
+    const r = buildLaunchEntry({ ...fakeCtx('win32', `${link}\\node.exe`, [`${real}\\node_modules\\npm\\bin\\npx-cli.js`]), realPath: () => real });
+    expect(r.command).toBe(`${real}\\node.exe`);
+    expect(r.notes[0]).toMatch(/version-specific path/);
+
+    // Nothing resolvable: says so plainly
+    const none = buildLaunchEntry(fakeCtx('darwin', '/Users/u/.local/state/fnm_multishells/123_456/bin/node', []));
+    expect(none.notes.some((n) => /per-terminal link/.test(n) && /fnm default/.test(n))).toBe(true);
+    const mac = buildLaunchEntry(
+      fakeCtx('darwin', '/Users/u/.local/state/fnm_multishells/123_456/bin/node', ['/Users/u/.local/share/fnm/aliases/default/bin/node', '/Users/u/.local/share/fnm/aliases/default/lib/node_modules/npm/bin/npx-cli.js'])
+    );
+    expect(mac.command).toBe('/Users/u/.local/share/fnm/aliases/default/bin/node');
+  });
+
+  it('setupCommand names the install that is running (a bare command can start an old global copy)', () => {
+    expect(setupCommand('npx', '2.4.0-beta.4')).toBe('npx -y digital-ai-testing-mcp@next setup');
+    expect(setupCommand('npx', '2.4.0')).toBe('npx -y digital-ai-testing-mcp@latest setup');
+    expect(setupCommand('npm', '2.4.0')).toBe('digital-ai-testing-mcp setup');
+    expect(setupCommand('source', '2.4.0')).toBe('node dist/index.js setup');
   });
 
   it('macOS Homebrew: npx-cli.js under ../lib, POSIX PATH', () => {
