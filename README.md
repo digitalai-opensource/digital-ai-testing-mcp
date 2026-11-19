@@ -14,7 +14,7 @@ It provides **212 tools**, **2 resources** and **7 prompts** across 27 capabilit
 
 ## Quick Start
 
-**1. Check that Node.js 22 or later is installed** (npm comes with it): `node --version`. If it isn't, install the LTS version that https://nodejs.org offers for your system (Windows, macOS or Linux). 22 is the minimum, not a required version: any newer release works.
+**1. Check that Node.js 22 or later is installed** (npm comes with it): `node --version`. Don't go by `npm --version`: that is npm's own version number (11 with current Node.js releases), not Node's. If it isn't, install the LTS version that https://nodejs.org offers for your system (Windows, macOS or Linux). 22 is the minimum, not a required version: any newer release works.
 
 ```bash
 node --version
@@ -408,6 +408,7 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 - A file that contains comments is not rewritten. `setup` prints the entry for you to paste instead.
 - If the client already has a `digital-ai-testing` entry, `setup` asks before replacing it and tells you when that entry holds its own key.
 - If that entry defines profiles of its own (`DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY`, `DAI_PROFILE_*`) that your saved profiles don't include, `setup` offers to import them first. It checks each key, keeps it in the OS keychain and never shows it. A profile it cannot import is listed with the command to add it yourself.
+- Replacing an entry keeps that client's own options (for example `disabled`, `timeout`, VS Code's `envFile`) and any variable that isn't a credential (for example `MCP_DEBUG_MODE`, `MCP_TOOLSETS`). Only the launch command, `PATH` and the URL/key variables change.
 - The entry starts Node.js and npx by their full paths and sets its own PATH, so it also works in clients that don't pass your terminal's PATH to the server, such as macOS apps and Xcode. If you switch Node.js versions with nvm or volta, run `setup clients add` again.
 - **Claude Code** rewrites its own settings while it runs, so `setup clients` prints a `claude mcp add` command for you to run instead.
 - **Claude Desktop on Windows** keeps its configuration in different places depending on how it was installed. `setup` edits it only when it finds exactly one configuration file, shows you the path and asks first. If it finds several, or none, it lists them and you choose one with `--config "<file>"`.

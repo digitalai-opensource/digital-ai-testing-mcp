@@ -835,6 +835,7 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
     changed++;
     io.out(`${t.label}: ${s.hasEntry ? 'updated' : 'added'} (${t.file}${r.backup ? `; previous version kept as ${r.backup}` : ''}).`);
     for (const n of s.otherNames) io.out(`  It also starts this server as "${n}" — remove that entry in ${t.file} to avoid two copies.`);
+    if (s.envFile) io.out(`  The entry also loads variables from ${s.envFile} (kept). If that file sets DIGITAL_AI_* or DAI_PROFILE_* keys, they still win over the credential store — remove them there.`);
     if (t.id === 'claude-desktop') {
       io.out(
         '  To confirm Claude Desktop reads this file: quit it completely (also from the system tray / menu bar), start it again, ' +

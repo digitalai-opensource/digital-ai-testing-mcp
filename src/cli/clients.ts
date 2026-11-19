@@ -345,6 +345,8 @@ export interface EntryStatus {
   upToDate: boolean;
   /** Other entries that start this package under another name. */
   otherNames: string[];
+  /** VS Code: the entry loads variables from this file (kept on replace; keys in it still win over the store). */
+  envFile?: string;
 }
 
 const KEY_VAR_RE = /^(DIGITAL_AI_ACCESS_KEY|DAI_PROFILE_.+_KEY)$/;
@@ -389,7 +391,7 @@ function envOf(format: ClientFormat, entry: unknown): Record<string, unknown> {
   return env && typeof env === 'object' ? (env as Record<string, unknown>) : {};
 }
 
-function jsonStatus(target: ClientTarget, wanted: Json): EntryStatus {
+function jsonStatus(target: ClientTarget, e: LaunchEntry): EntryStatus {
   const r = readJson(target.file);
   if (r.error) return { fileExists: r.exists, unreadable: r.error, hasEntry: false, entryHasKeys: false, upToDate: false, otherNames: [] };
   const container = (r.data?.[containerKey(target.format)] ?? {}) as Json;
@@ -401,8 +403,9 @@ function jsonStatus(target: ClientTarget, wanted: Json): EntryStatus {
     fileExists: r.exists,
     hasEntry: entry !== undefined,
     entryHasKeys: Object.keys(envOf(target.format, entry)).some((k) => KEY_VAR_RE.test(k)),
-    upToDate: entry !== undefined && JSON.stringify(entry) === JSON.stringify(wanted),
+    upToDate: entry !== undefined && JSON.stringify(entry) === JSON.stringify(mergedJsonEntry(target.format, e, entry)),
     otherNames,
+    envFile: entry && typeof entry === 'object' && typeof (entry as Json).envFile === 'string' ? ((entry as Json).envFile as string) : undefined,
   };
 }
 
@@ -414,16 +417,90 @@ function tomlString(s: string): string {
   return JSON.stringify(s); // a JSON string is a valid TOML basic string for paths and simple values
 }
 
-export function codexBlock(e: LaunchEntry): string {
+/** Lines of an existing Codex entry that setup keeps: other keys of the main table, non-credential env variables. */
+interface CodexKept {
+  main: string[];
+  env: string[];
+}
+
+export function codexBlock(e: LaunchEntry, kept: CodexKept = { main: [], env: [] }): string {
   const envPairs = Object.entries(e.env).map(([k, v]) => `${k} = ${tomlString(v)}`);
   return [
     `[mcp_servers.${SERVER_ENTRY_NAME}]`,
     `command = ${tomlString(e.command)}`,
     `args = [${e.args.map(tomlString).join(', ')}]`,
+    ...kept.main,
     '',
     `[mcp_servers.${SERVER_ENTRY_NAME}.env]`,
     ...envPairs,
+    ...kept.env,
   ].join('\n');
+}
+
+/** Variables that hold a connection (URL or key): the ones the credential store replaces. */
+const CREDENTIAL_VAR_RE = /^(DIGITAL_AI_BASE_URL|DIGITAL_AI_ACCESS_KEY|DAI_PROFILE_.+_(URL|KEY))$/;
+
+/**
+ * The key = value statements of our tables, each with its continuation lines (a multi-line array or """ string),
+ * so a kept setting is copied whole. Comments and blank lines are not kept.
+ */
+function codexKept(ours: string[], e: LaunchEntry): CodexKept {
+  const kept: CodexKept = { main: [], env: [] };
+  let section: 'main' | 'env' | undefined;
+  let current: { key: string; lines: string[]; section: 'main' | 'env' } | undefined;
+  let depth = 0;
+  let inTriple = false;
+  const flush = () => {
+    if (!current) return;
+    const text = current.lines.join('\n');
+    if (current.section === 'main' && !['command', 'args', 'env'].includes(current.key)) kept.main.push(text);
+    if (current.section === 'env' && !CREDENTIAL_VAR_RE.test(current.key) && !(current.key in e.env)) kept.env.push(text);
+    current = undefined;
+  };
+  for (const line of ours) {
+    if (current && (depth > 0 || inTriple)) {
+      current.lines.push(line);
+    } else {
+      flush();
+      const h = line.trim();
+      if (CODEX_HEADER_RE.test(h)) {
+        section = h.endsWith('.env]') ? 'env' : 'main';
+        continue;
+      }
+      const m = /^\s*("([^"]+)"|[A-Za-z0-9_-]+)\s*=/.exec(line);
+      if (!m || !section) continue;
+      current = { key: m[2] ?? m[1], lines: [line.trim()], section };
+      depth = 0;
+      inTriple = false;
+    }
+    // Track open arrays / inline tables and """ strings (brackets inside ordinary strings are ignored).
+    const triples = line.match(/"""|'''/g)?.length ?? 0;
+    if (triples % 2 === 1) inTriple = !inTriple;
+    if (triples === 0 && !inTriple) {
+      const stripped = line.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
+      depth = Math.max(0, depth + (stripped.match(/[[{]/g)?.length ?? 0) - (stripped.match(/[\]}]/g)?.length ?? 0));
+    }
+  }
+  flush();
+  return kept;
+}
+
+/**
+ * Our entry as it will be written over `old`: setup's command, arguments and variables, plus everything else the old
+ * entry had (other fields such as "disabled" or "timeout", and variables that are not credentials, e.g. MCP_DEBUG_MODE
+ * or MCP_TOOLSETS). Credential variables and PATH are setup's to decide.
+ */
+function mergedJsonEntry(format: ClientFormat, e: LaunchEntry, old: unknown): Json {
+  const fresh = entryFor(format, e);
+  if (!old || typeof old !== 'object' || Array.isArray(old)) return fresh;
+  const envKey = format === 'opencode' ? 'environment' : 'env';
+  const env: Json = { ...(fresh[envKey] as Json) };
+  for (const [k, v] of Object.entries(envOf(format, old))) {
+    if (!(k in env) && k !== 'PATH' && !CREDENTIAL_VAR_RE.test(k)) env[k] = v;
+  }
+  const out: Json = { ...fresh, [envKey]: env };
+  for (const [k, v] of Object.entries(old as Json)) if (!(k in out)) out[k] = v;
+  return out;
 }
 
 /** Splits a TOML file into our tables (header + body lines) and everything else, keeping order. */
@@ -447,7 +524,7 @@ function splitCodex(text: string): { before: string[]; ours: string[]; after: st
   return { before, ours, after };
 }
 
-function codexStatus(target: ClientTarget, block: string): EntryStatus {
+function codexStatus(target: ClientTarget, e: LaunchEntry): EntryStatus {
   if (!existsSync(target.file)) return { fileExists: false, hasEntry: false, entryHasKeys: false, upToDate: false, otherNames: [] };
   const text = readFileSync(target.file, 'utf8');
   const { ours } = splitCodex(text);
@@ -464,7 +541,7 @@ function codexStatus(target: ClientTarget, block: string): EntryStatus {
     fileExists: true,
     hasEntry: ours.length > 0,
     entryHasKeys: /^\s*(DIGITAL_AI_ACCESS_KEY|DAI_PROFILE_\w+_KEY)\s*=/m.test(oursText),
-    upToDate: oursText === block.trim(),
+    upToDate: oursText === codexBlock(e, codexKept(ours, e)).trim(),
     otherNames,
   };
 }
@@ -524,7 +601,7 @@ export function entryProfiles(target: ClientTarget): EntryProfile[] {
 }
 
 export function clientStatus(target: ClientTarget, e: LaunchEntry): EntryStatus {
-  return target.format === 'codex-toml' ? codexStatus(target, codexBlock(e)) : jsonStatus(target, entryFor(target.format, e));
+  return target.format === 'codex-toml' ? codexStatus(target, e) : jsonStatus(target, e);
 }
 
 function backup(file: string): string | undefined {
@@ -546,10 +623,10 @@ export function writeClientEntry(target: ClientTarget, e: LaunchEntry): EditResu
   try {
     if (target.format === 'codex-toml') {
       const text = existsSync(target.file) ? readFileSync(target.file, 'utf8') : '';
-      const { before, after } = splitCodex(text);
+      const { before, ours, after } = splitCodex(text);
       const head = before.join('\n').replace(/\s+$/, '');
       const tail = after.join('\n').replace(/^\s+/, '').replace(/\s+$/, '');
-      const body = [head, codexBlock(e), tail].filter((s) => s).join('\n\n') + '\n';
+      const body = [head, codexBlock(e, codexKept(ours, e)), tail].filter((s) => s).join('\n\n') + '\n';
       const b = backup(target.file);
       mkdirSync(dirname(target.file), { recursive: true });
       writeFileSync(target.file, body, 'utf8');
@@ -559,7 +636,7 @@ export function writeClientEntry(target: ClientTarget, e: LaunchEntry): EditResu
     if (r.error || !r.data) return { ok: false, error: `${target.file}: ${r.error}` };
     const key = containerKey(target.format);
     const container = (r.data[key] && typeof r.data[key] === 'object' ? r.data[key] : {}) as Json;
-    container[SERVER_ENTRY_NAME] = entryFor(target.format, e);
+    container[SERVER_ENTRY_NAME] = mergedJsonEntry(target.format, e, container[SERVER_ENTRY_NAME]);
     r.data[key] = container;
     const b = backup(target.file);
     mkdirSync(dirname(target.file), { recursive: true });

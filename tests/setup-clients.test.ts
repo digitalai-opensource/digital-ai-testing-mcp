@@ -270,6 +270,25 @@ describe('JSON clients', () => {
     });
   });
 
+  it('replacing an entry keeps that client\'s own options and non-credential variables, drops credentials and PATH', () => {
+    const userDir = target('vscode').file.replace(/[\\/]mcp\.json$/, '');
+    mkdirSync(userDir, { recursive: true });
+    const old = {
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', 'digital-ai-testing-mcp@latest'],
+      envFile: '${workspaceFolder}/.env',
+      env: { DIGITAL_AI_BASE_URL: 'https://a', DIGITAL_AI_ACCESS_KEY: 'aut_1_x', DAI_PROFILE_QA_KEY: 'k', MCP_DEBUG_MODE: 'true', MCP_TOOLSETS: 'core', PATH: 'old' },
+    };
+    writeFileSync(target('vscode').file, JSON.stringify({ servers: { 'digital-ai-testing': old } }));
+    expect(clientStatus(target('vscode'), entry()).envFile).toBe('${workspaceFolder}/.env');
+    writeClientEntry(target('vscode'), entry());
+    const e = json(target('vscode').file).servers['digital-ai-testing'];
+    expect(e).toMatchObject({ type: 'stdio', command: entry().command, args: entry().args, envFile: '${workspaceFolder}/.env' });
+    expect(e.env).toEqual({ ...entry().env, MCP_DEBUG_MODE: 'true', MCP_TOOLSETS: 'core' });
+    expect(clientStatus(target('vscode'), entry())).toMatchObject({ upToDate: true, entryHasKeys: false });
+  });
+
   it('remove takes out only our entry', () => {
     mkdirSync(join(home, '.cursor'));
     writeFileSync(target('cursor').file, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
@@ -298,6 +317,25 @@ describe('Codex (TOML)', () => {
 
     expect(removeClientEntry(target('codex'))).toMatchObject({ ok: true, removed: true });
     expect(readFileSync(file, 'utf8')).toBe(existing);
+  });
+
+  it('replacing keeps the other keys of our table and non-credential variables, multi-line values whole', () => {
+    mkdirSync(join(home, '.codex'));
+    writeFileSync(
+      target('codex').file,
+      '[mcp_servers.digital-ai-testing]\ncommand = "npx"\nargs = [\n  "-y",\n  "digital-ai-testing-mcp",\n]\nstartup_timeout_sec = 30\n' +
+        'tools = [\n  "a",\n  "b [x]",\n]\n\n[mcp_servers.digital-ai-testing.env]\nDIGITAL_AI_ACCESS_KEY = "aut_1_x"\nMCP_DEBUG_MODE = "true"\nPATH = "old"\n\n[other]\nx = 1\n'
+    );
+    expect(writeClientEntry(target('codex'), entry()).ok).toBe(true);
+    const text = readFileSync(target('codex').file, 'utf8');
+    expect(text).toContain('startup_timeout_sec = 30');
+    expect(text).toContain('tools = [\n  "a",\n  "b [x]",\n]');
+    expect(text).toContain('MCP_DEBUG_MODE = "true"');
+    expect(text).not.toContain('aut_1_x');
+    expect(text).not.toContain('PATH = "old"');
+    expect(text).not.toContain('"digital-ai-testing-mcp",\n]');
+    expect(text).toContain('[other]\nx = 1');
+    expect(clientStatus(target('codex'), entry()).upToDate).toBe(true);
   });
 
   it('entryProfiles reads the profiles of our env table (not another table\'s)', () => {
