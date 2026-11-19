@@ -208,31 +208,29 @@ Quit Claude Desktop completely (also from the system tray or menu bar) and start
 
 ### Claude Code (VS Code)
 
-1. Open the Claude Code extension panel
-2. Go to **Settings → MCP Servers**
-3. Add a new server with command `npx`, args `-y digital-ai-testing-mcp@latest`, and `DIGITAL_AI_BASE_URL`/`DIGITAL_AI_ACCESS_KEY` set in the server's environment variables (leave them out if you saved them with [setup](#the-setup-command)). On Windows, use command `cmd` with args `/c npx -y digital-ai-testing-mcp@latest`
+The easiest way: run `npx -y digital-ai-testing-mcp@latest setup clients add claude-code`. It adds the server for all your projects with Claude Code's own `claude` command, using the profiles you saved with [setup](#the-setup-command). If the `claude` command isn't available in your terminal, it prints the command to run instead.
 
-Or run `npx -y digital-ai-testing-mcp@latest setup clients`: it prints a ready-made `claude mcp add` command for this computer.
-
-Using Docker? Add the Docker command from [Docker client configuration](#docker-client-configuration) instead.
-
-### Claude Code (JetBrains / Android Studio)
-
-Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then open your project and run this command from the project root:
+To add it by hand, run this once (it works in the terminal and from the VS Code, JetBrains and Android Studio extensions):
 
 ```bash
 # macOS / Linux
-claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key -- npx -y digital-ai-testing-mcp@latest
+claude mcp add --scope user "--env=npm_config_yes=true" "--env=DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com" "--env=DIGITAL_AI_ACCESS_KEY=your-access-key" digital-ai-testing -- npx digital-ai-testing-mcp@latest
 
 # Windows (Claude Code needs the cmd /c wrapper to start npx)
-claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key -- cmd /c npx -y digital-ai-testing-mcp@latest
+claude mcp add --scope user "--env=npm_config_yes=true" "--env=DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com" "--env=DIGITAL_AI_ACCESS_KEY=your-access-key" digital-ai-testing -- cmd /c npx digital-ai-testing-mcp@latest
 ```
 
-If you saved your key with [setup](#the-setup-command), leave out the `--env` options, or use the command `setup clients` prints, which also works when the IDE does not pass your PATH to the server.
+If you saved your key with setup, leave out the two `DIGITAL_AI_*` options. Write the command exactly like this. Claude Code reads every argument after `--env NAME=value` as another variable (it would take the server name and the command too), and it refuses an option such as `-y` even after `--`, so each variable is one `--env=NAME=value` argument and `npm_config_yes=true` replaces npx's `-y`.
 
-This stores the server configuration in `~/.claude.json`, scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same command used for [Claude Desktop](#claude-desktop).
+`--scope user` makes the server available in every project. Leave it out to add it to the current project only. A project whose `.mcp.json` defines `digital-ai-testing` uses that entry instead.
 
-Restart the Claude Code panel after adding the server — the tools appear automatically.
+Using Docker? Use the Docker command from [Docker client configuration](#docker-client-configuration) instead.
+
+Restart Claude Code (or run `/mcp` and reconnect) after adding the server. The tools appear automatically.
+
+### Claude Code (JetBrains / Android Studio)
+
+Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then add the server the same way as for [Claude Code (VS Code)](#claude-code-vs-code): `setup clients add claude-code`, or the `claude mcp add` command shown there.
 
 Using Docker? See [Docker client configuration](#docker-client-configuration) — and on Windows, use forward slashes in the `.env` path.
 
@@ -346,12 +344,14 @@ For [Option B](#option-b--pull-from-github-container-registry) or [Option C](#op
 **Claude Code** (JetBrains / Android Studio, or VS Code) — from the project root, or add the same command under **Settings → MCP Servers**:
 
 ```bash
-# macOS / Linux
-claude mcp add digital-ai-testing -- docker run --pull=always --rm -i --env-file /absolute/path/to/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+# macOS / Linux (bash, zsh)
+claude mcp add-json digital-ai-testing '{"type":"stdio","command":"docker","args":["run","--pull=always","--rm","-i","--env-file","/absolute/path/to/.env","ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"]}'
 
-# Windows (use forward slashes — backslashes are stripped by Claude Code)
-claude mcp add digital-ai-testing -- docker run --pull=always --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+# Windows, PowerShell 7 (use forward slashes — backslashes are stripped by Claude Code)
+claude mcp add-json digital-ai-testing '{"type":"stdio","command":"docker","args":["run","--pull=always","--rm","-i","--env-file","C:/projects/digital-ai-testing-mcp/.env","ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"]}'
 ```
+
+`claude mcp add … -- docker run --pull=always …` does not work: Claude Code refuses the `docker run` options even after `--`, so the entry is given as JSON. In Windows PowerShell 5.1 or Command Prompt, the quotes inside the JSON are lost; use PowerShell 7 or add the entry in the Claude Code panel.
 
 > **Windows users on Docker:** always use forward slashes (`C:/path/to/.env`), never backslashes — whether you register via the CLI command above or through the Claude Code panel. Claude Code silently strips backslashes when it writes the configuration to `~/.claude.json`, which breaks the path and causes a cryptic `-32000` reconnection error ([how to fix it](#failed-to-reconnect-to-digital-ai-testing--32000)).
 
@@ -410,7 +410,7 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 - If that entry defines profiles of its own (`DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY`, `DAI_PROFILE_*`) that your saved profiles don't include, `setup` offers to import them first. It checks each key, keeps it in the OS keychain and never shows it. A profile it cannot import is listed with the command to add it yourself.
 - Replacing an entry keeps that client's own options (for example `disabled`, `timeout`, VS Code's `envFile`) and any variable that isn't a credential (for example `MCP_DEBUG_MODE`, `MCP_TOOLSETS`). Only the launch command, `PATH` and the URL/key variables change.
 - The entry starts Node.js and npx by their full paths and sets its own PATH, so it also works in clients that don't pass your terminal's PATH to the server, such as macOS apps and Xcode. If you switch Node.js versions with nvm or volta, run `setup clients add` again.
-- **Claude Code** rewrites its own settings while it runs, so `setup clients` prints a `claude mcp add` command for you to run instead.
+- **Claude Code**: setup adds the server for all your projects through Claude Code's own `claude` command (`claude mcp add-json --scope user`), when that command is installed. Otherwise it prints the command to run.
 - **Claude Desktop on Windows** keeps its configuration in different places depending on how it was installed. `setup` edits it only when it finds exactly one configuration file, shows you the path and asks first. If it finds several, or none, it lists them and you choose one with `--config "<file>"`.
 - Restart each AI client you changed. `setup clients remove` takes the entry out again.
 

@@ -40,6 +40,10 @@ import { basename, dirname } from 'node:path';
 import {
   buildLaunchEntry,
   claudeCodeCommand,
+  claudeCodeEntry,
+  claudeCodeTarget,
+  currentJsonEntry,
+  mergedJsonEntry,
   clientStatus,
   defaultClientContext,
   entryProfiles,
@@ -521,6 +525,7 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
   for (const t of knownClients(ctx)) {
     say(`  ${t.id.padEnd(22)} ${statusLine(t, entry)}${t.detected && !t.choices ? ` — ${t.file}` : ''}`);
   }
+  say(`  ${'claude-code'.padEnd(22)} ${claudeStatusLine(ctx, entry)}${claudeCodeTarget(ctx).detected ? ` — ${claudeCodeTarget(ctx).file} (user scope)` : ''}`);
   say('');
   say(problems ? `${problems} problem${problems === 1 ? '' : 's'} found (marked PROBLEM or FAILED above).` : 'No problems found.');
 
@@ -638,16 +643,24 @@ function statusLine(t: ClientTarget, entry: LaunchEntry): string {
   return (s.upToDate ? 'set up' : 'set up with a different launch command ("setup clients add" updates it)') + others;
 }
 
+/** Claude Code's user-scope status ("claude command not found" instead of "not installed": it may be installed elsewhere). */
+function claudeStatusLine(ctx: ClientContext, entry: LaunchEntry): string {
+  const t = claudeCodeTarget(ctx);
+  if (!t.detected) return 'the claude command was not found — run the command below in a terminal where it works';
+  return statusLine(t, claudeCodeEntry(entry, ctx.platform));
+}
+
 function cmdClientsList(io: SetupIO, ctx: ClientContext) {
   const entry = buildLaunchEntry(ctx);
   describeEntry(io, entry);
   io.out('');
   for (const t of knownClients(ctx)) io.out(`  ${t.id.padEnd(22)} ${t.label}: ${statusLine(t, entry)}`);
+  io.out(`  ${'claude-code'.padEnd(22)} Claude Code (all your projects): ${claudeStatusLine(ctx, entry)}`);
   io.out('');
   io.out('Set up by hand:');
   for (const m of manualClients()) io.out(`  ${m.id.padEnd(22)} ${m.label}: ${m.how}`);
   io.out('');
-  io.out('Claude Code — run once in a terminal:');
+  io.out(`Claude Code — "${setupCommand()} clients add claude-code" runs this for you, or run it once in a terminal:`);
   io.out(`  ${claudeCodeCommand(entry, ctx.platform)}`);
 }
 
@@ -847,19 +860,111 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
   return { changed, attention };
 }
 
+/**
+ * Claude Code, user scope (every project): runs `claude mcp add-json --scope user` itself when the claude command is
+ * found — the CLI is Claude Code's own way to change its settings, so a running session does not overwrite the change
+ * (verified 2026-11-18: entries added that way survived ~15 min of a running session). An existing entry is handled like
+ * the other clients: its profiles are offered for import and its other settings kept; replacing needs a yes.
+ * `explicit`: Claude Code was named, so "not found" or a decline counts as not changed. `approved`: the user already said
+ * yes to adding (guided setup), so a NEW entry is not asked about again.
+ */
+async function addToClaudeCode(io: SetupIO, ctx: ClientContext, yes: boolean, explicit: boolean, approved = false): Promise<{ changed: number; attention: number }> {
+  const entry = buildLaunchEntry(ctx);
+  const cmd = claudeCodeCommand(entry, ctx.platform);
+  const unchanged = { changed: 0, attention: explicit ? 1 : 0 };
+  const cli = ctx.claudeCli?.();
+  if (!cli) {
+    if (explicit) io.out(`Claude Code: the claude command was not found. Run this once in a terminal where it works:\n  ${cmd}`);
+    return unchanged;
+  }
+  const t = claudeCodeTarget(ctx);
+  const ce = claudeCodeEntry(entry, ctx.platform);
+  const s = clientStatus(t, ce);
+  if (s.unreadable) {
+    io.out(`Claude Code: not changed — ${t.file} could not be read (${s.unreadable}). Run this once in a terminal:\n  ${cmd}`);
+    return { changed: 0, attention: 1 };
+  }
+  if (s.upToDate) {
+    io.out('Claude Code: already set up (all your projects).');
+    return { changed: 0, attention: 0 };
+  }
+  const lost = s.hasEntry && s.entryHasKeys ? await importEntryProfiles(io, t, yes) : [];
+  const saved = s.entryHasKeys && entryProfiles(t).some((p) => p.url && p.key);
+  const where = `"${SERVER_ENTRY_NAME}" entry for all your projects`;
+  const question = !s.hasEntry
+    ? `Add the server to Claude Code for all your projects (runs "claude mcp add-json --scope user ${SERVER_ENTRY_NAME} …")? [Y/n] `
+    : lost.length
+      ? `Replace Claude Code's ${where} anyway? It would lose: ${lost.map((n) => (n === 'default' ? 'its default connection' : `"${n}"`)).join(', ')}. [y/N] `
+      : saved
+        ? `The profiles in Claude Code's ${where} are in the credential store now. Replace the entry with one that uses the credential store? [y/N] `
+        : s.entryHasKeys
+          ? `Claude Code already has a ${where} with its own access key. Replace it with one that uses the credential store? [y/N] `
+          : `Claude Code already has a ${where} with a different launch command. Replace it? [y/N] `;
+  let go = yes || (approved && !s.hasEntry);
+  if (!go) {
+    if (!io.interactive) {
+      io.out(`Claude Code: not changed — add --yes to ${s.hasEntry ? 'replace' : 'add'} it, or run this once in a terminal:\n  ${cmd}`);
+      return { changed: 0, attention: 1 };
+    }
+    const a = await io.ask(question);
+    go = s.hasEntry ? /^y(es)?$/i.test(a) : !/^n(o)?$/i.test(a);
+  }
+  if (!go) {
+    io.out(`Claude Code: not changed. To add it later: ${setupCommand()} clients add claude-code`);
+    return s.hasEntry ? { changed: 0, attention: 1 } : unchanged;
+  }
+
+  const old = s.hasEntry ? currentJsonEntry(t) : undefined;
+  const json = mergedJsonEntry('mcpServers', ce, old);
+  if (!('type' in json)) json.type = 'stdio';
+  const firstLine = (o: string) => redact(o.split(/\r?\n/).find((l) => l.trim()) ?? 'no output');
+  if (s.hasEntry) {
+    const r = cli.run(['mcp', 'remove', SERVER_ENTRY_NAME, '-s', 'user']);
+    if (!r.ok) {
+      io.err(`Claude Code: not changed — "claude mcp remove" failed: ${firstLine(r.output)}`);
+      return { changed: 0, attention: 1 };
+    }
+  }
+  const r = cli.run(['mcp', 'add-json', '--scope', 'user', SERVER_ENTRY_NAME, JSON.stringify(json)]);
+  if (!r.ok) {
+    // Put the old entry back, so a failed add never leaves Claude Code without the server.
+    const restored = old !== undefined && cli.run(['mcp', 'add-json', '--scope', 'user', SERVER_ENTRY_NAME, JSON.stringify(old)]).ok;
+    io.err(
+      `Claude Code: not changed — "claude mcp add-json" failed: ${firstLine(r.output)}.` +
+        (old !== undefined ? (restored ? ' The previous entry was put back.' : ' The previous entry could NOT be put back.') : '') +
+        ` Run this once in a terminal instead:\n  ${cmd}`
+    );
+    return { changed: 0, attention: 1 };
+  }
+  io.out(`Claude Code: ${s.hasEntry ? 'updated' : 'added'} for all your projects (claude mcp add-json --scope user; ${t.file}).`);
+  if (!clientStatus(t, ce).upToDate) io.out(`  Note: reading ${t.file} back did not show the new entry yet — check with: claude mcp get ${SERVER_ENTRY_NAME}`);
+  io.out(
+    `  A project whose .mcp.json defines "${SERVER_ENTRY_NAME}" keeps using that one. Claude Code sessions already running ` +
+      'pick up the change after a restart (or /mcp → reconnect).'
+  );
+  return { changed: 1, attention: 0 };
+}
+
 /** After a guided `setup`: offer the installed clients that are not set up yet. */
 async function offerClients(io: SetupIO) {
   const ctx = io.clients ?? defaultClientContext();
   const entry = buildLaunchEntry(ctx);
   const pending = knownClients(ctx).filter((t) => t.detected && !clientStatus(t, entry).upToDate);
-  if (pending.length === 0) return;
-  const answer = await io.ask(`Add the server to your AI clients too (${pending.map((t) => t.label).join(', ')})? [Y/n] `);
+  const claude = claudeCodeTarget(ctx);
+  const claudePending = claude.detected && !clientStatus(claude, claudeCodeEntry(entry, ctx.platform)).upToDate;
+  if (pending.length === 0 && !claudePending) {
+    if (!claude.detected) io.out(`Claude Code: run this once in a terminal: ${claudeCodeCommand(entry, ctx.platform)}`);
+    return;
+  }
+  const labels = [...pending.map((t) => t.label), ...(claudePending ? ['Claude Code'] : [])];
+  const answer = await io.ask(`Add the server to your AI clients too (${labels.join(', ')})? [Y/n] `);
   if (/^n(o)?$/i.test(answer)) {
     io.out(`Later: ${setupCommand()} clients add`);
     return;
   }
   await addToClients(io, ctx, pending, false);
-  io.out(`Claude Code: run this once in a terminal: ${claudeCodeCommand(entry, ctx.platform)}`);
+  if (claudePending) await addToClaudeCode(io, ctx, false, false, true);
+  else if (!claude.detected) io.out(`Claude Code: run this once in a terminal: ${claudeCodeCommand(entry, ctx.platform)}`);
 }
 
 async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], flags: Flags) {
@@ -869,24 +974,37 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
     cmdClientsList(io, ctx);
     return;
   }
+  const isClaude = (id: string) => id.toLowerCase() === 'claude-code';
+  const namedClaude = ids.some(isClaude);
+  const otherIds = ids.filter((id) => !isClaude(id));
+  if (namedClaude && flags.config !== undefined) throw new SetupError('--config does not apply to Claude Code: setup changes it with the claude command.', 2);
   if (sub === 'add') {
-    const targets = pickTargets(ctx, ids, flags.config);
-    if (targets.length === 0) {
+    const targets = namedClaude && otherIds.length === 0 ? [] : pickTargets(ctx, otherIds, flags.config);
+    // Claude Code: when named, or with "every installed client" (no names, no --config).
+    const withClaude = namedClaude || (ids.length === 0 && flags.config === undefined && claudeCodeTarget(ctx).detected);
+    if (targets.length === 0 && !withClaude) {
       throw new SetupError(`No AI clients were found on this machine. Name one: ${setupCommand()} clients add <client> (list: setup clients)`, 1);
     }
     describeEntry(io, buildLaunchEntry(ctx));
-    const { changed, attention } = await addToClients(io, ctx, targets, !!flags.yes);
+    const res = await addToClients(io, ctx, targets, !!flags.yes);
+    const cc = withClaude ? await addToClaudeCode(io, ctx, !!flags.yes, namedClaude) : { changed: 0, attention: 0 };
+    const changed = res.changed + cc.changed;
+    const attention = res.attention + cc.attention;
     if (changed > 0) io.out(RESTART_CLIENTS);
     if (attention > 0) throw new SetupError(`${attention} client${attention === 1 ? ' was' : 's were'} not changed (see above).`, 1);
     return;
   }
   if (sub === 'remove') {
     const entry = buildLaunchEntry(ctx);
-    const picked = pickTargets(ctx, ids, flags.config);
+    const picked = namedClaude && otherIds.length === 0 ? [] : pickTargets(ctx, otherIds, flags.config);
+    const claude = claudeCodeTarget(ctx);
+    const cli = ctx.claudeCli?.();
+    const claudeHas = (namedClaude || (ids.length === 0 && flags.config === undefined)) && !!cli && clientStatus(claude, claudeCodeEntry(entry, ctx.platform)).hasEntry;
+    if (namedClaude && !cli) io.out(`Claude Code: the claude command was not found. Remove it by hand: claude mcp remove ${SERVER_ENTRY_NAME} -s user`);
     for (const t of picked.filter((p) => p.choices && ids.length > 0)) io.out(`${t.label}: not changed — ${CHOOSE_HINT(t).replace('setup clients add', 'setup clients remove')}`);
     const targets = picked.filter((t) => !t.choices && clientStatus(t, entry).hasEntry);
-    const names = targets.map((t) => `${t.label} (${t.file})`).join(', ');
-    if (targets.length === 0) {
+    const names = [...targets.map((t) => `${t.label} (${t.file})`), ...(claudeHas ? ['Claude Code (all your projects)'] : [])].join(', ');
+    if (targets.length === 0 && !claudeHas) {
       io.out(`No AI client has a "${SERVER_ENTRY_NAME}" entry to remove.`);
       return;
     }
@@ -901,6 +1019,13 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
         removed++;
         io.out(`${t.label}: removed${r.backup ? ` (previous version kept as ${r.backup})` : ''}.`);
       }
+    }
+    if (claudeHas && cli) {
+      const r = cli.run(['mcp', 'remove', SERVER_ENTRY_NAME, '-s', 'user']);
+      if (r.ok) {
+        removed++;
+        io.out('Claude Code: removed (all your projects).');
+      } else io.err(`Claude Code: not changed — "claude mcp remove" failed: ${redact(r.output.split(/\r?\n/)[0] ?? '')}`);
     }
     if (removed > 0) io.out(RESTART_CLIENTS);
     return;

@@ -17,6 +17,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { getServerVersion, PACKAGE_NAME, packageSpec } from '../utils/version.js';
 import { installKind, type InstallKind } from '../utils/update-check.js';
@@ -50,6 +51,8 @@ export interface ClientContext {
   listDir?(path: string): string[];
   /** Resolves links (default realpathSync; undefined on failure) — follows fnm's per-terminal link to the real Node. */
   realPath?(path: string): string | undefined;
+  /** The claude command (Claude Code), when installed — default findClaudeCli; tests fake it. */
+  claudeCli?(): ClaudeCli | undefined;
 }
 
 export function defaultClientContext(): ClientContext {
@@ -60,6 +63,9 @@ export function defaultClientContext(): ClientContext {
     execPath: process.execPath,
     exists: existsSync,
     version: getServerVersion(),
+    claudeCli() {
+      return findClaudeCli(this);
+    },
     realPath: (p) => {
       try {
         return realpathSync(p);
@@ -298,11 +304,6 @@ export function knownClients(ctx: ClientContext): ClientTarget[] {
 export function manualClients(): ManualClient[] {
   return [
     {
-      id: 'claude-code',
-      label: 'Claude Code (terminal, VS Code and JetBrains/Android Studio extensions)',
-      how: 'Claude Code rewrites its own settings file while it runs, so setup prints a "claude mcp add" command for you to run instead (see below).',
-    },
-    {
       id: 'xcode',
       label: 'Xcode 26.3+ (Claude Agent, Codex)',
       how: 'Not edited yet: the location of Xcode\'s agent settings is not verified. Use the same entry in Xcode\'s agent MCP settings.',
@@ -319,15 +320,92 @@ export function manualClients(): ManualClient[] {
  * The `claude mcp add` command for Claude Code (printed, not run). On Windows every path uses forward slashes: Claude
  * Code strips backslashes when it saves a server entry, and the entry was verified to start with forward slashes in
  * the command, the script path and PATH (2026-11-17).
+ *
+ * Claude Code's option parser (verified with 2.1.326, 2026-11-18): `-e KEY=value` takes EVERY following argument as
+ * another variable — it swallowed the server name ("missing required argument 'name'") and, with the name first, the
+ * command after `--`; and an argument such as npx's `-y` after `--` is still rejected ("unknown option '-y'"). So each
+ * variable is one `--env=KEY=value` argument, and npx's -y becomes `npm_config_yes=true` (npm reads its config from
+ * npm_config_* variables). The resulting command was added and showed "Connected".
  */
 export function claudeCodeCommand(entry: LaunchEntry, platform: NodeJS.Platform): string {
   const win = platform === 'win32';
-  const q = (raw: string) => {
-    const s = win ? raw.replace(/\\/g, '/') : raw;
-    return win ? `"${s.replace(/"/g, '\\"')}"` : `'${s.replace(/'/g, `'\\''`)}'`;
+  const q = (s: string) => (win ? `"${s.replace(/"/g, '\\"')}"` : `'${s.replace(/'/g, `'\\''`)}'`);
+  const e = claudeCodeEntry(entry, platform);
+  const envFlags = Object.entries(e.env).map(([k, v]) => q(`--env=${k}=${v}`));
+  return ['claude mcp add --scope user', ...envFlags, SERVER_ENTRY_NAME, '--', q(e.command), ...e.args.map(q)].join(' ');
+}
+
+/** The entry as Claude Code stores it: forward slashes on Windows, npx's -y as npm_config_yes (see claudeCodeCommand). */
+export function claudeCodeEntry(entry: LaunchEntry, platform: NodeJS.Platform): LaunchEntry {
+  const fwd = (s: string) => (platform === 'win32' ? s.replace(/\\/g, '/') : s);
+  const args = entry.args.filter((a) => a !== '-y');
+  const env: Record<string, string> = args.length !== entry.args.length ? { npm_config_yes: 'true' } : {};
+  for (const [k, v] of Object.entries(entry.env)) env[k] = fwd(v);
+  return { command: fwd(entry.command), args: args.map(fwd), env, notes: entry.notes };
+}
+
+/**
+ * Claude Code's USER-scope servers (every project) — the top-level "mcpServers" of ~/.claude.json, or of
+ * $CLAUDE_CONFIG_DIR/.claude.json. Setup only READS this file (status, the profiles an old entry holds); changes go
+ * through the claude command (`claude mcp add-json` / `remove`), because Claude Code rewrites the file while it runs.
+ */
+export function claudeCodeTarget(ctx: ClientContext): ClientTarget {
+  const dir = ctx.env.CLAUDE_CONFIG_DIR?.trim() || ctx.home;
+  return {
+    id: 'claude-code',
+    label: 'Claude Code',
+    format: 'mcpServers',
+    file: pathJoin(ctx, dir, '.claude.json'),
+    detected: !!ctx.claudeCli?.(),
   };
-  const envFlags = Object.entries(entry.env).map(([k, v]) => `-e ${q(`${k}=${v}`)}`);
-  return ['claude mcp add --scope user', ...envFlags, SERVER_ENTRY_NAME, '--', q(entry.command), ...entry.args.map(q)].join(' ');
+}
+
+/** Our entry in a JSON client file as it is now (undefined when there is none or the file cannot be read). */
+export function currentJsonEntry(target: ClientTarget): unknown {
+  const r = readJson(target.file);
+  return ((r.data?.[containerKey(target.format)] ?? {}) as Json)[SERVER_ENTRY_NAME];
+}
+
+export interface ClaudeCli {
+  /** Runs `claude <args>` without a shell (no quoting to get wrong). ok = exit code 0. */
+  run(args: string[]): { ok: boolean; output: string };
+}
+
+/**
+ * The claude command on PATH, run without a shell. Windows: claude.exe (the native installer), else npm's claude.cmd
+ * wrapper, whose target (`"%dp0%\…\claude.exe"`, or a .js run with this Node) is read from the file — Node refuses to
+ * start a .cmd without a shell. Elsewhere: the `claude` file on PATH.
+ */
+export function findClaudeCli(ctx: ClientContext): ClaudeCli | undefined {
+  const win = ctx.platform === 'win32';
+  const dirs = (ctx.env.PATH ?? ctx.env.Path ?? '').split(win ? ';' : ':').filter((d) => d.trim());
+  const runner = (file: string, prefix: string[] = []): ClaudeCli => ({
+    run: (args) => {
+      const r = spawnSync(file, [...prefix, ...args], { encoding: 'utf8', timeout: 120_000, windowsHide: true });
+      return { ok: r.status === 0, output: `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? r.error.message : ''}`.trim() };
+    },
+  });
+  for (const dir of dirs) {
+    if (!win) {
+      const f = pathJoin(ctx, dir, 'claude');
+      if (ctx.exists(f)) return runner(f);
+      continue;
+    }
+    const exe = pathJoin(ctx, dir, 'claude.exe');
+    if (ctx.exists(exe)) return runner(exe);
+    const cmd = pathJoin(ctx, dir, 'claude.cmd');
+    if (!ctx.exists(cmd)) continue;
+    try {
+      const m = /"%dp0%\\([^"]+\.(exe|js))"/i.exec(readFileSync(cmd, 'utf8'));
+      if (!m) continue;
+      const target = pathJoin(ctx, dir, ...m[1].split('\\'));
+      if (!ctx.exists(target)) continue;
+      return m[2].toLowerCase() === 'exe' ? runner(target) : runner(ctx.execPath, [target]);
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 // ─── Reading and editing configuration files ──────────────────────────────────
@@ -391,6 +469,13 @@ function envOf(format: ClientFormat, entry: unknown): Record<string, unknown> {
   return env && typeof env === 'object' ? (env as Record<string, unknown>) : {};
 }
 
+/** JSON with object keys sorted — an entry another program rewrote (Claude Code puts "type" first) still compares equal. */
+function stableJson(v: unknown): string {
+  return JSON.stringify(v, (_k, val) =>
+    val && typeof val === 'object' && !Array.isArray(val) ? Object.fromEntries(Object.entries(val as Json).sort(([a], [b]) => a.localeCompare(b))) : val
+  );
+}
+
 function jsonStatus(target: ClientTarget, e: LaunchEntry): EntryStatus {
   const r = readJson(target.file);
   if (r.error) return { fileExists: r.exists, unreadable: r.error, hasEntry: false, entryHasKeys: false, upToDate: false, otherNames: [] };
@@ -403,7 +488,7 @@ function jsonStatus(target: ClientTarget, e: LaunchEntry): EntryStatus {
     fileExists: r.exists,
     hasEntry: entry !== undefined,
     entryHasKeys: Object.keys(envOf(target.format, entry)).some((k) => KEY_VAR_RE.test(k)),
-    upToDate: entry !== undefined && JSON.stringify(entry) === JSON.stringify(mergedJsonEntry(target.format, e, entry)),
+    upToDate: entry !== undefined && stableJson(entry) === stableJson(mergedJsonEntry(target.format, e, entry)),
     otherNames,
     envFile: entry && typeof entry === 'object' && typeof (entry as Json).envFile === 'string' ? ((entry as Json).envFile as string) : undefined,
   };
@@ -490,7 +575,7 @@ function codexKept(ours: string[], e: LaunchEntry): CodexKept {
  * entry had (other fields such as "disabled" or "timeout", and variables that are not credentials, e.g. MCP_DEBUG_MODE
  * or MCP_TOOLSETS). Credential variables and PATH are setup's to decide.
  */
-function mergedJsonEntry(format: ClientFormat, e: LaunchEntry, old: unknown): Json {
+export function mergedJsonEntry(format: ClientFormat, e: LaunchEntry, old: unknown): Json {
   const fresh = entryFor(format, e);
   if (!old || typeof old !== 'object' || Array.isArray(old)) return fresh;
   const envKey = format === 'opencode' ? 'environment' : 'env';

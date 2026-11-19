@@ -5,13 +5,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   buildLaunchEntry,
   claudeCodeCommand,
   clientStatus,
   codexBlock,
   entryProfiles,
+  findClaudeCli,
   packageSpec,
   knownClients,
   removeClientEntry,
@@ -134,16 +135,16 @@ describe('buildLaunchEntry', () => {
     const cmd = claudeCodeCommand(e, 'win32');
     expect(cmd).not.toContain('\\');
     expect(cmd).toBe(
-      'claude mcp add --scope user -e "PATH=C:/Program Files/nodejs;C:/WINDOWS/System32" -e "MCP_DEPLOYMENT_MODE=local" digital-ai-testing -- ' +
-        '"C:/Program Files/nodejs/node.exe" "C:/Program Files/nodejs/node_modules/npm/bin/npx-cli.js" "-y" "digital-ai-testing-mcp@latest"'
+      'claude mcp add --scope user "--env=npm_config_yes=true" "--env=PATH=C:/Program Files/nodejs;C:/WINDOWS/System32" "--env=MCP_DEPLOYMENT_MODE=local" digital-ai-testing -- ' +
+        '"C:/Program Files/nodejs/node.exe" "C:/Program Files/nodejs/node_modules/npm/bin/npx-cli.js" "digital-ai-testing-mcp@latest"'
     );
   });
 
   it('the Claude Code command carries the same entry, quoted for the shell', () => {
     const e = buildLaunchEntry(fakeCtx('darwin', '/opt/homebrew/bin/node', ['/opt/homebrew/lib/node_modules/npm/bin/npx-cli.js']));
     expect(claudeCodeCommand(e, 'darwin')).toBe(
-      "claude mcp add --scope user -e 'PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin' -e 'MCP_DEPLOYMENT_MODE=local' digital-ai-testing -- " +
-        "'/opt/homebrew/bin/node' '/opt/homebrew/lib/node_modules/npm/bin/npx-cli.js' '-y' 'digital-ai-testing-mcp@latest'"
+      "claude mcp add --scope user '--env=npm_config_yes=true' '--env=PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin' '--env=MCP_DEPLOYMENT_MODE=local' digital-ai-testing -- " +
+        "'/opt/homebrew/bin/node' '/opt/homebrew/lib/node_modules/npm/bin/npx-cli.js' 'digital-ai-testing-mcp@latest'"
     );
   });
 });
@@ -434,8 +435,8 @@ describe('setup clients commands', () => {
     expect(await runSetupCli(['clients', 'add', 'notepad'], unknown.s)).toBe(2);
     expect(unknown.all()).toContain('Unknown client "notepad"');
     const manual = io();
-    expect(await runSetupCli(['clients', 'add', 'claude-code'], manual.s)).toBe(2);
-    expect(manual.all()).toContain('claude mcp add');
+    expect(await runSetupCli(['clients', 'add', 'xcode'], manual.s)).toBe(2);
+    expect(manual.all()).toContain('Xcode');
   });
 
   it('remove needs confirmation and removes only our entry', async () => {
@@ -500,6 +501,110 @@ describe('setup clients commands', () => {
     expect(json(chosen).mcpServers).toHaveProperty('digital-ai-testing');
     expect(accepted.all()).toContain('To confirm Claude Desktop reads this file');
     expect(readFileSync(join(legacy, 'claude_desktop_config.json'), 'utf8')).toBe(original); // the other file untouched
+  });
+
+  describe('Claude Code (user scope, through the claude command)', () => {
+    // A fake claude command that keeps ~/.claude.json the way the real one does (top-level mcpServers, type first).
+    const fakeClaude = (fail?: 'add' | 'remove') => {
+      const calls: string[][] = [];
+      const file = join(home, '.claude.json');
+      const cli = {
+        run: (args: string[]) => {
+          calls.push(args);
+          const data = existsSync(file) ? json(file) : { numStartups: 3 };
+          data.mcpServers ??= {};
+          if (args[1] === 'remove') {
+            if (fail === 'remove') return { ok: false, output: 'boom' };
+            delete data.mcpServers[args[2]];
+          } else if (args[1] === 'add-json') {
+            if (fail === 'add' && calls.filter((c) => c[1] === 'add-json').length === 1) return { ok: false, output: 'Invalid JSON aut_1_secretInOutput' };
+            const { type, ...rest } = JSON.parse(args[5]);
+            data.mcpServers[args[4]] = { type, ...rest };
+          }
+          writeFileSync(file, JSON.stringify(data));
+          return { ok: true, output: 'ok' };
+        },
+      };
+      ctx.claudeCli = () => cli;
+      return { calls, file };
+    };
+    const ours = (file: string) => json(file).mcpServers['digital-ai-testing'];
+
+    it('add claude-code runs "claude mcp add-json --scope user"; a second run is "already set up"', async () => {
+      const c = fakeClaude();
+      const t = io();
+      expect(await runSetupCli(['clients', 'add', 'claude-code', '--yes'], t.s)).toBe(0);
+      expect(c.calls[0].slice(0, 5)).toEqual(['mcp', 'add-json', '--scope', 'user', 'digital-ai-testing']);
+      const e = ours(c.file);
+      expect(e.args).not.toContain('-y');
+      expect(e.env.npm_config_yes).toBe('true');
+      expect(e.type).toBe('stdio');
+      expect(json(c.file).numStartups).toBe(3);
+      expect(t.all()).toContain('Claude Code: added for all your projects');
+      const again = io();
+      expect(await runSetupCli(['clients', 'add', 'claude-code'], again.s)).toBe(0);
+      expect(again.all()).toContain('Claude Code: already set up');
+      expect(c.calls).toHaveLength(1);
+    });
+
+    it('in a terminal a new entry is asked about (default yes); outside one it needs --yes and prints the command', async () => {
+      const c = fakeClaude();
+      const declined = io(['n'], true);
+      expect(await runSetupCli(['clients', 'add', 'claude-code'], declined.s)).toBe(1);
+      expect(c.calls).toHaveLength(0);
+      const noTerminal = io();
+      expect(await runSetupCli(['clients', 'add', 'claude-code'], noTerminal.s)).toBe(1);
+      expect(noTerminal.all()).toContain('claude mcp add --scope user');
+      const accepted = io([''], true);
+      expect(await runSetupCli(['clients', 'add', 'claude-code'], accepted.s)).toBe(0);
+      expect(ours(c.file)).toBeDefined();
+    });
+
+    it('replacing keeps the old entry\'s other settings (remove, then add-json); remove takes it out', async () => {
+      const c = fakeClaude();
+      writeFileSync(c.file, JSON.stringify({ mcpServers: { 'digital-ai-testing': { type: 'stdio', command: 'npx', args: ['x'], env: { MCP_DEBUG_MODE: 'true' }, timeout: 5 } } }));
+      expect(await runSetupCli(['clients', 'add', 'claude-code', '--yes'], io().s)).toBe(0);
+      expect(c.calls.map((a) => a[1])).toEqual(['remove', 'add-json']);
+      expect(ours(c.file)).toMatchObject({ timeout: 5, env: { MCP_DEBUG_MODE: 'true', npm_config_yes: 'true' } });
+      expect(await runSetupCli(['clients', 'remove', 'claude-code', '--yes'], io().s)).toBe(0);
+      expect(ours(c.file)).toBeUndefined();
+    });
+
+    it('a failed add puts the previous entry back and never prints a key from the output', async () => {
+      const c = fakeClaude('add');
+      const old = { type: 'stdio', command: 'npx', args: ['x'], env: {} };
+      writeFileSync(c.file, JSON.stringify({ mcpServers: { 'digital-ai-testing': old } }));
+      const t = io();
+      expect(await runSetupCli(['clients', 'add', 'claude-code', '--yes'], t.s)).toBe(1);
+      expect(t.all()).toContain('The previous entry was put back');
+      expect(t.all()).not.toContain('aut_1_secretInOutput');
+      expect(ours(c.file)).toEqual(old);
+    });
+
+    it('"clients add" with no names includes Claude Code when the claude command exists; without it nothing is run', async () => {
+      mkdirSync(join(home, '.cursor'));
+      const c = fakeClaude();
+      expect(await runSetupCli(['clients', 'add', '--yes'], io().s)).toBe(0);
+      expect(ours(c.file)).toBeDefined();
+      ctx.claudeCli = () => undefined;
+      const t = io();
+      expect(await runSetupCli(['clients', 'add', 'claude-code'], t.s)).toBe(1);
+      expect(t.all()).toContain('the claude command was not found');
+      expect(await runSetupCli(['clients', 'add', 'claude-code', '--config', join(home, 'x.json')], io().s)).toBe(2);
+    });
+  });
+
+  it.runIf(process.platform === 'win32')('findClaudeCli: npm\'s claude.cmd wrapper → its claude.exe, run without a shell', () => {
+    const bin = join(home, 'bin');
+    const exe = join(bin, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+    mkdirSync(dirname(exe), { recursive: true });
+    writeFileSync(exe, '');
+    writeFileSync(join(bin, 'claude.cmd'), '@ECHO off\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n');
+    const c = { ...ctx, platform: 'win32' as const, env: { PATH: `${join(home, 'nothing')};${bin}` } };
+    expect(findClaudeCli(c)).toBeDefined();
+    writeFileSync(join(bin, 'claude.cmd'), '@ECHO off\r\nnode something\r\n');
+    expect(findClaudeCli(c)).toBeUndefined(); // a wrapper it cannot read is never run through a shell
+    expect(findClaudeCli({ ...c, env: { PATH: dirname(exe) } })).toBeDefined(); // claude.exe directly on PATH
   });
 
   it('nothing installed: add says so', async () => {
