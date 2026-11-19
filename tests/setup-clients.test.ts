@@ -96,8 +96,10 @@ describe('buildLaunchEntry', () => {
   });
 
   it('setupCommand names the install that is running (a bare command can start an old global copy)', () => {
-    expect(setupCommand('npx', '2.4.0-beta.4')).toBe('npx -y digital-ai-testing-mcp@next setup');
-    expect(setupCommand('npx', '2.4.0')).toBe('npx -y digital-ai-testing-mcp@latest setup');
+    expect(setupCommand('npx', '2.4.0-beta.4', 'darwin')).toBe('npx -y digital-ai-testing-mcp@next setup');
+    expect(setupCommand('npx', '2.4.0', 'linux')).toBe('npx -y digital-ai-testing-mcp@latest setup');
+    // Windows: npx.cmd — Windows PowerShell 5.1 refuses npm's npx.ps1 under the default execution policy.
+    expect(setupCommand('npx', '2.4.0', 'win32')).toBe('npx.cmd -y digital-ai-testing-mcp@latest setup');
     expect(setupCommand('npm', '2.4.0')).toBe('digital-ai-testing-mcp setup');
     expect(setupCommand('source', '2.4.0')).toBe('node dist/index.js setup');
   });

@@ -14,20 +14,25 @@ It provides **212 tools**, **2 resources** and **7 prompts** across 27 capabilit
 
 ## Quick Start
 
-**1. Check that Node.js 22 or later is installed** (npm comes with it): `node --version`. Don't go by `npm --version`: that is npm's own version number (11 with current Node.js releases), not Node's. If it isn't, install the LTS version that https://nodejs.org offers for your system (Windows, macOS or Linux). 22 is the minimum, not a required version: any newer release works.
+**1. Check that Node.js 22 or later is installed** (npm comes with it): `node --version`. Don't go by `npm --version`: that is npm's own version number (11 with current Node.js releases), not Node's. Setup needs only Node.js (npx comes with it). If it isn't, install the LTS version that https://nodejs.org offers for your system (Windows, macOS or Linux). 22 is the minimum, not a required version: any newer release works.
 
 ```bash
 node --version
-npm --version
 ```
 
 **2. Run setup in a terminal:**
 
 ```bash
+# macOS / Linux
 npx -y digital-ai-testing-mcp@latest setup
+
+# Windows (PowerShell or Command Prompt)
+npx.cmd -y digital-ai-testing-mcp@latest setup
 ```
 
-It asks for your Digital.ai Testing URL and your [access key](#access-keys) (the key is typed hidden), checks them with Digital.ai Testing, and saves the key in your operating system's keychain. Then it offers to add the server to the AI clients it finds on your computer: Claude Desktop, VS Code (GitHub Copilot), Cursor, Windsurf, OpenAI Codex, OpenCode and Gemini CLI. None of their configuration files gets a copy of your key. For Claude Code it prints a `claude mcp add` command to run. See [The setup command](#the-setup-command).
+On Windows, type `npx.cmd`: in Windows PowerShell, plain `npx` runs a PowerShell script that the default settings block ("running scripts is disabled on this system").
+
+It asks for your Digital.ai Testing URL and your [access key](#access-keys) (the key is typed hidden), checks them with Digital.ai Testing, and saves the key in your operating system's keychain. Then it offers to add the server to the AI clients it finds on your computer: Claude Desktop, VS Code (GitHub Copilot), Cursor, Windsurf, OpenAI Codex, OpenCode and Gemini CLI. None of their configuration files gets a copy of your key. Claude Code is added through its own `claude` command. See [The setup command](#the-setup-command).
 
 **3. Restart your AI client and ask:** *"Show me the overall health of the device farm."*
 
@@ -78,14 +83,20 @@ There is nothing else to install. The first start downloads the server (about 20
 No Docker required — the server runs directly under Node.js, and there is no install command. Run [setup](#the-setup-command) once:
 
 ```bash
+# macOS / Linux
 npx -y digital-ai-testing-mcp@latest setup
+
+# Windows (PowerShell or Command Prompt)
+npx.cmd -y digital-ai-testing-mcp@latest setup
 ```
+
+On Windows, type `npx.cmd`: in Windows PowerShell, plain `npx` runs a PowerShell script that the default settings block ("running scripts is disabled on this system").
 
 It saves your access key in the OS keychain and adds the server to your AI clients. Your AI client then starts the server through npx, which downloads the package the first time and a new release the first time it starts after one is published, so you always run the newest version.
 
 To set a client up by hand instead, [Connecting AI Clients](#connecting-ai-clients) has the entry for each one. Settings go in the client's `env` block (see [Configuration](#configuration)); you don't need an image name or a `.env` file.
 
-**Prefer a fixed install?** Run `npm install -g digital-ai-testing-mcp`, then use `"command": "digital-ai-testing-mcp"` with `"args": []` in the client configuration, and `digital-ai-testing-mcp setup` instead of `npx … setup`. That version stays until you [upgrade](#upgrading) it yourself, and the server starts without reaching the npm registry.
+**Prefer a fixed install?** Run `npm install -g digital-ai-testing-mcp` (`npm.cmd` on Windows), then use `"command": "digital-ai-testing-mcp"` with `"args": []` in the client configuration, and `digital-ai-testing-mcp setup` instead of `npx … setup` (on Windows, `digital-ai-testing-mcp.cmd setup` in Windows PowerShell, for the same reason as `npx.cmd`). That version stays until you [upgrade](#upgrading) it yourself, and the server starts without reaching the npm registry.
 
 ### Option B — Pull from GitHub Container Registry
 
@@ -208,7 +219,7 @@ Quit Claude Desktop completely (also from the system tray or menu bar) and start
 
 ### Claude Code (VS Code)
 
-The easiest way: run `npx -y digital-ai-testing-mcp@latest setup clients add claude-code`. It adds the server for all your projects with Claude Code's own `claude` command, using the profiles you saved with [setup](#the-setup-command). If the `claude` command isn't available in your terminal, it prints the command to run instead.
+The easiest way: run `npx -y digital-ai-testing-mcp@latest setup clients add claude-code` (`npx.cmd` on Windows). It adds the server for all your projects with Claude Code's own `claude` command, using the profiles you saved with [setup](#the-setup-command). If the `claude` command isn't available in your terminal, it prints the command to run instead.
 
 To add it by hand, run this once (it works in the terminal and from the VS Code, JetBrains and Android Studio extensions):
 
@@ -364,7 +375,11 @@ claude mcp add-json digital-ai-testing '{"type":"stdio","command":"docker","args
 `setup` saves your connection details where the server finds them, so no AI client configuration has to contain your access key.
 
 ```bash
+# macOS / Linux
 npx -y digital-ai-testing-mcp@latest setup
+
+# Windows (PowerShell or Command Prompt)
+npx.cmd -y digital-ai-testing-mcp@latest setup
 ```
 
 With a global npm install, run `digital-ai-testing-mcp setup`; from a source checkout, `node dist/index.js setup`. Running `setup` on its own walks you through adding a connection and then offers to add the server to your AI clients.
@@ -418,6 +433,8 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 
 | Problem | What to do |
 |---|---|
+| `npx : File …
+px.ps1 cannot be loaded because running scripts is disabled on this system` (or `npm.ps1`) | Windows PowerShell runs the PowerShell scripts npm installs (`npx.ps1`, `npm.ps1`), and its default execution policy blocks scripts | Type `npx.cmd` / `npm.cmd` instead of `npx` / `npm`. Or allow local scripts for your account once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (your organization's policy may override it). The AI client entries setup writes start Node.js directly and are not affected |
 | Every tool answers "SETUP REQUIRED" | The server found no connection. Run `setup`, or put `DIGITAL_AI_BASE_URL` and `DIGITAL_AI_ACCESS_KEY` in the client's `env` block |
 | A profile shows as not usable | `setup list` says why. `setup add <name>` replaces it |
 | You rotated your access key | `setup add <name>` with the new key replaces the old one; restart your AI client |
@@ -1084,7 +1101,7 @@ More checks run before any request leaves the server:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Every tool answers "SETUP REQUIRED" | The server found no connection: no `DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY` it can see and no usable profile saved with setup | Run `npx -y digital-ai-testing-mcp@latest setup`, or add the variable the message names to the client's `env` block (npm) or the `.env` file passed with `--env-file` (Docker). Then restart the client or reconnect the server. See [The setup command](#if-something-goes-wrong) |
+| Every tool answers "SETUP REQUIRED" | The server found no connection: no `DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY` it can see and no usable profile saved with setup | Run `npx -y digital-ai-testing-mcp@latest setup` (`npx.cmd` on Windows), or add the variable the message names to the client's `env` block (npm) or the `.env` file passed with `--env-file` (Docker). Then restart the client or reconnect the server. See [The setup command](#if-something-goes-wrong) |
 | `setup clients add` changed Claude Desktop's config, but the server doesn't appear | On Windows, Claude Desktop may read a different `claude_desktop_config.json` than the one changed | Put back the `.digital-ai-testing.bak` copy beside it, then run `setup clients add claude-desktop --config "<file>"` with the file Claude Desktop uses. See [Claude Desktop](#claude-desktop) |
 | `403 Forbidden` on admin tools (agents, regions, license) | Active profile has a project-level role (Project Admin or Project User) — v2 endpoints require Cloud Admin access | Ask the AI: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one. See [Using multiple keys](#using-multiple-keys) |
 | Report delete tools refuse with "Reporter deletes are disabled for project …" | The project's `allowUsersDeleteTests` setting is false, so project-level roles can't delete reports | Ask a Cloud Admin to enable it for the project, or switch to a Cloud Admin profile |

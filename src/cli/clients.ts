@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readd
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
-import { getServerVersion, PACKAGE_NAME, packageSpec } from '../utils/version.js';
+import { getServerVersion, npxCommand, PACKAGE_NAME, packageSpec } from '../utils/version.js';
 import { installKind, type InstallKind } from '../utils/update-check.js';
 
 export const SERVER_ENTRY_NAME = 'digital-ai-testing';
@@ -31,8 +31,12 @@ export { PACKAGE_NAME, packageSpec };
  * a different, older global install (seen live 2026-11-18: an old global copy answered with its pre-setup FATAL
  * error) — so a setup started through npx names npx, and a source checkout names its own entry point.
  */
-export function setupCommand(kind: InstallKind = installKind(), version: string | undefined = getServerVersion()): string {
-  if (kind === 'npx') return `npx -y ${packageSpec(version)} setup`;
+export function setupCommand(
+  kind: InstallKind = installKind(),
+  version: string | undefined = getServerVersion(),
+  platform: NodeJS.Platform = process.platform
+): string {
+  if (kind === 'npx') return `${npxCommand(platform)} -y ${packageSpec(version)} setup`;
   if (kind === 'source') return 'node dist/index.js setup';
   return `${PACKAGE_NAME} setup`;
 }
@@ -163,7 +167,7 @@ export function buildLaunchEntry(ctx: ClientContext): LaunchEntry {
   if (spec.endsWith('@next')) {
     notes.push(
       `This is a beta (${ctx.version}), so the entry starts the beta channel (${spec}) and updates with each beta. ` +
-        `Once a release includes setup, "npx -y ${PACKAGE_NAME}@latest setup clients add --yes" moves the entries back to releases.`
+        `Once a release includes setup, "${npxCommand(ctx.platform)} -y ${PACKAGE_NAME}@latest setup clients add --yes" moves the entries back to releases.`
     );
   }
   const { dir, versionSpecific, temporary } = stableNodeDir(ctx);
@@ -174,10 +178,10 @@ export function buildLaunchEntry(ctx: ClientContext): LaunchEntry {
   if (temporary) {
     notes.push(
       `Node.js is running from fnm's per-terminal link (${dir}), which fnm deletes later, and no fnm default was found. ` +
-        `Run "fnm default <version>", then "${setupCommand()} clients add" again.`
+        `Run "fnm default <version>", then "${setupCommand(undefined, undefined, ctx.platform)} clients add" again.`
     );
   } else if (versionSpecific) {
-    notes.push(`Node.js is at a version-specific path (${dir}). After switching Node versions, run "${setupCommand()} clients add" again.`);
+    notes.push(`Node.js is at a version-specific path (${dir}). After switching Node versions, run "${setupCommand(undefined, undefined, ctx.platform)} clients add" again.`);
   }
   if (!ctx.exists(npxCli)) {
     // Unusual layout: fall back to plain npx and rely on the client's PATH.

@@ -15,7 +15,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { getServerVersion, packageSpec } from './version.js';
+import { getServerVersion, npxCommand, packageSpec } from './version.js';
 
 export type SetupContext = 'client-config' | 'docker' | 'source';
 
@@ -45,7 +45,7 @@ function whereToSet(ctx: SetupContext): string {
   switch (ctx) {
     case 'client-config':
       return (
-        `Easiest: run "npx -y ${packageSpec(getServerVersion())} setup" in a terminal — it checks the key and saves it in ` +
+        `Easiest: run "${npxCommand()} -y ${packageSpec(getServerVersion())} setup" in a terminal — it checks the key and saves it in ` +
         'the credential store (the OS keychain), where this server finds it. Or add them to the `env` block of this ' +
         "server's entry in the AI client's MCP configuration (for example claude_desktop_config.json, .vscode/mcp.json, " +
         '.cursor/mcp.json, ~/.claude.json or ~/.codex/config.toml).'
