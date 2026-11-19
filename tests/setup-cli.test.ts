@@ -470,6 +470,8 @@ describe('setup clients add — importing the profiles of an entry it replaces',
     expect(JSON.parse(readFileSync(cfg(), 'utf8')).mcpServers.mine).toEqual({ command: 'x' });
     expect(r.all()).not.toContain(KEY);
     expect(r.all()).not.toContain(KEY_U);
+    expect(r.asked[1]).toContain('are in the credential store now');
+    expect(r.all()).toContain('Restart the AI clients');
   });
 
   it('profiles the store already holds (same URL and key, any name) are not asked about', async () => {
@@ -498,7 +500,8 @@ describe('setup clients add — importing the profiles of an entry it replaces',
     writeEntry(multi());
     const r = await clientsAdd([], { interactive: true, answers: ['n', 'n'] });
     expect(r.code).toBe(1);
-    expect(r.asked[1]).toContain('It would lose: default, project_user');
+    expect(r.asked[1]).toContain('It would lose: its default connection, "project_user"');
+    expect(r.all()).not.toContain('Restart the AI clients');
     expect(entryEnv().DAI_PROFILE_PROJECT_USER_KEY).toBe(KEY_U);
   });
 

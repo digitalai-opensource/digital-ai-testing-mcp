@@ -778,10 +778,11 @@ async function importEntryProfiles(io: SetupIO, t: ClientTarget, yes: boolean): 
   return notImported;
 }
 
-/** Adds or updates the entry in each target. Returns how many were left unchanged and need attention. */
-async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarget[], yes: boolean): Promise<number> {
+/** Adds or updates the entry in each target. Returns how many files changed, and how many were left unchanged and need attention. */
+async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarget[], yes: boolean): Promise<{ changed: number; attention: number }> {
   const entry = buildLaunchEntry(ctx);
   let attention = 0;
+  let changed = 0;
   for (const t of targets) {
     if (t.choices) {
       io.out(`${t.label}: not changed — ${CHOOSE_HINT(t)}`);
@@ -790,7 +791,7 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
     }
     const s = clientStatus(t, entry);
     if (s.unreadable) {
-      io.out(`${t.label}: not changed — ${s.unreadable}. Add this to ${t.file} by hand:`);
+      io.out(`${t.label}: not changed — ${s.unreadable}. Add this "${SERVER_ENTRY_NAME}" entry to ${t.file} by hand (replace the one there, if any):`);
       io.out(pasteSnippet(t.format, entry));
       attention++;
       continue;
@@ -810,11 +811,14 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
     }
     if (s.hasEntry) {
       const lost = s.entryHasKeys ? await importEntryProfiles(io, t, yes) : [];
+      const saved = s.entryHasKeys && entryProfiles(t).some((p) => p.url && p.key);
       const question = lost.length
-        ? `Replace ${t.label}'s entry anyway? It would lose: ${lost.join(', ')}. [y/N] `
-        : s.entryHasKeys
-          ? `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with its own access key. Replace it with one that uses the credential store? [y/N] `
-          : `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with a different launch command. Replace it? [y/N] `;
+        ? `Replace ${t.label}'s entry anyway? It would lose: ${lost.map((n) => (n === 'default' ? 'its default connection' : `"${n}"`)).join(', ')}. [y/N] `
+        : saved
+          ? `The profiles in ${t.label}'s entry are in the credential store now. Replace the entry with one that uses the credential store? [y/N] `
+          : s.entryHasKeys
+            ? `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with its own access key. Replace it with one that uses the credential store? [y/N] `
+            : `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with a different launch command. Replace it? [y/N] `;
       const replace = yes || (io.interactive && /^y(es)?$/i.test(await io.ask(question)));
       if (!replace) {
         io.out(`${t.label}: not changed${io.interactive ? '' : ' — add --yes to replace its existing entry'}.`);
@@ -828,6 +832,7 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
       attention++;
       continue;
     }
+    changed++;
     io.out(`${t.label}: ${s.hasEntry ? 'updated' : 'added'} (${t.file}${r.backup ? `; previous version kept as ${r.backup}` : ''}).`);
     for (const n of s.otherNames) io.out(`  It also starts this server as "${n}" — remove that entry in ${t.file} to avoid two copies.`);
     if (t.id === 'claude-desktop') {
@@ -838,7 +843,7 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
       );
     }
   }
-  return attention;
+  return { changed, attention };
 }
 
 /** After a guided `setup`: offer the installed clients that are not set up yet. */
@@ -869,8 +874,8 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
       throw new SetupError(`No AI clients were found on this machine. Name one: ${setupCommand()} clients add <client> (list: setup clients)`, 1);
     }
     describeEntry(io, buildLaunchEntry(ctx));
-    const attention = await addToClients(io, ctx, targets, !!flags.yes);
-    io.out(RESTART_CLIENTS);
+    const { changed, attention } = await addToClients(io, ctx, targets, !!flags.yes);
+    if (changed > 0) io.out(RESTART_CLIENTS);
     if (attention > 0) throw new SetupError(`${attention} client${attention === 1 ? ' was' : 's were'} not changed (see above).`, 1);
     return;
   }
@@ -887,12 +892,16 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
     if (!(await confirm(io, !!flags.yes, `Remove the "${SERVER_ENTRY_NAME}" entry from ${names}? [y/N] `, 'Add --yes to remove it.'))) {
       throw new SetupError('Nothing was changed.', 1);
     }
+    let removed = 0;
     for (const t of targets) {
       const r = removeClientEntry(t);
       if (!r.ok) io.err(`${t.label}: not changed — ${r.error}`);
-      else io.out(`${t.label}: removed${r.backup ? ` (previous version kept as ${r.backup})` : ''}.`);
+      else {
+        removed++;
+        io.out(`${t.label}: removed${r.backup ? ` (previous version kept as ${r.backup})` : ''}.`);
+      }
     }
-    io.out(RESTART_CLIENTS);
+    if (removed > 0) io.out(RESTART_CLIENTS);
     return;
   }
   throw new SetupError(`Unknown clients command: ${sub}. Use: setup clients | setup clients add [client…] | setup clients remove [client…]`, 2);

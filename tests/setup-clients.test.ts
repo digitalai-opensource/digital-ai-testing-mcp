@@ -415,6 +415,8 @@ describe('setup clients commands', () => {
     expect(await runSetupCli(['clients', 'add', 'cursor'], t.s)).toBe(1);
     expect(t.all()).toContain('"mcpServers"');
     expect(t.all()).toContain('"digital-ai-testing"');
+    expect(t.all()).toContain('(replace the one there, if any)');
+    expect(t.all()).not.toContain('Restart the AI clients');
   });
 
   it('--config names the file for one client; it must be that client\'s file name in an existing folder', async () => {

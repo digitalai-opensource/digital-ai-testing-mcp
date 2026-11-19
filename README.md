@@ -14,7 +14,7 @@ It provides **212 tools**, **2 resources** and **7 prompts** across 27 capabilit
 
 ## Quick Start
 
-**1. Check that Node.js 22 or later is installed** (npm comes with it). If it isn't, install the LTS version from https://nodejs.org first.
+**1. Check that Node.js 22 or later is installed** (npm comes with it): `node --version`. If it isn't, install the LTS version that https://nodejs.org offers for your system (Windows, macOS or Linux). 22 is the minimum, not a required version: any newer release works.
 
 ```bash
 node --version
@@ -70,7 +70,7 @@ There is nothing else to install. The first start downloads the server (about 20
 **What you need:**
 
 - A **Digital.ai Testing account** with a valid [access key](#access-keys).
-- **Node.js 22+** for [Option A](#option-a--install-via-npm-recommended) (recommended — no Docker needed), **or**
+- **Node.js 22 or later** (any current LTS release, on Windows, macOS or Linux) for [Option A](#option-a--install-via-npm-recommended) (recommended — no Docker needed), **or**
 - **Docker** for [Option B](#option-b--pull-from-github-container-registry) or [Option C](#option-c--build-from-source) (container-based install).
 
 ### Option A — Install via npm (Recommended)
