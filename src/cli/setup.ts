@@ -659,6 +659,13 @@ function cmdClientsList(io: SetupIO, ctx: ClientContext) {
   io.out('');
   io.out('Set up by hand:');
   for (const m of manualClients()) io.out(`  ${m.id.padEnd(22)} ${m.label}: ${m.how}`);
+  // The command only when there is something to do: after "set up" it read as a step still open (2026-11-19).
+  const claude = claudeCodeTarget(ctx);
+  const done = claude.detected && (() => {
+    const s = clientStatus(claude, claudeCodeEntry(entry, ctx.platform));
+    return s.hasEntry && s.upToDate && !s.entryHasKeys && !s.unreadable;
+  })();
+  if (done) return;
   io.out('');
   io.out(`Claude Code — "${setupCommand()} clients add claude-code" runs this for you, or run it once in a terminal:`);
   io.out(`  ${claudeCodeCommand(entry, ctx.platform)}`);

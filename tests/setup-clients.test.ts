@@ -549,6 +549,19 @@ describe('setup clients commands', () => {
       expect(c.calls).toHaveLength(1);
     });
 
+    it('setup clients prints the claude mcp add command only while Claude Code is not set up', async () => {
+      fakeClaude();
+      const before = io();
+      expect(await runSetupCli(['clients'], before.s)).toBe(0);
+      expect(before.all()).toMatch(/claude-code\s+Claude Code \(all your projects\): installed, not set up/);
+      expect(before.all()).toContain('claude mcp add --scope user');
+      expect(await runSetupCli(['clients', 'add', 'claude-code', '--yes'], io().s)).toBe(0);
+      const after = io();
+      expect(await runSetupCli(['clients'], after.s)).toBe(0);
+      expect(after.all()).toMatch(/claude-code\s+Claude Code \(all your projects\): set up/);
+      expect(after.all()).not.toContain('claude mcp add');
+    });
+
     it('in a terminal a new entry is asked about (default yes); outside one it needs --yes and prints the command', async () => {
       const c = fakeClaude();
       const declined = io(['n'], true);
