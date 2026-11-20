@@ -411,6 +411,15 @@ describe('setup clients commands', () => {
     expect(again.all()).toMatch(/Cursor: already set up/);
   });
 
+  it('macOS Claude Desktop: one config location, so no "confirm it reads this file" note (Windows only)', async () => {
+    ctx.platform = 'darwin';
+    mkdirSync(join(home, 'Library', 'Application Support', 'Claude'), { recursive: true });
+    const t = io();
+    expect(await runSetupCli(['clients', 'add', 'claude-desktop', '--yes'], t.s)).toBe(0);
+    expect(t.all()).toMatch(/Claude Desktop: added/);
+    expect(t.all()).not.toContain('To confirm Claude Desktop reads this file');
+  });
+
   it('an existing entry with its own key needs --yes outside a terminal', async () => {
     mkdirSync(join(home, '.cursor'));
     const file = join(home, '.cursor', 'mcp.json');

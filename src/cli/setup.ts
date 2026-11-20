@@ -885,9 +885,11 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
     io.out(`${t.label}: ${s.hasEntry ? 'updated' : 'added'} (${t.file}${r.backup ? `; previous version kept as ${r.backup}` : ''}).`);
     for (const n of s.otherNames) io.out(`  It also starts this server as "${n}" — remove that entry in ${t.file} to avoid two copies.`);
     if (s.envFile) io.out(`  The entry also loads variables from ${s.envFile} (kept). If that file sets DIGITAL_AI_* or DAI_PROFILE_* keys, they still win over the credential store — remove them there.`);
-    if (t.id === 'claude-desktop') {
+    // Windows only: there Claude Desktop's config has several possible locations (see CLAUDE.md). macOS has one, and the
+    // note read as noise there (Mac run 2026-11-19).
+    if (t.id === 'claude-desktop' && ctx.platform === 'win32') {
       io.out(
-        '  To confirm Claude Desktop reads this file: quit it completely (also from the system tray / menu bar), start it again, ' +
+        '  To confirm Claude Desktop reads this file: quit it completely (also from the system tray), start it again, ' +
           `and check that "${SERVER_ENTRY_NAME}" appears and is running in its MCP settings (Settings → Developer). If it does not appear, ` +
           `this install reads another file: ${r.backup ? `put back ${r.backup}, then ` : ''}run "${setupCommand()} clients add claude-desktop --config <file>" with the file it uses.`
       );
