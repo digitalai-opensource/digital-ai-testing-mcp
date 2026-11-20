@@ -32,7 +32,7 @@ npx.cmd -y digital-ai-testing-mcp@latest setup
 
 On Windows, type `npx.cmd`: in Windows PowerShell, plain `npx` runs a PowerShell script that the default settings block ("running scripts is disabled on this system").
 
-It asks for your Digital.ai Testing URL and your [access key](#access-keys) (the key is typed hidden), checks them with Digital.ai Testing, and saves the key in your operating system's keychain. Then it offers to add the server to the AI clients it finds on your computer: Claude Desktop, VS Code (GitHub Copilot), Cursor, Windsurf, OpenAI Codex, OpenCode and Gemini CLI. None of their configuration files gets a copy of your key. Claude Code is added through its own `claude` command. See [The setup command](#the-setup-command).
+It asks for your Digital.ai Testing URL and your [access key](#access-keys) (the key is typed hidden; in a Windows PowerShell or Command Prompt window, paste it with a right-click, since Ctrl+V doesn't paste there), checks them with Digital.ai Testing, and saves the key in your operating system's keychain. Then it offers to add the server to the AI clients it finds on your computer: Claude Desktop, VS Code (GitHub Copilot), Cursor, Windsurf, OpenAI Codex, OpenCode and Gemini CLI. None of their configuration files gets a copy of your key. Claude Code is added through its own `claude` command. See [The setup command](#the-setup-command).
 
 **3. Restart your AI client and ask:** *"Show me the overall health of the device farm."*
 
@@ -382,7 +382,7 @@ npx -y digital-ai-testing-mcp@latest setup
 npx.cmd -y digital-ai-testing-mcp@latest setup
 ```
 
-With a global npm install, run `digital-ai-testing-mcp setup`; from a source checkout, `node dist/index.js setup`. Running `setup` on its own walks you through adding a connection and then offers to add the server to your AI clients.
+With a global npm install, run `digital-ai-testing-mcp setup`; from a source checkout, `node dist/index.js setup`. In the table below, `setup` stands for the whole command you use, for example `npx.cmd -y digital-ai-testing-mcp@latest setup list` on Windows. Running `setup` on its own walks you through adding a connection and then offers to add the server to your AI clients.
 
 | Command | What it does |
 |---|---|
@@ -404,6 +404,7 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 - **In your operating system's keychain** by default: Windows Credential Manager (Windows Credentials → Generic Credentials, named `<profile>.digital-ai-testing-mcp`), the macOS Keychain, or the Linux Secret Service. The service name is `digital-ai-testing-mcp` and the account is the profile name. If you move the profiles file with `MCP_CREDENTIAL_STORE_DIR`, the account is `<profile>@<that folder>` instead, so a second set of profiles (for testing, say) can never overwrite or delete the keys of your usual ones.
 - **The list of profiles** — names, URLs and the default, no keys — is in `profiles.json`: `%APPDATA%\digital-ai-testing\` on Windows, `~/.config/digital-ai-testing/` on macOS and Linux. `setup path` prints the location.
 - With `--plain-file`, the key is kept in `profiles.json` instead, readable only by your user account. `setup` offers this when the keychain can't be used, for example on a Linux machine without a keyring service.
+- On Windows, the keychain (Credential Manager) needs the Microsoft Visual C++ runtime. Most PCs already have it. If setup says it is missing, install it from [Microsoft](https://aka.ms/vs/17/release/vc_redist.x64.exe), then run `setup add <name>` again to move the key into Credential Manager.
 - The key is typed at a hidden prompt (or piped in with `--key-stdin`), never as a command-line argument, and it is never shown. `setup` checks it with Digital.ai Testing before saving it.
 
 ### How the server picks a connection
@@ -433,13 +434,14 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 
 | Problem | What to do |
 |---|---|
-| `npx : File …
-px.ps1 cannot be loaded because running scripts is disabled on this system` (or `npm.ps1`) | Windows PowerShell runs the PowerShell scripts npm installs (`npx.ps1`, `npm.ps1`), and its default execution policy blocks scripts | Type `npx.cmd` / `npm.cmd` instead of `npx` / `npm`. Or allow local scripts for your account once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (your organization's policy may override it). The AI client entries setup writes start Node.js directly and are not affected |
+| `npx : File …\npx.ps1 cannot be loaded because running scripts is disabled on this system` (or `npm.ps1`) | Windows PowerShell blocks the PowerShell scripts npm installs. Type `npx.cmd` / `npm.cmd` instead of `npx` / `npm`, or allow local scripts for your account once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (your organization's policy may override it). The AI client entries setup writes start Node.js directly and are not affected |
 | Every tool answers "SETUP REQUIRED" | The server found no connection. Run `setup`, or put `DIGITAL_AI_BASE_URL` and `DIGITAL_AI_ACCESS_KEY` in the client's `env` block |
 | A profile shows as not usable | `setup list` says why. `setup add <name>` replaces it |
 | You rotated your access key | `setup add <name>` with the new key replaces the old one; restart your AI client |
 | `profiles.json` was damaged or edited by mistake | `setup repair` restores the previous version (the damaged file is kept as `profiles.json.before-repair`) |
 | You want to start over | `setup reset` deletes every profile and the keys it saved in the keychain |
+| Setup says the OS keychain needs the Microsoft Visual C++ runtime | Install it from [Microsoft](https://aka.ms/vs/17/release/vc_redist.x64.exe), then run `setup add <name>` again. Until then, setup can keep the key in the profiles file |
+| The key prompt says "No access key was entered" after you pasted | Ctrl+V doesn't paste at the hidden prompt in a Windows PowerShell or Command Prompt window. Right-click to paste, then press Enter |
 | You are asking support for help | Send the output of `setup doctor`. It never contains a key |
 
 You can always go back to putting your URL and key in the AI client's `env` block: those variables take precedence over saved profiles.
@@ -1101,6 +1103,7 @@ More checks run before any request leaves the server:
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `npx : File …\npx.ps1 cannot be loaded because running scripts is disabled on this system` (or `npm.ps1`) | Windows PowerShell runs the PowerShell scripts npm installs (`npx.ps1`, `npm.ps1`), and its default execution policy blocks scripts | Type `npx.cmd` / `npm.cmd` instead of `npx` / `npm`, or run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once (your organization's policy may override it). The AI client entries setup writes start Node.js directly and are not affected |
 | Every tool answers "SETUP REQUIRED" | The server found no connection: no `DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY` it can see and no usable profile saved with setup | Run `npx -y digital-ai-testing-mcp@latest setup` (`npx.cmd` on Windows), or add the variable the message names to the client's `env` block (npm) or the `.env` file passed with `--env-file` (Docker). Then restart the client or reconnect the server. See [The setup command](#if-something-goes-wrong) |
 | `setup clients add` changed Claude Desktop's config, but the server doesn't appear | On Windows, Claude Desktop may read a different `claude_desktop_config.json` than the one changed | Put back the `.digital-ai-testing.bak` copy beside it, then run `setup clients add claude-desktop --config "<file>"` with the file Claude Desktop uses. See [Claude Desktop](#claude-desktop) |
 | `403 Forbidden` on admin tools (agents, regions, license) | Active profile has a project-level role (Project Admin or Project User) — v2 endpoints require Cloud Admin access | Ask the AI: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one. See [Using multiple keys](#using-multiple-keys) |

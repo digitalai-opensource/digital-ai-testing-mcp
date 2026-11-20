@@ -62,6 +62,27 @@ function shortError(e: unknown): string {
   return (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
 }
 
+export const VC_RUNTIME_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
+
+/**
+ * Why the keychain library did not load, in words that say what to do. On Windows its binary needs the Microsoft Visual
+ * C++ runtime (VCRUNTIME140.dll). Most PCs have it; a clean image does not (Windows Sandbox, 2026-11-19), and the
+ * library then says "Cannot find native binding … npm has a bug …", which sent people to reinstall for nothing.
+ */
+export function keychainLoadError(
+  e: unknown,
+  platform: NodeJS.Platform = process.platform,
+  vcRuntimePresent: () => boolean = () => existsSync(join(process.env.SystemRoot?.trim() || 'C:\\Windows', 'System32', 'vcruntime140.dll'))
+): string {
+  if (platform === 'win32' && !vcRuntimePresent()) {
+    return (
+      'the OS keychain needs the Microsoft Visual C++ runtime, which is not installed on this PC. Install it from ' +
+      `${VC_RUNTIME_URL} (Microsoft), then run setup add again to move the key into Credential Manager`
+    );
+  }
+  return `the OS keychain library could not be loaded (${shortError(e)})`;
+}
+
 /** The OS keychain, loaded on first use. Never throws: an unusable keychain comes back as an error. */
 export function getKeychain(): { keychain?: Keychain; error?: string } {
   if (_keychainOverride !== undefined) {
@@ -78,7 +99,7 @@ export function getKeychain(): { keychain?: Keychain; error?: string } {
         },
       };
     } catch (e) {
-      _keychain = { error: `the OS keychain library could not be loaded (${shortError(e)})` };
+      _keychain = { error: keychainLoadError(e) };
     }
   }
   return _keychain;

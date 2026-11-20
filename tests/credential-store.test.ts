@@ -15,6 +15,7 @@ import {
   jsonErrorPosition,
   KEYCHAIN_SERVICE,
   keychainAccount,
+  keychainLoadError,
   keychainLookup,
   saveKeyToKeychain,
   setKeychainForTests,
@@ -101,6 +102,20 @@ describe('parseStore', () => {
     expect(parseStore([], 'p').error).toBe('the file is not a JSON object');
     expect(parseStore({ version: 1 }, 'p').error).toBe('the file has no "profiles" object');
     expect(parseStore({ version: 2, profiles: {} }, 'p').error).toContain('format version 2');
+  });
+});
+
+describe('keychainLoadError', () => {
+  const napi = new Error('Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828).');
+  it("Windows without the Visual C++ runtime: names it and links Microsoft's installer, not the npm bug", () => {
+    const msg = keychainLoadError(napi, 'win32', () => false);
+    expect(msg).toContain('Microsoft Visual C++ runtime');
+    expect(msg).toContain('https://aka.ms/vs/17/release/vc_redist.x64.exe');
+    expect(msg).not.toContain('npm has a bug');
+  });
+  it("anything else keeps the library's own reason", () => {
+    expect(keychainLoadError(napi, 'win32', () => true)).toMatch(/^the OS keychain library could not be loaded \(Cannot find native binding/);
+    expect(keychainLoadError(napi, 'linux', () => false)).toMatch(/^the OS keychain library could not be loaded/);
   });
 });
 

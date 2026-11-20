@@ -176,6 +176,28 @@ describe('setup add', () => {
     expect(existsSync(storeFile())).toBe(false);
   });
 
+  it('interactive: an empty key (Ctrl+V in Windows PowerShell pastes nothing) is asked again with the right-click hint', async () => {
+    const retried = await add([], { interactive: true, stdin: undefined, answers: ['tenant.example.com', ''], secrets: ['', KEY] });
+    expect(retried.code).toBe(0);
+    expect(retried.asked.filter((q) => q.startsWith('Access key'))).toHaveLength(2);
+    expect(retried.err.join('\n')).toContain('right-click to paste, then press Enter');
+    expect(kc.entries).toEqual({ admin: KEY });
+
+    rmSync(storeFile());
+    const gaveUp = await add([], { interactive: true, stdin: undefined, answers: ['tenant.example.com'], secrets: ['', '', ''] });
+    expect(gaveUp.code).toBe(2);
+    expect(gaveUp.err.at(-1)).toBe('No access key was entered. Nothing was saved.');
+    expect(existsSync(storeFile())).toBe(false);
+  });
+
+  it('with no AI client set up: no Claude Code command and no "restart" line, but where to add one', async () => {
+    const r = await add([], { interactive: true, stdin: undefined, answers: ['tenant.example.com', ''], secrets: [KEY] });
+    expect(r.code).toBe(0);
+    expect(r.all()).not.toContain('claude mcp add');
+    expect(r.all()).not.toContain('Restart your AI client');
+    expect(r.out.at(-1)).toMatch(/^No AI client runs the server yet\. Add it with: .* clients add$/);
+  });
+
   it('a second profile asks before changing the default', async () => {
     await add(['first', '--url', URL_A, '--key-stdin']);
     const r = await add(['second', '--url', URL_A], { interactive: true, secrets: [KEY2], answers: ['n'] });

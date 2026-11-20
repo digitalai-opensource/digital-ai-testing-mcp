@@ -115,6 +115,7 @@ Environment variables in an AI client's configuration (DIGITAL_AI_BASE_URL, DIGI
 always take precedence over these profiles.`;
 
 const RESTART = 'Restart your AI client, or reconnect the digital-ai-testing MCP server, to use the change.';
+const PASTE_HINT = 'Ctrl+V does not paste in this window: right-click to paste, then press Enter.';
 
 class SetupError extends Error {
   constructor(message: string, readonly code = 1) {
@@ -140,6 +141,7 @@ function askSecret(question: string): Promise<string> {
   process.stderr.write(question);
   return new Promise((resolve) => {
     let value = '';
+    let pasteHintShown = false;
     const finish = () => {
       stdin.removeListener('data', onData);
       stdin.setRawMode(false);
@@ -156,7 +158,12 @@ function askSecret(question: string): Promise<string> {
           finish();
           process.exit(130); // Ctrl+C
         }
-        if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1);
+        if (ch === '\u0016') {
+          // Ctrl+V reaches a raw-mode prompt as a control character in the classic console window (Windows
+          // PowerShell 5.1, cmd) — it does not paste there. Windows Terminal pastes it as text. Seen live 2026-11-19.
+          if (!pasteHintShown) process.stderr.write(`\n${PASTE_HINT}\n${question}`);
+          pasteHintShown = true;
+        } else if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1);
         else if (ch >= ' ') value += ch;
       }
     };
@@ -306,9 +313,14 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
   // Key
   let key: string;
   if (flags['key-stdin']) key = await io.readStdin();
-  else if (io.interactive) key = await io.askSecret('Access key (input hidden): ');
-  else throw new SetupError('No access key: pass --key-stdin and pipe the key in when not running in a terminal.', 2);
-  if (!key) throw new SetupError('No access key was entered.', 2);
+  else if (io.interactive) {
+    key = await io.askSecret('Access key (input hidden): ');
+    for (let attempt = 1; !key && attempt < 3; attempt++) {
+      io.err('No access key was entered. In a Windows PowerShell or Command Prompt window, Ctrl+V does not paste: right-click to paste, then press Enter.');
+      key = await io.askSecret('Access key (input hidden): ');
+    }
+  } else throw new SetupError('No access key: pass --key-stdin and pipe the key in when not running in a terminal.', 2);
+  if (!key) throw new SetupError('No access key was entered. Nothing was saved.', 2);
 
   // Check
   let check: CredentialCheck | undefined;
@@ -386,8 +398,21 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
   io.out(`Profiles file: ${path}`);
   io.out('If your AI client\'s configuration sets DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY, those still win — remove them to use these profiles.');
   if (io.interactive && !flags.yes) await offerClients(io);
-  else io.out(`To add the server to your AI clients: ${setupCommand()} clients add`);
-  io.out(RESTART);
+  restartNote(io);
+}
+
+/**
+ * "Restart your AI client" only when one runs this server: on a machine with none set up it read as a step to do
+ * (Windows Sandbox run 2026-11-19). Without any, it points to "setup clients add" instead.
+ */
+function restartNote(io: SetupIO) {
+  const ctx = io.clients ?? defaultClientContext();
+  const entry = buildLaunchEntry(ctx);
+  const claude = claudeCodeTarget(ctx);
+  const setUp =
+    knownClients(ctx).some((t) => t.detected && !t.choices && clientStatus(t, entry).hasEntry) ||
+    (claude.detected && clientStatus(claude, claudeCodeEntry(entry, ctx.platform)).hasEntry);
+  io.out(setUp ? RESTART : `No AI client runs the server yet. Add it with: ${setupCommand()} clients add`);
 }
 
 function cmdList(io: SetupIO) {
@@ -428,7 +453,7 @@ function cmdDefault(io: SetupIO, nameArg: string | undefined) {
   const usable = readStore().profiles[name];
   io.out(`The server now starts on "${name}".`);
   if (!usable) io.err(`Warning: "${name}" is not usable at the moment — see: ${setupCommand()} list`);
-  io.out(RESTART);
+  restartNote(io);
 }
 
 async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags) {
@@ -460,7 +485,7 @@ async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags)
           : `It was the default. Choose another: ${setupCommand()} default <name> (${left.join(', ')})`
     );
   }
-  io.out(RESTART);
+  restartNote(io);
 }
 
 /**
@@ -525,7 +550,7 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
   for (const t of knownClients(ctx)) {
     say(`  ${t.id.padEnd(22)} ${statusLine(t, entry)}${t.detected && !t.choices ? ` — ${t.file}` : ''}`);
   }
-  say(`  ${'claude-code'.padEnd(22)} ${claudeStatusLine(ctx, entry)}${claudeCodeTarget(ctx).detected ? ` — ${claudeCodeTarget(ctx).file} (user scope)` : ''}`);
+  say(`  ${'claude-code'.padEnd(22)} ${claudeStatusLine(ctx, entry, false)}${claudeCodeTarget(ctx).detected ? ` — ${claudeCodeTarget(ctx).file} (user scope)` : ''}`);
   say('');
   say(problems ? `${problems} problem${problems === 1 ? '' : 's'} found (marked PROBLEM or FAILED above).` : 'No problems found.');
 
@@ -579,7 +604,7 @@ async function cmdRepair(io: SetupIO, flags: Flags) {
   if (!r.ok) throw new SetupError(`Not restored: ${r.error}.`);
   io.out(`Restored the profiles file from its backup.${r.keptAs ? ` The replaced file is kept as ${r.keptAs}.` : ''}`);
   io.out(`Keys in the OS keychain are not affected. Check the result with: ${setupCommand()} list`);
-  io.out(RESTART);
+  restartNote(io);
 }
 
 async function cmdReset(io: SetupIO, flags: Flags) {
@@ -602,7 +627,7 @@ async function cmdReset(io: SetupIO, flags: Flags) {
   const removed = deleteStoreFiles();
   io.out(`Removed ${removed.length} file${removed.length === 1 ? '' : 's'}${keychainNames.length ? ` and ${keychainNames.length} OS keychain entr${keychainNames.length === 1 ? 'y' : 'ies'}` : ''}.`);
   if (!raw.data && raw.exists) io.err('The profiles file could not be read, so keys it kept in the OS keychain (if any) were not removed.');
-  io.out(RESTART);
+  restartNote(io);
 }
 
 // ─── AI clients ───────────────────────────────────────────────────────────────
@@ -644,9 +669,13 @@ function statusLine(t: ClientTarget, entry: LaunchEntry): string {
 }
 
 /** Claude Code's user-scope status ("claude command not found" instead of "not installed": it may be installed elsewhere). */
-function claudeStatusLine(ctx: ClientContext, entry: LaunchEntry): string {
+function claudeStatusLine(ctx: ClientContext, entry: LaunchEntry, commandBelow = true): string {
   const t = claudeCodeTarget(ctx);
-  if (!t.detected) return 'the claude command was not found — run the command below in a terminal where it works';
+  if (!t.detected) {
+    return commandBelow
+      ? 'not installed (the claude command was not found) — if you use it, run the command below in a terminal where it works'
+      : `not installed (the claude command was not found). If you use it, "${setupCommand()} clients" prints the command to run`;
+  }
   return statusLine(t, claudeCodeEntry(entry, ctx.platform));
 }
 
@@ -959,10 +988,7 @@ async function offerClients(io: SetupIO) {
   const pending = knownClients(ctx).filter((t) => t.detected && !clientStatus(t, entry).upToDate);
   const claude = claudeCodeTarget(ctx);
   const claudePending = claude.detected && !clientStatus(claude, claudeCodeEntry(entry, ctx.platform)).upToDate;
-  if (pending.length === 0 && !claudePending) {
-    if (!claude.detected) io.out(`Claude Code: run this once in a terminal: ${claudeCodeCommand(entry, ctx.platform)}`);
-    return;
-  }
+  if (pending.length === 0 && !claudePending) return;
   const labels = [...pending.map((t) => t.label), ...(claudePending ? ['Claude Code'] : [])];
   const answer = await io.ask(`Add the server to your AI clients too (${labels.join(', ')})? [Y/n] `);
   if (/^n(o)?$/i.test(answer)) {
@@ -971,7 +997,6 @@ async function offerClients(io: SetupIO) {
   }
   await addToClients(io, ctx, pending, false);
   if (claudePending) await addToClaudeCode(io, ctx, false, false, true);
-  else if (!claude.detected) io.out(`Claude Code: run this once in a terminal: ${claudeCodeCommand(entry, ctx.platform)}`);
 }
 
 async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], flags: Flags) {
