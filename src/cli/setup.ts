@@ -42,6 +42,7 @@ import {
   claudeCodeCommand,
   claudeCodeEntry,
   claudeCodeTarget,
+  claudeCodeProjectOverrides,
   currentJsonEntry,
   mergedJsonEntry,
   clientStatus,
@@ -551,6 +552,7 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
     say(`  ${t.id.padEnd(22)} ${statusLine(t, entry)}${t.detected && !t.choices ? ` — ${t.file}` : ''}`);
   }
   say(`  ${'claude-code'.padEnd(22)} ${claudeStatusLine(ctx, entry, false)}${claudeCodeTarget(ctx).detected ? ` — ${claudeCodeTarget(ctx).file} (user scope)` : ''}`);
+  for (const l of overrideLines(ctx)) say(l);
   say('');
   say(problems ? `${problems} problem${problems === 1 ? '' : 's'} found (marked PROBLEM or FAILED above).` : 'No problems found.');
 
@@ -679,12 +681,38 @@ function claudeStatusLine(ctx: ClientContext, entry: LaunchEntry, commandBelow =
   return statusLine(t, claudeCodeEntry(entry, ctx.platform));
 }
 
+/**
+ * Claude Code projects whose own entry replaces the user-scope one (claudeCodeProjectOverrides), each with how to
+ * remove it. Empty when there are none. A warning, not a doctor PROBLEM: an override can be deliberate (a source
+ * checkout, a project-specific key).
+ */
+function overrideLines(ctx: ClientContext): string[] {
+  const found = claudeCodeProjectOverrides(ctx);
+  if (found.length === 0) return [];
+  const n = new Set(found.map((o) => o.project.toLowerCase())).size;
+  const lines = [
+    `  WARNING: Claude Code has a per-project entry that replaces the "all your projects" one in ${n} project${n === 1 ? '' : 's'} ` +
+      '(a per-project entry wins). Those projects do not get this setup. Remove the entry unless the project needs its own:',
+  ];
+  for (const o of found) {
+    const what = `"${o.name}"${o.holdsKeys ? ', with its own access key' : ''}`;
+    lines.push(
+      o.scope === 'local'
+        ? `    ${o.project} — local entry ${what}. Remove: cd "${o.project}" ; claude mcp remove "${o.name}" -s local`
+        : `    ${o.project} — ${what} in ${o.file} (shared with the repository${o.approved ? '' : '; Claude Code asks before using it'}). ` +
+          'Remove it from that file.'
+    );
+  }
+  return lines;
+}
+
 function cmdClientsList(io: SetupIO, ctx: ClientContext) {
   const entry = buildLaunchEntry(ctx);
   describeEntry(io, entry);
   io.out('');
   for (const t of knownClients(ctx)) io.out(`  ${t.id.padEnd(22)} ${t.label}: ${statusLine(t, entry)}`);
   io.out(`  ${'claude-code'.padEnd(22)} Claude Code (all your projects): ${claudeStatusLine(ctx, entry)}`);
+  for (const l of overrideLines(ctx)) io.out(l);
   io.out('');
   io.out('Set up by hand:');
   for (const m of manualClients()) io.out(`  ${m.id.padEnd(22)} ${m.label}: ${m.how}`);
@@ -1043,6 +1071,11 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
     const cc = withClaude ? await addToClaudeCode(io, ctx, !!flags.yes, namedClaude) : { changed: 0, attention: 0 };
     const changed = res.changed + cc.changed;
     const attention = res.attention + cc.attention;
+    const overrides = overrideLines(ctx);
+    if (overrides.length) {
+      io.out('');
+      for (const l of overrides) io.out(l);
+    }
     // Always, not only after a change: run after a release with every entry already right, it downloads the new
     // version before a client's first start needs it (README Troubleshooting).
     if (attention === 0 || changed > 0) await warmNote(io, ctx, buildLaunchEntry(ctx));

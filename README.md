@@ -179,8 +179,8 @@ What this means for you:
 
 | Install | Change in the client configuration |
 |---|---|
-| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.4.1"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.4.1` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
-| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.4.1`. |
+| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.4.2"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.4.2` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
+| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.4.2`. |
 
 The [update notice](#update-notices) then tells you when a newer release exists.
 
@@ -233,7 +233,7 @@ claude mcp add --scope user "--env=npm_config_yes=true" "--env=DIGITAL_AI_BASE_U
 
 If you saved your key with setup, leave out the two `DIGITAL_AI_*` options. Write the command exactly like this. Claude Code reads every argument after `--env NAME=value` as another variable (it would take the server name and the command too), and it refuses an option such as `-y` even after `--`, so each variable is one `--env=NAME=value` argument and `npm_config_yes=true` replaces npx's `-y`.
 
-`--scope user` makes the server available in every project. Leave it out to add it to the current project only. A project whose `.mcp.json` defines `digital-ai-testing` uses that entry instead.
+`--scope user` makes the server available in every project. Leave it out to add it to the current project only. A project whose `.mcp.json` defines `digital-ai-testing` uses that entry instead. `setup clients` and `setup doctor` list such projects and say how to remove each entry.
 
 Using Docker? Use the Docker command from [Docker client configuration](#docker-client-configuration) instead.
 
@@ -1147,6 +1147,7 @@ More checks run before any request leaves the server:
 | rdb fails: `validation error / Failed to reserve device` | With a project-level role, the serial lookup returned an internal device ID instead of the real serial (the `get_remote_debug_command` response warns about this) | Ask the AI: *"switch to Cloud Admin"* → regenerate the rdb script → switch back. See [limitation 13](docs/limitations.md#13-get_remote_debug_command-requires-cloud-admin-for-reliable-serial-resolution) |
 | Device query returns nothing for `@manufacturer` / `@tag` | These fields are silently ignored server-side | Use the `manufacturer`/`tags` parameters on `find_available_device` — they filter client-side |
 | The AI client reports a timeout connecting to the server (for example "connection timed out after 30000ms" in Claude Code), often right after a new release | The first start of a new version downloads it, which can take longer than the client waits. The client stops the start and reports a timeout | Reconnect the server once more (Claude Code: `/mcp` → digital-ai-testing → Reconnect), or restart the client. To download a new version ahead of time, run `npx -y digital-ai-testing-mcp@latest setup clients add` (`npx.cmd` on Windows): it starts the server once and says how long the start took |
+| One project still uses an old setup (for example its own access key, Docker, or a plain `npx` that times out) although `setup clients add` set up Claude Code for all projects | Claude Code prefers a per-project entry (in `~/.claude.json` for that folder, or the projects `.mcp.json`) over the "all your projects" one | Run `npx -y digital-ai-testing-mcp@latest setup clients` (Windows: `npx.cmd`). It lists each project that has its own entry, with the command or file to remove it from. Keep the entry only if that project needs its own key |
 | The server doesn't start while the machine is offline, or the first start after a release is slow | The client configuration fetches the newest release at each start (`npx … @latest`, `docker run --pull=always`) | Wait for the first start to finish. For offline use, switch to a fixed install — see [Automatic updates](#automatic-updates) |
 | A downloaded file isn't on your machine, or an upload can't find your file (Docker) | Under Docker, file tools use the container's filesystem | See [Local File Transfer](#local-file-transfer-docker--remote-deployments-only) |
 

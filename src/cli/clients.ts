@@ -373,6 +373,77 @@ export function currentJsonEntry(target: ClientTarget): unknown {
   return ((r.data?.[containerKey(target.format)] ?? {}) as Json)[SERVER_ENTRY_NAME];
 }
 
+/** A Claude Code entry for ONE project folder that starts this server instead of the user-scope entry. */
+export interface ClaudeCodeOverride {
+  /** The project folder, as Claude Code stores it. */
+  project: string;
+  /** local = ~/.claude.json, only on this machine; project = the folder's .mcp.json, shared through the repository. */
+  scope: 'local' | 'project';
+  /** The entry's name (usually SERVER_ENTRY_NAME). */
+  name: string;
+  /** The entry sets an access key itself. */
+  holdsKeys: boolean;
+  /** The .mcp.json file (project scope). */
+  file?: string;
+  /** Project scope: Claude Code uses a .mcp.json server only once it is approved; until then it asks first. */
+  approved?: boolean;
+}
+
+/**
+ * Whether Claude Code uses a project .mcp.json server: 'off' when a settings layer disables it (it then overrides
+ * nothing), 'approved' when one enables it or enables every project server, else 'pending' (Claude Code asks).
+ * Layers: the project's entry in ~/.claude.json, <folder>/.claude/settings(.local).json, the user's settings.json.
+ */
+function mcpjsonApproval(ctx: ClientContext, project: string, name: string, projectEntry: Json): 'approved' | 'off' | 'pending' {
+  const userDir = ctx.env.CLAUDE_CONFIG_DIR?.trim() || pathJoin(ctx, ctx.home, '.claude');
+  const layers: Json[] = [
+    projectEntry,
+    readJson(pathJoin(ctx, project, '.claude', 'settings.local.json')).data ?? {},
+    readJson(pathJoin(ctx, project, '.claude', 'settings.json')).data ?? {},
+    readJson(pathJoin(ctx, userDir, 'settings.json')).data ?? {},
+  ];
+  const lists = (key: string) => layers.some((l) => Array.isArray(l[key]) && (l[key] as unknown[]).includes(name));
+  if (lists('disabledMcpjsonServers')) return 'off';
+  if (lists('enabledMcpjsonServers') || layers.some((l) => l.enableAllProjectMcpServers === true)) return 'approved';
+  return 'pending';
+}
+
+/**
+ * Entries that win over the user-scope entry in some projects (Claude Code: local > project > user). A user who ran
+ * `setup clients add` expects every project to use it; an older per-project entry (a bare npx that times out, Docker
+ * with a project's .env) silently replaced it in three projects on this machine (2026-11-20). Reads only:
+ * `projects[<folder>].mcpServers` of ~/.claude.json and each listed folder's .mcp.json. An entry counts when it is
+ * named like ours or starts this package under another name.
+ */
+export function claudeCodeProjectOverrides(ctx: ClientContext): ClaudeCodeOverride[] {
+  const r = readJson(claudeCodeTarget(ctx).file);
+  const projects = r.data?.projects;
+  if (!projects || typeof projects !== 'object') return [];
+  const ours = (name: string, e: unknown) => name === SERVER_ENTRY_NAME || RUNS_PACKAGE_RE.test(JSON.stringify(e) ?? '');
+  const keys = (e: unknown) => Object.keys(envOf('mcpServers', e)).some((k) => KEY_VAR_RE.test(k));
+  const out: ClaudeCodeOverride[] = [];
+  const seenFiles = new Set<string>();
+  for (const [project, value] of Object.entries(projects as Json)) {
+    const servers = value && typeof value === 'object' ? ((value as Json).mcpServers as Json | undefined) : undefined;
+    for (const [name, e] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
+      if (ours(name, e)) out.push({ project, scope: 'local', name, holdsKeys: keys(e) });
+    }
+    // Claude Code lists some folders twice with a different drive-letter case on Windows.
+    const file = pathJoin(ctx, project, '.mcp.json');
+    const id = ctx.platform === 'win32' ? file.toLowerCase().replace(/\\/g, '/') : file;
+    if (seenFiles.has(id)) continue;
+    seenFiles.add(id);
+    const shared = readJson(file);
+    const sharedServers = shared.data?.mcpServers;
+    for (const [name, e] of Object.entries(sharedServers && typeof sharedServers === 'object' ? (sharedServers as Json) : {})) {
+      if (!ours(name, e)) continue;
+      const approval = mcpjsonApproval(ctx, project, name, (value && typeof value === 'object' ? value : {}) as Json);
+      if (approval !== 'off') out.push({ project, scope: 'project', name, holdsKeys: keys(e), file, approved: approval === 'approved' });
+    }
+  }
+  return out;
+}
+
 export interface ClaudeCli {
   /** Runs `claude <args>` without a shell (no quoting to get wrong). ok = exit code 0. */
   run(args: string[]): { ok: boolean; output: string };
