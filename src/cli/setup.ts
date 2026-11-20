@@ -997,8 +997,27 @@ async function offerClients(io: SetupIO) {
     io.out(`Later: ${setupCommand()} clients add`);
     return;
   }
-  await addToClients(io, ctx, pending, false);
-  if (claudePending) await addToClaudeCode(io, ctx, false, false, true);
+  const res = await addToClients(io, ctx, pending, false);
+  const cc = claudePending ? await addToClaudeCode(io, ctx, false, false, true) : { changed: 0 };
+  if (res.changed + cc.changed > 0) await warmNote(io, ctx, entry);
+}
+
+/**
+ * After a client entry was written: start the server once the way the clients will, so the package is downloaded
+ * now rather than during a client's first start (Claude Code gives up after 30 s — see warmStart in clients.ts).
+ */
+async function warmNote(io: SetupIO, ctx: ClientContext, entry: LaunchEntry) {
+  if (!ctx.warmStart) return;
+  io.out('Starting the server once, the way your AI clients will, so its first start there is quick (the first run downloads it)…');
+  const r = await ctx.warmStart(entry);
+  const secs = (r.ms / 1000).toFixed(1);
+  if (r.ok) io.out(`  The server started in ${secs} s${r.version ? ` (version ${r.version})` : ''}.`);
+  else {
+    io.out(
+      `  The server did not start (${r.error}, after ${secs} s). If an AI client reports a timeout, reconnect the server ` +
+        `there once more. "${setupCommand()} doctor" checks the rest.`
+    );
+  }
 }
 
 async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], flags: Flags) {
@@ -1024,6 +1043,9 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
     const cc = withClaude ? await addToClaudeCode(io, ctx, !!flags.yes, namedClaude) : { changed: 0, attention: 0 };
     const changed = res.changed + cc.changed;
     const attention = res.attention + cc.attention;
+    // Always, not only after a change: run after a release with every entry already right, it downloads the new
+    // version before a client's first start needs it (README Troubleshooting).
+    if (attention === 0 || changed > 0) await warmNote(io, ctx, buildLaunchEntry(ctx));
     if (changed > 0) io.out(RESTART_CLIENTS);
     if (attention > 0) throw new SetupError(`${attention} client${attention === 1 ? ' was' : 's were'} not changed (see above).`, 1);
     return;
