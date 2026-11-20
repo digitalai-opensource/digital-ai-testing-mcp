@@ -48,6 +48,26 @@ async function probeStatus(url: string, key: string, path: string): Promise<{ st
   }
 }
 
+export type CredentialCheck =
+  | { ok: true; info: AccessInfo }
+  | { ok: false; problem: 'rejected' | 'unreachable' | 'not-api'; status?: number };
+
+/**
+ * Checks a url + key before it is saved (the setup command). Unlike resolveAccessInfo, which reports 'unknown' for
+ * every failure, this says WHICH failure: the key was refused (401/403), the host could not be reached, or the URL
+ * answered but not as the Digital.ai Testing API (another status, or a non-JSON page such as a portal login screen).
+ */
+export async function verifyCredential(url: string, key: string): Promise<CredentialCheck> {
+  const acct = await probeStatus(url, key, '/api/v1/users/my-account-info');
+  if (!acct) return { ok: false, problem: 'unreachable' };
+  if (acct.status === 401 || acct.status === 403) return { ok: false, problem: 'rejected', status: acct.status };
+  const body = acct.data as { data?: unknown } | undefined;
+  if (acct.status !== 200 || !body || typeof body !== 'object' || !body.data || typeof body.data !== 'object') {
+    return { ok: false, problem: 'not-api', status: acct.status };
+  }
+  return { ok: true, info: await resolveAccessInfo(url, key) };
+}
+
 // Concurrent callers for the same credential (list_environments across profiles sharing a key, or two
 // gates racing) share one in-flight resolution instead of each probing.
 const inFlight = new Map<string, Promise<AccessInfo>>();

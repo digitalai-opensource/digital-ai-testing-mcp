@@ -876,8 +876,8 @@ describe('upload_application_file HOST_PATH_UNREACHABLE gate is deployment-mode-
   // filesystem read or network call needed either way.
   const HOST_AND_CREDENTIAL_PATH = '/Users/joe/.env';
 
-  it('rejects a host-machine path as HOST_PATH_UNREACHABLE by default (docker)', async () => {
-    delete process.env.MCP_DEPLOYMENT_MODE;
+  it('rejects a host-machine path as HOST_PATH_UNREACHABLE under docker mode', async () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'docker';
     const res = await callTool('upload_application_file', { filePath: HOST_AND_CREDENTIAL_PATH });
     assert.equal(res.isError, true);
     assert.match(textOf(res), /HOST_PATH_UNREACHABLE/);

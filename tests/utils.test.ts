@@ -7,7 +7,7 @@ import { validateOutputPath } from '../src/utils/path-guard.js';
 import { formatDeviceTimestamp } from '../src/utils/timestamp.js';
 import { getStatusEmoji, formatProvisioningProfileList, formatTestReport } from '../src/utils/response-formatter.js';
 import type { ProvisioningProfile, TestReport } from '../src/types/digital-ai.js';
-import { getDeploymentMode } from '../src/utils/deployment-mode.js';
+import { getDeploymentMode, setContainerOverrideForTests } from '../src/utils/deployment-mode.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, staleBuildRemedy } from '../src/utils/locality.js';
 import { caseInsensitiveEnum, osTypeLower, osTypeTitle } from '../src/utils/schema.js';
 
@@ -23,8 +23,24 @@ describe('getDeploymentMode', () => {
     else process.env.MCP_DEPLOYMENT_MODE = ORIGINAL;
   });
 
-  it('defaults to docker when unset', () => {
+  afterEach(() => setContainerOverrideForTests(undefined));
+
+  it('unset: docker inside a container, local everywhere else', () => {
     delete process.env.MCP_DEPLOYMENT_MODE;
+    setContainerOverrideForTests(true);
+    assert.equal(getDeploymentMode(), 'docker');
+    setContainerOverrideForTests(false);
+    assert.equal(getDeploymentMode(), 'local');
+    process.env.MCP_DEPLOYMENT_MODE = '  ';
+    assert.equal(getDeploymentMode(), 'local'); // empty counts as unset
+  });
+
+  it('an explicit value wins over container detection', () => {
+    setContainerOverrideForTests(true);
+    process.env.MCP_DEPLOYMENT_MODE = 'local';
+    assert.equal(getDeploymentMode(), 'local');
+    setContainerOverrideForTests(false);
+    process.env.MCP_DEPLOYMENT_MODE = 'docker';
     assert.equal(getDeploymentMode(), 'docker');
   });
 
@@ -38,7 +54,8 @@ describe('getDeploymentMode', () => {
     assert.equal(getDeploymentMode(), 'http');
   });
 
-  it('falls back to docker for an unrecognized value', () => {
+  it('falls back to docker for an unrecognized value (a typo stays cautious, even outside a container)', () => {
+    setContainerOverrideForTests(false);
     process.env.MCP_DEPLOYMENT_MODE = 'bogus';
     assert.equal(getDeploymentMode(), 'docker');
   });
@@ -51,8 +68,8 @@ describe('locality notices vary by deployment mode', () => {
     else process.env.MCP_DEPLOYMENT_MODE = ORIGINAL;
   });
 
-  it('serverFsDownloadNotice warns about Docker by default', () => {
-    delete process.env.MCP_DEPLOYMENT_MODE;
+  it('serverFsDownloadNotice warns about Docker under docker mode', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'docker';
     assert.match(serverFsDownloadNotice(), /Docker/);
   });
 
@@ -75,17 +92,19 @@ describe('locality notices vary by deployment mode', () => {
     assert.match(text, /download_repository_file/);
   });
 
-  it('commandGeneratorNotice frames the generator as the Docker workaround by default', () => {
-    delete process.env.MCP_DEPLOYMENT_MODE;
+  it('commandGeneratorNotice frames the generator as the Docker workaround under docker mode', () => {
+    process.env.MCP_DEPLOYMENT_MODE = 'docker';
     const text = commandGeneratorNotice('download_repository_file', 'download');
     assert.match(text, /Docker\/remote/);
   });
 
-  it('staleBuildRemedy suggests npm reinstall under local mode, docker rebuild otherwise', () => {
+  it('staleBuildRemedy gives the update steps for THIS install (a source checkout here; Docker under docker mode)', () => {
     process.env.MCP_DEPLOYMENT_MODE = 'local';
-    assert.match(staleBuildRemedy(), /npm install -g/);
-    delete process.env.MCP_DEPLOYMENT_MODE;
-    assert.match(staleBuildRemedy(), /docker build/);
+    // The tests run from a git checkout, so installKind() is "source" — not `npm install -g` as it used to say.
+    assert.match(staleBuildRemedy(), /git pull.*npm run build/);
+    assert.doesNotMatch(staleBuildRemedy(), /npm install -g/);
+    process.env.MCP_DEPLOYMENT_MODE = 'docker';
+    assert.match(staleBuildRemedy(), /docker pull ghcr\.io\/digitalai-opensource\/digital-ai-testing-mcp:latest/);
   });
 });
 

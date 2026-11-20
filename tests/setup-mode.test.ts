@@ -5,7 +5,7 @@
  * from an empty temp folder so no .env is picked up, with every credential variable removed from the environment.
  */
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -40,7 +40,7 @@ describe('setupGuidance', () => {
     );
   });
   it('says where to set them for each kind of install', () => {
-    expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'client-config')).toContain('MCP_DEPLOYMENT_MODE=local');
+    expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'client-config')).toMatch(/Easiest: run "npx(.cmd)? -y digital-ai-testing-mcp@(latest|next) setup"/);
     expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'docker')).toContain('--env-file');
     expect(setupGuidance(['DIGITAL_AI_ACCESS_KEY'], 'source')).toContain('.env file in the folder the server starts from');
   });
@@ -66,7 +66,8 @@ async function startServer(extraEnv: Record<string, string>) {
     if (v === undefined || /^(DIGITAL_AI_|DAI_PROFILE_|MCP_)/.test(k)) continue;
     env[k] = v;
   }
-  Object.assign(env, { MCP_UPDATE_CHECK: 'false', MCP_DEBUG_MODE: 'false' }, extraEnv);
+  // The store folder is the empty temp folder unless a test supplies one, so a real profiles.json never interferes.
+  Object.assign(env, { MCP_UPDATE_CHECK: 'false', MCP_DEBUG_MODE: 'false', MCP_CREDENTIAL_STORE_DIR: cwd }, extraEnv);
   const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', TSX_LOADER, ENTRY], env, cwd, stderr: 'pipe' });
   let stderr = '';
   transport.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
@@ -120,6 +121,43 @@ describe('starting without credentials (stdio)', () => {
       expect(s.stderr()).not.toContain(secret);
     } finally {
       await s.close();
+    }
+  }, 60_000);
+
+  it('with only a credential store (no variables), starts normally on the store default', async () => {
+    const storeDir = mkdtempSync(join(tmpdir(), 'dai-setup-store-'));
+    const key = 'aut_1_setupModeStoreKey';
+    writeFileSync(
+      join(storeDir, 'profiles.json'),
+      JSON.stringify({ version: 1, default: 'team', profiles: { team: { url: 'http://127.0.0.1:9', key } } })
+    );
+    const s = await startServer({ MCP_CREDENTIAL_STORE_DIR: storeDir });
+    try {
+      expect(s.client.getInstructions()).not.toContain('SETUP REQUIRED');
+      expect(s.stderr()).toContain('profile "team" from the credential store');
+      const text = textOf(await s.client.callTool({ name: 'list_environments', arguments: {} }));
+      expect(text).toContain('team ← active');
+      expect(text).toContain('credential store');
+      expect(text).not.toContain(key);
+      expect(s.stderr()).not.toContain(key);
+    } finally {
+      await s.close();
+      rmSync(storeDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('with an unusable credential store and no variables, setup mode explains the store problem', async () => {
+    const storeDir = mkdtempSync(join(tmpdir(), 'dai-setup-store-'));
+    writeFileSync(join(storeDir, 'profiles.json'), '{"profiles": {"team": {"url": "http://127.0.0.1:9", "key": aut_1_x}}}');
+    const s = await startServer({ MCP_CREDENTIAL_STORE_DIR: storeDir });
+    try {
+      const text = textOf(await s.client.callTool({ name: 'get_server_info', arguments: {} }));
+      expect(text).toContain('SETUP REQUIRED');
+      expect(text).toContain('could not be used: the file is not valid JSON');
+      expect(text).not.toContain('aut_1_x');
+    } finally {
+      await s.close();
+      rmSync(storeDir, { recursive: true, force: true });
     }
   }, 60_000);
 

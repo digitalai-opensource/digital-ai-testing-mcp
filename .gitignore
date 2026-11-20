@@ -1,7 +1,8 @@
-# Environment — NEVER commit
+# Environment — NEVER commit. Any copy of .env (.env.off, .env.bak, .env.local …) holds keys too; only the
+# key-free template is tracked.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Build output
 node_modules/
@@ -34,8 +35,9 @@ fidelity-results/
 # Claude Code local state
 .claude/
 
-# MCP Config local state
+# MCP Config local state — holds keys; any copy of it (.mcp.json.off, .mcp.json.bak …) too
 .mcp.json
+.mcp.json.*
 
 # Developer guide — contains internal implementation notes not intended for public distribution.
 # Share manually with developer workstations; not needed by the MCP runtime.

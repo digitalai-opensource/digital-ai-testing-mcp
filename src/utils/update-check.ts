@@ -114,7 +114,7 @@ export function isWithinInterval(at: number | undefined, now: number): boolean {
 export type InstallKind = 'npm' | 'npx' | 'source' | 'docker';
 
 /**
- * docker — anything but MCP_DEPLOYMENT_MODE=local. Under local, the path of the running code tells the rest:
+ * docker — any deployment mode but local (an unset mode is local outside a container). Under local, the path of the running code tells the rest:
  * npx runs from <npm cache>/_npx/…, an npm install from …/node_modules/digital-ai-testing-mcp/…, and anything else is a
  * source checkout (git clone + npm run build).
  */
@@ -128,10 +128,11 @@ export function installKind(modulePath: string = fileURLToPath(import.meta.url))
 
 const RESTART = 'restart your AI client or reconnect this MCP server';
 
-export function updateSteps(kind: InstallKind = installKind()): string {
+export function updateSteps(kind: InstallKind = installKind(), platform: NodeJS.Platform = process.platform): string {
   switch (kind) {
     case 'npm':
-      return `Run \`npm install -g digital-ai-testing-mcp@latest\`, then ${RESTART} (a server that is already running keeps its version).`;
+      // npm.cmd on Windows: Windows PowerShell's default execution policy refuses npm.ps1 (see npxCommand in version.ts).
+      return `Run \`${platform === 'win32' ? 'npm.cmd' : 'npm'} install -g digital-ai-testing-mcp@latest\`, then ${RESTART} (a server that is already running keeps its version).`;
     case 'npx':
       return (
         `${RESTART[0].toUpperCase()}${RESTART.slice(1)} — npx fetches the newest release when the server starts. ` +

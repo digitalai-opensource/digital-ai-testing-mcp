@@ -1,6 +1,6 @@
 {
   "name": "digital-ai-testing-mcp",
-  "version": "2.3.4",
+  "version": "2.4.0",
   "description": "MCP server for Digital.ai Testing — device farm, app lifecycle, test runs, reporting and analytics, performance, live mobile and browser inspection, and test authoring",
   "keywords": [
     "mcp",
@@ -127,5 +127,8 @@
   },
   "overrides": {
     "minimatch": "^11.0.6"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "2.1.2"
   }
 }

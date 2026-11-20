@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance } from 'axios';
 import FormData from 'form-data';
-import { listProfiles, getProfileCredentials } from '../utils/profile-loader.js';
+import { listProfiles, getProfileCredentials, getStartingProfile } from '../utils/profile-loader.js';
 import { authHeadersFor, authSchemeFor, peekAccessInfo, describeLevel, type AuthScheme } from '../utils/access-level.js';
 import { extractApiErrorMessage } from '../utils/api-error.js';
 
@@ -52,7 +52,7 @@ function toApiError(status: number | undefined, body: unknown, fallback: string)
 }
 
 // ─── Active client state ──────────────────────────────────────────────────────
-// Lazily initialised on the first API call from the default env vars.
+// Lazily initialised on the first API call from the starting profile (env default, else the credential store).
 // Call resetClient() to switch to a different named profile at runtime.
 
 let _client: AxiosInstance | undefined;
@@ -102,13 +102,15 @@ function build403Hint(): string | undefined {
 
 function getClient(): AxiosInstance {
   if (!_client) {
-    const baseURL = process.env.DIGITAL_AI_BASE_URL;
-    const accessKey = process.env.DIGITAL_AI_ACCESS_KEY;
-    if (!baseURL || !accessKey) {
-      throw new Error('DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY must be set');
+    const start = getStartingProfile();
+    if (!start) {
+      throw new Error(
+        'No Digital.ai connection is configured: set DIGITAL_AI_BASE_URL and DIGITAL_AI_ACCESS_KEY, or add a default profile to the credential store'
+      );
     }
-    _activeUrl = baseURL.replace(/\/$/, '');
-    _client = buildClient(_activeUrl, accessKey);
+    _activeUrl = start.url;
+    _activeProfileName = start.name;
+    _client = buildClient(_activeUrl, start.key);
   }
   return _client;
 }
@@ -127,7 +129,8 @@ export function resetClient(url: string, key: string, profileName: string): void
 
 /** Returns the name of the currently active profile. */
 export function getActiveProfileName(): string {
-  return _activeProfileName;
+  // Before the first API call the client is not built yet: report the profile it will start on.
+  return _client ? _activeProfileName : (getStartingProfile()?.name ?? _activeProfileName);
 }
 
 /**
@@ -143,21 +146,21 @@ export function getActiveAuthScheme(): AuthScheme {
 
 /** Returns the base URL of the currently active connection. */
 export function getActiveUrl(): string {
-  // Return cached value if the client was already initialised, otherwise read env.
-  return _activeUrl || (process.env.DIGITAL_AI_BASE_URL ?? '').replace(/\/$/, '');
+  // Return cached value if the client was already initialised, otherwise the starting profile's.
+  return _activeUrl || (getStartingProfile()?.url ?? '');
 }
 
 /**
  * Returns the access key of the currently active connection.
  *
  * This is the ONLY sanctioned way for other modules to obtain the credential.
- * Never read process.env.DIGITAL_AI_ACCESS_KEY outside this file and
- * profile-loader.ts — env vars reflect the DEFAULT profile and ignore
+ * Never read process.env.DIGITAL_AI_ACCESS_KEY outside profile-loader.ts (which also reads the
+ * credential store) — env vars reflect the DEFAULT profile and ignore
  * switch_environment, which leaks the wrong credential into generated
  * artifacts (boilerplate, rdb scripts) and WebDriver sessions.
  */
 export function getActiveAccessKey(): string {
-  return _activeKey || (process.env.DIGITAL_AI_ACCESS_KEY ?? '');
+  return _activeKey || (getStartingProfile()?.key ?? '');
 }
 
 // ─── Retry for read operations ────────────────────────────────────────────────

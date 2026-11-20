@@ -27,6 +27,7 @@ import {
   withUpdateNotice,
 } from '../src/utils/update-check.js';
 import { registerMetaTools } from '../src/tools/meta-tools.js';
+import { setContainerOverrideForTests } from '../src/utils/deployment-mode.js';
 
 const HOUR = 60 * 60 * 1000;
 const T0 = Date.UTC(2026, 10, 17, 9, 0, 0);
@@ -48,10 +49,14 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'update-check-'));
   stateFile = join(dir, 'state.json');
   for (const k of ENV_KEYS) delete process.env[k];
+  // These tests were written for "unset = docker"; since 2.4.0 that holds only inside a container — pretend we are in
+  // one. Tests about the unset-outside-a-container case clear the override themselves.
+  setContainerOverrideForTests(true);
   resetUpdateCheckForTests();
 });
 
 afterEach(async () => {
+  setContainerOverrideForTests(undefined);
   await api?.close();
   api = undefined;
   rmSync(dir, { recursive: true, force: true });
@@ -253,7 +258,10 @@ describe('withUpdateNotice — delivery in a tool result', () => {
 
 describe('update steps follow the install', () => {
   it('detects Docker, npm, npx and a source checkout', () => {
-    assert.equal(installKind('/app/dist/utils/update-check.js'), 'docker', 'default mode');
+    assert.equal(installKind('/app/dist/utils/update-check.js'), 'docker', 'unset, in a container');
+    setContainerOverrideForTests(false);
+    assert.equal(installKind('/usr/local/lib/node_modules/digital-ai-testing-mcp/dist/utils/update-check.js'), 'npm', 'unset, not in a container: the path decides');
+    setContainerOverrideForTests(true);
     process.env.MCP_DEPLOYMENT_MODE = 'http';
     assert.equal(installKind('/app/dist/utils/update-check.js'), 'docker');
     process.env.MCP_DEPLOYMENT_MODE = 'local';
@@ -265,7 +273,9 @@ describe('update steps follow the install', () => {
   });
 
   it('gives each install its own command', () => {
-    assert.match(updateSteps('npm'), /npm install -g digital-ai-testing-mcp@latest/);
+    assert.match(updateSteps('npm', 'linux'), /`npm install -g digital-ai-testing-mcp@latest`/);
+    // Windows PowerShell's default execution policy refuses npm.ps1 — npm.cmd runs in every Windows shell.
+    assert.match(updateSteps('npm', 'win32'), /`npm\.cmd install -g digital-ai-testing-mcp@latest`/);
     assert.match(updateSteps('npx'), /^Restart your AI client.*digital-ai-testing-mcp@latest/);
     assert.doesNotMatch(updateSteps('npx'), /npm install/);
     assert.match(updateSteps('source'), /git pull.*npm ci.*npm run build/);

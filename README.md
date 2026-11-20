@@ -14,35 +14,31 @@ It provides **212 tools**, **2 resources** and **7 prompts** across 27 capabilit
 
 ## Quick Start
 
-**1. Check that Node.js 22 or later is installed** (npm comes with it). If it isn't, install the LTS version from https://nodejs.org first.
+**1. Check that Node.js 22 or later is installed** (npm comes with it): `node --version`. Don't go by `npm --version`: that is npm's own version number (11 with current Node.js releases), not Node's. Setup needs only Node.js (npx comes with it). If it isn't, install the LTS version that https://nodejs.org offers for your system (Windows, macOS or Linux). 22 is the minimum, not a required version: any newer release works.
 
 ```bash
 node --version
-npm --version
 ```
 
-**2. Add the server to your AI client** with your tenant URL and [access key](#access-keys). Claude Desktop is shown here; see [Connecting AI Clients](#connecting-ai-clients) for VS Code, JetBrains, Copilot and Cursor.
+**2. Run setup in a terminal:**
 
-```json
-{
-  "mcpServers": {
-    "digital-ai-testing": {
-      "command": "npx",
-      "args": ["-y", "digital-ai-testing-mcp@latest"],
-      "env": {
-        "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
-        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
-        "MCP_DEPLOYMENT_MODE": "local"
-      }
-    }
-  }
-}
+```bash
+# macOS / Linux
+npx -y digital-ai-testing-mcp@latest setup
+
+# Windows (PowerShell or Command Prompt)
+npx.cmd -y digital-ai-testing-mcp@latest setup
 ```
 
-**3. Restart the client and ask:** *"Show me the overall health of the device farm."*
+On Windows, type `npx.cmd`: in Windows PowerShell, plain `npx` runs a PowerShell script that the default settings block ("running scripts is disabled on this system").
 
-There is nothing to install. npx downloads the server the first time the client starts it (about 20 seconds), and starts the newest release every time after that. To stay on one version instead, see [Automatic updates](#automatic-updates).
+It asks for your Digital.ai Testing URL and your [access key](#access-keys) (the key is typed hidden; in a Windows PowerShell or Command Prompt window, paste it with a right-click, since Ctrl+V doesn't paste there), checks them with Digital.ai Testing, and saves the key in your operating system's keychain. Then it offers to add the server to the AI clients it finds on your computer: Claude Desktop, VS Code (GitHub Copilot), Cursor, Windsurf, OpenAI Codex, OpenCode and Gemini CLI. None of their configuration files gets a copy of your key. Claude Code is added through its own `claude` command. See [The setup command](#the-setup-command).
 
+**3. Restart your AI client and ask:** *"Show me the overall health of the device farm."*
+
+There is nothing else to install. The first start downloads the server (about 20 seconds), and every start after a new release runs it. To stay on one version instead, see [Automatic updates](#automatic-updates).
+
+> Prefer to edit your AI client's configuration yourself? See [Connecting AI Clients](#connecting-ai-clients).
 > Prefer a container? See [Option B — Pull from GitHub Container Registry](#option-b--pull-from-github-container-registry).
 
 ---
@@ -53,6 +49,7 @@ There is nothing to install. npx downloads the server the first time the client 
 - [Quick Start](#quick-start)
 - [Installation](#installation) — [npm](#option-a--install-via-npm-recommended) · [Docker image](#option-b--pull-from-github-container-registry) · [from source](#option-c--build-from-source) · [Upgrading](#upgrading) · [update notices](#update-notices) · [automatic updates](#automatic-updates)
 - [Connecting AI Clients](#connecting-ai-clients) — [Claude Desktop](#claude-desktop) · [Claude Code (VS Code)](#claude-code-vs-code) · [Claude Code (JetBrains)](#claude-code-jetbrains--android-studio) · [GitHub Copilot](#github-copilot-vs-code) · [Cursor](#cursor) · [Docker configs](#docker-client-configuration)
+- [The setup command](#the-setup-command) — profiles in the OS keychain · [AI clients](#adding-the-server-to-ai-clients) · [diagnosing problems](#if-something-goes-wrong)
 - [Access Keys](#access-keys) — access levels, finding your key, multiple profiles
 - [Configuration](#configuration) — [Toolsets](#toolsets-reducing-context-size) · [Debug mode](#debug-mode-remediation-notes)
 
@@ -78,23 +75,28 @@ There is nothing to install. npx downloads the server the first time the client 
 **What you need:**
 
 - A **Digital.ai Testing account** with a valid [access key](#access-keys).
-- **Node.js 22+** for [Option A](#option-a--install-via-npm-recommended) (recommended — no Docker needed), **or**
+- **Node.js 22 or later** (any current LTS release, on Windows, macOS or Linux) for [Option A](#option-a--install-via-npm-recommended) (recommended — no Docker needed), **or**
 - **Docker** for [Option B](#option-b--pull-from-github-container-registry) or [Option C](#option-c--build-from-source) (container-based install).
 
 ### Option A — Install via npm (Recommended)
 
-No Docker required — the server runs directly under Node.js, and there is no install command. Your AI client starts the server through npx:
+No Docker required — the server runs directly under Node.js, and there is no install command. Run [setup](#the-setup-command) once:
 
-```json
-"command": "npx",
-"args": ["-y", "digital-ai-testing-mcp@latest"]
+```bash
+# macOS / Linux
+npx -y digital-ai-testing-mcp@latest setup
+
+# Windows (PowerShell or Command Prompt)
+npx.cmd -y digital-ai-testing-mcp@latest setup
 ```
 
-npx downloads the package the first time the client starts the server, and a new release the first time it starts after one is published, so you always run the newest version. [Connecting AI Clients](#connecting-ai-clients) has the full entry for each client. You don't need an image name or a `.env` file: settings go in the client's `env` block (see [Configuration](#configuration)).
+On Windows, type `npx.cmd`: in Windows PowerShell, plain `npx` runs a PowerShell script that the default settings block ("running scripts is disabled on this system").
 
-**Prefer a fixed install?** Run `npm install -g digital-ai-testing-mcp`, then use `"command": "digital-ai-testing-mcp"` with `"args": []` in the client configuration. That version stays until you [upgrade](#upgrading) it yourself, and the server starts without reaching the npm registry.
+It saves your access key in the OS keychain and adds the server to your AI clients. Your AI client then starts the server through npx, which downloads the package the first time and a new release the first time it starts after one is published, so you always run the newest version.
 
-Set `MCP_DEPLOYMENT_MODE=local` alongside your credentials (the client examples below already include it). It tells the server that its filesystem is your own machine, so tool descriptions and a few upload/download behaviors drop the Docker-specific caveats and path warnings.
+To set a client up by hand instead, [Connecting AI Clients](#connecting-ai-clients) has the entry for each one. Settings go in the client's `env` block (see [Configuration](#configuration)); you don't need an image name or a `.env` file.
+
+**Prefer a fixed install?** Run `npm install -g digital-ai-testing-mcp` (`npm.cmd` on Windows), then use `"command": "digital-ai-testing-mcp"` with `"args": []` in the client configuration, and `digital-ai-testing-mcp setup` instead of `npx … setup` (on Windows, `digital-ai-testing-mcp.cmd setup` in Windows PowerShell, for the same reason as `npx.cmd`). That version stays until you [upgrade](#upgrading) it yourself, and the server starts without reaching the npm registry.
 
 ### Option B — Pull from GitHub Container Registry
 
@@ -177,8 +179,8 @@ What this means for you:
 
 | Install | Change in the client configuration |
 |---|---|
-| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.3.4"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.3.4` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
-| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.3.4`. |
+| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.4.0"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.4.0` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
+| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.4.0`. |
 
 The [update notice](#update-notices) then tells you when a newer release exists.
 
@@ -188,13 +190,15 @@ The [update notice](#update-notices) then tells you when a newer release exists.
 
 ## Connecting AI Clients
 
-The examples below use the npm package ([Option A](#option-a--install-via-npm-recommended)): the client starts the server through npx, and credentials go directly in the client's `env` block. If you run the server in Docker (Options B/C), use the [Docker client configuration](#docker-client-configuration) instead.
+**The quickest way is [`setup clients add`](#adding-the-server-to-ai-clients)**, which adds the entry to every AI client it finds. The sections below show how to add it by hand.
+
+The examples use the npm package ([Option A](#option-a--install-via-npm-recommended)): the client starts the server through npx. Put your URL and key in the client's `env` block as shown, or leave the `env` block out if you saved them with [setup](#the-setup-command). If you run the server in Docker (Options B/C), use the [Docker client configuration](#docker-client-configuration) instead.
 
 ### Claude Desktop
 
 Find your config file:
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** Open Claude Desktop → Settings → Developer → **Edit Config** (the path varies by install method — Windows Store vs. direct installer)
+- **Windows:** Open Claude Desktop → Settings → Developer → **Edit Config**. The location depends on how and when Claude Desktop was installed: `%APPDATA%\Claude\`, a folder under `%LOCALAPPDATA%\Packages\Claude_…\`, or `%LOCALAPPDATA%\Claude-Data\claude_…\`. On some installs **Edit Config** opens a different file than the one Claude Desktop reads. If the server doesn't appear after a restart, look for another `claude_desktop_config.json` in those folders. `setup clients` lists the candidates and asks which one to use when there is more than one.
 
 ```json
 {
@@ -204,39 +208,40 @@ Find your config file:
       "args": ["-y", "digital-ai-testing-mcp@latest"],
       "env": {
         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
-        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
-        "MCP_DEPLOYMENT_MODE": "local"
+        "DIGITAL_AI_ACCESS_KEY": "your-access-key"
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop after editing — the tools appear automatically.
+Quit Claude Desktop completely (also from the system tray or menu bar) and start it again. The tools appear automatically, and the server shows as running under Settings → Developer.
 
 ### Claude Code (VS Code)
 
-1. Open the Claude Code extension panel
-2. Go to **Settings → MCP Servers**
-3. Add a new server with command `npx`, args `-y digital-ai-testing-mcp@latest`, and `DIGITAL_AI_BASE_URL`/`DIGITAL_AI_ACCESS_KEY`/`MCP_DEPLOYMENT_MODE=local` set in the server's environment variables. On Windows, use command `cmd` with args `/c npx -y digital-ai-testing-mcp@latest`
+The easiest way: run `npx -y digital-ai-testing-mcp@latest setup clients add claude-code` (`npx.cmd` on Windows). It adds the server for all your projects with Claude Code's own `claude` command, using the profiles you saved with [setup](#the-setup-command). If the `claude` command isn't available in your terminal, it prints the command to run instead.
 
-Using Docker? Add the Docker command from [Docker client configuration](#docker-client-configuration) instead.
-
-### Claude Code (JetBrains / Android Studio)
-
-Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then open your project and run this command from the project root:
+To add it by hand, run this once (it works in the terminal and from the VS Code, JetBrains and Android Studio extensions):
 
 ```bash
 # macOS / Linux
-claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key --env MCP_DEPLOYMENT_MODE=local -- npx -y digital-ai-testing-mcp@latest
+claude mcp add --scope user "--env=npm_config_yes=true" "--env=DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com" "--env=DIGITAL_AI_ACCESS_KEY=your-access-key" digital-ai-testing -- npx digital-ai-testing-mcp@latest
 
 # Windows (Claude Code needs the cmd /c wrapper to start npx)
-claude mcp add digital-ai-testing --env DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com --env DIGITAL_AI_ACCESS_KEY=your-access-key --env MCP_DEPLOYMENT_MODE=local -- cmd /c npx -y digital-ai-testing-mcp@latest
+claude mcp add --scope user "--env=npm_config_yes=true" "--env=DIGITAL_AI_BASE_URL=https://your-tenant.experitest.com" "--env=DIGITAL_AI_ACCESS_KEY=your-access-key" digital-ai-testing -- cmd /c npx digital-ai-testing-mcp@latest
 ```
 
-This stores the server configuration in `~/.claude.json`, scoped to the current project. Alternatively, use the Claude Code panel: **Settings → MCP Servers** and add the same command used for [Claude Desktop](#claude-desktop).
+If you saved your key with setup, leave out the two `DIGITAL_AI_*` options. Write the command exactly like this. Claude Code reads every argument after `--env NAME=value` as another variable (it would take the server name and the command too), and it refuses an option such as `-y` even after `--`, so each variable is one `--env=NAME=value` argument and `npm_config_yes=true` replaces npx's `-y`.
 
-Restart the Claude Code panel after adding the server — the tools appear automatically.
+`--scope user` makes the server available in every project. Leave it out to add it to the current project only. A project whose `.mcp.json` defines `digital-ai-testing` uses that entry instead.
+
+Using Docker? Use the Docker command from [Docker client configuration](#docker-client-configuration) instead.
+
+Restart Claude Code (or run `/mcp` and reconnect) after adding the server. The tools appear automatically.
+
+### Claude Code (JetBrains / Android Studio)
+
+Install the [Claude Code](https://plugins.jetbrains.com/plugin/22828-claude-code) plugin from the JetBrains Marketplace, then add the server the same way as for [Claude Code (VS Code)](#claude-code-vs-code): `setup clients add claude-code`, or the `claude mcp add` command shown there.
 
 Using Docker? See [Docker client configuration](#docker-client-configuration) — and on Windows, use forward slashes in the `.env` path.
 
@@ -255,8 +260,7 @@ GitHub Copilot supports MCP tools in **Agent mode** only. Register the server in
       "args": ["-y", "digital-ai-testing-mcp@latest"],
       "env": {
         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
-        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
-        "MCP_DEPLOYMENT_MODE": "local"
+        "DIGITAL_AI_ACCESS_KEY": "your-access-key"
       }
     }
   }
@@ -283,8 +287,7 @@ Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → M
       "args": ["-y", "digital-ai-testing-mcp@latest"],
       "env": {
         "DIGITAL_AI_BASE_URL": "https://your-tenant.experitest.com",
-        "DIGITAL_AI_ACCESS_KEY": "your-access-key",
-        "MCP_DEPLOYMENT_MODE": "local"
+        "DIGITAL_AI_ACCESS_KEY": "your-access-key"
       }
     }
   }
@@ -293,9 +296,23 @@ Cursor supports MCP in **Agent mode**. Add the server in **Cursor Settings → M
 
 Alternatively, create a `.cursor/mcp.json` file in your project root with the same `mcpServers` object — this scopes the server to that workspace and can be committed to share it with your team.
 
-Cursor is available on macOS, Windows, and Linux. It is the recommended option for iOS developers on macOS, where Xcode is the primary IDE but does not natively support MCP.
+Cursor is available on macOS, Windows, and Linux.
 
 Using Docker? See [Docker client configuration](#docker-client-configuration).
+
+### Other AI clients
+
+[`setup clients add`](#adding-the-server-to-ai-clients) also configures these. To add the server by hand, use the same command and arguments as for [Claude Desktop](#claude-desktop), in each client's own format:
+
+| Client | Configuration file | Format |
+|---|---|---|
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` entry, as for Claude Desktop |
+| OpenAI Codex (CLI, IDE extension, ChatGPT desktop app) | `~/.codex/config.toml` | a `[mcp_servers.digital-ai-testing]` table with `command`, `args` and an `[mcp_servers.digital-ai-testing.env]` table, or `codex mcp add` |
+| OpenCode | `~/.config/opencode/opencode.json` | an `mcp` entry with `"type": "local"` and `command` as one array |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers` entry, as for Claude Desktop |
+| Xcode 26.3 and later (Claude Agent, Codex) | Xcode's agent MCP settings | the same command and arguments. Xcode starts its agents without your shell's PATH, so use the absolute-path entry that `setup clients` prints |
+
+Gemini in Android Studio accepts only remote (HTTP) MCP servers, so it cannot start this server. In Android Studio, use the [Claude Code plugin](#claude-code-jetbrains--android-studio) instead.
 
 ### Docker client configuration
 
@@ -338,14 +355,96 @@ For [Option B](#option-b--pull-from-github-container-registry) or [Option C](#op
 **Claude Code** (JetBrains / Android Studio, or VS Code) — from the project root, or add the same command under **Settings → MCP Servers**:
 
 ```bash
-# macOS / Linux
-claude mcp add digital-ai-testing -- docker run --pull=always --rm -i --env-file /absolute/path/to/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+# macOS / Linux (bash, zsh)
+claude mcp add-json digital-ai-testing '{"type":"stdio","command":"docker","args":["run","--pull=always","--rm","-i","--env-file","/absolute/path/to/.env","ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"]}'
 
-# Windows (use forward slashes — backslashes are stripped by Claude Code)
-claude mcp add digital-ai-testing -- docker run --pull=always --rm -i --env-file C:/projects/digital-ai-testing-mcp/.env ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest
+# Windows, PowerShell 7 (use forward slashes — backslashes are stripped by Claude Code)
+claude mcp add-json digital-ai-testing '{"type":"stdio","command":"docker","args":["run","--pull=always","--rm","-i","--env-file","C:/projects/digital-ai-testing-mcp/.env","ghcr.io/digitalai-opensource/digital-ai-testing-mcp:latest"]}'
 ```
 
+`claude mcp add … -- docker run --pull=always …` does not work: Claude Code refuses the `docker run` options even after `--`, so the entry is given as JSON. In Windows PowerShell 5.1 or Command Prompt, the quotes inside the JSON are lost; use PowerShell 7 or add the entry in the Claude Code panel.
+
 > **Windows users on Docker:** always use forward slashes (`C:/path/to/.env`), never backslashes — whether you register via the CLI command above or through the Claude Code panel. Claude Code silently strips backslashes when it writes the configuration to `~/.claude.json`, which breaks the path and causes a cryptic `-32000` reconnection error ([how to fix it](#failed-to-reconnect-to-digital-ai-testing--32000)).
+
+[↑ Back to top](#table-of-contents)
+
+---
+
+## The setup command
+
+`setup` saves your connection details where the server finds them, so no AI client configuration has to contain your access key.
+
+```bash
+# macOS / Linux
+npx -y digital-ai-testing-mcp@latest setup
+
+# Windows (PowerShell or Command Prompt)
+npx.cmd -y digital-ai-testing-mcp@latest setup
+```
+
+With a global npm install, run `digital-ai-testing-mcp setup`; from a source checkout, `node dist/index.js setup`. In the table below, `setup` stands for the whole command you use, for example `npx.cmd -y digital-ai-testing-mcp@latest setup list` on Windows. Running `setup` on its own walks you through adding a connection and then offers to add the server to your AI clients.
+
+| Command | What it does |
+|---|---|
+| `setup` | Guided: asks for the URL and the access key, checks them, saves them, and offers to set up your AI clients |
+| `setup add [name]` | Adds a connection profile, or replaces one with the same name |
+| `setup list` | Lists your profiles, where each key is kept, and which one the server starts on |
+| `setup default <name>` | Makes `<name>` the profile the server starts on |
+| `setup remove <name>` | Deletes a profile and its key |
+| `setup test [name]` | Checks one profile, or all of them, with Digital.ai Testing |
+| `setup clients` | Shows which AI clients are installed and whether they are set up |
+| `setup clients add [client…]` / `setup clients remove [client…]` | Adds the server to your AI clients, or removes it |
+| `setup doctor` | A report to send to support: install, profiles, keychain and AI clients. It never contains a key |
+| `setup path` · `setup repair` · `setup reset` | Where the profiles file is · restore it from its backup · delete every profile and its keys |
+
+Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--plain-file` · `--default` · `--skip-check` · `--yes` (answer yes to confirmations) · `--config <file>` (with `clients add`) · `--offline` (with `doctor`). `setup help` lists them all.
+
+### Where your key is kept
+
+- **In your operating system's keychain** by default: Windows Credential Manager (Windows Credentials → Generic Credentials, named `<profile>.digital-ai-testing-mcp`), the macOS Keychain, or the Linux Secret Service. The service name is `digital-ai-testing-mcp` and the account is the profile name. If you move the profiles file with `MCP_CREDENTIAL_STORE_DIR`, the account is `<profile>@<that folder>` instead, so a second set of profiles (for testing, say) can never overwrite or delete the keys of your usual ones.
+- **The list of profiles** — names, URLs and the default, no keys — is in `profiles.json`: `%APPDATA%\digital-ai-testing\` on Windows, `~/.config/digital-ai-testing/` on macOS and Linux. `setup path` prints the location.
+- With `--plain-file`, the key is kept in `profiles.json` instead, readable only by your user account. `setup` offers this when the keychain can't be used, for example on a Linux machine without a keyring service.
+- On Windows, the keychain (Credential Manager) needs the Microsoft Visual C++ runtime. Most PCs already have it. If setup says it is missing, install it from [Microsoft](https://aka.ms/vs/17/release/vc_redist.x64.exe), then run `setup add <name>` again to move the key into Credential Manager.
+- The key is typed at a hidden prompt (or piped in with `--key-stdin`), never as a command-line argument, and it is never shown. `setup` checks it with Digital.ai Testing before saving it.
+
+### How the server picks a connection
+
+- `DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY` and `DAI_PROFILE_*` variables — in the AI client's configuration or a `.env` file — **always take precedence**. The profiles you saved with `setup` are added alongside them; for a name both define, the variable wins.
+- The server starts on your default saved profile only when neither `DIGITAL_AI_BASE_URL` nor `DIGITAL_AI_ACCESS_KEY` is set.
+- `list_environments` shows every profile and where it comes from, and `switch_environment` switches between all of them.
+- A Docker container cannot reach your computer's keychain, so with Docker keep using the `.env` file.
+- Set `MCP_CREDENTIAL_STORE=off` to make the server ignore the saved profiles.
+
+### Adding the server to AI clients
+
+`setup clients add` adds the server to every AI client it finds — Claude Desktop, VS Code and VS Code Insiders (GitHub Copilot), Cursor, Windsurf, OpenAI Codex, OpenCode and Gemini CLI — or only the ones you name, e.g. `setup clients add vscode cursor`.
+
+- The entry contains no key.
+- Each file is copied to `<file>.digital-ai-testing.bak` before it is changed, and every other server and setting in it stays as it was.
+- A file that contains comments is not rewritten. `setup` prints the entry for you to paste instead.
+- If the client already has a `digital-ai-testing` entry, `setup` asks before replacing it and tells you when that entry holds its own key.
+- If that entry defines profiles of its own (`DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY`, `DAI_PROFILE_*`) that your saved profiles don't include, `setup` offers to import them first. It checks each key, keeps it in the OS keychain and never shows it. A profile it cannot import is listed with the command to add it yourself.
+- Replacing an entry keeps that client's own options (for example `disabled`, `timeout`, VS Code's `envFile`) and any variable that isn't a credential (for example `MCP_DEBUG_MODE`, `MCP_TOOLSETS`). Only the launch command, `PATH` and the URL/key variables change.
+- The entry starts Node.js and npx by their full paths and sets its own PATH, so it also works in clients that don't pass your terminal's PATH to the server, such as macOS apps and Xcode. If you switch Node.js versions with nvm or volta, run `setup clients add` again.
+- **Claude Code**: setup adds the server for all your projects through Claude Code's own `claude` command (`claude mcp add-json --scope user`), when that command is installed. Otherwise it prints the command to run.
+- **Claude Desktop on Windows** keeps its configuration in different places depending on how it was installed. `setup` edits it only when it finds exactly one configuration file, shows you the path and asks first. If it finds several, or none, it lists them and you choose one with `--config "<file>"`.
+- Restart each AI client you changed. `setup clients remove` takes the entry out again.
+
+### If something goes wrong
+
+| Problem | What to do |
+|---|---|
+| `npx : File …\npx.ps1 cannot be loaded because running scripts is disabled on this system` (or `npm.ps1`) | Windows PowerShell blocks the PowerShell scripts npm installs. Type `npx.cmd` / `npm.cmd` instead of `npx` / `npm`, or allow local scripts for your account once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (your organization's policy may override it). The AI client entries setup writes start Node.js directly and are not affected |
+| Every tool answers "SETUP REQUIRED" | The server found no connection. Run `setup`, or put `DIGITAL_AI_BASE_URL` and `DIGITAL_AI_ACCESS_KEY` in the client's `env` block |
+| A profile shows as not usable | `setup list` says why. `setup add <name>` replaces it |
+| You rotated your access key | `setup add <name>` with the new key replaces the old one; restart your AI client |
+| `profiles.json` was damaged or edited by mistake | `setup repair` restores the previous version (the damaged file is kept as `profiles.json.before-repair`) |
+| You want to start over | `setup reset` deletes every profile and the keys it saved in the keychain |
+| Setup says the OS keychain needs the Microsoft Visual C++ runtime | Install it from [Microsoft](https://aka.ms/vs/17/release/vc_redist.x64.exe), then run `setup add <name>` again. Until then, setup can keep the key in the profiles file |
+| The key prompt says "No access key was entered" after you pasted | Ctrl+V doesn't paste at the hidden prompt in a Windows PowerShell or Command Prompt window. Right-click to paste, then press Enter |
+| You are asking support for help | Send the output of `setup doctor`. It never contains a key |
+
+You can always go back to putting your URL and key in the AI client's `env` block: those variables take precedence over saved profiles.
 
 [↑ Back to top](#table-of-contents)
 
@@ -375,7 +474,11 @@ The key shown is tied to the **project currently selected in the portal**. If yo
 
 ### Using multiple keys
 
-Set up named profiles to switch between keys (for example, Cloud Admin and a project) without editing files. With the npm install, add the variables to the `env` block of your AI client's configuration; with Docker, add them to your `.env` file:
+Set up named profiles to switch between keys (for example, Cloud Admin and a project) without editing files.
+
+**With setup:** run `setup add <name>` once per key, e.g. `setup add admin` for your Cloud Admin key and `setup add mobile-qa` for a project key, and `setup default <name>` to choose the one the server starts on. See [The setup command](#the-setup-command).
+
+**With variables:** with the npm install, add them to the `env` block of your AI client's configuration; with Docker, add them to your `.env` file:
 
 ```
 # Default connection (typically Cloud Admin credentials — either key format works)
@@ -405,13 +508,15 @@ The switch takes effect immediately — no restart needed.
 
 ## Configuration
 
-Set these as environment variables: in the client's `env` block (npm install) or in your `.env` file (Docker).
+Set these as environment variables: in the client's `env` block (npm install) or in your `.env` file (Docker). The URL and key can instead be saved once with [setup](#the-setup-command).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DIGITAL_AI_BASE_URL` | ✅ | — | Your Digital.ai tenant URL |
-| `DIGITAL_AI_ACCESS_KEY` | ✅ | — | Access key — see [Access Keys](#access-keys) for the three access levels and key formats |
-| `MCP_DEPLOYMENT_MODE` | Optional | `docker` | `docker` (default) or `local`. Set `local` when running via the npm package ([Option A](#option-a--install-via-npm-recommended)) so tool descriptions and upload/download behavior reflect that the server's filesystem is your own machine, not a container's |
+| `DIGITAL_AI_BASE_URL` | ✅ unless saved with [setup](#the-setup-command) | — | Your Digital.ai tenant URL |
+| `DIGITAL_AI_ACCESS_KEY` | ✅ unless saved with [setup](#the-setup-command) | — | Access key — see [Access Keys](#access-keys) for the three access levels and key formats. Variables take precedence over profiles saved with setup |
+| `MCP_DEPLOYMENT_MODE` | Optional | `local`, or `docker` inside a container | Where the server runs: `local` (your own machine — file tools read and write your files) or `docker` (a container, whose filesystem is not yours). You rarely need to set it: the server detects a container, and the published Docker image sets `docker` |
+| `MCP_CREDENTIAL_STORE` | Optional | on | `off` makes the server ignore the profiles saved with [setup](#the-setup-command) |
+| `MCP_CREDENTIAL_STORE_DIR` | Optional | `%APPDATA%\digital-ai-testing` (Windows), `~/.config/digital-ai-testing` (macOS, Linux) | Folder of the saved profiles file (`profiles.json`). Keys that profiles in a moved folder keep in the OS keychain are named `<profile>@<folder>`, apart from your usual ones |
 | `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
 | `MCP_UPDATE_CHECK` | Optional | `true` | `false` turns off the daily check for a newer release and its notice. See [Update notices](#update-notices) |
 | `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. See [Debug mode](#debug-mode-remediation-notes) |
@@ -472,7 +577,7 @@ Debug mode costs extra tokens (the instructions and the notes). Leave it off for
 
 | Install | Notes | Event log |
 |---|---|---|
-| npm (`MCP_DEPLOYMENT_MODE=local`) | The server writes `<project>/remediation/<yyyymmddhhmmss>-<id>.md` | The server writes `<project>/remediation/<yyyymmddhhmmss>-<id>.events.jsonl` |
+| npm (local mode) | The server writes `<project>/remediation/<yyyymmddhhmmss>-<id>.md` | The server writes `<project>/remediation/<yyyymmddhhmmss>-<id>.events.jsonl` |
 | Docker | Returned to the AI, which saves them to `remediation/` in its project if it can write files (Claude Code can; Claude Desktop needs a filesystem tool) | Kept in server memory; a summary is included in every note |
 
 With the npm install, the server finds the project in this order, and records the step it used as `location:` in each file:
@@ -998,7 +1103,9 @@ More checks run before any request leaves the server:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Every tool answers "SETUP REQUIRED" | `DIGITAL_AI_BASE_URL` or `DIGITAL_AI_ACCESS_KEY` is not set where the server can see it | Add the variable the message names: in the client's `env` block (npm), or in the `.env` file passed with `--env-file` (Docker). Then restart the client or reconnect the server. See [Configuration](#configuration) |
+| `npx : File …\npx.ps1 cannot be loaded because running scripts is disabled on this system` (or `npm.ps1`) | Windows PowerShell runs the PowerShell scripts npm installs (`npx.ps1`, `npm.ps1`), and its default execution policy blocks scripts | Type `npx.cmd` / `npm.cmd` instead of `npx` / `npm`, or run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once (your organization's policy may override it). The AI client entries setup writes start Node.js directly and are not affected |
+| Every tool answers "SETUP REQUIRED" | The server found no connection: no `DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY` it can see and no usable profile saved with setup | Run `npx -y digital-ai-testing-mcp@latest setup` (`npx.cmd` on Windows), or add the variable the message names to the client's `env` block (npm) or the `.env` file passed with `--env-file` (Docker). Then restart the client or reconnect the server. See [The setup command](#if-something-goes-wrong) |
+| `setup clients add` changed Claude Desktop's config, but the server doesn't appear | On Windows, Claude Desktop may read a different `claude_desktop_config.json` than the one changed | Put back the `.digital-ai-testing.bak` copy beside it, then run `setup clients add claude-desktop --config "<file>"` with the file Claude Desktop uses. See [Claude Desktop](#claude-desktop) |
 | `403 Forbidden` on admin tools (agents, regions, license) | Active profile has a project-level role (Project Admin or Project User) — v2 endpoints require Cloud Admin access | Ask the AI: *"switch to my Cloud Admin profile"* — it will call `list_environments` and pick the right one. See [Using multiple keys](#using-multiple-keys) |
 | Report delete tools refuse with "Reporter deletes are disabled for project …" | The project's `allowUsersDeleteTests` setting is false, so project-level roles can't delete reports | Ask a Cloud Admin to enable it for the project, or switch to a Cloud Admin profile |
 | `install_application` returns 400 on a device you can see | Device is reserved via an rdb (remote debug) session | Install **first**, then run `get_remote_debug_command` — not the other way around |
