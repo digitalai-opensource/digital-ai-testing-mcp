@@ -631,7 +631,8 @@ describe('setup clients commands', () => {
       const list = io();
       expect(await runSetupCli(['clients'], list.s)).toBe(0);
       expect(list.all()).toContain('replaces the "all your projects" one in 3 projects');
-      expect(list.all()).toContain(`${projA} — local entry "digital-ai-testing", with its own access key. Remove: cd "${projA}" ; claude mcp remove "digital-ai-testing" -s local`);
+      expect(list.all()).toContain(`${projA} — local entry "digital-ai-testing", with its own access key. Remove it with:`);
+      expect(list.out).toContain(`      cd "${projA}" ; claude mcp remove "digital-ai-testing" -s local`); // own line, ready to copy
       expect(list.all()).toContain(`${projB} — "dai" in ${join(projB, '.mcp.json')} (shared with the repository; Claude Code asks before using it)`);
       expect(list.all()).toContain(`${projD} — "dai" in ${join(projD, '.mcp.json')} (shared with the repository).`);
       expect(list.all()).not.toContain(projE);
