@@ -71,6 +71,21 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # A stable release also becomes `:next` when it is newer than the version `next` points to — unless a newer
+      # beta from a working branch is in flight (.github/scripts/next-channel.mjs). Otherwise `docker run …:next`
+      # users would keep running a beta older than the release.
+      - name: Decide whether next follows this release
+        id: next
+        if: steps.ver.outputs.channel == 'latest'
+        run: node .github/scripts/next-channel.mjs "${{ steps.ver.outputs.version }}"
+
+      - name: Point :next at this release
+        if: steps.ver.outputs.channel == 'latest' && steps.next.outputs.move == 'true'
+        run: |
+          image=ghcr.io/digitalai-opensource/digital-ai-testing-mcp
+          docker buildx imagetools create -t "$image:next" "$image:${{ steps.ver.outputs.version }}"
+          echo "Docker \`:next\` now points to ${{ steps.ver.outputs.version }} (was ${{ steps.next.outputs.current }})." >> "$GITHUB_STEP_SUMMARY"
+
   npm:
     name: Publish npm package
     runs-on: ubuntu-latest
@@ -122,3 +137,25 @@ jobs:
           # instead of falling through to the OIDC/Trusted Publishing
           # exchange — clearing it here is what lets Trusted Publishing work.
           NODE_AUTH_TOKEN: ''
+
+      # npm's `next` should follow this release too (same rule as the docker job), but Trusted Publishing covers only
+      # `npm publish`, not `npm dist-tag` — so the run asks for the one command instead of holding a token.
+      - name: Check whether npm next should follow this release
+        id: next
+        if: steps.ver.outputs.channel == 'latest'
+        run: node .github/scripts/next-channel.mjs "${{ steps.ver.outputs.version }}"
+
+      - name: Ask for npm next to be moved
+        if: steps.ver.outputs.channel == 'latest' && steps.next.outputs.move == 'true'
+        run: |
+          cmd="npm dist-tag add digital-ai-testing-mcp@${{ steps.ver.outputs.version }} next"
+          echo "::warning title=Move npm next::npm next is ${{ steps.next.outputs.current }}, older than this release. Run: $cmd"
+          {
+            echo "### Action needed: move npm \`next\`"
+            echo "npm \`next\` is ${{ steps.next.outputs.current }}, older than ${{ steps.ver.outputs.version }}. With your npm login, run:"
+            echo
+            echo '```'
+            echo "npm login"
+            echo "$cmd"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
