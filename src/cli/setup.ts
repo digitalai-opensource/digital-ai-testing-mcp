@@ -37,6 +37,7 @@ import { installKind } from '../utils/update-check.js';
 import { redact } from '../utils/remediation.js';
 import { credentialEnvPresence } from '../utils/profile-loader.js';
 import { basename, dirname } from 'node:path';
+import * as ui from './ui.js';
 import {
   buildLaunchEntry,
   claudeCodeCommand,
@@ -129,7 +130,7 @@ class SetupError extends Error {
 function ask(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   return new Promise((resolve) => {
-    rl.question(question, (answer) => {
+    rl.question(ui.prompt(question), (answer) => {
       rl.close();
       resolve(answer.trim());
     });
@@ -139,6 +140,7 @@ function ask(question: string): Promise<string> {
 function askSecret(question: string): Promise<string> {
   const stdin = process.stdin;
   if (!stdin.isTTY) return ask(question);
+  question = ui.prompt(question);
   process.stderr.write(question);
   return new Promise((resolve) => {
     let value = '';
@@ -162,7 +164,7 @@ function askSecret(question: string): Promise<string> {
         if (ch === '\u0016') {
           // Ctrl+V reaches a raw-mode prompt as a control character in the classic console window (Windows
           // PowerShell 5.1, cmd) — it does not paste there. Windows Terminal pastes it as text. Seen live 2026-11-19.
-          if (!pasteHintShown) process.stderr.write(`\n${PASTE_HINT}\n${question}`);
+          if (!pasteHintShown) process.stderr.write(`\n${ui.yellow(PASTE_HINT)}\n${question}`);
           pasteHintShown = true;
         } else if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1);
         else if (ch >= ' ') value += ch;
@@ -181,6 +183,8 @@ async function readStdin(): Promise<string> {
 }
 
 export function terminalIO(): SetupIO {
+  // Colors only when the output is a terminal: `setup doctor > report.txt` stays plain text.
+  ui.setColor(ui.colorWanted(process.stdout));
   return {
     out: (t) => void process.stdout.write(t + '\n'),
     err: (t) => void process.stderr.write(t + '\n'),
@@ -293,6 +297,19 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
   const data = loadForEdit();
   storeOffNote(io);
 
+  // In a terminal: numbered steps with space between them (feedback 2026-11-20: the output ran together and was hard to
+  // read). Step 3 only when there are AI clients to offer.
+  const guided = io.interactive && !flags['key-stdin'];
+  const clientsToOffer = io.interactive && !flags.yes ? pendingClients(io) : undefined;
+  const steps = clientsToOffer ? 3 : 2;
+  if (guided) {
+    io.out('');
+    io.out(ui.bold('Digital.ai Testing MCP setup'));
+    io.out('');
+    io.out(ui.step(1, steps, 'Connect to Digital.ai Testing'));
+    io.out(ui.gray('  The URL is the address you open the portal with. The access key is in the portal: your name (top right) → Access Key.'));
+  }
+
   // URL
   let url: string | null;
   if (flags.url) {
@@ -331,7 +348,12 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
     if (!check.ok) {
       throw new SetupError(`Not saved: ${describeCheck(check, url)}.` + (check.problem === 'unreachable' ? ' To save it anyway, add --skip-check.' : ''));
     }
-    io.out(`OK — ${describeCheck(check, url)}.`);
+    io.out(`${ui.green('OK')} — ${describeCheck(check, url)}.`);
+  }
+
+  if (guided) {
+    io.out('');
+    io.out(ui.step(2, steps, 'Save it as a profile'));
   }
 
   // Name
@@ -385,20 +407,29 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
     const why = back.skipped.find((s) => s.name === name)?.reason ?? back.error ?? 'unknown reason';
     throw new SetupError(`The profile was written to ${path}, but reading it back failed: ${why}.`);
   }
+  // One short line, then aligned details: the long "key in … (service …, account …)" sentence was the hardest to read.
+  io.out(`${ui.green('Saved')} profile "${name}" (${url}).`);
   io.out(
-    `Saved profile "${name}" (${url}) — key in ${keyLocation === 'os' ? `the OS keychain (service "${KEYCHAIN_SERVICE}", account "${keychainAccount(name)}")` : 'the profiles file'}.`
+    `  Key:      ${keyLocation === 'os' ? `the OS keychain ${ui.gray(`(service "${KEYCHAIN_SERVICE}", account "${keychainAccount(name)}")`)}` : 'the profiles file'}`
   );
-  io.out(makeDefault ? `The server starts on "${name}".` : `The server still starts on "${currentDefault}"; switch with switch_environment("${name}").`);
+  io.out(`  File:     ${ui.gray(path)}`);
+  io.out(
+    `  Default:  ${makeDefault ? `yes — the server starts on "${name}"` : `no — the server still starts on "${currentDefault}"; switch with switch_environment("${name}")`}`
+  );
   // A Cloud-Admin-sounding name on a project key: "switch to admin" would land here, not on a Cloud Admin profile.
   if (check?.ok && isKnownNotCloudAdmin(check.info.level) && ADMIN_ALIAS_NAMES.includes(name)) {
     io.out(
-      `Note: "${name}" holds a ${roleLine(check.info).split(' of ')[0]} key. switch_environment("${name}") always picks this ` +
-        'profile; ask for "cloud admin" to reach a Cloud Admin profile.'
+      ui.yellow(`Note: "${name}" holds a ${roleLine(check.info).split(' of ')[0]} key. switch_environment("${name}") always picks this `) +
+        ui.yellow('profile; ask for "cloud admin" to reach a Cloud Admin profile.')
     );
   }
-  io.out(`Profiles file: ${path}`);
-  io.out('If your AI client\'s configuration sets DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY, those still win — remove them to use these profiles.');
-  if (io.interactive && !flags.yes) await offerClients(io);
+  io.out(ui.gray('  If an AI client\'s configuration sets DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY, those still win — remove them to use these profiles.'));
+  if (clientsToOffer) {
+    io.out('');
+    io.out(ui.step(3, steps, 'Add the server to your AI clients'));
+    await offerClients(io, clientsToOffer);
+  }
+  if (guided) io.out('');
   restartNote(io);
 }
 
@@ -413,7 +444,11 @@ function restartNote(io: SetupIO) {
   const setUp =
     knownClients(ctx).some((t) => t.detected && !t.choices && clientStatus(t, entry).hasEntry) ||
     (claude.detected && clientStatus(claude, claudeCodeEntry(entry, ctx.platform)).hasEntry);
-  io.out(setUp ? RESTART : `No AI client runs the server yet. Add it with: ${setupCommand()} clients add`);
+  if (setUp) io.out(ui.bold(RESTART));
+  else {
+    io.out('No AI client runs the server yet. Add it with:');
+    io.out(`  ${ui.command(`${setupCommand()} clients add`)}`);
+  }
 }
 
 function cmdList(io: SetupIO) {
@@ -421,27 +456,29 @@ function cmdList(io: SetupIO) {
   storeOffNote(io);
   const raw = readStoreFileRaw();
   if (!raw.exists) {
-    io.out(`No profiles yet (${path} does not exist). Add one with: ${setupCommand()}`);
+    io.out(`No profiles yet (${path} does not exist). Add one with: ${ui.command(setupCommand())}`);
     return;
   }
-  io.out(`Profiles file: ${path}`);
+  io.out(`${ui.bold('Profiles file:')} ${ui.gray(path)}`);
   if (!raw.data) {
-    io.out(`It cannot be used: ${raw.error}. ${capital(brokenFileFix())}.`);
+    io.out(`${ui.red('It cannot be used:')} ${raw.error}. ${capital(brokenFileFix())}.`);
     return;
   }
   const store = readStore();
   const names = Object.keys(raw.data.profiles);
-  if (names.length === 0) io.out(`No profiles in it. Add one with: ${setupCommand()}`);
+  if (names.length === 0) io.out(`No profiles in it. Add one with: ${ui.command(setupCommand())}`);
   for (const rawName of names) {
     const n = rawName.trim().toLowerCase();
     const ok = store.profiles[n];
     const isDefault = store.defaultProfile === n;
     const where = ok ? (ok.keyStore === 'os' ? 'key in the OS keychain' : 'key in this file') : '';
     const problem = store.skipped.find((s) => s.name === rawName || s.name === n)?.reason;
-    io.out(`  ${rawName}${isDefault ? ' (default)' : ''}: ${ok ? `${ok.url} — ${where}` : `NOT USABLE — ${problem ?? 'unknown reason'}`}`);
+    io.out(
+      `  ${ui.bold(rawName)}${isDefault ? ui.green(' (default)') : ''}: ${ok ? `${ok.url} ${ui.gray(`— ${where}`)}` : `${ui.red('NOT USABLE')} — ${problem ?? 'unknown reason'}`}`
+    );
   }
   const defaultProblem = store.skipped.find((s) => s.name === '(default)');
-  if (defaultProblem) io.out(`  Default: ${defaultProblem.reason}. Fix with: ${setupCommand()} default <name>`);
+  if (defaultProblem) io.out(`  ${ui.red('Default:')} ${defaultProblem.reason}. Fix with: ${ui.command(`${setupCommand()} default <name>`)}`);
 }
 
 function cmdDefault(io: SetupIO, nameArg: string | undefined) {
@@ -566,7 +603,7 @@ async function cmdTest(io: SetupIO, nameArg: string | undefined) {
   const wanted = nameArg ? normalizeName(nameArg) : undefined;
   const names = wanted ? [wanted] : Object.keys(store.profiles);
   if (names.length === 0 && store.skipped.length === 0) {
-    io.out(`No profiles to check. Add one with: ${setupCommand()}`);
+    io.out(`No profiles to check. Add one with: ${ui.command(setupCommand())}`);
     return;
   }
   let failed = 0;
@@ -575,17 +612,17 @@ async function cmdTest(io: SetupIO, nameArg: string | undefined) {
     if (!p) {
       const reason = store.skipped.find((s) => s.name.toLowerCase() === n)?.reason;
       if (!reason && wanted) throw new SetupError(`There is no profile named "${n}". See: ${setupCommand()} list`);
-      io.out(`  ${n}: NOT USABLE — ${reason}`);
+      io.out(`  ${ui.bold(n)}: ${ui.red('NOT USABLE')} — ${reason}`);
       failed++;
       continue;
     }
     const check = await io.verify(p.url, p.key);
-    io.out(`  ${n}: ${check.ok ? 'OK' : 'FAILED'} — ${describeCheck(check, p.url)}`);
+    io.out(`  ${ui.bold(n)}: ${check.ok ? ui.green('OK') : ui.red('FAILED')} — ${describeCheck(check, p.url)}`);
     if (!check.ok) failed++;
   }
   if (!wanted) {
     for (const s of store.skipped.filter((s) => s.name !== '(default)')) {
-      io.out(`  ${s.name}: NOT USABLE — ${s.reason}`);
+      io.out(`  ${ui.bold(s.name)}: ${ui.red('NOT USABLE')} — ${s.reason}`);
       failed++;
     }
   }
@@ -637,9 +674,9 @@ async function cmdReset(io: SetupIO, flags: Flags) {
 const RESTART_CLIENTS = 'Restart the AI clients you changed (or reconnect the server in them) to use the change.';
 
 function describeEntry(io: SetupIO, entry: LaunchEntry) {
-  io.out(`Entry "${SERVER_ENTRY_NAME}" (no access key in it — the server reads the credential store):`);
-  io.out(`  ${entry.command} ${entry.args.join(' ')}`);
-  for (const n of entry.notes) io.out(`  Note: ${n}`);
+  io.out(`${ui.bold(`The "${SERVER_ENTRY_NAME}" entry setup writes`)} ${ui.gray('(no access key in it — the server reads the credential store)')}`);
+  io.out(ui.gray(`  ${entry.command} ${entry.args.join(' ')}`));
+  for (const n of entry.notes) io.out(ui.gray(`  Note: ${n}`));
 }
 
 /** "path (modified 2026-11-17 18:50)" for each candidate file, or "path (no file yet)". */
@@ -659,15 +696,16 @@ const CHOOSE_HINT = (t: ClientTarget) =>
   `Claude Desktop keeps its config in different places on Windows, and setup cannot tell which one this install reads. ` +
   `Candidates: ${describeChoices(t.choices ?? [])}. Pick it with: ${setupCommand()} clients add ${t.id} --config "<file>"`;
 
+/** The client's state, colored by meaning: green = set up, yellow = needs attention, gray = not installed. */
 function statusLine(t: ClientTarget, entry: LaunchEntry): string {
-  if (!t.detected) return 'not installed';
-  if (t.choices) return `installed — ${CHOOSE_HINT(t)}`;
+  if (!t.detected) return ui.gray('not installed');
+  if (t.choices) return `${ui.yellow('installed')} — ${CHOOSE_HINT(t)}`;
   const s = clientStatus(t, entry);
   const others = s.otherNames.length ? ` It also starts this server as "${s.otherNames.join('", "')}" — remove that entry to avoid two copies.` : '';
-  if (s.unreadable) return `not changed by setup — ${s.unreadable}. "setup clients add ${t.id}" prints the entry to paste.${others}`;
-  if (!s.hasEntry) return `installed, not set up${others}`;
-  if (s.entryHasKeys) return `set up with its own access key in the entry (that key wins over the credential store)${others}`;
-  return (s.upToDate ? 'set up' : 'set up with a different launch command ("setup clients add" updates it)') + others;
+  if (s.unreadable) return `${ui.yellow('not changed by setup')} — ${s.unreadable}. "setup clients add ${t.id}" prints the entry to paste.${others}`;
+  if (!s.hasEntry) return `${ui.yellow('installed, not set up')}${others}`;
+  if (s.entryHasKeys) return `${ui.yellow('set up with its own access key in the entry')} (that key wins over the credential store)${others}`;
+  return (s.upToDate ? ui.green('set up') : `${ui.yellow('set up with a different launch command')} ("setup clients add" updates it)`) + others;
 }
 
 /** Claude Code's user-scope status ("claude command not found" instead of "not installed": it may be installed elsewhere). */
@@ -675,8 +713,8 @@ function claudeStatusLine(ctx: ClientContext, entry: LaunchEntry, commandBelow =
   const t = claudeCodeTarget(ctx);
   if (!t.detected) {
     return commandBelow
-      ? 'not installed (the claude command was not found) — if you use it, run the command below in a terminal where it works'
-      : `not installed (the claude command was not found). If you use it, "${setupCommand()} clients" prints the command to run`;
+      ? ui.gray('not installed (the claude command was not found) — if you use it, run the command below in a terminal where it works')
+      : ui.gray(`not installed (the claude command was not found). If you use it, "${setupCommand()} clients" prints the command to run`);
   }
   return statusLine(t, claudeCodeEntry(entry, ctx.platform));
 }
@@ -691,31 +729,39 @@ function overrideLines(ctx: ClientContext): string[] {
   if (found.length === 0) return [];
   const n = new Set(found.map((o) => o.project.toLowerCase())).size;
   const lines = [
-    `  WARNING: Claude Code has a per-project entry that replaces the "all your projects" one in ${n} project${n === 1 ? '' : 's'} ` +
+    '',
+    `  ${ui.yellow('WARNING:')} Claude Code has a per-project entry that replaces the "all your projects" one in ${n} project${n === 1 ? '' : 's'} ` +
       '(a per-project entry wins). Those projects do not get this setup. Remove the entry unless the project needs its own:',
   ];
   for (const o of found) {
     const what = `"${o.name}"${o.holdsKeys ? ', with its own access key' : ''}`;
-    lines.push(
-      o.scope === 'local'
-        ? `    ${o.project} — local entry ${what}. Remove: cd "${o.project}" ; claude mcp remove "${o.name}" -s local`
-        : `    ${o.project} — ${what} in ${o.file} (shared with the repository${o.approved ? '' : '; Claude Code asks before using it'}). ` +
+    if (o.scope === 'local') {
+      lines.push(`    ${ui.bold(o.project)} — local entry ${what}. Remove it with:`);
+      lines.push(`      ${ui.command(`cd "${o.project}" ; claude mcp remove "${o.name}" -s local`)}`);
+    } else {
+      lines.push(
+        `    ${ui.bold(o.project)} — ${what} in ${o.file} (shared with the repository${o.approved ? '' : '; Claude Code asks before using it'}). ` +
           'Remove it from that file.'
-    );
+      );
+    }
   }
   return lines;
 }
 
 function cmdClientsList(io: SetupIO, ctx: ClientContext) {
   const entry = buildLaunchEntry(ctx);
-  describeEntry(io, entry);
-  io.out('');
-  for (const t of knownClients(ctx)) io.out(`  ${t.id.padEnd(22)} ${t.label}: ${statusLine(t, entry)}`);
+  io.out(ui.bold('AI clients on this computer'));
+  for (const t of knownClients(ctx)) {
+    const row = `  ${t.id.padEnd(22)} ${t.label}: ${statusLine(t, entry)}`;
+    io.out(t.detected ? row : ui.gray(ui.stripStyle(row))); // a client that is not installed is background
+  }
   io.out(`  ${'claude-code'.padEnd(22)} Claude Code (all your projects): ${claudeStatusLine(ctx, entry)}`);
   for (const l of overrideLines(ctx)) io.out(l);
   io.out('');
-  io.out('Set up by hand:');
-  for (const m of manualClients()) io.out(`  ${m.id.padEnd(22)} ${m.label}: ${m.how}`);
+  io.out(ui.bold('Set up by hand'));
+  for (const m of manualClients()) io.out(ui.gray(`  ${m.id.padEnd(22)} ${m.label}: ${m.how}`));
+  io.out('');
+  describeEntry(io, entry);
   // The command only when there is something to do: after "set up" it read as a step still open (2026-11-19).
   const claude = claudeCodeTarget(ctx);
   const done = claude.detected && (() => {
@@ -725,7 +771,7 @@ function cmdClientsList(io: SetupIO, ctx: ClientContext) {
   if (done) return;
   io.out('');
   io.out(`Claude Code — "${setupCommand()} clients add claude-code" runs this for you, or run it once in a terminal:`);
-  io.out(`  ${claudeCodeCommand(entry, ctx.platform)}`);
+  io.out(`  ${ui.command(claudeCodeCommand(entry, ctx.platform))}`);
 }
 
 /** The named clients, or every installed one when none is named. */
@@ -862,26 +908,26 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
   let changed = 0;
   for (const t of targets) {
     if (t.choices) {
-      io.out(`${t.label}: not changed — ${CHOOSE_HINT(t)}`);
+      io.out(`${t.label}: ${ui.yellow('not changed')} — ${CHOOSE_HINT(t)}`);
       attention++;
       continue;
     }
     const s = clientStatus(t, entry);
     if (s.unreadable) {
-      io.out(`${t.label}: not changed — ${s.unreadable}. Add this "${SERVER_ENTRY_NAME}" entry to ${t.file} by hand (replace the one there, if any):`);
+      io.out(`${t.label}: ${ui.yellow('not changed')} — ${s.unreadable}. Add this "${SERVER_ENTRY_NAME}" entry to ${t.file} by hand (replace the one there, if any):`);
       io.out(pasteSnippet(t.format, entry));
       attention++;
       continue;
     }
     if (s.upToDate) {
-      io.out(`${t.label}: already set up.`);
+      io.out(`${t.label}: ${ui.green('already set up')}.`);
       continue;
     }
     // Claude Desktop on Windows: always show the exact file and get a yes for it (its location varies by install).
     if (t.id === 'claude-desktop' && ctx.platform === 'win32' && !yes) {
       const ok = io.interactive && /^y(es)?$/i.test(await io.ask(`Edit Claude Desktop's config file ${t.file}? [y/N] `));
       if (!ok) {
-        io.out(`${t.label}: not changed${io.interactive ? '' : ` — add --yes to edit ${t.file}`}.`);
+        io.out(`${t.label}: ${ui.yellow('not changed')}${io.interactive ? '' : ` — add --yes to edit ${t.file}`}.`);
         attention++;
         continue;
       }
@@ -898,19 +944,19 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
             : `${t.label} already has a "${SERVER_ENTRY_NAME}" entry with a different launch command. Replace it? [y/N] `;
       const replace = yes || (io.interactive && /^y(es)?$/i.test(await io.ask(question)));
       if (!replace) {
-        io.out(`${t.label}: not changed${io.interactive ? '' : ' — add --yes to replace its existing entry'}.`);
+        io.out(`${t.label}: ${ui.yellow('not changed')}${io.interactive ? '' : ' — add --yes to replace its existing entry'}.`);
         attention++;
         continue;
       }
     }
     const r = writeClientEntry(t, entry);
     if (!r.ok) {
-      io.err(`${t.label}: not changed — ${r.error}`);
+      io.err(`${t.label}: ${ui.red('not changed')} — ${r.error}`);
       attention++;
       continue;
     }
     changed++;
-    io.out(`${t.label}: ${s.hasEntry ? 'updated' : 'added'} (${t.file}${r.backup ? `; previous version kept as ${r.backup}` : ''}).`);
+    io.out(`${t.label}: ${ui.green(s.hasEntry ? 'updated' : 'added')} ${ui.gray(`(${t.file}${r.backup ? `; previous version kept as ${r.backup}` : ''})`)}.`);
     for (const n of s.otherNames) io.out(`  It also starts this server as "${n}" — remove that entry in ${t.file} to avoid two copies.`);
     if (s.envFile) io.out(`  The entry also loads variables from ${s.envFile} (kept). If that file sets DIGITAL_AI_* or DAI_PROFILE_* keys, they still win over the credential store — remove them there.`);
     // Windows only: there Claude Desktop's config has several possible locations (see CLAUDE.md). macOS has one, and the
@@ -940,18 +986,18 @@ async function addToClaudeCode(io: SetupIO, ctx: ClientContext, yes: boolean, ex
   const unchanged = { changed: 0, attention: explicit ? 1 : 0 };
   const cli = ctx.claudeCli?.();
   if (!cli) {
-    if (explicit) io.out(`Claude Code: the claude command was not found. Run this once in a terminal where it works:\n  ${cmd}`);
+    if (explicit) io.out(`Claude Code: the claude command was not found. Run this once in a terminal where it works:\n  ${ui.command(cmd)}`);
     return unchanged;
   }
   const t = claudeCodeTarget(ctx);
   const ce = claudeCodeEntry(entry, ctx.platform);
   const s = clientStatus(t, ce);
   if (s.unreadable) {
-    io.out(`Claude Code: not changed — ${t.file} could not be read (${s.unreadable}). Run this once in a terminal:\n  ${cmd}`);
+    io.out(`Claude Code: ${ui.yellow('not changed')} — ${t.file} could not be read (${s.unreadable}). Run this once in a terminal:\n  ${ui.command(cmd)}`);
     return { changed: 0, attention: 1 };
   }
   if (s.upToDate) {
-    io.out('Claude Code: already set up (all your projects).');
+    io.out(`Claude Code: ${ui.green('already set up')} (all your projects).`);
     return { changed: 0, attention: 0 };
   }
   const lost = s.hasEntry && s.entryHasKeys ? await importEntryProfiles(io, t, yes) : [];
@@ -969,14 +1015,14 @@ async function addToClaudeCode(io: SetupIO, ctx: ClientContext, yes: boolean, ex
   let go = yes || (approved && !s.hasEntry);
   if (!go) {
     if (!io.interactive) {
-      io.out(`Claude Code: not changed — add --yes to ${s.hasEntry ? 'replace' : 'add'} it, or run this once in a terminal:\n  ${cmd}`);
+      io.out(`Claude Code: ${ui.yellow('not changed')} — add --yes to ${s.hasEntry ? 'replace' : 'add'} it, or run this once in a terminal:\n  ${ui.command(cmd)}`);
       return { changed: 0, attention: 1 };
     }
     const a = await io.ask(question);
     go = s.hasEntry ? /^y(es)?$/i.test(a) : !/^n(o)?$/i.test(a);
   }
   if (!go) {
-    io.out(`Claude Code: not changed. To add it later: ${setupCommand()} clients add claude-code`);
+    io.out(`Claude Code: ${ui.yellow('not changed')}. To add it later: ${ui.command(`${setupCommand()} clients add claude-code`)}`);
     return s.hasEntry ? { changed: 0, attention: 1 } : unchanged;
   }
 
@@ -998,35 +1044,51 @@ async function addToClaudeCode(io: SetupIO, ctx: ClientContext, yes: boolean, ex
     io.err(
       `Claude Code: not changed — "claude mcp add-json" failed: ${firstLine(r.output)}.` +
         (old !== undefined ? (restored ? ' The previous entry was put back.' : ' The previous entry could NOT be put back.') : '') +
-        ` Run this once in a terminal instead:\n  ${cmd}`
+        ` Run this once in a terminal instead:\n  ${ui.command(cmd)}`
     );
     return { changed: 0, attention: 1 };
   }
-  io.out(`Claude Code: ${s.hasEntry ? 'updated' : 'added'} for all your projects (claude mcp add-json --scope user; ${t.file}).`);
+  io.out(`Claude Code: ${ui.green(s.hasEntry ? 'updated' : 'added')} for all your projects ${ui.gray(`(claude mcp add-json --scope user; ${t.file})`)}.`);
   if (!clientStatus(t, ce).upToDate) io.out(`  Note: reading ${t.file} back did not show the new entry yet — check with: claude mcp get ${SERVER_ENTRY_NAME}`);
   io.out(
-    `  A project whose .mcp.json defines "${SERVER_ENTRY_NAME}" keeps using that one. Claude Code sessions already running ` +
-      'pick up the change after a restart (or /mcp → reconnect).'
+    ui.gray(
+      `  A project whose .mcp.json defines "${SERVER_ENTRY_NAME}" keeps using that one. Claude Code sessions already running ` +
+        'pick up the change after a restart (or /mcp → reconnect).'
+    )
   );
   return { changed: 1, attention: 0 };
 }
 
-/** After a guided `setup`: offer the installed clients that are not set up yet. */
-async function offerClients(io: SetupIO) {
+interface PendingClients {
+  ctx: ClientContext;
+  entry: LaunchEntry;
+  targets: ClientTarget[];
+  claude: boolean;
+}
+
+/** The installed clients that are not set up yet (undefined when there are none) — what a guided `setup` offers. */
+function pendingClients(io: SetupIO): PendingClients | undefined {
   const ctx = io.clients ?? defaultClientContext();
   const entry = buildLaunchEntry(ctx);
-  const pending = knownClients(ctx).filter((t) => t.detected && !clientStatus(t, entry).upToDate);
-  const claude = claudeCodeTarget(ctx);
-  const claudePending = claude.detected && !clientStatus(claude, claudeCodeEntry(entry, ctx.platform)).upToDate;
-  if (pending.length === 0 && !claudePending) return;
-  const labels = [...pending.map((t) => t.label), ...(claudePending ? ['Claude Code'] : [])];
-  const answer = await io.ask(`Add the server to your AI clients too (${labels.join(', ')})? [Y/n] `);
+  const targets = knownClients(ctx).filter((t) => t.detected && !clientStatus(t, entry).upToDate);
+  const claudeT = claudeCodeTarget(ctx);
+  const claude = claudeT.detected && !clientStatus(claudeT, claudeCodeEntry(entry, ctx.platform)).upToDate;
+  return targets.length || claude ? { ctx, entry, targets, claude } : undefined;
+}
+
+/** After a guided `setup`: offer the installed clients that are not set up yet. */
+async function offerClients(io: SetupIO, p: PendingClients) {
+  const { ctx, entry, targets, claude } = p;
+  const labels = [...targets.map((t) => t.label), ...(claude ? ['Claude Code'] : [])];
+  io.out(`  Found on this computer: ${labels.join(', ')}`);
+  const answer = await io.ask('Add the server to them? [Y/n] ');
   if (/^n(o)?$/i.test(answer)) {
-    io.out(`Later: ${setupCommand()} clients add`);
+    io.out('Not added. To add it later:');
+    io.out(`  ${ui.command(`${setupCommand()} clients add`)}`);
     return;
   }
-  const res = await addToClients(io, ctx, pending, false);
-  const cc = claudePending ? await addToClaudeCode(io, ctx, false, false, true) : { changed: 0 };
+  const res = await addToClients(io, ctx, targets, false);
+  const cc = claude ? await addToClaudeCode(io, ctx, false, false, true) : { changed: 0 };
   if (res.changed + cc.changed > 0) await warmNote(io, ctx, entry);
 }
 
@@ -1039,10 +1101,10 @@ async function warmNote(io: SetupIO, ctx: ClientContext, entry: LaunchEntry) {
   io.out('Starting the server once, the way your AI clients will, so its first start there is quick (the first run downloads it)…');
   const r = await ctx.warmStart(entry);
   const secs = (r.ms / 1000).toFixed(1);
-  if (r.ok) io.out(`  The server started in ${secs} s${r.version ? ` (version ${r.version})` : ''}.`);
+  if (r.ok) io.out(`  The server ${ui.green('started')} in ${secs} s${r.version ? ` (version ${r.version})` : ''}.`);
   else {
     io.out(
-      `  The server did not start (${r.error}, after ${secs} s). If an AI client reports a timeout, reconnect the server ` +
+      `  The server ${ui.yellow('did not start')} (${r.error}, after ${secs} s). If an AI client reports a timeout, reconnect the server ` +
         `there once more. "${setupCommand()} doctor" checks the rest.`
     );
   }
@@ -1103,7 +1165,7 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
     let removed = 0;
     for (const t of targets) {
       const r = removeClientEntry(t);
-      if (!r.ok) io.err(`${t.label}: not changed — ${r.error}`);
+      if (!r.ok) io.err(`${t.label}: ${ui.red('not changed')} — ${r.error}`);
       else {
         removed++;
         io.out(`${t.label}: removed${r.backup ? ` (previous version kept as ${r.backup})` : ''}.`);
@@ -1201,10 +1263,11 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
     return 0;
   } catch (e) {
     if (e instanceof SetupError) {
-      io.err(e.message);
+      const [first, ...rest] = e.message.split('\n');
+      io.err([ui.red(first), ...rest].join('\n'));
       return e.code;
     }
-    io.err(`Unexpected error: ${(e as Error).message}`);
+    io.err(ui.red(`Unexpected error: ${(e as Error).message}`));
     return 1;
   }
 }

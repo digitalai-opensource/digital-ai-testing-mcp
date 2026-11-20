@@ -114,8 +114,8 @@ describe('setup add', () => {
     expect(r.code).toBe(0);
     expect(readFile()).toEqual({ version: 1, profiles: { admin: { url: URL_A, keyStore: 'os' } }, default: 'admin' });
     expect(kc.entries).toEqual({ admin: KEY });
-    expect(r.all()).toContain('key in the OS keychain (service "digital-ai-testing-mcp", account "admin")');
-    expect(r.all()).toContain('The server starts on "admin"');
+    expect(r.all()).toContain('Key:      the OS keychain (service "digital-ai-testing-mcp", account "admin")');
+    expect(r.all()).toContain('Default:  yes — the server starts on "admin"');
     expect(r.all()).not.toContain(KEY);
   });
 
@@ -195,7 +195,8 @@ describe('setup add', () => {
     expect(r.code).toBe(0);
     expect(r.all()).not.toContain('claude mcp add');
     expect(r.all()).not.toContain('Restart your AI client');
-    expect(r.out.at(-1)).toMatch(/^No AI client runs the server yet\. Add it with: .* clients add$/);
+    expect(r.out.at(-2)).toBe('No AI client runs the server yet. Add it with:');
+    expect(r.out.at(-1)).toMatch(/^ {2}\S.* clients add$/); // the command on its own line, ready to copy
   });
 
   it('a second profile asks before changing the default', async () => {
@@ -204,7 +205,7 @@ describe('setup add', () => {
     expect(r.code).toBe(0);
     expect(r.asked.at(-1)).toBe('Make "second" the profile the server starts on (now "first")? [y/N] ');
     expect(readFile().default).toBe('first');
-    expect(r.all()).toContain('The server still starts on "first"; switch with switch_environment("second")');
+    expect(r.all()).toContain('Default:  no — the server still starts on "first"; switch with switch_environment("second")');
     expect((await add(['third', '--url', URL_A, '--key-stdin', '--default'])).code).toBe(0);
     expect(readFile().default).toBe('third');
   });
