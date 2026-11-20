@@ -8,7 +8,46 @@ import { runSetupCli } from '../src/cli/setup.js';
 
 const ESC = '\x1b[';
 
-afterEach(() => ui.setColor(false));
+afterEach(() => {
+  ui.setColor(false);
+  ui.setWidth(0);
+});
+
+describe('wrapping to the terminal width', () => {
+  it('breaks at word boundaries and indents continuation lines under the item', () => {
+    ui.setWidth(31); // 30 usable columns
+    const wrapped = ui.wrap('  The URL is the address you open the portal with.');
+    expect(wrapped.split('\n')).toEqual(['  The URL is the address you', '    open the portal with.']);
+    for (const l of wrapped.split('\n')) expect(l.length).toBeLessThanOrEqual(30);
+  });
+
+  it('a line styled from its first character keeps its color code whole', () => {
+    ui.setColor(true);
+    ui.setWidth(31);
+    const wrapped = ui.wrap(ui.gray('  The URL is the address you open the portal with.'));
+    expect(ui.stripStyle(wrapped).split('\n')).toEqual(['  The URL is the address you', '    open the portal with.']);
+    expect(wrapped.startsWith('  \x1b[90mThe')).toBe(true);
+    expect(wrapped).not.toMatch(/(^|[^\x1b])\[\d+m/); // no code without its ESC
+  });
+
+  it('counts visible characters only, so styling never causes an early break', () => {
+    ui.setColor(true);
+    ui.setWidth(31);
+    const line = `  ${ui.green('OK')} — a short line`;
+    expect(ui.wrap(line)).toBe(line);
+  });
+
+  it('never wraps a command to copy, a long single word, or anything when the width is unknown', () => {
+    ui.setColor(true);
+    ui.setWidth(31);
+    const cmd = `  ${ui.command('npx -y digital-ai-testing-mcp@latest setup clients add')}`;
+    expect(ui.wrap(cmd)).toBe(cmd);
+    expect(ui.wrap('  C:\\Users\\someone\\AppData\\Roaming\\digital-ai-testing\\profiles.json')).not.toContain('\n');
+    ui.setWidth(0);
+    const long = 'word '.repeat(40).trim();
+    expect(ui.wrap(long)).toBe(long);
+  });
+});
 
 describe('setup styling', () => {
   it('is plain text unless a terminal turned it on', () => {

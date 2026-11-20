@@ -49,6 +49,57 @@ export function prompt(question: string): string {
   return `${bold(text)}${gray(example)}${gray(choices)}${tail}`;
 }
 
+let width = 0;
+
+/** The terminal's width in columns (0 = do not wrap: tests, piped output). */
+export function setWidth(columns: number | undefined): void {
+  width = columns && columns > 20 ? Math.min(columns, 110) - 1 : 0;
+}
+
+/**
+ * Wraps one line at word boundaries to the terminal width. Continuation lines keep the line's indent plus two
+ * spaces, so a wrapped item still reads as one item (feedback 2026-11-20: the terminal broke long lines mid-word
+ * at column 0). A command to copy is never wrapped — a line break inside it would break the paste — and neither is
+ * a single word longer than the width (a path); the terminal wraps those itself.
+ */
+export function wrap(line: string): string {
+  if (!width || line.includes('\x1b[36m') || stripStyle(line).length <= width) return line;
+  // The indent is the leading spaces; color codes before or between them belong to the first word (a whole line in
+  // gray starts with its code, and slicing by visible length cut that code in half).
+  let i = 0;
+  let indent = 0;
+  let codes = '';
+  for (;;) {
+    const code = /^\x1b\[[0-9;]*m/.exec(line.slice(i));
+    if (code) {
+      codes += code[0];
+      i += code[0].length;
+    } else if (line[i] === ' ') {
+      indent++;
+      i++;
+    } else break;
+  }
+  const words = (codes + line.slice(i)).split(' ');
+  const out: string[] = [];
+  let current = ' '.repeat(indent);
+  let visible = indent;
+  let lineHasWord = false;
+  for (const w of words) {
+    const len = stripStyle(w).length;
+    if (lineHasWord && visible + 1 + len > width) {
+      out.push(current);
+      current = ' '.repeat(indent + 2) + w;
+      visible = indent + 2 + len;
+      continue;
+    }
+    current += (lineHasWord ? ' ' : '') + w;
+    visible += (lineHasWord ? 1 : 0) + len;
+    lineHasWord = true;
+  }
+  out.push(current);
+  return out.join('\n');
+}
+
 /** Removes the styling again (tests of the styled form, and widths). */
 export function stripStyle(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, '');
