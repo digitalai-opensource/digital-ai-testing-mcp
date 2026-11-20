@@ -89,6 +89,7 @@ jobs:
   npm:
     name: Publish npm package
     runs-on: ubuntu-latest
+    timeout-minutes: 45 # the download wait gives up after 25 minutes
     # Authenticates via npm Trusted Publishing (OIDC) — no NPM_TOKEN secret.
     # Requires a trusted publisher registered on the npm package pointing at
     # this repo + workflow file (npmjs.com package → Settings → Trusted
@@ -127,9 +128,12 @@ jobs:
       - name: Update npm
         run: npm install -g npm@latest
 
-      # --tag is explicit: `latest` only for a stable version from main, `next` for a prerelease.
-      - name: Publish to npm
-        run: npm publish --provenance --access public --tag ${{ steps.ver.outputs.channel }}
+      # Published under `staging`, NOT the release channel: the registry lists a new version minutes before its tarball
+      # can be downloaded, and a channel moved at publish time sent every `npx …@latest` to a 404 for ~9 minutes
+      # (2.4.2, 2026-11-20). `latest`/`next` move below, once the file can really be downloaded.
+      - name: Publish to npm (staging tag)
+        id: publish
+        run: npm publish --provenance --access public --tag staging
         env:
           # actions/setup-node injects a dummy placeholder NODE_AUTH_TOKEN
           # whenever registry-url is set, even with no real token configured.
@@ -138,24 +142,60 @@ jobs:
           # exchange — clearing it here is what lets Trusted Publishing work.
           NODE_AUTH_TOKEN: ''
 
-      # npm's `next` should follow this release too (same rule as the docker job), but Trusted Publishing covers only
-      # `npm publish`, not `npm dist-tag` — so the run asks for the one command instead of holding a token.
+      # Cache-busted requests until the origin has the file, then the plain URL npm uses, then a margin. Times out
+      # (exit 1) rather than move a channel to a version that cannot be downloaded.
+      - name: Wait until the new version can be downloaded
+        run: node .github/scripts/wait-for-npm.mjs "${{ steps.ver.outputs.version }}"
+
+      # Trusted Publishing may move dist-tags since 2026-09-30 ("Allow npm dist-tag" on the package's trusted publisher,
+      # turned on 2026-11-20) — no token.
+      - name: Move npm ${{ steps.ver.outputs.channel }} to this release
+        id: channel
+        run: npm dist-tag add "digital-ai-testing-mcp@${{ steps.ver.outputs.version }}" "${{ steps.ver.outputs.channel }}"
+        env:
+          NODE_AUTH_TOKEN: ''
+
+      # npm's `next` follows a stable release only when the release is newer (same rule as the docker job).
       - name: Check whether npm next should follow this release
         id: next
         if: steps.ver.outputs.channel == 'latest'
         run: node .github/scripts/next-channel.mjs "${{ steps.ver.outputs.version }}"
 
-      - name: Ask for npm next to be moved
+      - name: Move npm next to this release
+        id: nextmove
         if: steps.ver.outputs.channel == 'latest' && steps.next.outputs.move == 'true'
+        run: npm dist-tag add "digital-ai-testing-mcp@${{ steps.ver.outputs.version }}" next
+        env:
+          NODE_AUTH_TOKEN: ''
+
+      - name: Remove the staging tag
+        continue-on-error: true
+        run: npm dist-tag rm digital-ai-testing-mcp staging
+        env:
+          NODE_AUTH_TOKEN: ''
+
+      - name: Summary
         run: |
-          cmd="npm dist-tag add digital-ai-testing-mcp@${{ steps.ver.outputs.version }} next"
-          echo "::warning title=Move npm next::npm next is ${{ steps.next.outputs.current }}, older than this release. Run: $cmd"
           {
-            echo "### Action needed: move npm \`next\`"
-            echo "npm \`next\` is ${{ steps.next.outputs.current }}, older than ${{ steps.ver.outputs.version }}. With your npm login, run:"
+            echo "### npm"
+            echo "\`${{ steps.ver.outputs.channel }}\` → ${{ steps.ver.outputs.version }}, moved after the tarball could be downloaded."
+            if [[ '${{ steps.nextmove.outcome }}' == 'success' ]]; then echo "\`next\` → ${{ steps.ver.outputs.version }} (was ${{ steps.next.outputs.current }})."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Published, but a channel was not moved (the wait timed out, or the dist-tag permission failed): users keep
+      # the previous release, which is the safe side. Say exactly what to run.
+      - name: Channel not moved — action needed
+        if: failure() && steps.publish.outcome == 'success'
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          echo "::error title=npm channel not moved::$v is published under 'staging' but '${{ steps.ver.outputs.channel }}' still points to the previous release."
+          {
+            echo "### Action needed: npm channel not moved"
+            echo "$v is published (dist-tag \`staging\`), but \`${{ steps.ver.outputs.channel }}\` was not moved, so users still get the previous release."
+            echo "Check that \`npm view digital-ai-testing-mcp@$v\` works, then, with your npm login:"
             echo
             echo '```'
-            echo "npm login"
-            echo "$cmd"
+            echo "npm dist-tag add digital-ai-testing-mcp@$v ${{ steps.ver.outputs.channel }}"
+            if [[ '${{ steps.ver.outputs.channel }}' == 'latest' ]]; then echo "# and, if next is older than $v:"; echo "npm dist-tag add digital-ai-testing-mcp@$v next"; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
