@@ -17,6 +17,7 @@ import {
   knownClients,
   removeClientEntry,
   setupCommand,
+  warmStart,
   writeClientEntry,
   type ClientContext,
   type ClientTarget,
@@ -635,5 +636,63 @@ describe('setup clients commands', () => {
     const t = io();
     expect(await runSetupCli(['clients', 'add'], t.s)).toBe(1);
     expect(t.all()).toContain('No AI clients were found');
+  });
+});
+
+describe('warm start after writing client entries', () => {
+  it('runs after clients add, reports the time and version — also when every entry was already right', async () => {
+    mkdirSync(join(home, '.cursor'));
+    const calls: string[] = [];
+    ctx.warmStart = async (e) => {
+      calls.push(e.args.join(' '));
+      return { ok: true, ms: 3200, version: '9.9.9' };
+    };
+    const t = io();
+    expect(await runSetupCli(['clients', 'add', 'cursor'], t.s)).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain(packageSpec(ctx.version));
+    expect(t.all()).toContain('The server started in 3.2 s (version 9.9.9).');
+    const again = io();
+    expect(await runSetupCli(['clients', 'add', 'cursor'], again.s)).toBe(0);
+    expect(calls).toHaveLength(2); // nothing written, but a new release still gets downloaded ahead of the clients
+    expect(again.all()).toContain('already set up');
+    expect(again.all()).not.toContain('Restart the AI clients');
+  });
+
+  it('a failed start is a note with what to do, not a setup failure', async () => {
+    mkdirSync(join(home, '.cursor'));
+    ctx.warmStart = async () => ({ ok: false, ms: 180000, error: 'no answer within 180 s' });
+    const t = io();
+    expect(await runSetupCli(['clients', 'add', 'cursor'], t.s)).toBe(0);
+    expect(t.all()).toContain('The server did not start (no answer within 180 s, after 180.0 s)');
+    expect(t.all()).toContain('reconnect the server there once more');
+  });
+
+  // The real warmStart, against tiny stand-in servers (no npx, no network).
+  const server = (name: string, code: string) => {
+    const f = join(home, name);
+    writeFileSync(f, code);
+    return { command: process.execPath, args: [f], env: {}, notes: [] };
+  };
+
+  it('times the first answer to initialize and reads the version', async () => {
+    const e = server(
+      'ok.cjs',
+      `process.stdin.on('data', (d) => { const m = JSON.parse(String(d)); process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { serverInfo: { name: 'x', version: '1.2.3' } } }) + '\\n'); });`
+    );
+    const r = await warmStart(e, 20000);
+    expect(r).toMatchObject({ ok: true, version: '1.2.3' });
+    expect(r.ms).toBeLessThan(20000);
+  });
+
+  it('reports a server that exits, with its last error line', async () => {
+    const r = await warmStart(server('dies.cjs', `console.error('FATAL: cannot start'); process.exit(3);`), 20000);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/exited \(code 3\): FATAL: cannot start/);
+  });
+
+  it('gives up after the limit on a server that never answers', async () => {
+    const r = await warmStart(server('silent.cjs', `process.stdin.resume(); process.stdin.on('end', () => process.exit(0)); setInterval(() => {}, 1000);`), 1500);
+    expect(r).toMatchObject({ ok: false, error: 'no answer within 2 s' });
   });
 });

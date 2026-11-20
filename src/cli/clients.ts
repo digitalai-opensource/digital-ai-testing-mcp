@@ -16,8 +16,8 @@
  * Everything here takes a ClientContext so tests run against temp folders; nothing reads the real home folder directly.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
+import { spawn, spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { getServerVersion, npxCommand, PACKAGE_NAME, packageSpec } from '../utils/version.js';
 import { installKind, type InstallKind } from '../utils/update-check.js';
@@ -57,6 +57,8 @@ export interface ClientContext {
   realPath?(path: string): string | undefined;
   /** The claude command (Claude Code), when installed — default findClaudeCli; tests fake it. */
   claudeCli?(): ClaudeCli | undefined;
+  /** Starts the entry once and times the first answer (default warmStart). Absent → setup skips the warm start. */
+  warmStart?(entry: LaunchEntry): Promise<WarmResult>;
 }
 
 export function defaultClientContext(): ClientContext {
@@ -70,6 +72,7 @@ export function defaultClientContext(): ClientContext {
     claudeCli() {
       return findClaudeCli(this);
     },
+    warmStart: (entry) => warmStart(entry),
     realPath: (p) => {
       try {
         return realpathSync(p);
@@ -765,4 +768,87 @@ export function removeClientEntry(target: ClientTarget): EditResult & { removed?
 /** The entry as JSON for a person to paste (Xcode, a JSONC file setup will not rewrite). */
 export function pasteSnippet(format: ClientFormat, e: LaunchEntry): string {
   return JSON.stringify({ [containerKey(format)]: { [SERVER_ENTRY_NAME]: entryFor(format, e) } }, null, 2);
+}
+
+// ─── Warm start ───────────────────────────────────────────────────────────────
+
+export interface WarmResult {
+  ok: boolean;
+  ms: number;
+  /** The version the server reported (serverInfo.version). */
+  version?: string;
+  error?: string;
+}
+
+/**
+ * Starts the server exactly as the AI clients will (the entry's command, args and env), sends `initialize`, and times
+ * the answer. With `@latest`/`@next` the first start of a new version makes npx download it and its dependencies; a
+ * client with a fixed connect limit (Claude Code: 30 s) can time out on that start — and, since each timeout stops the
+ * process, keep timing out (seen live 2026-11-19, right after 2.4.0 shipped). Run once by setup, the download happens
+ * here, and the clients' first start is quick. Started from the temp folder so no project .env is read. Never throws.
+ */
+export function warmStart(entry: LaunchEntry, timeoutMs = 180_000): Promise<WarmResult> {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    let done = false;
+    let stderr = '';
+    let stdout = '';
+    const win = process.platform === 'win32';
+    const child = spawn(entry.command, entry.args, {
+      cwd: tmpdir(),
+      env: { ...process.env, ...entry.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: !win, // its own process group, so a stuck npx and the server it started stop together
+    });
+    const stop = () => {
+      child.stdin?.end(); // a stdio MCP server exits when its input closes
+      const t = setTimeout(() => {
+        if (child.exitCode !== null) return;
+        try {
+          if (win && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+          else if (child.pid) process.kill(-child.pid, 'SIGTERM');
+        } catch {
+          /* already gone */
+        }
+      }, 5000);
+      t.unref();
+    };
+    const finish = (r: Omit<WarmResult, 'ms'>) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      stop();
+      resolve({ ...r, ms: Date.now() - started });
+    };
+    const timer = setTimeout(() => finish({ ok: false, error: `no answer within ${Math.round(timeoutMs / 1000)} s` }), timeoutMs);
+    child.on('error', (e) => finish({ ok: false, error: e.message }));
+    child.on('exit', (code) => {
+      const last = stderr.trim().split('\n').filter(Boolean).slice(-2).join(' / ');
+      finish({ ok: false, error: `it exited (code ${code ?? 'none'})${last ? `: ${last.slice(0, 300)}` : ''}` });
+    });
+    child.stderr?.on('data', (d) => {
+      stderr = (stderr + String(d)).slice(-4000);
+    });
+    child.stdout?.on('data', (d) => {
+      stdout += String(d);
+      for (const line of stdout.split('\n').slice(0, -1)) {
+        try {
+          const msg = JSON.parse(line) as { id?: number; result?: { serverInfo?: { version?: string } } };
+          if (msg.id === 1) return finish(msg.result ? { ok: true, version: msg.result.serverInfo?.version } : { ok: false, error: 'it answered with an error' });
+        } catch {
+          /* not a JSON-RPC line */
+        }
+      }
+      stdout = stdout.slice(stdout.lastIndexOf('\n') + 1);
+    });
+    child.stdin?.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'digital-ai-testing-setup', version: '1' } },
+      }) + '\n'
+    );
+  });
 }
