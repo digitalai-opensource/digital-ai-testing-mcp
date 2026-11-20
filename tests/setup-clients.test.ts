@@ -606,6 +606,54 @@ describe('setup clients commands', () => {
       expect(ours(c.file)).toEqual(old);
     });
 
+    it('warns about per-project entries that replace the user-scope one (local in ~/.claude.json, or a project .mcp.json)', async () => {
+      const c = fakeClaude();
+      const projA = join(home, 'projA');
+      const projB = join(home, 'projB');
+      const projC = join(home, 'projC');
+      const projD = join(home, 'projD');
+      const projE = join(home, 'projE');
+      for (const p of [projA, projB, projC, projD, projE]) mkdirSync(p);
+      const shared = JSON.stringify({ mcpServers: { dai: { command: 'npx', args: ['-y', 'digital-ai-testing-mcp@latest'] } } });
+      for (const p of [projB, projD, projE]) writeFileSync(join(p, '.mcp.json'), shared);
+      mkdirSync(join(projD, '.claude'));
+      writeFileSync(join(projD, '.claude', 'settings.local.json'), JSON.stringify({ enabledMcpjsonServers: ['dai'] }));
+      writeFileSync(c.file, JSON.stringify({
+        projects: {
+          [projA]: { mcpServers: { 'digital-ai-testing': { command: 'npx', args: ['x'], env: { DIGITAL_AI_ACCESS_KEY: 'aut_1_secretLocal' } } } },
+          [projB]: { mcpServers: {} },
+          [projC]: { mcpServers: { qel: { command: 'node', args: ['other-server.js'] } } }, // not ours
+          [projD]: {},
+          [projE]: { disabledMcpjsonServers: ['dai'] }, // turned off: overrides nothing
+        },
+      }));
+
+      const list = io();
+      expect(await runSetupCli(['clients'], list.s)).toBe(0);
+      expect(list.all()).toContain('replaces the "all your projects" one in 3 projects');
+      expect(list.all()).toContain(`${projA} — local entry "digital-ai-testing", with its own access key. Remove: cd "${projA}" ; claude mcp remove "digital-ai-testing" -s local`);
+      expect(list.all()).toContain(`${projB} — "dai" in ${join(projB, '.mcp.json')} (shared with the repository; Claude Code asks before using it)`);
+      expect(list.all()).toContain(`${projD} — "dai" in ${join(projD, '.mcp.json')} (shared with the repository).`);
+      expect(list.all()).not.toContain(projE);
+      expect(list.all()).not.toContain('qel');
+      expect(list.all()).not.toContain('aut_1_secretLocal');
+
+      const add = io();
+      expect(await runSetupCli(['clients', 'add', 'claude-code', '--yes'], add.s)).toBe(0);
+      expect(add.all()).toContain('WARNING: Claude Code has a per-project entry');
+      expect(json(c.file).projects[projA].mcpServers['digital-ai-testing']).toBeDefined(); // only warned about, never removed
+
+      const doctor = io();
+      await runSetupCli(['doctor', '--offline'], doctor.s);
+      expect(doctor.all()).toContain(`cd "${projA}" ; claude mcp remove`);
+
+      // Removed → no warning.
+      writeFileSync(c.file, JSON.stringify({ ...json(c.file), projects: { [projC]: { mcpServers: {} }, [projE]: { disabledMcpjsonServers: ['dai'] } } }));
+      const clean = io();
+      expect(await runSetupCli(['clients'], clean.s)).toBe(0);
+      expect(clean.all()).not.toContain('per-project entry');
+    });
+
     it('"clients add" with no names includes Claude Code when the claude command exists; without it nothing is run', async () => {
       mkdirSync(join(home, '.cursor'));
       const c = fakeClaude();
