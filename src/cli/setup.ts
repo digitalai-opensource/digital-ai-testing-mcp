@@ -184,10 +184,15 @@ async function readStdin(): Promise<string> {
 
 export function terminalIO(): SetupIO {
   // Colors only when the output is a terminal: `setup doctor > report.txt` stays plain text.
-  ui.setColor(ui.colorWanted(process.stdout));
+  const color = ui.colorWanted(process.stdout);
+  ui.setColor(color);
+  // Word wrapping only together with color: without color a command cannot be told from prose, and a command must
+  // never be broken across lines.
+  ui.setWidth(color ? process.stdout.columns : 0);
+  const show = (t: string) => t.split('\n').map(ui.wrap).join('\n') + '\n';
   return {
-    out: (t) => void process.stdout.write(t + '\n'),
-    err: (t) => void process.stderr.write(t + '\n'),
+    out: (t) => void process.stdout.write(show(t)),
+    err: (t) => void process.stderr.write(show(t)),
     ask,
     askSecret,
     readStdin,
@@ -728,21 +733,27 @@ function overrideLines(ctx: ClientContext): string[] {
   const found = claudeCodeProjectOverrides(ctx);
   if (found.length === 0) return [];
   const n = new Set(found.map((o) => o.project.toLowerCase())).size;
+  // A short headline, then one block per project with aligned rows (feedback 2026-11-20: one long sentence per
+  // project, wrapped by the terminal, was hard to read).
   const lines = [
     '',
-    `  ${ui.yellow('WARNING:')} Claude Code has a per-project entry that replaces the "all your projects" one in ${n} project${n === 1 ? '' : 's'} ` +
-      '(a per-project entry wins). Those projects do not get this setup. Remove the entry unless the project needs its own:',
+    `  ${ui.bold(ui.yellow('WARNING'))}  ${ui.bold(`${n} Claude Code project${n === 1 ? ' uses its' : 's use their'} own server entry, not this setup`)}`,
+    ui.gray('  A per-project entry wins over the "all your projects" one.'),
+    ui.gray('  Remove it unless the project needs its own.'),
   ];
   for (const o of found) {
-    const what = `"${o.name}"${o.holdsKeys ? ', with its own access key' : ''}`;
+    const keys = o.holdsKeys ? ui.yellow(' (with its own access key)') : '';
+    lines.push('');
+    lines.push(`    ${ui.bold(o.project)}`);
     if (o.scope === 'local') {
-      lines.push(`    ${ui.bold(o.project)} — local entry ${what}. Remove it with:`);
-      lines.push(`      ${ui.command(`cd "${o.project}" ; claude mcp remove "${o.name}" -s local`)}`);
+      lines.push(`      Entry:  "${o.name}"${keys}, local to this computer`);
+      lines.push('      Fix:    run');
+      lines.push(`        ${ui.command(`cd "${o.project}" ; claude mcp remove "${o.name}" -s local`)}`);
     } else {
-      lines.push(
-        `    ${ui.bold(o.project)} — ${what} in ${o.file} (shared with the repository${o.approved ? '' : '; Claude Code asks before using it'}). ` +
-          'Remove it from that file.'
-      );
+      lines.push(`      Entry:  "${o.name}"${keys}`);
+      lines.push(`      File:   ${ui.gray(o.file ?? '')}`);
+      lines.push(`      Note:   ${ui.gray(`shared with the repository${o.approved ? '' : '; Claude Code asks before using it'}`)}`);
+      lines.push(`      Fix:    remove "${o.name}" from that file`);
     }
   }
   return lines;
@@ -1098,7 +1109,8 @@ async function offerClients(io: SetupIO, p: PendingClients) {
  */
 async function warmNote(io: SetupIO, ctx: ClientContext, entry: LaunchEntry) {
   if (!ctx.warmStart) return;
-  io.out('Starting the server once, the way your AI clients will, so its first start there is quick (the first run downloads it)…');
+  io.out('');
+  io.out('Starting the server once, as your AI clients will (the first run downloads it)…');
   const r = await ctx.warmStart(entry);
   const secs = (r.ms / 1000).toFixed(1);
   if (r.ok) io.out(`  The server ${ui.green('started')} in ${secs} s${r.version ? ` (version ${r.version})` : ''}.`);
@@ -1133,11 +1145,7 @@ async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], f
     const cc = withClaude ? await addToClaudeCode(io, ctx, !!flags.yes, namedClaude) : { changed: 0, attention: 0 };
     const changed = res.changed + cc.changed;
     const attention = res.attention + cc.attention;
-    const overrides = overrideLines(ctx);
-    if (overrides.length) {
-      io.out('');
-      for (const l of overrides) io.out(l);
-    }
+    for (const l of overrideLines(ctx)) io.out(l); // starts with its own blank line
     // Always, not only after a change: run after a release with every entry already right, it downloads the new
     // version before a client's first start needs it (README Troubleshooting).
     if (attention === 0 || changed > 0) await warmNote(io, ctx, buildLaunchEntry(ctx));
