@@ -137,7 +137,8 @@ export function isPhoneForOrientation(deviceCategory: string | undefined, nameAn
 function sessionSummary(s: InspectionSession): string {
   const age = Math.round((Date.now() - s.startedAt) / 1000);
   const idle = Math.round((Date.now() - s.lastUsedAt) / 1000);
-  const idleWarning = idle > 180 ? ' ⚠️ likely expired (Grid idle timeout ~4 min)' : '';
+  const limit = s.idleTimeoutSeconds ?? 60;
+  const idleWarning = idle > limit ? ` ⚠️ likely expired (idle limit ${limit} s)` : '';
   return (
     `Handle:   ${s.handle}\n` +
     `Device:   ${s.deviceName} (${s.deviceOs} ${s.deviceVersion})\n` +
@@ -447,6 +448,16 @@ export function registerInspectionTools(server: McpServer): void {
         .enum(INSTRUMENT_CLUSTER_CONTENT)
         .optional()
         .describe('iOS CarPlay only, with automotiveProjection: content for the instrument cluster display.'),
+      idleTimeoutSeconds: z
+        .number()
+        .int()
+        .min(60)
+        .max(1800)
+        .optional()
+        .describe(
+          'Seconds without a command before the platform ends the session and frees the device (default 300, or ' +
+          'MCP_SESSION_IDLE_TIMEOUT_SECONDS). Raise it only when the user expects long pauses — an abandoned session holds a shared device this long.'
+        ),
     },
     async (args) => {
       if (args.instrumentCluster && (args.platform !== 'ios' || !args.automotiveProjection)) {
@@ -513,6 +524,7 @@ export function registerInspectionTools(server: McpServer): void {
           testName: args.testName,
           automotiveProjection: args.automotiveProjection,
           instrumentCluster: args.instrumentCluster,
+          idleTimeoutSeconds: args.idleTimeoutSeconds,
         });
 
         // Resolve the numeric platform device ID from the UDID so the user-facing
@@ -599,9 +611,10 @@ export function registerInspectionTools(server: McpServer): void {
           cloudViewLink: session.cloudViewLink,
           reportUrl: session.reportUrl,
           idleTimeoutNote:
-            'Sessions expire after ~4 minutes without a command (Appium Server and Appium Grid alike). Before pausing to ask the user something, ' +
+            `This session ends after ${Math.round((session.idleTimeoutSeconds ?? 300) / 60)} minute(s) without a command ` +
+            '(idleTimeoutSeconds; the device stays held for the user meanwhile). Before pausing to ask the user something, ' +
             'call take_inspection_screenshot — it resets the idle clock AND captures the state you are asking about. ' +
-            'If the user takes longer than ~4 minutes, expect a 404 on your next call: stop_inspection_session to clean up, ' +
+            'If the user takes longer than that, expect a 404 on your next call: stop_inspection_session to clean up, ' +
             'start a fresh session, and re-find elements (your noted selectors stay valid; raw elementIds do not survive sessions).',
           shareWithUser: viewUrl
             ? `Share this URL with the user immediately so they can watch the session live (read-only): ${viewUrl}`

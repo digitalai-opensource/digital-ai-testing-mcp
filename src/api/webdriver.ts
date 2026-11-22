@@ -44,6 +44,26 @@ export interface InspectionSessionOptions {
   automotiveProjection?: AutomotiveResolution;
   /** iOS CarPlay only: instrument cluster content (digitalai:instrumentCluster). */
   instrumentCluster?: InstrumentClusterContent;
+  /** Seconds without a command before the platform ends the session (appium:newCommandTimeout). */
+  idleTimeoutSeconds?: number;
+}
+
+/**
+ * Idle limit sent as newCommandTimeout. Without it the platform ended an idle session after ~60–80 s (measured live
+ * 2026-11-22: Android 83 s, iOS 67 s to "released") — shorter than a user's pause between prompts, so interactive
+ * sessions died while the user was reading. With newCommandTimeout 300 the same phones were still held after 200 s idle
+ * and the next command worked (Android and iOS, Appium Server). The trade-off: an abandoned session holds a shared
+ * device this long — clean client exits are covered by the shutdown handler, a crashed client is not.
+ */
+export const DEFAULT_IDLE_TIMEOUT_SECONDS = 300;
+export const MIN_IDLE_TIMEOUT_SECONDS = 60;
+export const MAX_IDLE_TIMEOUT_SECONDS = 1800;
+
+/** The explicit value, else MCP_SESSION_IDLE_TIMEOUT_SECONDS, else the default — clamped to 60–1800 s. */
+export function idleTimeoutSeconds(requested?: number, env: NodeJS.ProcessEnv = process.env): number {
+  const fromEnv = Number(env.MCP_SESSION_IDLE_TIMEOUT_SECONDS);
+  const value = requested ?? (Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_IDLE_TIMEOUT_SECONDS);
+  return Math.min(MAX_IDLE_TIMEOUT_SECONDS, Math.max(MIN_IDLE_TIMEOUT_SECONDS, Math.round(value)));
 }
 
 /** Android Auto supports all three; CarPlay supports 800x480 only (platform docs). */
@@ -140,6 +160,8 @@ export async function createInspectionSession(
   if (opts.instrumentCluster) desiredCapabilities['digitalai:instrumentCluster'] = opts.instrumentCluster;
   const timeout = sessionCreateTimeoutMs(query, !!opts.automotiveProjection);
   desiredCapabilities['digitalai:newSessionWaitTimeout'] = newSessionWaitSeconds(timeout);
+  const idleLimit = idleTimeoutSeconds(opts.idleTimeoutSeconds);
+  desiredCapabilities['newCommandTimeout'] = idleLimit;
   // An iOS session started WITHOUT an app has no app under test, and XCUITest then lists no webview of an app opened
   // later with launch_app (verified live 2026-11-14 on the UAT run's iPhone, iOS 17.6, Appium 3.5.2: ExperiBank launched
   // mid-session → NATIVE_APP only; with additionalWebviewBundleIds ['*'] or the app's bundle id → WEBVIEW_<pid>.1
@@ -200,7 +222,7 @@ export async function createInspectionSession(
           : `The platform may still be waiting on the device or fail the start; rather than repeating the same query, widen it or pick another device. `) +
         `To wait longer instead, set INSPECTION_SESSION_TIMEOUT_MS (ms) in the MCP server's environment. ` +
         `The platform may still finish this start: the session would then hold the device unattended until its idle ` +
-        `timeout (~4 min) and leave a report "${testName}" (its status and cause show the platform's final outcome — ` +
+        `timeout (${Math.round(idleLimit / 60)} min) and leave a report "${testName}" (its status and cause show the platform's final outcome — ` +
         `find_latest_test_for_name) — run cleanup_inspection_sessions afterwards to delete it.`
       );
     }
@@ -289,6 +311,7 @@ export async function createInspectionSession(
     appPackage: String(caps['appPackage'] ?? caps['bundleId'] ?? opts.appPackage ?? ''),
     startedAt: Date.now(),
     lastUsedAt: Date.now(),
+    idleTimeoutSeconds: idleLimit,
     canDeleteReport,
     sessionFormat: isW3c ? 'w3c' : 'jwp',
     platform,
@@ -455,7 +478,10 @@ function sessionAwareError(e: unknown, handle: string): string {
     const s = sessionRegistry.get(handle);
     const idleNote =
       s?.lastIdleMs != null && s.lastIdleMs > 60_000
-        ? ` The session was idle for ${Math.round(s.lastIdleMs / 60_000)} minute(s) before this command — sessions expire after ~4 minutes of inactivity.`
+        ? ` The session was idle for ${Math.round(s.lastIdleMs / 1000)} s before this command — ` +
+          (s.idleTimeoutSeconds
+            ? `it was started with a ${s.idleTimeoutSeconds} s idle limit (start_inspection_session idleTimeoutSeconds raises it).`
+            : 'the platform ends a session after about a minute without a command.')
         : '';
     return (
       `${detail} — the Grid session has likely been terminated (idle timeout or agent crash).${idleNote} ` +
@@ -2889,7 +2915,7 @@ export function requireSession(handle: string): InspectionSession {
     throw new Error(
       `No active inspection session "${handle}". Use list_inspection_sessions to see active sessions.`
     );
-  // Track idle gaps — Grid sessions expire after ~4 minutes without a command,
+  // Track idle gaps — a session ends after its idle limit (newCommandTimeout) without a command,
   // so the gap preceding a failure is the key diagnostic (v36).
   const now = Date.now();
   s.lastIdleMs = now - s.lastUsedAt;
