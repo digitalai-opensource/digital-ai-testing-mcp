@@ -1102,7 +1102,8 @@ export function registerInspectionTools(server: McpServer): void {
           content: [
             {
               type: 'text' as const,
-              text: `✅ Typed "${args.text}" into ${via}.`,
+              // The typed text is never echoed: it is often a password, and the caller already has it.
+              text: `✅ Typed ${args.text.length} character${args.text.length === 1 ? '' : 's'} into ${via}.`,
             },
           ],
         };

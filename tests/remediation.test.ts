@@ -11,7 +11,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   isDebugMode, redact, classifyOutcome, instrumentHandler, startRemediationSession, getRecordedEvents, saveNote,
   debugInstructions, debugStatusLine, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject, locateStartFolder,
-  ensureRemediationDir, getRemediationSession, nudgeFor,
+  ensureRemediationDir, getRemediationSession, nudgeFor, recordToolEvent, isSensitiveArg,
 } from '../src/utils/remediation.js';
 import { registerRemediationTools } from '../src/tools/remediation-tools.js';
 
@@ -111,6 +111,20 @@ describe('event log and nudges', () => {
     startRemediationSession({ mcpVersion: 't', toolsets: 'all', client: () => undefined });
     assert.equal(nudgeFor('validate_test_script', 'error', 'fail'), null);
     assert.match(nudgeFor('get_test_report', 'error', 'boom') ?? '', /^\[debug mode\]/);
+  });
+
+  it('never records typed text or secret arguments — only their length', () => {
+    startRemediationSession({ mcpVersion: 't', toolsets: 'all', client: () => undefined });
+    const typed = recordToolEvent({ tool: 'type_into_element', args: { handle: 'h1', strategy: 'id', selector: 'password', text: 'Hunter2!pw' }, ms: 1, result: ok() });
+    assert.equal(typed.args.text, '‹10 chars, not recorded›');
+    assert.equal(typed.args.selector, 'password', 'the locator is still recorded');
+    const clip = recordToolEvent({ tool: 'device_control', args: { action: 'set_clipboard', text: 'otp 482913' }, ms: 1, result: ok() });
+    assert.equal(clip.args.text, '‹10 chars, not recorded›');
+    const p12 = recordToolEvent({ tool: 'upload_provisioning_profile', args: { password: 'p12-secret', keyPassword: 'k', keystorePassword: 'ks' }, ms: 1, result: ok() });
+    assert.deepEqual(p12.args, { password: '‹10 chars, not recorded›', keyPassword: '‹1 chars, not recorded›', keystorePassword: '‹2 chars, not recorded›' });
+    // A `text` argument on other tools (a Maestro step's visible text, a search) is not typed input — still recorded.
+    assert.equal(isSensitiveArg('generate_maestro_flow', 'text'), false);
+    assert.ok(!JSON.stringify(getRecordedEvents()).match(/Hunter2|482913|p12-secret/));
   });
 
   it('records each call, flags retries and repeats, and nudges once per tool and outcome', async () => {

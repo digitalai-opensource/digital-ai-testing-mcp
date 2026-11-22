@@ -43,6 +43,7 @@ import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
 import { isUpdateCheckEnabled, updateSteps, withUpdateNotice } from './utils/update-check.js';
 import { runUpdateCheck } from './api/update-check.js';
+import { installShutdownHandlers } from './api/shutdown.js';
 import { describeStartingProfile, listProfiles, startupCredentialProblem } from './utils/profile-loader.js';
 import { detectSetupContext, setupGuidance, setupInstructionsBlock, setupRequiredResult } from './utils/setup-guidance.js';
 
@@ -227,14 +228,8 @@ if (degradedWorkflows.length > 0) {
 console.error(`[${name}] Ready.`);
 // Note: create_poc is registered as both a tool (universal client support) and a prompt (prompt-aware clients).
 
-process.on('SIGTERM', () => {
-  console.error(`[${name}] Shutting down.`);
-  process.exit(0);
-});
-process.on('SIGINT', () => {
-  console.error(`[${name}] Shutting down.`);
-  process.exit(0);
-});
+// Open sessions are quit before exiting (device released, report cleaned up) — src/api/shutdown.ts.
+installShutdownHandlers(name);
 
 // Asks GitHub for the newest release at most once per 24 h (src/api/update-check.ts). Not awaited: startup never waits
 // for it, and it never throws.

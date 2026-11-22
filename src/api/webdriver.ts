@@ -2901,6 +2901,12 @@ export function listActiveSessions(): InspectionSession[] {
   return [...sessionRegistry.values()];
 }
 
+/** Shutdown worker only: re-registers a session handed over by the exiting server so quitInspectionSession can run. */
+export function adoptSessionForShutdown(session: InspectionSession): void {
+  sessionRegistry.set(session.handle, session);
+  if (session.reportTestId > 0) allReports.set(session.reportTestId, session.projectName);
+}
+
 export function getPendingReportIds(): number[] {
   return [...allReports.keys()];
 }
