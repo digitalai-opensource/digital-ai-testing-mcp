@@ -9,7 +9,7 @@ import { describe, it, beforeAll, afterAll, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 import { registerInspectionTools, looksLikeTablet, isPhoneForOrientation } from '../src/tools/inspection-tools.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
-import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_QUERY_MAX_LENGTH, newSessionWaitSeconds } from '../src/api/webdriver.js';
+import { isSameActivity, sessionCreateTimeoutMs, deviceQueryLengthError, DEVICE_QUERY_MAX_LENGTH, newSessionWaitSeconds, idleTimeoutSeconds, DEFAULT_IDLE_TIMEOUT_SECONDS } from '../src/api/webdriver.js';
 import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 let foreground = '.makePaymentView';
@@ -112,7 +112,7 @@ describe('start_inspection_session reports the screen in front', () => {
   it('the idle-timeout note does not name the Grid — Appium Server sessions expire the same way (UAT 2026-11-14)', async () => {
     const r = await tools.callJson('start_inspection_session', { platform: 'android' });
     handles.push(r.handle as string);
-    assert.match(String(r.idleTimeoutNote), /^Sessions expire after ~4 minutes without a command \(Appium Server and Appium Grid alike\)/);
+    assert.match(String(r.idleTimeoutNote), /^This session ends after 5 minute\(s\) without a command/);
     assert.doesNotMatch(String(r.idleTimeoutNote), /Grid sessions/);
   });
 
@@ -215,6 +215,25 @@ describe('session start limits', () => {
     const sent = api.requests.find((r) => r.path === '/wd/hub/session' && r.method === 'POST')!.json;
     assert.equal(sent.desiredCapabilities['digitalai:newSessionWaitTimeout'], 105);
     assert.equal(sent.capabilities.alwaysMatch['digitalai:newSessionWaitTimeout'], 105);
+  });
+
+  it('sends an idle limit (newCommandTimeout) so a pause between prompts does not end the session', async () => {
+    assert.equal(idleTimeoutSeconds(undefined, {}), DEFAULT_IDLE_TIMEOUT_SECONDS);
+    assert.equal(idleTimeoutSeconds(undefined, { MCP_SESSION_IDLE_TIMEOUT_SECONDS: '600' }), 600);
+    assert.equal(idleTimeoutSeconds(120, { MCP_SESSION_IDLE_TIMEOUT_SECONDS: '600' }), 120, 'the parameter wins');
+    assert.equal(idleTimeoutSeconds(5, {}), 60, 'never below 60 s');
+    assert.equal(idleTimeoutSeconds(99_999, {}), 1800, 'never above 30 min');
+    assert.equal(idleTimeoutSeconds(undefined, { MCP_SESSION_IDLE_TIMEOUT_SECONDS: 'nope' }), DEFAULT_IDLE_TIMEOUT_SECONDS);
+    api.requests.length = 0;
+    const j = await start({ platform: 'android' });
+    let sent = api.requests.find((r) => r.path === '/wd/hub/session' && r.method === 'POST')!.json;
+    assert.equal(sent.desiredCapabilities.newCommandTimeout, 300);
+    assert.equal(sent.capabilities.alwaysMatch['appium:newCommandTimeout'], 300);
+    assert.match(JSON.stringify(j.idleTimeoutNote), /5 minute/);
+    api.requests.length = 0;
+    await start({ platform: 'android', idleTimeoutSeconds: 900 });
+    sent = api.requests.find((r) => r.path === '/wd/hub/session' && r.method === 'POST')!.json;
+    assert.equal(sent.desiredCapabilities.newCommandTimeout, 900);
   });
 
   it('refuses a device query over 255 characters before any session request', async () => {

@@ -225,12 +225,29 @@ export function classifyOutcome(result: unknown): { outcome: Outcome; text: stri
   return { outcome: r?.isError ? 'error' : 'ok', text };
 }
 
-function summarizeArgs(args: unknown): Record<string, string> {
+/** Arguments that carry what a user typed or a secret: stored as a length only, never the value. `redact()` catches keys,
+ *  tokens and emails by shape — a typed password has no shape, and 8 of 8 type_into_element events in the saved logs held
+ *  the typed text in plain text, 2 of them into password fields (2026-11-21). */
+const TYPED_TEXT_ARGS: Record<string, readonly string[]> = {
+  type_into_element: ['text'],
+  device_control: ['text'], // set_clipboard
+};
+const SECRET_ARG_RE = /pass(word|phrase)|secret/i;
+
+export function isSensitiveArg(tool: string, key: string): boolean {
+  return SECRET_ARG_RE.test(key) || (TYPED_TEXT_ARGS[tool]?.includes(key) ?? false);
+}
+
+function summarizeArgs(tool: string, args: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!args || typeof args !== 'object') return out;
   for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
     // JSON.stringify(undefined) is undefined, not a string — never let the bookkeeping throw on an odd argument.
     const s = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v));
+    if (isSensitiveArg(tool, k)) {
+      out[k] = `‹${s.length} chars, not recorded›`;
+      continue;
+    }
     out[k] = redact(s.length > 160 ? `${s.slice(0, 160)}…(${s.length} chars)` : s);
   }
   return out;
@@ -288,7 +305,7 @@ export function recordToolEvent(e: { tool: string; args: unknown; ms: number; re
   // its own signal (the `placeholder` flag), not a guard, and the real call that follows is not a "retry after a guard".
   const outcome: Outcome = e.placeholder && !(e.result as { isError?: boolean } | undefined)?.isError ? 'ok' : classified.outcome;
   const text = classified.text;
-  const args = summarizeArgs(e.args);
+  const args = summarizeArgs(e.tool, e.args);
   const argsKey = JSON.stringify(args);
   const prev = lastOutcome.get(e.tool);
   const ev: ToolEvent = {

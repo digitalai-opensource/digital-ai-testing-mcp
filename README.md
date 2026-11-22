@@ -179,8 +179,8 @@ What this means for you:
 
 | Install | Change in the client configuration |
 |---|---|
-| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.4.4"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.4.4` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
-| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.4.4`. |
+| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.4.5"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.4.5` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
+| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.4.5`. |
 
 The [update notice](#update-notices) then tells you when a newer release exists.
 
@@ -558,6 +558,8 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `INSPECTION_SESSION_TIMEOUT_MS` | Optional | `120000` (`240000` for `@emulator='true'` queries and automotive projection) | How long `start_inspection_session` waits for the platform to allocate a device. Emulators and simulators boot inside that request (an iOS simulator took 154 s live). Raising it only helps a slow boot: an emulator can also fail to boot after several minutes, so after a timeout try another model or OS version before waiting longer |
 | `USAGE_REPORT_TIMEOUT_MS` | Optional | `240000` | Wall-clock cap on one usage-report CSV fetch (`download_usage_report` / `summarize_usage_report`). An unfiltered month can be ~12 MB and take minutes to transfer; a fetch that outlives the cap returns an error that says how to narrow it |
 | `ACCESS_PROBE_TIMEOUT_MS` | Optional | `8000` | Timeout for the access-level detection call |
+| `MCP_SESSION_IDLE_TIMEOUT_SECONDS` | Optional | `300` | How long an inspection session may sit without a command before the platform ends it and frees the device (60–1800). Without a limit the platform ended idle sessions after roughly 1–2 minutes, which is shorter than a pause between prompts. `start_inspection_session` also takes `idleTimeoutSeconds` per session |
+| `MCP_SHUTDOWN_TIMEOUT_MS` | Optional | `8000` | When the AI client closes the server, open inspection and browser sessions are closed (device released, session report deleted) by a short-lived background process. Only if that process can't start does the server close them itself, waiting at most this long |
 | `AXE_DEVTOOLS_API_KEY` | Optional | — | Deque Axe DevTools Mobile key used by `includeAxeScan` boilerplate |
 | `TEST_ORCHESTRATOR_JAR_URL` / `TEST_ORCHESTRATOR_JAR_SHA256` | Optional | pinned | Override the Test Orchestrator agent download location; both are required |
 | `MCP_SERVER_NAME` | Optional | `digital-ai-testing-mcp` | Server identity shown in the AI client |
@@ -599,7 +601,7 @@ When it is on:
   - spots a way to make things cleaner or cheaper.
 
   It records each note once the situation is resolved or abandoned, not in the middle of your task. Expected outcomes, such as deliberate negative tests or a safety check that worked as intended, are not recorded: they show nothing to improve.
-- **The server logs what it sees.** Every tool call is logged with its duration, response size and outcome (ok, error or guard), with flags for retries and repeated calls. This is objective data the AI can't under-report.
+- **The server logs what it sees.** Every tool call is logged with its duration, response size and outcome (ok, error or guard), with flags for retries and repeated calls. This is objective data the AI can't under-report. Text typed on a device (`type_into_element`, the clipboard) and any password argument are logged as a length only, never the value.
 - **The AI is told up front.** The debug-mode instructions come first in what the server sends at connect time, and `get_server_info` and `check_connectivity` show "Debug mode: ON".
 - **Errors get a reminder.** The first time a tool returns a given error or guard, the response starts with a one-line reminder to record a note if it was unexpected (in JSON responses, as a `_debugMode` field).
 

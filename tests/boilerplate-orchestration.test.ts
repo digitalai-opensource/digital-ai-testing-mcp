@@ -699,6 +699,19 @@ describe('get_web_test_boilerplate — fixes found running the templates live (2
     }
   });
 
+  it('nodejs: wdio 9 with classic WebDriver — under BiDi the report status never reaches the cloud', async () => {
+    // Verified live 2026-11-21 on cloud Chrome 157 with a deliberately failing test: wdio 8 → report Failed; wdio 9
+    // without the flag → seetest:client.* ran as page JS ("client is not defined") and the report said Passed;
+    // wdio 9 + wdio:enforceWebDriverClassic → Failed.
+    const { json } = await webGen({ language: 'nodejs' });
+    const conf = json.files.find((f) => f.filename === 'wdio.conf.js')!.content;
+    assert.match(conf, /'wdio:enforceWebDriverClassic': true,/);
+    const pkg = JSON.parse(json.files.find((f) => f.filename === 'package.json')!.content);
+    for (const dep of ['@wdio/cli', '@wdio/local-runner', '@wdio/mocha-framework', '@wdio/spec-reporter']) {
+      assert.equal(pkg.devDependencies[dep], '^9.0.0', dep);
+    }
+  });
+
   it('playwright: SELENIUM_REMOTE_URL route (verified live with @playwright/test 1.65.0), Chrome/Edge only, guarded placeholder', async () => {
     const { json } = await webGen({ language: 'playwright' });
     const names = json.files.map((f) => f.filename);

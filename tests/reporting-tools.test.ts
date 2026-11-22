@@ -93,6 +93,13 @@ beforeAll(async () => {
           ? { count: 1, data: [{ test_id: 77, name: 'own_project', status: 'Passed', start_time: new Date(NOW - HOUR).toISOString(), project_id: 1 }] }
           : { count: 0, data: [] };
       }
+      // As on the platform: mobile reports carry the user in "user", web reports in "digitalai:user" (live 2026-11-22).
+      const userProp = (req.json.filter ?? []).find((f: { property: string }) => f.property === 'user' || f.property === 'digitalai:user')?.property;
+      if (userProp === 'user') return { count: 1, data: [{ test_id: 61, name: 'mobile', status: 'Failed', start_time: new Date(NOW).toISOString(), ...((req.json.keys ?? []).includes('user') && { user: 'me@x.io' }) }] };
+      if (userProp === 'digitalai:user') {
+        const keys: string[] = req.json.keys ?? [];
+        return { count: 1, data: [{ test_id: 62, name: 'web', status: 'Failed', start_time: new Date(NOW).toISOString(), ...(keys.includes('user') && { user: null }), ...(keys.includes('digitalai:user') && { 'digitalai:user': 'me@x.io' }) }] };
+      }
       if ((req.json.filter ?? []).some((f: { operator: string }) => f.operator === '>')) {
         return reply(400, { status: 'ERROR', message: 'Failed to retrieve data. Please check log for details.' });
       }
@@ -136,6 +143,33 @@ describe('device.os case folding', () => {
     const rows = (j.data as Array<Record<string, unknown>>).map((r) => `${r['device.os']}/${r.status}=${r._count_}`).sort();
     assert.deepEqual(rows, ['Android/Error=122', 'Android/Passed=900', 'iOS/Passed=5', 'null/Passed=7']);
     assert.equal(j.count, 4);
+  });
+});
+
+describe('web reports keep the user in digitalai:user (bug report 2026-11-21)', () => {
+  it('a user filter says web reports were not matched and gives the digitalai:user filter to run', async () => {
+    const j = await tools.callJson('list_test_reports', { filter: [{ property: 'user', operator: '=', value: 'me@x.io' }, { property: 'status', operator: '=', value: 'Failed' }] });
+    assert.match(String(j.note), /web \(Selenium\) reports keep the user in the key "digitalai:user"/);
+    assert.match(String(j.note), /\{"property":"digitalai:user","operator":"=","value":"me@x\.io"\}/);
+    const viaWebKey = await tools.callJson('list_test_reports', { filter: [{ property: 'digitalai:user', operator: '=', value: 'me@x.io' }] });
+    assert.equal(viaWebKey.note, undefined, 'no note once the web key is used');
+    const plain = await tools.callJson('list_test_reports', { filter: [{ property: 'status', operator: '=', value: 'Failed' }] });
+    assert.equal(plain.note, undefined);
+  });
+
+  it('asking for the user key fills it from digitalai:user on web records', async () => {
+    api.requests.length = 0;
+    const j = await tools.callJson('list_test_reports', { filter: [{ property: 'digitalai:user', operator: '=', value: 'me@x.io' }], keys: ['user'] });
+    const sent = api.requests.find((r) => r.path === '/reporter/api/tests/list')!;
+    assert.deepEqual(sent.json.keys, ['user', 'digitalai:user']);
+    assert.equal((j.reports as Array<Record<string, unknown>>)[0].user, 'me@x.io');
+  });
+
+  it('grouping by user notes that web reports fall in the null row', async () => {
+    const j = await tools.callJson('get_grouped_test_reports', { groupBy: ['user'] });
+    assert.match(String(j.note), /null user row/);
+    const t = await tools.call('get_grouped_test_reports', { groupBy: ['status'] });
+    assert.doesNotMatch(t.text, /digitalai:user/);
   });
 });
 
@@ -323,7 +357,7 @@ describe('list_test_reports keys', () => {
 
   it('applies the same rule on the startDate scan path', async () => {
     await tools.call('list_test_reports', { searchValue: 't1', keys: ['start_time', 'user'], startDate: new Date(NOW - HOUR).toISOString(), limit: 5 });
-    assert.deepEqual(lastListBody().keys, ['user']);
+    assert.deepEqual(lastListBody().keys, ['user', 'digitalai:user']);
   });
 
   it('fields: "compact" keeps the six core columns plus requested keys; full stays the default (intake 2026-11-12)', async () => {

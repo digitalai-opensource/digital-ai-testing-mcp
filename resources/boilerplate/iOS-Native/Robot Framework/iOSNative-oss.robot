@@ -56,7 +56,11 @@ Wait And Input
 #   Background Application    5                           lifecycle check
 
 Open Cloud Session
+    # INFO while the session opens: at DEBUG/TRACE, Robot and the Appium client write the capabilities — the access key —
+    # into output.xml / log.html. The previous level comes back in the teardown, also when opening fails.
+    ${level}=    Set Log Level    INFO
     Open Application    ${REMOTE_URL}    &{CAPABILITIES}
+    [Teardown]    Set Log Level    ${level}
 
 Close Cloud Session
     # Report the real outcome: without this a failed step or assertion can still show as Passed in the platform report.

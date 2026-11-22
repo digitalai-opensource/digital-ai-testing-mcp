@@ -96,6 +96,47 @@ export function projectIdFilterNote(filter: Array<{ property: string }> | undefi
     'returns nothing, as here. To query another project, drop the filter and pass projectId (the reporter project id) or projectName.';
 }
 
+/**
+ * Web (Selenium) reports keep the user in the key "digitalai:user"; mobile reports use "user" (verified live 2026-11-22
+ * on Default: user = <email> → 364 mobile reports and no web ones; digitalai:user = <email> → 110 web reports, 32 of them
+ * Failed — a "delete my failed reports" cleanup had missed all 32). The reporter cannot group on digitalai:user (one
+ * bucket for everything), so a user grouping can never include web reports.
+ */
+export function webUserNote(
+  filter: Array<{ property: string; operator?: string; value?: unknown }> | undefined,
+  groupBy?: string[]
+): string | undefined {
+  const userFilter = filter?.find((f) => f.property === 'user');
+  const notes: string[] = [];
+  if (userFilter && !filter?.some((f) => f.property === 'digitalai:user')) {
+    notes.push(
+      'Note: web (Selenium) reports keep the user in the key "digitalai:user", not "user", so this user filter matched ' +
+      'mobile reports only. For the same user\'s web reports, run the query again with ' +
+      `{"property":"digitalai:user","operator":"=","value":${JSON.stringify(userFilter.value ?? '<email>')}} instead of the user filter.`
+    );
+  }
+  if (groupBy?.includes('user')) {
+    notes.push(
+      'Note: web (Selenium) reports have no "user" value (they keep it in "digitalai:user", which the reporter cannot ' +
+      'group by), so they all fall in the null user row. To count one user\'s web reports, use list_test_reports with ' +
+      'filter digitalai:user = <email> and returnTotalCount: true.'
+    );
+  }
+  return notes.length ? notes.join(' ') : undefined;
+}
+
+/** When the caller asks for the "user" key, also fetch "digitalai:user" and show it as user on web records. */
+function withWebUserKey(keys: string[] | undefined): string[] | undefined {
+  return keys?.includes('user') && !keys.includes('digitalai:user') ? [...keys, 'digitalai:user'] : keys;
+}
+function fillWebUser(reports: TestReport[], keys: string[] | undefined): TestReport[] {
+  if (!keys?.includes('user')) return reports;
+  return reports.map((r) => {
+    const rec = r as unknown as Record<string, unknown>;
+    return rec.user == null && rec['digitalai:user'] != null ? ({ ...rec, user: rec['digitalai:user'] } as unknown as TestReport) : r;
+  });
+}
+
 export function registerReportingTools(server: McpServer): void {
   // ─── get_test_report ───────────────────────────────────────────────────────
 
@@ -320,6 +361,8 @@ export function registerReportingTools(server: McpServer): void {
     'For date-range filtering use startDate/endDate — server-side start_time filtering is CSRF-blocked. ' +
     'When the user asks for "my reports" / "reports linked to my account", filter by user immediately: ' +
     '[{"property":"user","operator":"=","value":"<email from get_my_account_info>"}] — do not return a global count first. ' +
+    'That filter matches MOBILE reports only: web (Selenium) reports keep the user in "digitalai:user", so for all of a user\'s ' +
+    'reports run a second query with {"property":"digitalai:user","operator":"=","value":"<email>"} (one query cannot OR the two). ' +
     'Scoped to a project if projectId or projectName is provided. ' +
     'NOTE: the list response does NOT include failure diagnostics — the cause, errorCategory, and errorDetail fields are only returned by get_test_report (single-record). ' +
     'To diagnose why a listed test failed, call get_test_report with its test_id, or get_test_log for the full Appium log. ' +
@@ -361,7 +404,8 @@ export function registerReportingTools(server: McpServer): void {
               'Field to filter on. Confirmed working: ' +
               '"status" (Passed/Failed/Incomplete/Skipped/Error/Healed), ' +
               '"name", ' +
-              '"user" (email, exact match — for "my reports" use the email from get_my_account_info), ' +
+              '"user" (email, exact match — for "my reports" use the email from get_my_account_info; MOBILE reports only), ' +
+              '"digitalai:user" (the same email for WEB/Selenium reports — they keep the user there; run a second query for "all my reports"), ' +
               '"has_attachment" ("Y"/"N"), ' +
               '"success" (boolean true/false), ' +
               '"accessibility_report" (JSON boolean true/false, NOT the string "true" — that 400s; true = runs with an Axe accessibility scan), ' +
@@ -408,7 +452,7 @@ export function registerReportingTools(server: McpServer): void {
         .array(z.string())
         .optional()
         .describe(
-          'Custom key names to add to each record, e.g. ["device.os", "browser"]. Built-in columns (name, status, start_time, duration, test_id, uuid, …) are always returned — do not list them. Omit to return all keys.'
+          'Custom key names to add to each record, e.g. ["device.os", "browser"]. Built-in columns (name, status, start_time, duration, test_id, uuid, …) are always returned — do not list them. Omit to get only the built-in columns (no custom keys at all). Asking for "user" also fills it from "digitalai:user" on web reports.'
         ),
       returnTotalCount: z
         .boolean()
@@ -430,8 +474,16 @@ export function registerReportingTools(server: McpServer): void {
       try {
         const targetLimit = limit ?? 50;
         const compact = fields === 'compact';
-        const shape = (rs: TestReport[]) => (compact ? rs.map((r) => compactReport(r, keys)) : rs);
-        const render = (rs: TestReport[]) => (compact ? formatCompactReportList(rs, keys) : formatTestReportList(rs));
+        const userNote = webUserNote(filter);
+        const requestKeys = withWebUserKey(keys);
+        const shape = (rs: TestReport[]) => {
+          const filled = fillWebUser(rs, keys);
+          return compact ? filled.map((r) => compactReport(r, keys)) : filled;
+        };
+        const render = (rs: TestReport[]) => {
+          const filled = fillWebUser(rs, keys);
+          return compact ? formatCompactReportList(filled, keys) : formatTestReportList(filled);
+        };
 
         if (startDate || endDate) {
           // Client-side date filtering — server-side start_time filter is CSRF-blocked for all key types.
@@ -460,7 +512,7 @@ export function registerReportingTools(server: McpServer): void {
                 ...(wantSort && { sort: [{ property: 'start_time', descending: true }] }),
                 ...(searchValue && { searchValue }),
                 ...(filter && { filter }),
-                ...(keys && { keys }),
+                ...(requestKeys && { keys: requestKeys }),
               },
               projectId,
               projectName
@@ -501,7 +553,7 @@ export function registerReportingTools(server: McpServer): void {
           const header = matched.length === 0
             ? `${totalLine}No tests found in range ${rangeLabel} (date filter applied client-side).`
             : `${totalLine}${matched.length} test(s) shown for range ${rangeLabel} (date filter applied client-side):\n`;
-          const rangeNote = projectIdFilterNote(filter, matched.length);
+          const rangeNote = [projectIdFilterNote(filter, matched.length), userNote].filter(Boolean).join('\n\n') || undefined;
           return respond(
             outputFormat,
             {
@@ -520,7 +572,7 @@ export function registerReportingTools(server: McpServer): void {
           ...(searchValue && { searchValue }),
           ...(filter && { filter }),
           ...(sort && { sort }),
-          ...(keys && { keys }),
+          ...(requestKeys && { keys: requestKeys }),
         };
         // No sort given → newest first. Unsorted, the platform answered in storage order: "limit: 5" on a project that ran
         // ~10k tests that day returned records from July and August (UAT 2026-11-14). Measured live the same day: the
@@ -543,7 +595,7 @@ export function registerReportingTools(server: McpServer): void {
           ? 'The platform refused server-side sort for this credential — these results are in platform order, NOT the order requested. ' +
             'For newest-first results use find_latest_test_for_name / list_active_test_executions, or pass startDate/endDate (scanned and ordered client-side).'
           : undefined;
-        const emptyNote = projectIdFilterNote(filter, reports.length);
+        const emptyNote = [projectIdFilterNote(filter, reports.length), userNote].filter(Boolean).join('\n\n') || undefined;
         return respond(
           outputFormat,
           { reports: shape(reports), total: result.count, ...(sortRefused && { sortApplied: false, warning: sortWarning }), ...(emptyNote && { note: emptyNote }) },
@@ -642,8 +694,10 @@ export function registerReportingTools(server: McpServer): void {
           const totalRecords = result.data.reduce((n, row) => n + (typeof row['_count_'] === 'number' ? (row['_count_'] as number) : 0), 0);
           payload = { ...result, totalRecords };
         }
+        const userNote = webUserNote(filter, groupBy);
+        if (userNote) payload = { ...payload, note: userNote };
 
-        return respond(outputFormat, payload, formatGroupedTestReports(result));
+        return respond(outputFormat, payload, formatGroupedTestReports(result) + (userNote ? `\n\n${userNote}` : ''));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

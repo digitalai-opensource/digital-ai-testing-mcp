@@ -24,7 +24,7 @@ import { checkDeleteAllowed } from '../api/access-level.js';
 function browserSessionSummary(s: ReturnType<typeof requireSession>): string {
   const age = Math.round((Date.now() - s.startedAt) / 1000);
   const idle = Math.round((Date.now() - s.lastUsedAt) / 1000);
-  const idleWarning = idle > 180 ? ' ⚠️ likely expired (Grid idle timeout ~4 min)' : '';
+  const idleWarning = idle > 180 ? ' ⚠️ may have expired (idle over 3 min)' : '';
   return (
     `Handle:   ${s.handle}\n` +
     `Browser:  ${s.browserName ?? s.deviceName}\n` +
