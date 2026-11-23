@@ -179,8 +179,8 @@ What this means for you:
 
 | Install | Change in the client configuration |
 |---|---|
-| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.4.6"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.4.6` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
-| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.4.6`. |
+| npm | Name the version: `"args": ["-y", "digital-ai-testing-mcp@2.4.7"]`. Or install it once with `npm install -g digital-ai-testing-mcp@2.4.7` and use `"command": "digital-ai-testing-mcp"`, `"args": []` — use this form on a machine that can't reach the npm registry when the server starts. |
+| GHCR image | Remove `"--pull=always"` and name the version tag: `ghcr.io/digitalai-opensource/digital-ai-testing-mcp:2.4.7`. |
 
 The [update notice](#update-notices) then tells you when a newer release exists.
 
