@@ -426,7 +426,8 @@ describe('set_debug_mode — on or off until the server restarts', () => {
 
 // The production wiring (index.ts): the real entry point over stdio, as an AI client starts it.
 describe('set_debug_mode over stdio', () => {
-  it('lists record_remediation_note only while on, tells the client the list changed, and saves notes once on', async () => {
+  // Claude Desktop does not reload the tool list mid-run, so the tool list must be the same before and after the switch.
+  it('keeps the tool list unchanged, records notes only while on, and starts the session on the first switch', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'dai-debug-toggle-'));
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(DIGITAL_AI_|DAI_PROFILE_|MCP_)/.test(k)) env[k] = v;
@@ -440,35 +441,32 @@ describe('set_debug_mode over stdio', () => {
     const client = new Client({ name: 'debug-toggle-test', version: '1.0.0' });
     let listChanged = 0;
     client.setNotificationHandler(ToolListChangedNotificationSchema, async () => { listChanged++; });
+    const note = (title: string) => client.callTool({ name: 'record_remediation_note', arguments: { category: 'improvement', title, intent: 'i', whatHappened: 'w' } });
     await client.connect(transport);
     const names = async () => (await client.listTools()).tools.map((t) => t.name);
     const text = (r: unknown) => (r as { content: Array<{ text?: string }> }).content.map((c) => c.text ?? '').join('\n');
-    const waitFor = async (cond: () => boolean) => { for (let i = 0; i < 50 && !cond(); i++) await new Promise((r) => setTimeout(r, 20)); };
     try {
       assert.doesNotMatch(client.getInstructions() ?? '', /DEBUG MODE IS ON/);
-      let listed = await names();
-      assert.ok(listed.includes('set_debug_mode'));
-      assert.ok(!listed.includes('record_remediation_note'), 'hidden while off');
+      const before = await names();
+      assert.ok(before.includes('set_debug_mode') && before.includes('record_remediation_note'), 'both listed while off');
+      assert.match(text(await note('while off')), /^Debug mode is off, so the note was not recorded/);
+      assert.deepEqual(readdirSync(cwd), [], 'nothing written while off');
 
       const on = await client.callTool({ name: 'set_debug_mode', arguments: { enabled: true } });
       assert.match(text(on), /^Debug mode is now ON/);
-      await waitFor(() => listChanged > 0);
-      assert.ok(listChanged > 0, 'tools/list_changed sent');
-      listed = await names();
-      assert.ok(listed.includes('record_remediation_note'));
+      assert.deepEqual(await names(), before, 'same tool list');
 
-      const note = await client.callTool({ name: 'record_remediation_note', arguments: { category: 'improvement', title: 'toggle test', intent: 'i', whatHappened: 'w' } });
-      assert.match(text(note), /Remediation note saved to /);
+      assert.match(text(await note('toggle test')), /Remediation note saved to /);
       const files = readdirSync(join(cwd)).filter((f) => f.endsWith('.md'));
       assert.equal(files.length, 1);
       assert.match(readFileSync(join(cwd, files[0]), 'utf8'), /^enabledBy: set_debug_mode$/m);
       assert.ok(readdirSync(cwd).some((f) => f.endsWith('.events.jsonl')), 'event log started');
 
-      const seen = listChanged;
       const off = await client.callTool({ name: 'set_debug_mode', arguments: { enabled: false } });
       assert.match(text(off), /^Debug mode is now OFF/);
-      await waitFor(() => listChanged > seen);
-      assert.ok(!(await names()).includes('record_remediation_note'), 'hidden again');
+      assert.match(text(await note('off again')), /^Debug mode is off, so the note was not recorded/);
+      assert.deepEqual(await names(), before, 'same tool list');
+      assert.equal(listChanged, 0, 'no tools/list_changed — nothing for the client to reload');
     } finally {
       await client.close();
       rmSync(cwd, { recursive: true, force: true });

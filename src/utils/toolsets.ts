@@ -165,11 +165,6 @@ export interface ToolsetController {
   summary(): Array<{ toolset: string; description: string; loaded: boolean; tools: number }>;
   /** `name(param*, …)` signatures for the named tools (required params marked *), in the given order. */
   signatures(names: string[]): string[];
-  /**
-   * List or hide one tool (RegisteredTool.enable/disable — a disabled tool is left out of tools/list and the client is
-   * sent tools/list_changed once connected). Returns false for an unknown name.
-   */
-  setEnabled(name: string, enabled: boolean): boolean;
 }
 
 /** Optional callback wrapper (debug mode instruments every tool and placeholder through this). */
@@ -214,14 +209,6 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
       }
       if (changed.length) notify.call(server);
       return changed;
-    },
-    setEnabled(name, enabled) {
-      const h = handles.get(name);
-      if (!h) return false;
-      if (h.handle.enabled === enabled) return true;
-      if (enabled) h.handle.enable();
-      else h.handle.disable();
-      return true;
     },
     signatures(names) {
       return names.flatMap((n) => { const h = handles.get(n); return h ? [signatureOf(n, h.tool.shape)] : []; });

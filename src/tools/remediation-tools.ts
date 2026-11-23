@@ -13,23 +13,22 @@ export function debugModeChangeText(on: boolean, changed: boolean): string {
   if (!changed) return `Debug mode is already ${onOff(on).toUpperCase()}. Nothing changed. ${config}`;
   if (on) {
     return (
-      `Debug mode is now ON for this run of the MCP server. ${config}\n` +
-      'record_remediation_note is back in the tool list (if your client has not refreshed its list, the user can set ' +
-      'MCP_DEBUG_MODE=true in the client configuration and restart instead).\n\n' +
+      `Debug mode is now ON for this run of the MCP server. ${config}\n\n` +
       debugInstructions('set_debug_mode').trimEnd()
     );
   }
   return (
     `Debug mode is now OFF for this run of the MCP server. ${config}\n` +
     'Stop recording remediation notes and ignore any DEBUG MODE block in the server instructions: no event log is ' +
-    'kept, no reminders are added, and record_remediation_note is no longer listed. Notes already saved stay where they are.'
+    'kept, no reminders are added, and record_remediation_note records nothing. Notes already saved stay where they are.'
   );
 }
 
 /**
- * record_remediation_note is registered always but listed only while debug mode is on — index.ts disables its handle
- * when off, so it costs nothing in normal use. set_debug_mode is always listed (user request 2026-11-22: turn debug mode
- * on or off with a prompt until the next restart). See src/utils/remediation.ts for the design (event log + notes + nudges).
+ * Both tools are always listed (user request 2026-11-22: turn debug mode on or off with a prompt until the next restart).
+ * record_remediation_note was hidden while off at first, but Claude Desktop does not reload the tool list when the server
+ * says it changed (2.4.6-beta.1), so a note tool added mid-run never reached the agent. Listed always (~550 tokens, user
+ * decision 2026-11-22), it records only while debug mode is on. See src/utils/remediation.ts for the design (event log + notes + nudges).
  */
 export function registerRemediationTools(server: McpServer): void {
   server.tool(
@@ -49,7 +48,8 @@ export function registerRemediationTools(server: McpServer): void {
 
   server.tool(
     'record_remediation_note',
-    'Debug mode: record something that would help improve this MCP — an error, calls wasted on unclear guidance, a ' +
+    'Debug mode only — records nothing while debug mode is off, so call it only when debug mode is ON (the server ' +
+    'instructions, get_server_info or set_debug_mode say so). Record something that would help improve this MCP — an error, calls wasted on unclear guidance, a ' +
     'user correction, giving up, a better path than the one recommended, or any improvement idea. Call it once per ' +
     'occurrence, when resolved or abandoned; never interrupt the user\'s task for it. Be concrete: the request, the ' +
     'tool calls and arguments involved, what the MCP said, and what finally worked. Never include credentials.',

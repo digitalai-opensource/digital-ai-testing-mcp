@@ -25,23 +25,13 @@ describe('get_server_info capability domains', () => {
   });
 
   // "Registered tools" printed the static TOOL_COUNT (205) while debug mode had registered 206 (UAT 2026-10-16).
-  // record_remediation_note is registered always since set_debug_mode (2026-11-22) but listed only while debug mode is on.
-  it('the registered-tool total counts what the client lists: debug-only tools only while debug mode is on', () => {
+  it('the registered-tool total counts what was registered, debug-mode tools included', () => {
     setToolCatalog([
       { module: 'reporting', name: 'list_test_reports' },
       { module: 'remediation', name: 'set_debug_mode' },
       { module: 'remediation', name: 'record_remediation_note' },
     ]);
-    const before = process.env.MCP_DEBUG_MODE;
-    try {
-      process.env.MCP_DEBUG_MODE = 'true';
-      assert.equal(registeredToolCount(), 3);
-      process.env.MCP_DEBUG_MODE = 'false';
-      assert.equal(registeredToolCount(), 2);
-    } finally {
-      if (before === undefined) delete process.env.MCP_DEBUG_MODE;
-      else process.env.MCP_DEBUG_MODE = before;
-    }
+    assert.equal(registeredToolCount(), 3);
   });
 });
 

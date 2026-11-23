@@ -153,7 +153,7 @@ const modules: Array<[string, RegisterFn]> = [
   ['performance', registerPerformanceTools],
   ['usage-reports', registerUsageReportTools],
   ['test-runs', registerTestRunTools],
-  ['remediation', registerRemediationTools], // set_debug_mode; record_remediation_note is listed only while debug mode is on
+  ['remediation', registerRemediationTools], // set_debug_mode, record_remediation_note (records only while debug mode is on)
   ['meta', registerMetaTools],
   ['toolsets', makeToolsetTools(() => toolsetController)],
 ];
@@ -205,11 +205,10 @@ const controller = registerWithToolsets(
         return updateCheck && !placeholder ? withUpdateNotice(handler) : handler;
       }
 );
-// record_remediation_note is listed only while debug mode is on; set_debug_mode flips it (and starts the session).
-controller.setEnabled('record_remediation_note', debugMode);
+// set_debug_mode turned it on mid-run: start the remediation session. record_remediation_note stays listed either way
+// (Claude Desktop does not reload the tool list on tools/list_changed — 2.4.6-beta.1, 2026-11-22).
 onDebugModeChange((on) => {
   if (on) startDebugSession();
-  controller.setEnabled('record_remediation_note', on);
   console.error(`[${name}] Debug mode turned ${on ? 'ON' : 'OFF'} with set_debug_mode (until restart).`);
 });
 if (!toolsetSelection.all) {
@@ -217,7 +216,7 @@ if (!toolsetSelection.all) {
   console.error(`[${name}] Toolsets loaded in full: ${controller.loaded().join(', ') || '(core only)'} — the rest are self-loading placeholders.`);
 }
 
-console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools${debugMode ? " + record_remediation_note" : ""} + 2 resources + 7 prompts).`);
+console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 7 prompts).`);
 
 // Startup parity check: verify all workflow dependency tools are actually registered.
 // A missing tool here means a module failed to load — the build/image is stale and needs rebuilding.

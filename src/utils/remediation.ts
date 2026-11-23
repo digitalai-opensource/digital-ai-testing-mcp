@@ -1,9 +1,9 @@
 /**
  * Debug mode (MCP_DEBUG_MODE=true) — remediation capture for ongoing improvement of the MCP.
  *
- * Off by default, and off means no behaviour change: nothing is logged or nudged, and record_remediation_note is
- * disabled (registered but not listed). set_debug_mode switches it on or off for the running process only; a restart
- * goes back to MCP_DEBUG_MODE.
+ * Off by default, and off means no behaviour change: nothing is logged or nudged, and record_remediation_note (always
+ * listed) records nothing. set_debug_mode switches it on or off for the running process only; a restart goes back to
+ * MCP_DEBUG_MODE.
  * On, three things work together:
  *  1. A server-side EVENT LOG of what the MCP observes itself — every tool call with timing, response size (a token
  *     proxy), outcome (ok / error / guard), and "retried after an error or guard" signals. The agent can't under-report
