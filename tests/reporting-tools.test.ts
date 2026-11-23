@@ -13,7 +13,8 @@
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
 import AdmZip from 'adm-zip';
-import { registerReportingTools } from '../src/tools/reporting-tools.js';
+import { registerReportingTools, mergeReportLists, webUserTwin } from '../src/tools/reporting-tools.js';
+import type { TestReport } from '../src/types/digital-ai.js';
 import { clearReporterProjectNameCacheForTests } from '../src/api/reporter-projects.js';
 import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
@@ -66,6 +67,11 @@ beforeAll(async () => {
     if (req.path === '/reporter/api/projects') return reporterProjectsFixture;
     if (req.path === '/reporter/api/tests/grouped') {
       const groupBy: string[] = req.json.groupBy ?? [];
+      // As on the platform: web reports have no "user" value; a digitalai:user filter finds them (live 2026-11-22).
+      const userKey = (req.json.filter ?? []).find((f: { property: string }) => f.property === 'user' || f.property === 'digitalai:user')?.property;
+      if (groupBy.includes('user') && userKey) {
+        return userKey === 'user' ? { count: 1, data: [{ user: 'me@x.io', _count_: 5, failedCount: 1 }] } : { count: 1, data: [{ user: null, _count_: 3, failedCount: 2 }] };
+      }
       return groupBy.includes('device.os')
         ? { count: GROUPED_BY_OS_STATUS.length, data: GROUPED_BY_OS_STATUS }
         : { count: 2, data: [{ status: 'Passed', _count_: 90 }, { status: 'Failed', _count_: 10 }] };
@@ -147,14 +153,59 @@ describe('device.os case folding', () => {
 });
 
 describe('web reports keep the user in digitalai:user (bug report 2026-11-21)', () => {
-  it('a user filter says web reports were not matched and gives the digitalai:user filter to run', async () => {
-    const j = await tools.callJson('list_test_reports', { filter: [{ property: 'user', operator: '=', value: 'me@x.io' }, { property: 'status', operator: '=', value: 'Failed' }] });
-    assert.match(String(j.note), /web \(Selenium\) reports keep the user in the key "digitalai:user"/);
-    assert.match(String(j.note), /\{"property":"digitalai:user","operator":"=","value":"me@x\.io"\}/);
+  const userFailed = [{ property: 'user', operator: '=', value: 'me@x.io' }, { property: 'status', operator: '=', value: 'Failed' }];
+  const listBodies = () => api.requests.filter((r) => r.path === '/reporter/api/tests/list').map((r) => r.json);
+
+  it('a user filter also queries digitalai:user and merges mobile and web reports into one answer', async () => {
+    api.requests.length = 0;
+    const j = await tools.callJson('list_test_reports', { filter: userFailed });
+    assert.deepEqual((j.reports as Array<{ test_id: number }>).map((r) => r.test_id).sort(), [61, 62]);
+    assert.equal(j.total, 2);
+    assert.match(String(j.note), /covered mobile AND web reports: .* \(matching: 1 through "user", 1 through "digitalai:user"\)/);
+    // The second query keeps the other filters and swaps only the user key.
+    assert.deepEqual(listBodies().map((b) => b.filter), [userFailed, [{ ...userFailed[0], property: 'digitalai:user' }, userFailed[1]]]);
+
+    api.requests.length = 0;
     const viaWebKey = await tools.callJson('list_test_reports', { filter: [{ property: 'digitalai:user', operator: '=', value: 'me@x.io' }] });
     assert.equal(viaWebKey.note, undefined, 'no note once the web key is used');
+    assert.equal(listBodies().length, 1, 'a digitalai:user filter runs once');
     const plain = await tools.callJson('list_test_reports', { filter: [{ property: 'status', operator: '=', value: 'Failed' }] });
     assert.equal(plain.note, undefined);
+  });
+
+  it('merges on the startDate scan path too', async () => {
+    const j = await tools.callJson('list_test_reports', { filter: userFailed, startDate: new Date(NOW - HOUR).toISOString(), returnTotalCount: true });
+    assert.deepEqual((j.reports as Array<{ test_id: number }>).map((r) => r.test_id).sort(), [61, 62]);
+    assert.equal(j.total, 2);
+    assert.match(String(j.note), /matching: 1 through "user", 1 through "digitalai:user"/);
+  });
+
+  it('a page too deep to merge keeps one query and says which second query to run', async () => {
+    api.requests.length = 0;
+    const j = await tools.callJson('list_test_reports', { filter: userFailed, page: 20, limit: 50 });
+    assert.equal(listBodies().length, 1);
+    assert.match(String(j.note), /\{"property":"digitalai:user","operator":"=","value":"me@x\.io"\}/);
+  });
+
+  it('mergeReportLists keeps the sort order and drops duplicates; webUserTwin only rewrites an equality user filter', () => {
+    const r = (test_id: number, start_time: string, uuid = `u${test_id}`) => ({ test_id, start_time, uuid }) as unknown as TestReport;
+    const a = [r(1, '2026-11-20T10:00:00Z'), r(2, '2026-11-18T10:00:00Z')];
+    const b = [r(3, '2026-11-19T10:00:00Z'), r(1, '2026-11-20T10:00:00Z')];
+    assert.deepEqual(mergeReportLists(a, b).map((x) => x.test_id), [1, 3, 2]);
+    assert.deepEqual(mergeReportLists(a, b, [{ property: 'test_id', descending: false }]).map((x) => x.test_id), [1, 2, 3]);
+    assert.equal(webUserTwin([{ property: 'status', operator: '=', value: 'Failed' }]), undefined);
+    assert.equal(webUserTwin([{ property: 'user', operator: 'contains', value: 'me' }]), undefined);
+    assert.equal(webUserTwin([{ property: 'user', operator: '=', value: 'a' }, { property: 'digitalai:user', operator: '=', value: 'a' }]), undefined);
+  });
+
+  it('get_grouped_test_reports sums mobile and web rows per group and files web rows under the filtered user', async () => {
+    const byUser = await tools.callJson('get_grouped_test_reports', { groupBy: ['user'], filter: [{ property: 'user', operator: '=', value: 'me@x.io' }], returnTotalCount: true });
+    assert.deepEqual(byUser.data, [{ user: 'me@x.io', _count_: 8, failedCount: 3 }]);
+    assert.equal(byUser.count, 1);
+    assert.equal(byUser.totalRecords, 8);
+    assert.match(String(byUser.note), /matching: 5 through "user", 3 through "digitalai:user"/);
+    const byStatus = await tools.callJson('get_grouped_test_reports', { groupBy: ['status'], filter: [{ property: 'user', operator: '=', value: 'me@x.io' }] });
+    assert.deepEqual(byStatus.data, [{ status: 'Passed', _count_: 180 }, { status: 'Failed', _count_: 20 }]);
   });
 
   it('asking for the user key fills it from digitalai:user on web records', async () => {

@@ -463,33 +463,44 @@ export async function captureScreenshot(
  *  platform could not fetch came back 404 and was misreported as a terminated session, 2026-10-18). */
 function looksLikeDeadSession(e: unknown): boolean {
   const err = e as { response?: { status?: number; data?: { value?: { error?: string; message?: string } } } };
+  const v = err.response?.data?.value;
+  const msg = `${v?.error ?? ''} ${v?.message ?? ''}`.toLowerCase();
+  // An expired DESKTOP browser session answered 400 "Could not find session information for sessionId …" (Chrome,
+  // Safari) or 404 "Session … could not be found" (live 2026-11-23).
+  if (err.response?.status === 400 && /could not find session information/.test(msg)) return true;
   if (err.response?.status !== 404) return false;
-  const v = err.response.data?.value;
   if (!v || (v.error == null && v.message == null)) return true; // bare route 404: nothing to proxy to
-  const msg = `${v.error ?? ''} ${v.message ?? ''}`.toLowerCase();
-  if (/invalid session id|no such session|session .*(not found|terminated|expired|does not exist|has ended|is not running)/.test(msg)) return true;
+  if (/invalid session id|no such session|session .*(not found|could not be found|terminated|expired|does not exist|has ended|is not running)/.test(msg)) return true;
   // 'unknown command' covers both a route the driver lacks and a wrapped seetest:client failure — neither is a dead session.
   return v.error !== 'unknown command' && v.error !== 'no such element' && v.error !== 'no such alert' && v.error !== 'invalid argument';
 }
 
-function sessionAwareError(e: unknown, handle: string): string {
-  const detail = describeWdError(e);
-  if (looksLikeDeadSession(e)) {
-    const s = sessionRegistry.get(handle);
-    const idleNote =
-      s?.lastIdleMs != null && s.lastIdleMs > 60_000
-        ? ` The session was idle for ${Math.round(s.lastIdleMs / 1000)} s before this command — ` +
-          (s.idleTimeoutSeconds
-            ? `it was started with a ${s.idleTimeoutSeconds} s idle limit (start_inspection_session idleTimeoutSeconds raises it).`
+/** Recovery advice when `e` shows the session is gone (idle limit or agent crash), else null. Worded per session kind. */
+export function deadSessionAdvice(e: unknown, handle: string): string | null {
+  if (!looksLikeDeadSession(e)) return null;
+  const s = sessionRegistry.get(handle);
+  const browser = s?.platform === 'web';
+  const desktop = browser && !s?.mobileOs;
+  const [stopTool, startTool] = browser
+    ? ['stop_browser_inspection_session', 'start_browser_inspection_session']
+    : ['stop_inspection_session', 'start_inspection_session'];
+  const idleNote =
+    s?.lastIdleMs != null && s.lastIdleMs > 60_000
+      ? ` The session was idle for ${Math.round(s.lastIdleMs / 1000)} s before this command — ` +
+        (desktop
+          ? `the platform ends a desktop browser session after ${Math.round((s.idleTimeoutSeconds ?? 300) / 60)} minutes without a command; it cannot be raised.`
+          : s.idleTimeoutSeconds
+            ? `it was started with a ${s.idleTimeoutSeconds} s idle limit (${startTool} idleTimeoutSeconds raises it).`
             : 'the platform ends a session after about a minute without a command.')
-        : '';
-    return (
-      `${detail} — the Grid session has likely been terminated (idle timeout or agent crash).${idleNote} ` +
-      `The handle "${handle}" is no longer usable: call stop_inspection_session to clean up, ` +
-      `then start_inspection_session for a fresh session.`
-    );
-  }
-  return detail;
+      : '';
+  return (
+    ` — the session has likely been terminated (idle timeout or agent crash).${idleNote} ` +
+    `The handle "${handle}" is no longer usable: call ${stopTool} to clean up, then ${startTool} for a fresh session.`
+  );
+}
+
+function sessionAwareError(e: unknown, handle: string): string {
+  return describeWdError(e) + (deadSessionAdvice(e, handle) ?? '');
 }
 
 export async function getPageSource(handle: string): Promise<string> {
@@ -868,7 +879,6 @@ export async function clearElement(handle: string, elementId: string): Promise<v
 }
 
 // ─── Gestures & app management ───────────────────────────────────────────────
-// Ported from the official appium/appium-mcp implementation patterns.
 // W3C agents (Appium 2/3) use POST /actions and `mobile:` execute commands —
 // Appium 3 removed every legacy JWP route (touch/perform, /appium/device/*).
 // JWP agents (Appium 1.x) only have the legacy routes — the `mobile:` gesture
@@ -1040,7 +1050,7 @@ export async function swipeScreen(
   const sid = session.gridSessionId;
 
   // W3C Actions — the initial 200ms pause after pointerDown makes the gesture
-  // register as a drag/scroll rather than a fling (appium-mcp swipe pattern).
+  // register as a drag/scroll rather than a fling.
   const w3c = () =>
     client.post(
       `/session/${sid}/actions`,

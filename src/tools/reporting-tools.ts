@@ -118,11 +118,55 @@ export function webUserNote(
   if (groupBy?.includes('user')) {
     notes.push(
       'Note: web (Selenium) reports have no "user" value (they keep it in "digitalai:user", which the reporter cannot ' +
-      'group by), so they all fall in the null user row. To count one user\'s web reports, use list_test_reports with ' +
-      'filter digitalai:user = <email> and returnTotalCount: true.'
+      'group by), so they all fall in the null user row. To count one user\'s reports including web ones, add the filter ' +
+      'user = <email>: it also queries digitalai:user and files the web reports under that user.'
     );
   }
   return notes.length ? notes.join(' ') : undefined;
+}
+
+/**
+ * A `user = <email>` filter rewritten for web reports (`digitalai:user = <email>`), or undefined when there is nothing to
+ * add (no equality user filter, or the caller already filters on digitalai:user). The reporter cannot OR two keys, so
+ * list_test_reports and get_grouped_test_reports run both queries and merge them — "my reports" includes web runs.
+ */
+export function webUserTwin<F extends { property: string; operator?: string }>(filter: F[] | undefined): F[] | undefined {
+  if (!filter || filter.some((f) => f.property === 'digitalai:user')) return undefined;
+  const i = filter.findIndex((f) => f.property === 'user' && (f.operator ?? '=') === '=');
+  return i < 0 ? undefined : filter.map((f, j) => (j === i ? { ...f, property: 'digitalai:user' } : f));
+}
+
+function compareValues(a: unknown, b: unknown): number {
+  if (a == null || b == null) return a == null ? (b == null ? 0 : 1) : -1; // missing values last
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a).localeCompare(String(b));
+}
+
+/** Two report lists, each in `sort` order (default newest first), as one: de-duplicated by uuid, same order. */
+export function mergeReportLists(
+  a: TestReport[],
+  b: TestReport[],
+  sort?: Array<{ property: string; descending: boolean }>
+): TestReport[] {
+  const { property, descending } = sort?.[0] ?? { property: 'start_time', descending: true };
+  const seen = new Set<string>();
+  const unique = [...a, ...b].filter((r) => {
+    const rec = r as unknown as Record<string, unknown>;
+    const id = String(rec.uuid ?? rec.test_id);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  return unique.sort((x, y) => {
+    const c = compareValues((x as unknown as Record<string, unknown>)[property], (y as unknown as Record<string, unknown>)[property]);
+    return descending ? -c : c;
+  });
+}
+
+function mergedUserNote(mobile: number | null | undefined, web: number | null | undefined, counted: boolean): string {
+  const n = (v: number | null | undefined) => (v == null ? '?' : String(v));
+  return `The user filter covered mobile AND web reports: web (Selenium) reports keep the user in "digitalai:user", so both ` +
+    `were queried and merged (${counted ? 'matching' : 'found'}: ${n(mobile)} through "user", ${n(web)} through "digitalai:user").`;
 }
 
 /** When the caller asks for the "user" key, also fetch "digitalai:user" and show it as user on web records. */
@@ -361,8 +405,8 @@ export function registerReportingTools(server: McpServer): void {
     'For date-range filtering use startDate/endDate — server-side start_time filtering is CSRF-blocked. ' +
     'When the user asks for "my reports" / "reports linked to my account", filter by user immediately: ' +
     '[{"property":"user","operator":"=","value":"<email from get_my_account_info>"}] — do not return a global count first. ' +
-    'That filter matches MOBILE reports only: web (Selenium) reports keep the user in "digitalai:user", so for all of a user\'s ' +
-    'reports run a second query with {"property":"digitalai:user","operator":"=","value":"<email>"} (one query cannot OR the two). ' +
+    'A user = <email> filter covers mobile AND web reports: web (Selenium) reports keep the user in "digitalai:user", so the ' +
+    'tool also runs the query on that key and merges the results (the note gives both counts; one query is enough). ' +
     'Scoped to a project if projectId or projectName is provided. ' +
     'NOTE: the list response does NOT include failure diagnostics — the cause, errorCategory, and errorDetail fields are only returned by get_test_report (single-record). ' +
     'To diagnose why a listed test failed, call get_test_report with its test_id, or get_test_log for the full Appium log. ' +
@@ -404,8 +448,8 @@ export function registerReportingTools(server: McpServer): void {
               'Field to filter on. Confirmed working: ' +
               '"status" (Passed/Failed/Incomplete/Skipped/Error/Healed), ' +
               '"name", ' +
-              '"user" (email, exact match — for "my reports" use the email from get_my_account_info; MOBILE reports only), ' +
-              '"digitalai:user" (the same email for WEB/Selenium reports — they keep the user there; run a second query for "all my reports"), ' +
+              '"user" (email, exact match — for "my reports" use the email from get_my_account_info; with "=" it also matches web reports through digitalai:user), ' +
+              '"digitalai:user" (the key web/Selenium reports keep the user in — filter on it only for web reports alone), ' +
               '"has_attachment" ("Y"/"N"), ' +
               '"success" (boolean true/false), ' +
               '"accessibility_report" (JSON boolean true/false, NOT the string "true" — that 400s; true = runs with an Axe accessibility scan), ' +
@@ -474,7 +518,7 @@ export function registerReportingTools(server: McpServer): void {
       try {
         const targetLimit = limit ?? 50;
         const compact = fields === 'compact';
-        const userNote = webUserNote(filter);
+        const twin = webUserTwin(filter);
         const requestKeys = withWebUserKey(keys);
         const shape = (rs: TestReport[]) => {
           const filled = fillWebUser(rs, keys);
@@ -495,56 +539,65 @@ export function registerReportingTools(server: McpServer): void {
           // all in-range records (up to maxScan) instead of stopping at the limit.
           const wantTotal = returnTotalCount ?? false;
           const maxScan = 5000;
-          const matched: TestReport[] = [];
-          let matchedCount = 0;
-          let scanned = 0;
-          let countCapped = false;
-          let fetchPage = 1;
-          let done = false;
+          const scanRange = async (scanFilter: typeof filter) => {
+            const matched: TestReport[] = [];
+            let matchedCount = 0;
+            let scanned = 0;
+            let countCapped = false;
+            let fetchPage = 1;
+            let done = false;
 
-          while (!done && (wantTotal || matched.length < targetLimit)) {
-            const wantSort = serverSortAvailable();
-            const batch = await listTests(
-              {
-                limit: 500,
-                page: fetchPage,
-                returnTotalCount: false,
-                ...(wantSort && { sort: [{ property: 'start_time', descending: true }] }),
-                ...(searchValue && { searchValue }),
-                ...(filter && { filter }),
-                ...(requestKeys && { keys: requestKeys }),
-              },
-              projectId,
-              projectName
-            );
-            if (wantSort && batch.sortApplied === false && fetchPage > 1) {
-              // Sort refused partway through a sorted scan: unsorted page N is not a continuation of sorted
-              // pages 1..N-1. Restart from page 1 — the refusal is remembered, so the rescan is unsorted throughout.
-              matched.length = 0;
-              matchedCount = 0;
-              scanned = 0;
-              fetchPage = 1;
-              continue;
-            }
-            const records = batch.data ?? [];
-            if (records.length === 0) break;
-            scanned += records.length;
-            const isSortedFetch = batch.sortApplied === true;
-
-            for (const r of records) {
-              const t = new Date(r.start_time).getTime();
-              // Early-exit is only valid when results are sorted descending by start_time.
-              if (isSortedFetch && t < startTs) { done = true; break; }
-              if (t >= startTs && t <= endTs) {
-                matchedCount++;
-                if (matched.length < targetLimit) matched.push(r);
-                if (!wantTotal && matched.length >= targetLimit) { done = true; break; }
+            while (!done && (wantTotal || matched.length < targetLimit)) {
+              const wantSort = serverSortAvailable();
+              const batch = await listTests(
+                {
+                  limit: 500,
+                  page: fetchPage,
+                  returnTotalCount: false,
+                  ...(wantSort && { sort: [{ property: 'start_time', descending: true }] }),
+                  ...(searchValue && { searchValue }),
+                  ...(scanFilter && { filter: scanFilter }),
+                  ...(requestKeys && { keys: requestKeys }),
+                },
+                projectId,
+                projectName
+              );
+              if (wantSort && batch.sortApplied === false && fetchPage > 1) {
+                // Sort refused partway through a sorted scan: unsorted page N is not a continuation of sorted
+                // pages 1..N-1. Restart from page 1 — the refusal is remembered, so the rescan is unsorted throughout.
+                matched.length = 0;
+                matchedCount = 0;
+                scanned = 0;
+                fetchPage = 1;
+                continue;
               }
+              const records = batch.data ?? [];
+              if (records.length === 0) break;
+              scanned += records.length;
+              const isSortedFetch = batch.sortApplied === true;
+
+              for (const r of records) {
+                const t = new Date(r.start_time).getTime();
+                // Early-exit is only valid when results are sorted descending by start_time.
+                if (isSortedFetch && t < startTs) { done = true; break; }
+                if (t >= startTs && t <= endTs) {
+                  matchedCount++;
+                  if (matched.length < targetLimit) matched.push(r);
+                  if (!wantTotal && matched.length >= targetLimit) { done = true; break; }
+                }
+              }
+              if (records.length < 500) done = true;
+              if (!done && scanned >= maxScan) { countCapped = true; done = true; }
+              fetchPage++;
             }
-            if (records.length < 500) done = true;
-            if (!done && scanned >= maxScan) { countCapped = true; done = true; }
-            fetchPage++;
-          }
+            return { matched, matchedCount, countCapped };
+          };
+          // A user filter also runs as digitalai:user (web reports) and the two scans are merged newest first.
+          const [own, web] = await Promise.all([scanRange(filter), twin ? scanRange(twin) : undefined]);
+          const matched = web ? mergeReportLists(own.matched, web.matched).slice(0, targetLimit) : own.matched;
+          const matchedCount = own.matchedCount + (web?.matchedCount ?? 0);
+          const countCapped = own.countCapped || !!web?.countCapped;
+          const userNote = web ? mergedUserNote(own.matchedCount, web.matchedCount, wantTotal) : webUserNote(filter);
 
           const rangeLabel = `${startDate ?? 'beginning'} → ${endDate ?? 'now'}`;
           const totalLine = wantTotal
@@ -579,13 +632,36 @@ export function registerReportingTools(server: McpServer): void {
         // sorted request worked with every filter shape tried (plain, has_attachment, searchValue (+keys), custom key,
         // status) and cost 1–1.5 s more. If the sorted request fails for any reason, the caller's unsorted request runs.
         const defaultSort = !sort && serverSortAvailable();
-        let result: Awaited<ReturnType<typeof listTests>>;
-        try {
-          result = await listTests(defaultSort ? { ...request, sort: [{ property: 'start_time', descending: true }] } : request, projectId, projectName);
-        } catch (e) {
-          if (!defaultSort) throw e;
-          result = await listTests(request, projectId, projectName);
-          result = { ...result, sortApplied: false };
+        type ListResult = Awaited<ReturnType<typeof listTests>>;
+        const fetchList = async (req: typeof request): Promise<ListResult> => {
+          try {
+            return await listTests(defaultSort ? { ...req, sort: [{ property: 'start_time', descending: true }] } : req, projectId, projectName);
+          } catch (e) {
+            if (!defaultSort) throw e;
+            return { ...(await listTests(req, projectId, projectName)), sortApplied: false };
+          }
+        };
+        // A user filter also runs as digitalai:user (web reports): both lists are fetched down to the requested page and
+        // merged in sort order. Deeper than 500 records per side cannot be merged in one request each — then the note
+        // gives the second query to run instead.
+        const pageNo = page ?? 1;
+        const mergeUsers = !!twin && pageNo * targetLimit <= 500;
+        let result: ListResult;
+        let userNote: string | undefined;
+        if (mergeUsers) {
+          const want = { ...request, limit: pageNo * targetLimit, page: 1 };
+          const [own, web] = await Promise.all([fetchList(want), fetchList({ ...want, filter: twin })]);
+          const data = mergeReportLists(own.data ?? [], web.data ?? [], sort).slice((pageNo - 1) * targetLimit, pageNo * targetLimit);
+          result = {
+            ...own,
+            data,
+            count: own.count != null && web.count != null ? own.count + web.count : undefined,
+            sortApplied: own.sortApplied === false || web.sortApplied === false ? false : own.sortApplied,
+          };
+          userNote = mergedUserNote(own.count, web.count, own.count != null && web.count != null);
+        } else {
+          result = await fetchList(request);
+          userNote = webUserNote(filter);
         }
         const reports = result.data ?? [];
         const countLine = result.count !== undefined ? `Total matching: ${result.count}\n\n` : '';
@@ -657,11 +733,32 @@ export function registerReportingTools(server: McpServer): void {
           ...(filter && { filter }),
           returnTotalCount: returnTotalCount ?? true,
         };
-        let result = await getGroupedTests(request, projectId, projectName) as { count?: number | null; data?: Array<Record<string, unknown>> };
+        type Grouped = { count?: number | null; data?: Array<Record<string, unknown>> };
+        // A user filter also runs as digitalai:user (web reports keep the user there) and the rows are summed per group.
+        const twin = webUserTwin(filter);
+        const [own, web] = await Promise.all([
+          getGroupedTests(request, projectId, projectName) as Promise<Grouped>,
+          twin ? (getGroupedTests({ ...request, filter: twin }, projectId, projectName) as Promise<Grouped>) : undefined,
+        ]);
+        let result: Grouped = own;
+        let userNote: string | undefined;
+        if (web) {
+          const userValue = filter?.find((f) => f.property === 'user')?.value;
+          // Web rows have no "user" value; a grouping by user files them under the filtered user, where they belong.
+          const webRows = (web.data ?? []).map((r) => (groupBy?.includes('user') ? { ...r, user: userValue } : r));
+          const records = (rows: Array<Record<string, unknown>> | undefined) =>
+            (rows ?? []).reduce((n, r) => n + (typeof r['_count_'] === 'number' ? (r['_count_'] as number) : 0), 0);
+          userNote = mergedUserNote(records(own.data), records(webRows), true);
+          result = { ...own, data: [...(own.data ?? []), ...webRows] };
+        } else {
+          userNote = webUserNote(filter, groupBy);
+        }
 
-        // Normalise device.os case variants ("ANDROID"/"IOS") to canonical form and
-        // merge their counts so consumers see at most 3 rows: Android, iOS, null.
-        if (groupBy?.includes('device.os') && Array.isArray(result?.data)) {
+        // Normalise device.os case variants ("ANDROID"/"IOS") to canonical form and merge their counts so consumers
+        // see at most 3 rows: Android, iOS, null. The same per-group merge sums the mobile and web rows of a user filter.
+        const hasOs = !!groupBy?.includes('device.os');
+        if ((hasOs || web) && Array.isArray(result?.data)) {
+          const fields = groupBy ?? [];
           const OS_NORM: Record<string, string> = { android: 'Android', ios: 'iOS' };
           const merged: Record<string, Record<string, unknown>> = {};
           for (const row of result.data) {
@@ -669,13 +766,13 @@ export function registerReportingTools(server: McpServer): void {
             const normOs = rawOs == null ? null : (OS_NORM[(String(rawOs)).toLowerCase()] ?? String(rawOs));
             // Key on EVERY group-by field (OS normalised). Keying on the OS alone collapsed multi-field groupings —
             // ["device.os","status"] merged Passed and Failed into one row per OS.
-            const key = JSON.stringify(groupBy.map((f) => (f === 'device.os' ? normOs : row[f] ?? null)));
+            const key = JSON.stringify(fields.map((f) => (f === 'device.os' ? normOs : row[f] ?? null)));
             if (!merged[key]) {
-              merged[key] = { ...row, 'device.os': normOs };
+              merged[key] = hasOs ? { ...row, 'device.os': normOs } : { ...row };
             } else {
               // Sum all numeric count fields (group-by fields are never summed)
               for (const [k, v] of Object.entries(row)) {
-                if (typeof v === 'number' && !groupBy.includes(k)) {
+                if (typeof v === 'number' && !fields.includes(k)) {
                   merged[key][k] = ((merged[key][k] as number) ?? 0) + v;
                 }
               }
@@ -694,7 +791,6 @@ export function registerReportingTools(server: McpServer): void {
           const totalRecords = result.data.reduce((n, row) => n + (typeof row['_count_'] === 'number' ? (row['_count_'] as number) : 0), 0);
           payload = { ...result, totalRecords };
         }
-        const userNote = webUserNote(filter, groupBy);
         if (userNote) payload = { ...payload, note: userNote };
 
         return respond(outputFormat, payload, formatGroupedTestReports(result) + (userNote ? `\n\n${userNote}` : ''));

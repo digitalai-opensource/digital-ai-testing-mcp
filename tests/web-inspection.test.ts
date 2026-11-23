@@ -6,7 +6,7 @@
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { registerSession, captureScreenshot } from '../src/api/webdriver.js';
+import { registerSession, captureScreenshot, deadSessionAdvice } from '../src/api/webdriver.js';
 import { certificateWarning, browserVersionFromUserAgent } from '../src/api/browser-inspection.js';
 import { normalizeBidiMessage, injectBrowserEventsForTests, pushBrowserEventForTests, type BrowserEvent } from '../src/api/browser-events.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
@@ -15,6 +15,7 @@ import type { InspectionSession } from '../src/types/digital-ai.js';
 import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
 
 const sessionCaps: Array<Record<string, unknown>> = [];
+const desiredCaps: Array<Record<string, unknown>> = [];
 const jwpExecutes: string[] = [];
 const shotCalls: string[] = [];
 
@@ -35,6 +36,7 @@ beforeAll(async () => {
     if (req.path === '/wd/hub/session' && req.method === 'POST') {
       const caps = req.json.capabilities?.alwaysMatch ?? {};
       sessionCaps.push(caps);
+      desiredCaps.push(req.json.desiredCapabilities ?? {});
       // A phone on an Appium Grid project answers in JWP: CLOUD-SID at the top, caps (with the agent's own id) in value.
       if (String(caps['digitalai:deviceQuery'] ?? '').includes('GRID')) {
         return { sessionId: 'CLOUD-SID:g-1', status: 0, value: { sessionId: 'agent-internal', 'device.name': 'Galaxy S22', 'device.model': 'SM-S901', 'device.version': '13.0', 'digitalai:cloudViewLink': 'https://cloud/studio/x', 'digitalai:reportTestId': 0 } };
@@ -304,6 +306,57 @@ describe('mobile browser sessions (Chrome on Android / Safari on iOS — verifie
     } finally {
       setAccessLevelOverrideForTests(null);
     }
+  });
+
+  it('idle limit: phones send newCommandTimeout (default 300, configurable); desktop keeps the fixed 5-minute platform limit', async () => {
+    // Measured live 2026-11-23: phone browsers ended before 90 s idle without it and lived past 291 s with 300;
+    // desktop browsers end at 300 s whatever is sent.
+    setAccessLevelOverrideForTests('cloud-admin');
+    try {
+      const phone = await tools.callJson('start_browser_inspection_session', { mobilePlatform: 'android' });
+      assert.equal(desiredCaps.at(-1)!.newCommandTimeout, 300, 'bare in desiredCapabilities — the half the platform reads on phones');
+      assert.equal(sessionCaps.at(-1)!['appium:newCommandTimeout'], 300, 'prefixed in alwaysMatch');
+      assert.equal(sessionCaps.at(-1)!.newCommandTimeout, undefined, 'no bare non-W3C key in alwaysMatch');
+      assert.match(String(phone.idleTimeoutNote), /ends after 5 minute\(s\) without a command .*take_inspection_screenshot/);
+      await tools.call('stop_browser_inspection_session', { handle: phone.handle });
+
+      const long = await tools.callJson('start_browser_inspection_session', { mobilePlatform: 'ios', idleTimeoutSeconds: 900 });
+      assert.equal(desiredCaps.at(-1)!.newCommandTimeout, 900);
+      await tools.call('stop_browser_inspection_session', { handle: long.handle });
+
+      const desktop = await tools.callJson('start_browser_inspection_session', { inspectionBrowser: 'chrome', captureBrowserLog: false });
+      assert.equal(desiredCaps.at(-1)!.newCommandTimeout, undefined);
+      assert.equal(sessionCaps.at(-1)!['appium:newCommandTimeout'], undefined);
+      assert.match(String(desktop.idleTimeoutNote), /ends after 5 minutes without a command \(a platform limit — it cannot be raised\)/);
+      await tools.call('stop_browser_inspection_session', { handle: desktop.handle });
+
+      const r = await tools.call('start_browser_inspection_session', { inspectionBrowser: 'chrome', idleTimeoutSeconds: 600 });
+      assert.equal(r.res.isError, true);
+      assert.match(r.text, /idleTimeoutSeconds applies to mobile browsers only/);
+    } finally {
+      setAccessLevelOverrideForTests(null);
+    }
+  });
+
+  it('an expired session is recognised by both desktop answers and the advice names the right tools and limit', () => {
+    const httpErr = (status: number, value: Record<string, string>) => ({ response: { status, data: { value } } });
+    registerSession({ ...webSession('WEB00040'), idleTimeoutSeconds: 300, lastIdleMs: 320_000 });
+    // Live 2026-11-23: Chrome/Safari answered 400 "Could not find session information", others 404 "could not be found".
+    const desktop400 = deadSessionAdvice(httpErr(400, { error: 'invalid argument', message: 'Could not find session information for sessionId e475' }), 'WEB00040');
+    assert.match(String(desktop400), /idle for 320 s .* ends a desktop browser session after 5 minutes without a command; it cannot be raised/);
+    assert.match(String(desktop400), /call stop_browser_inspection_session to clean up, then start_browser_inspection_session/);
+    assert.ok(deadSessionAdvice(httpErr(404, { error: 'unknown error', message: 'Session 4587 could not be found' }), 'WEB00040'));
+
+    registerSession({ ...webSession('WEB00041'), mobileOs: 'android', idleTimeoutSeconds: 300, lastIdleMs: 310_000 });
+    assert.match(String(deadSessionAdvice(httpErr(404, { error: 'invalid session id', message: 'gone' }), 'WEB00041')),
+      /300 s idle limit \(start_browser_inspection_session idleTimeoutSeconds raises it\)/);
+
+    registerSession({ ...webSession('APP00042'), platform: 'android', idleTimeoutSeconds: 300, lastIdleMs: 310_000 });
+    assert.match(String(deadSessionAdvice(httpErr(404, { error: 'invalid session id', message: 'gone' }), 'APP00042')),
+      /\(start_inspection_session idleTimeoutSeconds raises it\)\. .*call stop_inspection_session/);
+
+    assert.equal(deadSessionAdvice(httpErr(404, { error: 'unknown command', message: 'no route' }), 'WEB00040'), null, 'a missing route is not a dead session');
+    assert.equal(deadSessionAdvice(httpErr(400, { error: 'invalid argument', message: 'bad selector' }), 'WEB00040'), null);
   });
 
   it('refuses deviceQuery/region without mobilePlatform, and a browser that does not match the phone', async () => {

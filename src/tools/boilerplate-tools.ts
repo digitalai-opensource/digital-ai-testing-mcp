@@ -1026,6 +1026,21 @@ function appNote(
   return 'Replace com.experitest.ExperiBank with your app\'s bundle ID. Replace the test steps with interactions specific to your app.';
 }
 
+/**
+ * get_web_test_boilerplate guidance on choosing the browser. With targetBrowser the generated code names the browser and
+ * never reads BROWSER — the guidance used to say "Set BROWSER=…" for every variant anyway.
+ */
+export function webBrowserGuidance(targetBrowser: string | undefined, language: 'java' | 'python' | 'nodejs' | 'robot'): string {
+  if (language === 'robot') {
+    return targetBrowser
+      ? `The browser is set to ${targetBrowser} in the suite's \${BROWSER} variable; the BROWSER environment variable is not read. Override it for one run with robot --variable BROWSER:firefox.`
+      : 'Choose the browser at run time with the BROWSER environment variable: chrome | firefox | edge | safari (SeleniumLibrary names; default chrome).';
+  }
+  return targetBrowser
+    ? `The browser is fixed to ${targetBrowser} (targetBrowser); the BROWSER environment variable is not read. To choose the browser at run time instead, generate the test again without targetBrowser.`
+    : 'Choose the browser at run time with the BROWSER environment variable: chrome | firefox | MicrosoftEdge | safari | opera (default chrome). The same script runs on each.';
+}
+
 export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'get_test_boilerplate',
@@ -2313,7 +2328,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           credentialSetup: CREDENTIAL_SETUP,
           guidance: [
             'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
-            'Set BROWSER=chrome (or firefox/MicrosoftEdge/safari) in your environment to choose the browser at runtime.',
+            webBrowserGuidance(targetBrowser, 'java'),
             `Grid URL: ${gridUrl}`,
             includeShadowHelper ? 'Shadow DOM helper included — use shadowQuery(hostEl, cssSelector) for Web Components.' : '',
           ].filter(Boolean),
@@ -2415,7 +2430,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           credentialSetup: CREDENTIAL_SETUP,
           guidance: [
             'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
-            'Set BROWSER=chrome (or firefox / MicrosoftEdge / safari / opera) in your environment.',
+            webBrowserGuidance(targetBrowser, 'python'),
             `Grid URL: ${gridUrl}`,
           ],
         };
@@ -2501,6 +2516,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           guidance: [
             'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
             'pip install -r requirements.txt, then robot --outputdir results tests/',
+            webBrowserGuidance(slBrowser, 'robot'),
             'The Test Teardown sets the platform report to Passed / Failed / Skipped from Robot\'s own result.',
             `Grid URL: ${gridUrl}`,
           ],
@@ -2660,7 +2676,9 @@ export function registerBoilerplateTools(server: McpServer): void {
 
       code = [
         `// ${filename}`,
-        `// Digital.ai Selenium Grid — browser-neutral web test`,
+        targetBrowser
+          ? `// Digital.ai Selenium Grid — ${targetBrowser} web test (browser set in wdio.conf.js)`
+          : `// Digital.ai Selenium Grid — browser-neutral web test (BROWSER env var, read in wdio.conf.js)`,
         `// Run: npx wdio run wdio.conf.js`,
         `${shadowHelper}`,
         `describe('${testName}', () => {`,
@@ -2684,7 +2702,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         credentialSetup: CREDENTIAL_SETUP,
         guidance: [
           'Replace the placeholder test body with selectors from get_page_dom / find_web_elements.',
-          'Set BROWSER=chrome (or firefox/MicrosoftEdge/safari) in your environment.',
+          webBrowserGuidance(targetBrowser, 'nodejs'),
           'WebdriverIO 9 needs Node.js 18.20.8+, 20.20.2+, 22.23.4+, 24.22.1+ or 26.12.1+. Keep wdio:enforceWebDriverClassic in wdio.conf.js — ' +
             'without it (wdio 9+ default) the cloud report shows Passed even when the test fails (verified live).',
           `Grid URL: ${gridUrl}`,

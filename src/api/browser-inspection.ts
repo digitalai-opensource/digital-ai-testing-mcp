@@ -4,7 +4,7 @@ import type { InspectionSession } from '../types/digital-ai.js';
 import { getMyAccountInfo } from './users.js';
 import { getActiveUrl, getActiveAccessKey } from './client.js';
 import { checkDeleteAllowed } from './access-level.js';
-import { registerSession, requireSession, listActiveSessions, deviceQueryLengthError, newSessionWaitSeconds, cleanUpFailedSessionReport } from './webdriver.js';
+import { registerSession, requireSession, listActiveSessions, deviceQueryLengthError, newSessionWaitSeconds, cleanUpFailedSessionReport, idleTimeoutSeconds, deadSessionAdvice } from './webdriver.js';
 import { extractApiErrorMessage } from '../utils/api-error.js';
 import { BIDI_BROWSERS, browserEventMark, mainDocumentError, startBrowserEventCapture } from './browser-events.js';
 
@@ -22,7 +22,8 @@ function makeClient(): AxiosInstance {
   });
 }
 
-function describeError(e: unknown): string {
+/** With a handle, an error that shows the session has ended also says why and how to recover (deadSessionAdvice). */
+function describeError(e: unknown, handle?: string): string {
   const err = e as { response?: { data?: unknown; status?: number }; message?: string };
   // WebDriver errors nest under `value`; the shared extractor handles every other shape (and never
   // yields "[object Object]" or an empty string).
@@ -30,7 +31,8 @@ function describeError(e: unknown): string {
   const value = data && typeof data === 'object' && 'value' in data ? (data as { value?: unknown }).value : undefined;
   const msg = extractApiErrorMessage(value ?? data, err.message ?? String(e));
   const status = err.response?.status;
-  return status ? `HTTP ${status}: ${msg}` : msg;
+  const base = status ? `HTTP ${status}: ${msg}` : msg;
+  return base + ((handle && deadSessionAdvice(e, handle)) || '');
 }
 
 export interface BrowserSessionOptions {
@@ -46,7 +48,17 @@ export interface BrowserSessionOptions {
   /** Mobile browser on a cloud phone: Chrome on Android, Safari on iOS (verified live 2026-11-12 on Appium Server and
    *  Appium Grid projects — navigate/title/find/text/source/screenshot all work; Grid sessions answer in JWP). */
   mobile?: { platform: 'android' | 'ios'; deviceQuery?: string; region?: string };
+  /** Phones only: seconds without a command before the platform ends the session (newCommandTimeout). */
+  idleTimeoutSeconds?: number;
 }
+
+/**
+ * Idle limits of browser sessions (measured live 2026-11-23, uscloud, no idle setting sent). Desktop Chrome was alive
+ * after 280 s idle and gone at 300 s (Firefox and Safari gone at 300 s too); newCommandTimeout does not extend it (gone
+ * by 420 s with 300 sent), so it is the platform's fixed limit. Phone browsers (Android Chrome, iOS Safari) were gone
+ * before 90 s — like inspection sessions before 2.4.5 — and alive after 291 s once newCommandTimeout 300 was sent.
+ */
+export const DESKTOP_BROWSER_IDLE_SECONDS = 300;
 
 /** Mobile browser sessions can take ~25–55 s to allocate a phone (live); give the platform up to 150 s. */
 export const MOBILE_BROWSER_TIMEOUT_MS = 180_000;
@@ -101,13 +113,19 @@ export async function createBrowserInspectionSession(
   const wantEvents = !mobile && opts.captureEvents !== false && BIDI_BROWSERS.has(browserName);
   if (wantEvents) caps['webSocketUrl'] = true;
 
+  // Phones get the inspection sessions' idle limit: bare in desiredCapabilities (what the platform reads on phones),
+  // appium:-prefixed in alwaysMatch (a bare non-W3C key there can be refused). Desktop browsers keep the platform's own.
+  const idleLimit = mobile ? idleTimeoutSeconds(opts.idleTimeoutSeconds) : DESKTOP_BROWSER_IDLE_SECONDS;
+  const desired = mobile ? { ...caps, newCommandTimeout: idleLimit } : caps;
+  const alwaysMatch = mobile ? { ...caps, 'appium:newCommandTimeout': idleLimit } : caps;
+
   const client = makeClient();
   const requestedAt = Date.now();
   let res;
   try {
     res = await client.post('/session', {
-      desiredCapabilities: caps,
-      capabilities: { alwaysMatch: caps, firstMatch: [{}] },
+      desiredCapabilities: desired,
+      capabilities: { alwaysMatch, firstMatch: [{}] },
     }, mobile ? { timeout: MOBILE_BROWSER_TIMEOUT_MS } : undefined);
   } catch (e) {
     if (mobile) {
@@ -167,6 +185,7 @@ export async function createBrowserInspectionSession(
     acceptInsecureCerts: opts.acceptInsecureCerts === true,
     currentUrl: '',
     projectName,
+    idleTimeoutSeconds: idleLimit,
   };
 
   registerSession(session);
@@ -223,7 +242,7 @@ export async function navigateTo(handle: string, url: string): Promise<{ httpErr
   try {
     await client.post(`/session/${session.gridSessionId}/url`, { url }, { timeout: 60_000 });
   } catch (e) {
-    const detail = describeError(e);
+    const detail = describeError(e, handle);
     const hint = certificateWarning(detail);
     throw new Error(`navigate_to failed: ${detail}${hint ? `\n${hint}` : ''}`);
   }
@@ -382,7 +401,7 @@ export async function getPageDom(
     );
     metaResult = JSON.parse(String(detectRes.data.value));
   } catch (e) {
-    throw new Error(`get_page_dom detection phase failed: ${describeError(e)}`);
+    throw new Error(`get_page_dom detection phase failed: ${describeError(e, handle)}`);
   }
 
   // The walker extracts interactive elements whether or not shadow roots exist, so "auto" always uses it — the tool
@@ -408,7 +427,7 @@ export async function getPageDom(
       session.currentUrl = full.url;
       return full;
     } catch (e) {
-      throw new Error(`get_page_dom element extraction failed: ${describeError(e)}`);
+      throw new Error(`get_page_dom element extraction failed: ${describeError(e, handle)}`);
     }
   }
 
@@ -423,7 +442,7 @@ export async function getPageDom(
       rawHtml: String(sourceRes.data.value ?? ''),
     };
   } catch (e) {
-    throw new Error(`get_page_dom DOM extraction failed: ${describeError(e)}`);
+    throw new Error(`get_page_dom DOM extraction failed: ${describeError(e, handle)}`);
   }
 }
 
@@ -441,7 +460,7 @@ export async function browserNavigate(
   try {
     await client.post(`/session/${sid}/${routes[action]}`, {}, { timeout: 30_000 });
   } catch (e) {
-    throw new Error(`browser_action ${action} failed: ${describeError(e)}`);
+    throw new Error(`browser_action ${action} failed: ${describeError(e, handle)}`);
   }
   // Refresh currentUrl after navigation
   try {
