@@ -426,10 +426,17 @@ export function nudgeFor(tool: string, outcome: Outcome, detail = ''): string | 
     : `[debug mode] If this guard was unclear or cost extra calls, record it with record_remediation_note (category "unclear-guidance"). Skip it if the guard worked as intended.`;
 }
 
-/** Status line for get_server_info / check_connectivity, so the agent learns debug mode is on from its first calls. */
-export function debugStatusLine(): string | null {
+/**
+ * Status line for get_server_info / check_connectivity, so the agent learns the debug-mode state from its first calls.
+ * Always present: with no line while off, a Claude Desktop agent asked "is debug mode on?" could only guess (2.4.6-beta.2).
+ */
+export function debugStatusLine(): string {
   const untilRestart = debugModeOverridden() ? ' Set with set_debug_mode for this run; MCP_DEBUG_MODE applies again after a restart.' : '';
-  if (!isDebugMode()) return untilRestart ? `Debug mode:       OFF for this run — do not record remediation notes.${untilRestart}` : null;
+  if (!isDebugMode()) {
+    return untilRestart
+      ? `Debug mode:       OFF for this run — do not record remediation notes.${untilRestart}`
+      : 'Debug mode:       OFF (MCP_DEBUG_MODE) — no remediation notes are recorded. If the user asks, set_debug_mode turns it on until the server restarts.';
+  }
   return `Debug mode:       ON — call record_remediation_note for unexpected errors, unclear guidance, user corrections, giving up, better paths and token-saving ideas (not for expected errors).${untilRestart}`;
 }
 

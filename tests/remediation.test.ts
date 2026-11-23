@@ -80,10 +80,10 @@ describe('MCP_DEBUG_MODE flag', () => {
     assert.match(text, /\n\n$/, 'separated from the server instructions that follow');
   });
 
-  it('debug status line appears only when debug mode is on', () => {
-    assert.match(debugStatusLine() ?? '', /^Debug mode:\s+ON — call record_remediation_note .*not for expected errors/);
+  it('debug status line states the mode whether it is on or off', () => {
+    assert.match(debugStatusLine(), /^Debug mode:\s+ON — call record_remediation_note .*not for expected errors/);
     process.env.MCP_DEBUG_MODE = 'false';
-    assert.equal(debugStatusLine(), null);
+    assert.match(debugStatusLine(), /^Debug mode:\s+OFF \(MCP_DEBUG_MODE\) — no remediation notes are recorded\. .*set_debug_mode/);
   });
 });
 
@@ -393,7 +393,7 @@ describe('set_debug_mode — on or off until the server restarts', () => {
     assert.match(on.content[0].text, /DEBUG MODE IS ON \(turned on with set_debug_mode until the server restarts\)/);
     for (const c of REMEDIATION_CATEGORIES) assert.match(on.content[0].text, new RegExp(`\\b${c}\\b`));
     assert.equal(isDebugMode(), true);
-    assert.match(debugStatusLine() ?? '', /ON — .*Set with set_debug_mode for this run; MCP_DEBUG_MODE applies again after a restart\./);
+    assert.match(debugStatusLine(), /ON — .*Set with set_debug_mode for this run; MCP_DEBUG_MODE applies again after a restart\./);
 
     const again = await t.set_debug_mode.handler({ enabled: true }, {});
     assert.match(again.content[0].text, /^Debug mode is already ON\. Nothing changed\./);
@@ -405,7 +405,7 @@ describe('set_debug_mode — on or off until the server restarts', () => {
     const off = await t.set_debug_mode.handler({ enabled: false }, {});
     assert.match(off.content[0].text, /^Debug mode is now OFF for this run of the MCP server\. MCP_DEBUG_MODE in the client configuration is on;/);
     assert.match(off.content[0].text, /ignore any DEBUG MODE block in the server instructions/);
-    assert.match(debugStatusLine() ?? '', /^Debug mode:\s+OFF for this run — do not record remediation notes\./);
+    assert.match(debugStatusLine(), /^Debug mode:\s+OFF for this run — do not record remediation notes\./);
 
     const note = await t.record_remediation_note.handler({ category: 'error', title: 'abc', intent: 'i', whatHappened: 'w' }, {});
     assert.match(note.content[0].text, /^Debug mode is off, so the note was not recorded/);

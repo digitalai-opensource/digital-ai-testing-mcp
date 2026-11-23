@@ -36,7 +36,8 @@ export function registerRemediationTools(server: McpServer): void {
     'Turn debug mode on or off for this run of the MCP server — ONLY when the user asks for it (e.g. "turn on debug ' +
     'mode", "stop recording remediation notes"), never on your own. Debug mode records remediation notes and an event ' +
     'log that help improve this MCP. The change lasts until the MCP server restarts; then MCP_DEBUG_MODE in the ' +
-    'client configuration applies again. The response carries the rules to follow from then on.',
+    'client configuration applies again. The response carries the rules to follow from then on. To only CHECK whether ' +
+    'debug mode is on, read the "Debug mode" line of get_server_info instead.',
     {
       enabled: z.boolean().describe('true = turn debug mode on, false = turn it off.'),
     },
