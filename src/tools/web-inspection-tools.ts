@@ -16,6 +16,7 @@ import {
   getCurrentUrl,
   getPageDom,
   browserNavigate,
+  DESKTOP_BROWSER_IDLE_SECONDS,
 } from '../api/browser-inspection.js';
 import { readBrowserEvents } from '../api/browser-events.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -24,13 +25,25 @@ import { checkDeleteAllowed } from '../api/access-level.js';
 function browserSessionSummary(s: ReturnType<typeof requireSession>): string {
   const age = Math.round((Date.now() - s.startedAt) / 1000);
   const idle = Math.round((Date.now() - s.lastUsedAt) / 1000);
-  const idleWarning = idle > 180 ? ' ⚠️ may have expired (idle over 3 min)' : '';
+  const limit = s.idleTimeoutSeconds ?? DESKTOP_BROWSER_IDLE_SECONDS;
+  const idleWarning = idle >= limit ? ` ⚠️ has likely expired (idle limit ${limit} s)` : '';
   return (
     `Handle:   ${s.handle}\n` +
     `Browser:  ${s.browserName ?? s.deviceName}\n` +
     `URL:      ${s.currentUrl || '(no navigation yet)'}\n` +
     `Age:      ${age}s | Idle: ${idle}s${idleWarning}\n`
   );
+}
+
+/** What the agent must know about the idle limit before it pauses for the user (measured live 2026-11-23). */
+function browserIdleNote(s: ReturnType<typeof requireSession>): string {
+  const minutes = Math.round((s.idleTimeoutSeconds ?? DESKTOP_BROWSER_IDLE_SECONDS) / 60);
+  const limit = s.mobileOs
+    ? `This session ends after ${minutes} minute(s) without a command (idleTimeoutSeconds; the phone stays held meanwhile).`
+    : `This session ends after ${minutes} minutes without a command (a platform limit — it cannot be raised).`;
+  return `${limit} Before pausing to ask the user something, call take_inspection_screenshot — it resets the idle clock and ` +
+    'captures the page you are asking about. If the user takes longer, expect "session not found" on the next call: ' +
+    'stop_browser_inspection_session to clean up, then start a new session (your verified selectors stay valid).';
 }
 
 export function registerWebInspectionTools(server: McpServer): void {
@@ -104,11 +117,24 @@ export function registerWebInspectionTools(server: McpServer): void {
         .string()
         .optional()
         .describe('mobilePlatform only: restrict to a region, e.g. "US2" (from find_available_device).'),
+      idleTimeoutSeconds: z
+        .number()
+        .int()
+        .min(60)
+        .max(1800)
+        .optional()
+        .describe(
+          'mobilePlatform only: seconds without a command before the platform ends the session and frees the phone ' +
+          '(default 300, or MCP_SESSION_IDLE_TIMEOUT_SECONDS). Desktop browser sessions always end after 5 minutes idle (platform limit).'
+        ),
       outputFormat: outputFormatParam,
     },
     async (args) => {
       if ((args.deviceQuery || args.region) && !args.mobilePlatform) {
         return { content: [{ type: 'text' as const, text: 'Error: deviceQuery and region apply to mobile browsers only — set mobilePlatform ("android" or "ios").' }], isError: true };
+      }
+      if (args.idleTimeoutSeconds != null && !args.mobilePlatform) {
+        return { content: [{ type: 'text' as const, text: `Error: idleTimeoutSeconds applies to mobile browsers only — a desktop browser session always ends after ${DESKTOP_BROWSER_IDLE_SECONDS / 60} minutes without a command (platform limit).` }], isError: true };
       }
       if (!args.inspectionBrowser && !args.mobilePlatform) {
         return {
@@ -135,7 +161,9 @@ export function registerWebInspectionTools(server: McpServer): void {
           acceptInsecureCerts: args.acceptInsecureCerts,
           captureEvents: args.captureBrowserLog,
           mobile,
+          idleTimeoutSeconds: args.idleTimeoutSeconds,
         });
+        const idleTimeoutNote = browserIdleNote(session);
 
         // Structured like start_inspection_session — the handle is what every later call needs (UAT 2026-10-10 run 3).
         const structured: Record<string, unknown> = {
@@ -155,6 +183,7 @@ export function registerWebInspectionTools(server: McpServer): void {
             ? 'Mobile browser session — mobileStudioUrl shows the phone live; take_inspection_screenshot relays the page.'
             : 'No live view URL for browser sessions — use take_inspection_screenshot to relay the page state. ' +
               'The inspection browser is for element discovery only; the generated test is browser-neutral.',
+          idleTimeoutNote,
           next: `stop_browser_inspection_session("${session.handle}") when done`,
         };
         const lines = [
@@ -187,7 +216,7 @@ export function registerWebInspectionTools(server: McpServer): void {
           }
         }
 
-        lines.push(``, `When done, call stop_browser_inspection_session("${session.handle}").`);
+        lines.push(``, `IDLE LIMIT: ${idleTimeoutNote}`, ``, `When done, call stop_browser_inspection_session("${session.handle}").`);
 
         return respond(args.outputFormat, structured, lines.join('\n'));
       } catch (e) {

@@ -756,6 +756,24 @@ describe('get_web_test_boilerplate — fixes found running the templates live (2
     }
   });
 
+  it('browser guidance matches the code: BROWSER only when it is read, the fixed browser when targetBrowser is set', async () => {
+    const guidance = (j: unknown) => ((j as { guidance: string[] }).guidance).join('\n');
+    for (const language of ['java-junit5', 'java-testng', 'python', 'nodejs', 'robot']) {
+      const neutral = await webGen({ language });
+      assert.match(guidance(neutral.json), /Choose the browser at run time with the BROWSER environment variable/, language);
+      assert.match(source(neutral.json), /BROWSER/, `${language}: the neutral code reads BROWSER`);
+
+      const fixed = await webGen({ language, targetBrowser: 'firefox' });
+      const g = guidance(fixed.json);
+      assert.match(g, /firefox/, language);
+      assert.match(g, /the BROWSER environment variable is not read/, language);
+      assert.doesNotMatch(g, /Set BROWSER=|Choose the browser at run time/, language);
+      assert.doesNotMatch(source(fixed.json), /process\.env\.BROWSER|getenv\(\)\.getOrDefault\("BROWSER"|environ\.get\("BROWSER"|%\{BROWSER/, `${language}: fixed code does not read BROWSER`);
+      assert.doesNotMatch(source(fixed.json), /browser-neutral/i, language);
+    }
+    assert.match(source((await webGen({ language: 'nodejs', targetBrowser: 'safari' })).json), /\/\/ Digital\.ai Selenium Grid — safari web test/);
+  });
+
   it('robot: SeleniumLibrary suite with the report library; Edge maps to "edge"; Opera is refused', async () => {
     const { json } = await webGen({ language: 'robot' });
     assert.deepEqual(json.files.map((f) => f.filename), ['tests/Checkout.robot', 'tests/DigitalAiWebReport.py', 'requirements.txt', '.env.example']);
