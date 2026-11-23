@@ -25,12 +25,13 @@ describe('get_server_info capability domains', () => {
   });
 
   // "Registered tools" printed the static TOOL_COUNT (205) while debug mode had registered 206 (UAT 2026-10-16).
-  it('the registered-tool total counts what was registered, debug-only tools included', () => {
+  it('the registered-tool total counts what was registered, debug-mode tools included', () => {
     setToolCatalog([
       { module: 'reporting', name: 'list_test_reports' },
+      { module: 'remediation', name: 'set_debug_mode' },
       { module: 'remediation', name: 'record_remediation_note' },
     ]);
-    assert.equal(registeredToolCount(), 2);
+    assert.equal(registeredToolCount(), 3);
   });
 });
 

@@ -125,12 +125,11 @@ export const REGISTERED_TOOLS = [
   // Test runs — Espresso / XCUITest / Maestro executed by the platform
   'execute_test_run', 'get_test_run_status', 'cancel_test_run', 'get_test_run_command', 'generate_maestro_flow',
   'execute_playwright_run',
-  // Debug mode only (MCP_DEBUG_MODE=true) — not registered otherwise, so not in TOOL_COUNT
-  'record_remediation_note',
+  // Debug mode — both always listed; record_remediation_note records only while debug mode is on
+  'set_debug_mode', 'record_remediation_note',
 ] as const;
 
-export const DEBUG_ONLY_TOOLS: readonly string[] = ['record_remediation_note'];
-export const TOOL_COUNT = REGISTERED_TOOLS.length - DEBUG_ONLY_TOOLS.length;
+export const TOOL_COUNT = REGISTERED_TOOLS.length;
 
 // Short descriptions per tool module; counts come from the registrations themselves (src/utils/tool-catalog.ts).
 const DOMAINS: Array<[module: string, label: string, note: string]> = [
@@ -162,7 +161,7 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['workflows', 'Workflows', 'POC and project setup / teardown (Cloud Admin)'],
   ['meta', 'Server', 'server info, connectivity, workflow readiness, environments'],
   ['toolsets', 'Toolsets', 'enable_toolset'],
-  ['remediation', 'Debug Mode', 'record_remediation_note'],
+  ['remediation', 'Debug Mode', 'set_debug_mode, record_remediation_note'],
 ];
 
 /**

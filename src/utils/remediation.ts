@@ -1,7 +1,9 @@
 /**
  * Debug mode (MCP_DEBUG_MODE=true) — remediation capture for ongoing improvement of the MCP.
  *
- * Off by default, and off means no behaviour change: nothing is wrapped, logged, nudged or registered.
+ * Off by default, and off means no behaviour change: nothing is logged or nudged, and record_remediation_note (always
+ * listed) records nothing. set_debug_mode switches it on or off for the running process only; a restart goes back to
+ * MCP_DEBUG_MODE.
  * On, three things work together:
  *  1. A server-side EVENT LOG of what the MCP observes itself — every tool call with timing, response size (a token
  *     proxy), outcome (ok / error / guard), and "retried after an error or guard" signals. The agent can't under-report
@@ -26,9 +28,53 @@ import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
 import { getDeploymentMode } from './deployment-mode.js';
 
-/** Read live (like getDeploymentMode) so tests can flip it; "true"/"1"/"yes", case-insensitive. */
-export function isDebugMode(): boolean {
+/** The configured value: MCP_DEBUG_MODE, read live (like getDeploymentMode) so tests can flip it; "true"/"1"/"yes", case-insensitive. */
+export function configuredDebugMode(): boolean {
   return /^(true|1|yes)$/i.test((process.env.MCP_DEBUG_MODE ?? '').trim());
+}
+
+/**
+ * set_debug_mode's choice for this process — undefined = follow the configuration. Kept in memory only, so a restart
+ * goes back to MCP_DEBUG_MODE (user decision 2026-11-22: "the setting would last until the next restart").
+ */
+let debugOverride: boolean | undefined;
+const debugModeListeners = new Set<(on: boolean) => void>();
+
+/** Debug mode right now: set_debug_mode's choice for this process, else MCP_DEBUG_MODE. */
+export function isDebugMode(): boolean {
+  return debugOverride ?? configuredDebugMode();
+}
+
+/** true when set_debug_mode has changed the mode away from the configuration for this process. */
+export function debugModeOverridden(): boolean {
+  return debugOverride !== undefined && debugOverride !== configuredDebugMode();
+}
+
+/** Turn debug mode on or off until the server restarts. Listeners (index.ts: tool list, session) hear only real changes. */
+export function setDebugMode(on: boolean): { changed: boolean } {
+  const before = isDebugMode();
+  debugOverride = on === configuredDebugMode() ? undefined : on;
+  const changed = before !== on;
+  if (changed) {
+    for (const l of debugModeListeners) {
+      try {
+        l(on);
+      } catch (e) {
+        console.error(`[debug-mode] change listener failed: ${(e as Error).message}`);
+      }
+    }
+  }
+  return { changed };
+}
+
+export function onDebugModeChange(listener: (on: boolean) => void): () => void {
+  debugModeListeners.add(listener);
+  return () => debugModeListeners.delete(listener);
+}
+
+export function resetDebugModeForTests(): void {
+  debugOverride = undefined;
+  debugModeListeners.clear();
 }
 
 export const REMEDIATION_CATEGORIES = ['error', 'unclear-guidance', 'user-correction', 'gave-up', 'better-path', 'improvement'] as const;
@@ -60,6 +106,8 @@ interface SessionInfo {
   /** The client's workspace folders (MCP roots), as file:// URIs. */
   roots?: () => Promise<string[]>;
   location?: RemediationLocation;
+  /** How debug mode came on when the session started: the configuration, or set_debug_mode mid-run. */
+  enabledBy: 'MCP_DEBUG_MODE' | 'set_debug_mode';
 }
 
 /** 'none': no project folder to write to — events stay in memory and notes are returned, as under Docker. */
@@ -74,7 +122,7 @@ let session: SessionInfo | null = null;
 /** Called once at startup when debug mode is on. The short random suffix keeps parallel sessions apart. */
 export function startRemediationSession(opts: { mcpVersion: string; toolsets: string; client: SessionInfo['client']; roots?: SessionInfo['roots']; now?: Date }): SessionInfo {
   const startedAt = opts.now ?? new Date();
-  session = { id: `${remediationStamp(startedAt)}-${randomBytes(2).toString('hex')}`, startedAt, mcpVersion: opts.mcpVersion, toolsets: opts.toolsets, client: opts.client, roots: opts.roots };
+  session = { id: `${remediationStamp(startedAt)}-${randomBytes(2).toString('hex')}`, startedAt, mcpVersion: opts.mcpVersion, toolsets: opts.toolsets, client: opts.client, roots: opts.roots, enabledBy: debugModeOverridden() ? 'set_debug_mode' : 'MCP_DEBUG_MODE' };
   events.length = 0;
   lastOutcome.clear();
   nudged.clear();
@@ -296,6 +344,7 @@ function sessionMeta() {
     deploymentMode: getDeploymentMode(),
     toolsets: session?.toolsets,
     client: c ? `${c.name ?? '?'} ${c.version ?? ''}`.trim() : 'unknown',
+    enabledBy: session?.enabledBy,
   };
 }
 
@@ -359,7 +408,7 @@ export function summarizeEvents(list: readonly ToolEvent[] = events): string {
  * Tools whose "error" is their normal answer: validate_test_script returns isError for a "fail" verdict, which is the
  * tool working — a reminder there read like an MCP malfunction (UAT 2026-10-10).
  */
-const NO_NUDGE_TOOLS: ReadonlySet<string> = new Set(['record_remediation_note', 'validate_test_script']);
+const NO_NUDGE_TOOLS: ReadonlySet<string> = new Set(['record_remediation_note', 'validate_test_script', 'set_debug_mode']);
 
 /**
  * One reminder per tool + outcome + distinct message per session. Keyed on the message too, so a second, different
@@ -377,10 +426,18 @@ export function nudgeFor(tool: string, outcome: Outcome, detail = ''): string | 
     : `[debug mode] If this guard was unclear or cost extra calls, record it with record_remediation_note (category "unclear-guidance"). Skip it if the guard worked as intended.`;
 }
 
-/** Status line for get_server_info / check_connectivity, so the agent learns debug mode is on from its first calls. */
-export function debugStatusLine(): string | null {
-  if (!isDebugMode()) return null;
-  return 'Debug mode:       ON — call record_remediation_note for unexpected errors, unclear guidance, user corrections, giving up, better paths and token-saving ideas (not for expected errors).';
+/**
+ * Status line for get_server_info / check_connectivity, so the agent learns the debug-mode state from its first calls.
+ * Always present: with no line while off, a Claude Desktop agent asked "is debug mode on?" could only guess (2.4.6-beta.2).
+ */
+export function debugStatusLine(): string {
+  const untilRestart = debugModeOverridden() ? ' Set with set_debug_mode for this run; MCP_DEBUG_MODE applies again after a restart.' : '';
+  if (!isDebugMode()) {
+    return untilRestart
+      ? `Debug mode:       OFF for this run — do not record remediation notes.${untilRestart}`
+      : 'Debug mode:       OFF (MCP_DEBUG_MODE) — no remediation notes are recorded. If the user asks, set_debug_mode turns it on until the server restarts.';
+  }
+  return `Debug mode:       ON — call record_remediation_note for unexpected errors, unclear guidance, user corrections, giving up, better paths and token-saving ideas (not for expected errors).${untilRestart}`;
 }
 
 /**
@@ -409,9 +466,14 @@ export function withNudge<T extends { content?: Array<{ type: string; text?: str
 
 type Handler = (...a: unknown[]) => unknown;
 
-/** Wrap a tool callback: time it, log the event, prepend a nudge on error/guard (withNudge). A successful result is returned unchanged. */
+/**
+ * Wrap a tool callback: time it, log the event, prepend a nudge on error/guard (withNudge). A successful result is
+ * returned unchanged. Every tool is wrapped (set_debug_mode can turn debug mode on mid-run), so the mode is checked per
+ * call: off → the callback runs directly, nothing logged or nudged.
+ */
 export function instrumentHandler(tool: string, callback: Handler, opts: { placeholder?: boolean } = {}): Handler {
   return async (...a: unknown[]) => {
+    if (!isDebugMode()) return callback(...a);
     // Debug-mode bookkeeping must never turn a working tool into a failing one: every step around the real call is
     // guarded, and a bookkeeping error is logged to stderr instead of propagating to the client.
     const safely = <T>(what: string, fn: () => T): T | undefined => {
@@ -469,6 +531,7 @@ export function noteFileHeader(): string {
     `machine: ${m.machine}`,
     `user: ${m.user}`,
     `location: ${m.location}  # env | client-roots | start-folder`,
+    `enabledBy: ${m.enabledBy ?? 'MCP_DEBUG_MODE'}`,
     'debugMode: true  # debug sessions spend extra tokens on notes — exclude them from token baselines',
     canWriteLocally() ? `eventsLog: ${m.session}.events.jsonl` : 'eventsLog: none (server not on this machine) — see "Server-observed events" in each note',
     '---',
@@ -529,11 +592,12 @@ export function saveNote(note: RemediationNote): { written: string | null; markd
 }
 
 /** Instructions block placed BEFORE the server instructions when debug mode is on (kept short — it costs tokens). */
-export function debugInstructions(): string {
+export function debugInstructions(source: 'config' | 'set_debug_mode' = 'config'): string {
   const where = canWriteLocally()
     ? 'The server saves each note in a remediation/ folder of the project you are working in.'
     : 'The tool returns each note as markdown: if you can write files, append it to remediation/<fileName> in the root of the project you are working in (create the folder, plus remediation/.gitignore containing "*" so it is never committed); if you cannot, skip saving — never paste notes into the conversation unasked.';
-  return `DEBUG MODE IS ON (MCP_DEBUG_MODE=true). Its purpose is to improve this MCP's functionality and cut wasted tokens. Call record_remediation_note once per occurrence, when it is resolved or abandoned (never interrupt the user's task for it):
+  const how = source === 'config' ? 'MCP_DEBUG_MODE=true' : 'turned on with set_debug_mode until the server restarts';
+  return `DEBUG MODE IS ON (${how}). Its purpose is to improve this MCP's functionality and cut wasted tokens. Call record_remediation_note once per occurrence, when it is resolved or abandoned (never interrupt the user's task for it):
 1. error — an error you hit: what you were doing, the error, any workaround.
 2. unclear-guidance — calls wasted because a tool's guidance was unclear: the request, the misunderstanding, the resolution.
 3. user-correction — the user corrected or stopped you: what you did, what they said, the fix.

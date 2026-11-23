@@ -8,10 +8,14 @@ import { homedir, hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
   isDebugMode, redact, classifyOutcome, instrumentHandler, startRemediationSession, getRecordedEvents, saveNote,
   debugInstructions, debugStatusLine, summarizeEvents, REMEDIATION_CATEGORIES, resolveRemediationLocation, looksLikeProject, locateStartFolder,
   ensureRemediationDir, getRemediationSession, nudgeFor, recordToolEvent, isSensitiveArg,
+  setDebugMode, onDebugModeChange, debugModeOverridden, configuredDebugMode, resetDebugModeForTests,
 } from '../src/utils/remediation.js';
 import { registerRemediationTools } from '../src/tools/remediation-tools.js';
 
@@ -25,6 +29,7 @@ beforeEach(() => {
   startRemediationSession({ mcpVersion: '9.9.9', toolsets: 'all', client: () => ({ name: 'test-client', version: '1.0' }), now: new Date(2026, 9, 9, 16, 30, 12) });
 });
 afterEach(() => {
+  resetDebugModeForTests();
   rmSync(dir, { recursive: true, force: true });
   for (const k of ['MCP_REMEDIATION_DIR', 'MCP_DEBUG_MODE', 'MCP_DEPLOYMENT_MODE']) {
     if (saved[k] === undefined) delete process.env[k];
@@ -48,15 +53,16 @@ describe('MCP_DEBUG_MODE flag', () => {
     }
   });
 
-  it('registers record_remediation_note only when on', () => {
+  // Both are registered either way; index.ts hides record_remediation_note while debug mode is off (set_debug_mode).
+  it('registers set_debug_mode and record_remediation_note whether debug mode is on or off', () => {
     const names = (on: boolean) => {
       process.env.MCP_DEBUG_MODE = on ? 'true' : 'false';
       const s = new McpServer({ name: 's', version: '0' });
       registerRemediationTools(s);
       return Object.keys((s as unknown as { _registeredTools: Record<string, unknown> })._registeredTools);
     };
-    assert.deepEqual(names(false), []);
-    assert.deepEqual(names(true), ['record_remediation_note']);
+    assert.deepEqual(names(false), ['set_debug_mode', 'record_remediation_note']);
+    assert.deepEqual(names(true), ['set_debug_mode', 'record_remediation_note']);
   });
 
   it('instructions list all six categories and where notes go', () => {
@@ -74,10 +80,10 @@ describe('MCP_DEBUG_MODE flag', () => {
     assert.match(text, /\n\n$/, 'separated from the server instructions that follow');
   });
 
-  it('debug status line appears only when debug mode is on', () => {
-    assert.match(debugStatusLine() ?? '', /^Debug mode:\s+ON — call record_remediation_note .*not for expected errors/);
+  it('debug status line states the mode whether it is on or off', () => {
+    assert.match(debugStatusLine(), /^Debug mode:\s+ON — call record_remediation_note .*not for expected errors/);
     process.env.MCP_DEBUG_MODE = 'false';
-    assert.equal(debugStatusLine(), null);
+    assert.match(debugStatusLine(), /^Debug mode:\s+OFF \(MCP_DEBUG_MODE\) — no remediation notes are recorded\. .*set_debug_mode/);
   });
 });
 
@@ -328,4 +334,142 @@ describe('notes', () => {
     assert.match(r.markdown, /Server-observed events[\s\S]*1 tool calls: 0 ok, 1 error/);
     assert.doesNotMatch(saveNote(note).markdown, /^---/, 'front matter only on the first note');
   });
+});
+
+describe('set_debug_mode — on or off until the server restarts', () => {
+  type Tool = { handler: (a: unknown, extra: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }> };
+  const tools = () => {
+    const s = new McpServer({ name: 's', version: '0' });
+    registerRemediationTools(s);
+    return (s as unknown as { _registeredTools: Record<string, Tool> })._registeredTools;
+  };
+
+  it('overrides MCP_DEBUG_MODE in both directions; choosing the configured value clears the override', () => {
+    process.env.MCP_DEBUG_MODE = 'false';
+    assert.equal(isDebugMode(), false);
+    assert.deepEqual(setDebugMode(true), { changed: true });
+    assert.equal(isDebugMode(), true);
+    assert.equal(configuredDebugMode(), false, 'the configuration itself is untouched');
+    assert.equal(debugModeOverridden(), true);
+    assert.deepEqual(setDebugMode(true), { changed: false });
+    assert.deepEqual(setDebugMode(false), { changed: true });
+    assert.equal(debugModeOverridden(), false);
+
+    process.env.MCP_DEBUG_MODE = 'true';
+    setDebugMode(false);
+    assert.equal(isDebugMode(), false, 'off wins over MCP_DEBUG_MODE=true for this run');
+    resetDebugModeForTests(); // = a restart
+    assert.equal(isDebugMode(), true, 'after a restart the configuration applies again');
+  });
+
+  it('tells listeners only about real changes', () => {
+    process.env.MCP_DEBUG_MODE = 'false';
+    const heard: boolean[] = [];
+    onDebugModeChange((on) => heard.push(on));
+    setDebugMode(false);
+    setDebugMode(true);
+    setDebugMode(true);
+    setDebugMode(false);
+    assert.deepEqual(heard, [true, false]);
+  });
+
+  it('off: tools run unwrapped — no event, no nudge — and the event log resumes when turned back on', async () => {
+    process.env.MCP_DEBUG_MODE = 'true';
+    setDebugMode(false);
+    const wrapped = instrumentHandler('install_application', async () => err());
+    const r = (await wrapped({ appId: 1 })) as { content: Array<{ text: string }> };
+    assert.equal(r.content[0].text, 'Error: boom', 'no nudge while off');
+    assert.equal(getRecordedEvents().length, 0);
+    setDebugMode(true);
+    await wrapped({ appId: 1 });
+    assert.equal(getRecordedEvents().length, 1);
+  });
+
+  it('turning it on returns the rules (the server instructions cannot change after connect)', async () => {
+    process.env.MCP_DEBUG_MODE = 'false';
+    const t = tools();
+    const on = await t.set_debug_mode.handler({ enabled: true }, {});
+    assert.match(on.content[0].text, /^Debug mode is now ON for this run of the MCP server\. MCP_DEBUG_MODE in the client configuration is off; it applies again when the MCP server restarts\./);
+    assert.match(on.content[0].text, /DEBUG MODE IS ON \(turned on with set_debug_mode until the server restarts\)/);
+    for (const c of REMEDIATION_CATEGORIES) assert.match(on.content[0].text, new RegExp(`\\b${c}\\b`));
+    assert.equal(isDebugMode(), true);
+    assert.match(debugStatusLine(), /ON — .*Set with set_debug_mode for this run; MCP_DEBUG_MODE applies again after a restart\./);
+
+    const again = await t.set_debug_mode.handler({ enabled: true }, {});
+    assert.match(again.content[0].text, /^Debug mode is already ON\. Nothing changed\./);
+  });
+
+  it('turning it off tells the agent to ignore the DEBUG MODE instructions, and notes are refused', async () => {
+    process.env.MCP_DEBUG_MODE = 'true';
+    const t = tools();
+    const off = await t.set_debug_mode.handler({ enabled: false }, {});
+    assert.match(off.content[0].text, /^Debug mode is now OFF for this run of the MCP server\. MCP_DEBUG_MODE in the client configuration is on;/);
+    assert.match(off.content[0].text, /ignore any DEBUG MODE block in the server instructions/);
+    assert.match(debugStatusLine(), /^Debug mode:\s+OFF for this run — do not record remediation notes\./);
+
+    const note = await t.record_remediation_note.handler({ category: 'error', title: 'abc', intent: 'i', whatHappened: 'w' }, {});
+    assert.match(note.content[0].text, /^Debug mode is off, so the note was not recorded/);
+    assert.notEqual(note.isError, true);
+    assert.deepEqual(readdirSync(dir), [], 'nothing written');
+  });
+
+  it('a session started by set_debug_mode says so in its files', () => {
+    process.env.MCP_DEBUG_MODE = 'false';
+    setDebugMode(true);
+    startRemediationSession({ mcpVersion: '9.9.9', toolsets: 'all', client: () => undefined });
+    const r = saveNote({ category: 'improvement', title: 'x', intent: 'y', whatHappened: 'z' });
+    assert.match(readFileSync(r.written!, 'utf8'), /^enabledBy: set_debug_mode$/m);
+    const events = readFileSync(join(dir, `${getRemediationSession()!.id}.events.jsonl`), 'utf8');
+    assert.match(events, /"enabledBy":"set_debug_mode"/);
+  });
+});
+
+// The production wiring (index.ts): the real entry point over stdio, as an AI client starts it.
+describe('set_debug_mode over stdio', () => {
+  // Claude Desktop does not reload the tool list mid-run, so the tool list must be the same before and after the switch.
+  it('keeps the tool list unchanged, records notes only while on, and starts the session on the first switch', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'dai-debug-toggle-'));
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(DIGITAL_AI_|DAI_PROFILE_|MCP_)/.test(k)) env[k] = v;
+    // Unreachable host: nothing here calls the platform.
+    Object.assign(env, {
+      DIGITAL_AI_BASE_URL: 'http://127.0.0.1:9', DIGITAL_AI_ACCESS_KEY: 'aut_1_debugToggleTestKey', MCP_CREDENTIAL_STORE: 'off',
+      MCP_UPDATE_CHECK: 'false', MCP_DEBUG_MODE: 'false', MCP_DEPLOYMENT_MODE: 'local', MCP_REMEDIATION_DIR: cwd,
+    });
+    const entry = join(__dirname, '..', 'src', 'index.ts');
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', import.meta.resolve('tsx'), entry], env, cwd, stderr: 'pipe' });
+    const client = new Client({ name: 'debug-toggle-test', version: '1.0.0' });
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => { listChanged++; });
+    const note = (title: string) => client.callTool({ name: 'record_remediation_note', arguments: { category: 'improvement', title, intent: 'i', whatHappened: 'w' } });
+    await client.connect(transport);
+    const names = async () => (await client.listTools()).tools.map((t) => t.name);
+    const text = (r: unknown) => (r as { content: Array<{ text?: string }> }).content.map((c) => c.text ?? '').join('\n');
+    try {
+      assert.doesNotMatch(client.getInstructions() ?? '', /DEBUG MODE IS ON/);
+      const before = await names();
+      assert.ok(before.includes('set_debug_mode') && before.includes('record_remediation_note'), 'both listed while off');
+      assert.match(text(await note('while off')), /^Debug mode is off, so the note was not recorded/);
+      assert.deepEqual(readdirSync(cwd), [], 'nothing written while off');
+
+      const on = await client.callTool({ name: 'set_debug_mode', arguments: { enabled: true } });
+      assert.match(text(on), /^Debug mode is now ON/);
+      assert.deepEqual(await names(), before, 'same tool list');
+
+      assert.match(text(await note('toggle test')), /Remediation note saved to /);
+      const files = readdirSync(join(cwd)).filter((f) => f.endsWith('.md'));
+      assert.equal(files.length, 1);
+      assert.match(readFileSync(join(cwd, files[0]), 'utf8'), /^enabledBy: set_debug_mode$/m);
+      assert.ok(readdirSync(cwd).some((f) => f.endsWith('.events.jsonl')), 'event log started');
+
+      const off = await client.callTool({ name: 'set_debug_mode', arguments: { enabled: false } });
+      assert.match(text(off), /^Debug mode is now OFF/);
+      assert.match(text(await note('off again')), /^Debug mode is off, so the note was not recorded/);
+      assert.deepEqual(await names(), before, 'same tool list');
+      assert.equal(listChanged, 0, 'no tools/list_changed — nothing for the client to reload');
+    } finally {
+      await client.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

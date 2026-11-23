@@ -33,7 +33,7 @@ import { registerPerformanceTools } from './tools/performance-tools.js';
 import { registerUsageReportTools } from './tools/usage-report-tools.js';
 import { registerTestRunTools } from './tools/test-run-tools.js';
 import { registerRemediationTools } from './tools/remediation-tools.js';
-import { isDebugMode, startRemediationSession, instrumentHandler, debugInstructions, remediationDir, canWriteLocally } from './utils/remediation.js';
+import { isDebugMode, startRemediationSession, getRemediationSession, onDebugModeChange, instrumentHandler, debugInstructions, remediationDir, canWriteLocally } from './utils/remediation.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { makeToolsetTools } from './tools/toolset-tools.js';
 import { captureRegistrations, parseToolsetSelection, registerWithToolsets, TOOLSETS, type RegisterFn, type ToolsetController } from './utils/toolsets.js';
@@ -153,7 +153,7 @@ const modules: Array<[string, RegisterFn]> = [
   ['performance', registerPerformanceTools],
   ['usage-reports', registerUsageReportTools],
   ['test-runs', registerTestRunTools],
-  ['remediation', registerRemediationTools], // registers nothing unless MCP_DEBUG_MODE=true
+  ['remediation', registerRemediationTools], // set_debug_mode, record_remediation_note (records only while debug mode is on)
   ['meta', registerMetaTools],
   ['toolsets', makeToolsetTools(() => toolsetController)],
 ];
@@ -161,9 +161,11 @@ const toolsetSelection = parseToolsetSelection(process.env.MCP_TOOLSETS);
 if (toolsetSelection.unknown.length > 0) {
   console.error(`[${name}] ⚠️  MCP_TOOLSETS: unknown toolset(s) ignored: ${toolsetSelection.unknown.join(', ')} (valid: ${Object.keys(TOOLSETS).join(', ')}, core, all)`);
 }
-// Debug mode (MCP_DEBUG_MODE=true): every tool and placeholder is instrumented for the remediation event log.
-// Off (the default): no wrapper is passed, so registration is byte-for-byte what it was.
-if (debugMode) {
+// Debug mode (MCP_DEBUG_MODE=true, or set_debug_mode for this run): every tool and placeholder is instrumented for
+// the remediation event log. The wrapper is always installed (debug mode can be turned on mid-run); off, it calls the
+// tool directly — instrumentHandler checks the mode on every call.
+function startDebugSession(): void {
+  if (getRemediationSession()) return; // turned off and on again: the same session continues
   const s = startRemediationSession({
     mcpVersion: version,
     toolsets: process.env.MCP_TOOLSETS || 'all',
@@ -182,6 +184,7 @@ if (debugMode) {
         : "notes are returned to the agent to save in its project's remediation/ folder (server is not on the user's machine).")
   );
 }
+if (debugMode) startDebugSession();
 const captured = captureRegistrations(modules);
 setToolCatalog(captured.tools); // get_server_info reports real per-area counts from this
 // Update check (on unless MCP_UPDATE_CHECK=false): the first successful tool result after a newer release was found
@@ -197,19 +200,23 @@ const controller = registerWithToolsets(
   toolsetSelection,
   setupModeHandler
     ? () => setupModeHandler
-    : debugMode || updateCheck
-    ? (tool, callback, placeholder) => {
-        const handler = debugMode ? instrumentHandler(tool, callback, { placeholder }) : callback;
+    : (tool, callback, placeholder) => {
+        const handler = instrumentHandler(tool, callback, { placeholder });
         return updateCheck && !placeholder ? withUpdateNotice(handler) : handler;
       }
-    : undefined
 );
+// set_debug_mode turned it on mid-run: start the remediation session. record_remediation_note stays listed either way
+// (Claude Desktop does not reload the tool list on tools/list_changed — 2.4.6-beta.1, 2026-11-22).
+onDebugModeChange((on) => {
+  if (on) startDebugSession();
+  console.error(`[${name}] Debug mode turned ${on ? 'ON' : 'OFF'} with set_debug_mode (until restart).`);
+});
 if (!toolsetSelection.all) {
   toolsetController = controller;
   console.error(`[${name}] Toolsets loaded in full: ${controller.loaded().join(', ') || '(core only)'} — the rest are self-loading placeholders.`);
 }
 
-console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools${debugMode ? " + record_remediation_note" : ""} + 2 resources + 7 prompts).`);
+console.error(`[${name}] All tool modules registered (${TOOL_COUNT} tools + 2 resources + 7 prompts).`);
 
 // Startup parity check: verify all workflow dependency tools are actually registered.
 // A missing tool here means a module failed to load — the build/image is stale and needs rebuilding.
