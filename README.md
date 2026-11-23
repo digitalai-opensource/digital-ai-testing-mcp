@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **212 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **213 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -551,7 +551,7 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `MCP_CREDENTIAL_STORE_DIR` | Optional | `%APPDATA%\digital-ai-testing` (Windows), `~/.config/digital-ai-testing` (macOS, Linux) | Folder of the saved profiles file (`profiles.json`). Keys that profiles in a moved folder keep in the OS keychain are named `<profile>@<folder>`, apart from your usual ones |
 | `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
 | `MCP_UPDATE_CHECK` | Optional | `true` | `false` turns off the daily check for a newer release and its notice. See [Update notices](#update-notices) |
-| `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. See [Debug mode](#debug-mode-remediation-notes) |
+| `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. You can also turn it on or off by asking the AI, until the server restarts. See [Debug mode](#debug-mode-remediation-notes) |
 | `MCP_REMEDIATION_DIR` | Optional | — | Debug mode only: folder to write remediation files to (overrides project detection) |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
 | `UPLOAD_TIMEOUT_MS` | Optional | `120000` | File upload timeout in milliseconds |
@@ -569,7 +569,7 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ### Toolsets (reducing context size)
 
-All 212 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
+All 213 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
 
 Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
@@ -590,9 +590,11 @@ Always loaded in full: environment and connection tools (`get_server_info`, `swi
 
 Set `MCP_DEBUG_MODE=true` while evaluating or developing the MCP to collect feedback for improving it. With the default `false`, nothing changes.
 
+**Turning it on or off for one run.** Ask the AI, for example "turn on debug mode" or "turn off debug mode". It calls `set_debug_mode`, and the change lasts until the MCP server restarts (restarting the AI client restarts it). After that, `MCP_DEBUG_MODE` in your client configuration applies again. Your AI client must refresh its tool list when the server says it changed. If `record_remediation_note` doesn't appear after you turn debug mode on, set `MCP_DEBUG_MODE=true` in the configuration and restart the client instead.
+
 When it is on:
 
-- **The AI records notes.** The server asks the AI client to call `record_remediation_note` (a tool that exists only in debug mode) whenever it:
+- **The AI records notes.** The server asks the AI client to call `record_remediation_note` (a tool that is listed only while debug mode is on) whenever it:
   - hits an unexpected error;
   - wastes calls because guidance was unclear;
   - is corrected or stopped by you;
@@ -686,7 +688,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 
 ### All capability areas
 
-212 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+213 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -709,7 +711,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 | [Agents](docs/tools.md#agents) | 2 | Host machine status *(Cloud Admin)* |
 | [Regions](docs/tools.md#regions) | 2 | Region status and infrastructure topology *(Cloud Admin)* |
 | [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(Cloud Admin)* |
-| [Server, Environments & Toolsets](docs/tools.md#server-environments--toolsets) | 6 | Server info, connectivity and workflow readiness checks, named connection profiles and runtime switching, toolset loading (plus `record_remediation_note` in debug mode) |
+| [Server, Environments & Toolsets](docs/tools.md#server-environments--toolsets) | 7 | Server info, connectivity and workflow readiness checks, named connection profiles and runtime switching, toolset loading, debug mode on/off (plus `record_remediation_note` while debug mode is on) |
 | [Workflows](docs/tools.md#workflows) | 6 | POC and project lifecycle orchestration |
 | [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | Ready-to-run Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python, Robot Framework) that report the real outcome, Test Orchestrator agent install; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud Android or iOS device as if it were attached locally (ADB / usbmuxd) |
@@ -1162,7 +1164,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 212; 213 with MCP_DEBUG_MODE=true) and active profile
+1. get_server_info           — confirm tool count (expect 213; 214 while debug mode is on) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -1172,7 +1174,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 212,
+  "registeredToolCount": 213,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }

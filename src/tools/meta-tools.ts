@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getMyAccountInfo } from '../api/users.js';
 import { resetClient, getActiveProfileName, getActiveUrl } from '../api/client.js';
 import { getToolCatalog } from '../utils/tool-catalog.js';
-import { debugStatusLine } from '../utils/remediation.js';
+import { debugStatusLine, isDebugMode } from '../utils/remediation.js';
 import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
 import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
@@ -125,8 +125,8 @@ export const REGISTERED_TOOLS = [
   // Test runs — Espresso / XCUITest / Maestro executed by the platform
   'execute_test_run', 'get_test_run_status', 'cancel_test_run', 'get_test_run_command', 'generate_maestro_flow',
   'execute_playwright_run',
-  // Debug mode only (MCP_DEBUG_MODE=true) — not registered otherwise, so not in TOOL_COUNT
-  'record_remediation_note',
+  // Debug mode: set_debug_mode is always listed; record_remediation_note only while debug mode is on (not in TOOL_COUNT)
+  'set_debug_mode', 'record_remediation_note',
 ] as const;
 
 export const DEBUG_ONLY_TOOLS: readonly string[] = ['record_remediation_note'];
@@ -162,7 +162,7 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
   ['workflows', 'Workflows', 'POC and project setup / teardown (Cloud Admin)'],
   ['meta', 'Server', 'server info, connectivity, workflow readiness, environments'],
   ['toolsets', 'Toolsets', 'enable_toolset'],
-  ['remediation', 'Debug Mode', 'record_remediation_note'],
+  ['remediation', 'Debug Mode', 'set_debug_mode, record_remediation_note while on'],
 ];
 
 /**
@@ -171,12 +171,19 @@ const DOMAINS: Array<[module: string, label: string, note: string]> = [
  * Falls back to TOOL_COUNT before the catalog is set (unit tests that register modules directly).
  */
 export function registeredToolCount(): number {
-  const catalog = getToolCatalog();
+  const catalog = listedCatalog();
   return catalog.size > 0 ? [...catalog.values()].reduce((n, tools) => n + tools.length, 0) : TOOL_COUNT;
 }
 
-export function capabilityLines(): string[] {
+/** The catalog as the client sees it: debug-only tools are registered always but listed only while debug mode is on. */
+function listedCatalog(): ReadonlyMap<string, readonly string[]> {
   const catalog = getToolCatalog();
+  if (isDebugMode()) return catalog;
+  return new Map([...catalog].map(([m, tools]) => [m, tools.filter((t) => !DEBUG_ONLY_TOOLS.includes(t))]));
+}
+
+export function capabilityLines(): string[] {
+  const catalog = listedCatalog();
   const known = new Set(DOMAINS.map(([m]) => m));
   const line = (label: string, note: string, n: number) => `  ${label.padEnd(22)} — ${note} (${n} tool${n === 1 ? '' : 's'})`;
   const lines = DOMAINS.filter(([m]) => (catalog.get(m)?.length ?? 0) > 0).map(([m, label, note]) => line(label, note, catalog.get(m)!.length));

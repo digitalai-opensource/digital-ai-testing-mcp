@@ -1,13 +1,51 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { REMEDIATION_CATEGORIES, isDebugMode, saveNote, canWriteLocally, resolveRemediationLocation } from '../utils/remediation.js';
+import {
+  REMEDIATION_CATEGORIES, isDebugMode, saveNote, canWriteLocally, resolveRemediationLocation, setDebugMode, configuredDebugMode,
+  debugInstructions,
+} from '../utils/remediation.js';
+
+const onOff = (on: boolean) => (on ? 'on' : 'off');
+
+/** set_debug_mode's answer — the server instructions are fixed at connect, so this text has to carry the new rules. */
+export function debugModeChangeText(on: boolean, changed: boolean): string {
+  const config = `MCP_DEBUG_MODE in the client configuration is ${onOff(configuredDebugMode())}; it applies again when the MCP server restarts.`;
+  if (!changed) return `Debug mode is already ${onOff(on).toUpperCase()}. Nothing changed. ${config}`;
+  if (on) {
+    return (
+      `Debug mode is now ON for this run of the MCP server. ${config}\n` +
+      'record_remediation_note is back in the tool list (if your client has not refreshed its list, the user can set ' +
+      'MCP_DEBUG_MODE=true in the client configuration and restart instead).\n\n' +
+      debugInstructions('set_debug_mode').trimEnd()
+    );
+  }
+  return (
+    `Debug mode is now OFF for this run of the MCP server. ${config}\n` +
+    'Stop recording remediation notes and ignore any DEBUG MODE block in the server instructions: no event log is ' +
+    'kept, no reminders are added, and record_remediation_note is no longer listed. Notes already saved stay where they are.'
+  );
+}
 
 /**
- * Debug mode only (MCP_DEBUG_MODE=true): registered only then, so it costs nothing in normal use.
- * See src/utils/remediation.ts for the design (event log + notes + nudges).
+ * record_remediation_note is registered always but listed only while debug mode is on — index.ts disables its handle
+ * when off, so it costs nothing in normal use. set_debug_mode is always listed (user request 2026-11-22: turn debug mode
+ * on or off with a prompt until the next restart). See src/utils/remediation.ts for the design (event log + notes + nudges).
  */
 export function registerRemediationTools(server: McpServer): void {
-  if (!isDebugMode()) return;
+  server.tool(
+    'set_debug_mode',
+    'Turn debug mode on or off for this run of the MCP server — ONLY when the user asks for it (e.g. "turn on debug ' +
+    'mode", "stop recording remediation notes"), never on your own. Debug mode records remediation notes and an event ' +
+    'log that help improve this MCP. The change lasts until the MCP server restarts; then MCP_DEBUG_MODE in the ' +
+    'client configuration applies again. The response carries the rules to follow from then on.',
+    {
+      enabled: z.boolean().describe('true = turn debug mode on, false = turn it off.'),
+    },
+    async ({ enabled }) => {
+      const { changed } = setDebugMode(enabled);
+      return { content: [{ type: 'text', text: debugModeChangeText(enabled, changed) }] };
+    }
+  );
 
   server.tool(
     'record_remediation_note',
@@ -30,6 +68,10 @@ export function registerRemediationTools(server: McpServer): void {
       suggestion: z.string().optional().describe('The MCP change that would have avoided this (clearer description, different default, new tool, better error).'),
     },
     async (args) => {
+      // Listed only while debug mode is on; a client that did not refresh its tool list can still call it.
+      if (!isDebugMode()) {
+        return { content: [{ type: 'text', text: "Debug mode is off, so the note was not recorded. Continue with the user's task." }] };
+      }
       try {
         if (canWriteLocally()) await resolveRemediationLocation();
         const { written, markdown, fileName } = saveNote(args);

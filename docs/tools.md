@@ -1,6 +1,6 @@
 # Tool Reference
 
-Complete per-tool reference for the Digital.ai Testing MCP Server — all 212 tools (plus `record_remediation_note` in debug mode), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
+Complete per-tool reference for the Digital.ai Testing MCP Server — all 213 tools (plus `record_remediation_note` while debug mode is on), 2 resources, and 7 prompts, organized by capability domain. For setup, configuration, and usage guides, see the [main README](../README.md).
 
 **Reading the tables:**
 - **Admin Required?** — *Cloud Admin* requires a Cloud Admin credential (access level is detected from the API — either key format works); *Cloud Admin / Project Admin* works for those two roles; *Any* works for all three roles (Cloud Admin, Project Admin, Project User). See [Access Keys](../README.md#access-keys).
@@ -200,7 +200,8 @@ Always loaded, even when `MCP_TOOLSETS` limits the other toolsets.
 | `list_environments` | List all named connection profiles — name, URL, and the access level detected from the API (role). Marks the active profile. Credentials are never exposed. | Any |
 | `switch_environment` | Switch to a named profile instantly. Verifies the new connection and reports the connected user. All subsequent tool calls use the new credentials. Aliases: `"cloud admin"` / `"admin"` → the Cloud Admin profile, `"project"` → the project-scoped profile, `"project admin"` / `"project user"` → only the profiles detected at that role — but an exact profile name always wins (a profile named `admin` is chosen by `"admin"` even if it is not Cloud Admin; the response says so). | Any |
 | `enable_toolset` | List toolsets and load them in full when the server runs with `MCP_TOOLSETS` (tools outside the loaded toolsets also load themselves on first call). The response lists a typed signature for every tool just loaded — `execute_test_run(executionType*: "ESPRESSO"\|"XCUITEST"\|"MAESTRO", deviceQueries*: string[], …)`, `*` = required — so a client that does not refresh tool definitions still has the exact parameter names and types; `confirm*` guard flags are marked as needing the user's explicit agreement | Any |
-| `record_remediation_note` | **(debug mode only — `MCP_DEBUG_MODE=true`)** Records an error, unclear guidance, user correction, giving up, a better path or an improvement idea as a structured note. Written to `remediation/<session>.md` in the client project (npm install) or returned for the AI to save there (Docker); redacted | Any |
+| `set_debug_mode` | Turns debug mode on or off for this run of the server, when the user asks for it. Lasts until the server restarts, then `MCP_DEBUG_MODE` applies again. Shows or hides `record_remediation_note` and tells the client its tool list changed. Turning it on returns the debug-mode instructions, because the server instructions can't change after connect | Any |
+| `record_remediation_note` | **(listed only while debug mode is on — `MCP_DEBUG_MODE=true` or `set_debug_mode`)** Records an error, unclear guidance, user correction, giving up, a better path or an improvement idea as a structured note. Written to `remediation/<session>.md` in the client project (npm install) or returned for the AI to save there (Docker); redacted | Any |
 
 ### Health & Diagnostics
 
