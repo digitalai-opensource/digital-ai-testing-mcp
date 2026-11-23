@@ -2927,8 +2927,11 @@ export function requireSession(handle: string): InspectionSession {
     );
   // Track idle gaps — a session ends after its idle limit (newCommandTimeout) without a command,
   // so the gap preceding a failure is the key diagnostic (v36).
+  // A tool and the API function it calls both look the session up; the second lookup, milliseconds later, must not
+  // replace the real gap with ~0 (a 320 s idle desktop session lost its idle explanation that way, live 2026-11-23).
   const now = Date.now();
-  s.lastIdleMs = now - s.lastUsedAt;
+  const gap = now - s.lastUsedAt;
+  if (gap > 1000 || s.lastIdleMs == null) s.lastIdleMs = gap;
   s.lastUsedAt = now;
   return s;
 }

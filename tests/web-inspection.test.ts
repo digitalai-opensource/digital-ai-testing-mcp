@@ -6,7 +6,7 @@
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
 import assert from 'node:assert/strict';
-import { registerSession, captureScreenshot, deadSessionAdvice } from '../src/api/webdriver.js';
+import { registerSession, requireSession, captureScreenshot, deadSessionAdvice } from '../src/api/webdriver.js';
 import { certificateWarning, browserVersionFromUserAgent } from '../src/api/browser-inspection.js';
 import { normalizeBidiMessage, injectBrowserEventsForTests, pushBrowserEventForTests, type BrowserEvent } from '../src/api/browser-events.js';
 import { setAccessLevelOverrideForTests } from '../src/utils/access-level.js';
@@ -354,6 +354,12 @@ describe('mobile browser sessions (Chrome on Android / Safari on iOS — verifie
     registerSession({ ...webSession('APP00042'), platform: 'android', idleTimeoutSeconds: 300, lastIdleMs: 310_000 });
     assert.match(String(deadSessionAdvice(httpErr(404, { error: 'invalid session id', message: 'gone' }), 'APP00042')),
       /\(start_inspection_session idleTimeoutSeconds raises it\)\. .*call stop_inspection_session/);
+
+    // A second lookup right after the first (tool, then API function) keeps the real idle gap.
+    registerSession({ ...webSession('WEB00043'), lastUsedAt: Date.now() - 320_000 });
+    requireSession('WEB00043');
+    requireSession('WEB00043');
+    assert.match(String(deadSessionAdvice(httpErr(404, { error: 'unknown error', message: 'Session x could not be found' }), 'WEB00043')), /idle for 320 s/);
 
     assert.equal(deadSessionAdvice(httpErr(404, { error: 'unknown command', message: 'no route' }), 'WEB00040'), null, 'a missing route is not a dead session');
     assert.equal(deadSessionAdvice(httpErr(400, { error: 'invalid argument', message: 'bad selector' }), 'WEB00040'), null);
