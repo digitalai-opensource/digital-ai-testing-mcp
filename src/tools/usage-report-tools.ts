@@ -36,7 +36,7 @@ const REPORT_TYPE_DESCRIPTION =
   'cell can hold several comma-separated tags). Use for reservation-hours per user or per user tag ' +
   '(summarize_usage_report groupBy "User Tag" — a user with several tags counts in each). A non-zero userId narrows it ' +
   'to one user.\n' +
-  '- "Devices Usage": columns Device ID, Device name, OS, OS Version, Project, Total duration (hours). One row per ' +
+  '- "Devices Usage": columns Device ID, Device name, OS, OS Version, Project, Total duration (in hours). One row per ' +
   'device. Use for per-device utilization / idle-device audits, NOT per-user or per-session questions.\n' +
   '- "Browser Usage": columns session start/end timestamp+time, duration, session host, browser platform/name/version, ' +
   'username, email, project, execution type. One row per Selenium/browser session. Use for browser-version ' +

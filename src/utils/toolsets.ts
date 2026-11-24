@@ -20,6 +20,7 @@
 import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { annotationsFor } from './tool-annotations.js';
+import { toolUiMeta } from './report-view.js';
 
 /** The tool's zod shape as a STRICT object: unknown keys fail validation (and the JSON schema says additionalProperties: false). */
 function strictShape(shape: Record<string, unknown>) {
@@ -66,7 +67,7 @@ export const TOOLSETS: Record<string, { modules: string[]; description: string }
 };
 
 /** Always loaded in full: connection/environment basics, toolset control, and the test-delivery backstop. */
-export const CORE_MODULES = ['meta', 'toolsets'];
+export const CORE_MODULES = ['meta', 'toolsets', 'report'];
 export const CORE_TOOLS = ['validate_test_script'];
 
 export function toolsetOfModule(module: string): string | null {
@@ -230,7 +231,9 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
       // Strict input: an unknown parameter is an error, never silently dropped. With the SDK's default (strip)
       // behaviour `list_applications({ search: "ExperiBank" })` returned the whole catalogue and the agent spent turns
       // wondering whether the filter had worked (fidelity eval 2026-10-14).
-      const handle = server.registerTool(tool.name, { description: tool.description, inputSchema: strictShape(tool.shape), annotations: annotationsFor(tool.name) }, callback as never);
+      // _meta: the report tools name the inline report view (MCP Apps); undefined for every other tool.
+      const uiMeta = toolUiMeta(tool.name);
+      const handle = server.registerTool(tool.name, { description: tool.description, inputSchema: strictShape(tool.shape), annotations: annotationsFor(tool.name), ...(uiMeta ? { _meta: uiMeta } : {}) }, callback as never);
       handles.set(tool.name, { tool, handle, toolset });
       continue;
     }

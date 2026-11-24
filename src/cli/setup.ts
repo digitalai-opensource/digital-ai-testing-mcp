@@ -22,6 +22,7 @@ import {
   keychainAccount,
   PROFILE_NAME_RE,
   readStore,
+  readReportDirSetting,
   readStoreFileRaw,
   restoreStoreBackup,
   saveKeyToKeychain,
@@ -30,13 +31,14 @@ import {
   writeStore,
   type RawStoreFile,
 } from '../utils/credential-store.js';
-import { existsSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { getServerVersion } from '../utils/version.js';
 import { getDeploymentMode, runningInContainer } from '../utils/deployment-mode.js';
 import { installKind } from '../utils/update-check.js';
 import { redact } from '../utils/remediation.js';
 import { credentialEnvPresence } from '../utils/profile-loader.js';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import * as ui from './ui.js';
 import {
   buildLaunchEntry,
@@ -48,6 +50,7 @@ import {
   mergedJsonEntry,
   clientStatus,
   defaultClientContext,
+  entryEnv,
   entryProfiles,
   type EntryProfile,
   knownClients,
@@ -92,6 +95,7 @@ Commands:
   test [name]         Check one profile, or all, against the API
   doctor              A report for support: install, profiles, keychain and AI clients (never a key)
   path                Show where the profiles file is
+  reports [folder|off]  Show or set the folder finished reports are saved to (fast, no rewriting by the AI)
   repair              Restore the profiles file from its backup
   reset               Delete the profiles file, its backups and the keys it keeps in the OS keychain
   clients             Show which AI clients are set up to start this server
@@ -115,6 +119,11 @@ Options for every command:
 The access key is in the Digital.ai Testing portal: click your name (top right) → Access Key.
 Environment variables in an AI client's configuration (DIGITAL_AI_BASE_URL, DIGITAL_AI_ACCESS_KEY, DAI_PROFILE_*)
 always take precedence over these profiles.`;
+
+// Measured 2026-11-23 in Claude Desktop: without a folder the AI writes a 20 KB report out itself (~1 min, ~6k output
+// tokens); with one the server saves it in seconds. Desktop's agent can only link a file in a folder added to the task.
+const REPORT_DIR_WHY = 'Reports (create_report, render_report) are saved there in seconds instead of the AI writing each one out (about a minute and ~6,000 tokens per report).';
+const REPORT_DIR_DESKTOP = 'Claude Desktop: also add this folder to a conversation ("Add folder") to get a link to each report in the chat.';
 
 const RESTART = 'Restart your AI client, or reconnect the digital-ai-testing MCP server, to use the change.';
 const PASTE_HINT = 'Ctrl+V does not paste in this window: right-click to paste, then press Enter.';
@@ -429,6 +438,7 @@ async function cmdAdd(io: SetupIO, nameArg: string | undefined, flags: Flags) {
     );
   }
   io.out(ui.gray('  If an AI client\'s configuration sets DIGITAL_AI_BASE_URL / DIGITAL_AI_ACCESS_KEY, those still win — remove them to use these profiles.'));
+  if (guided && !flags.yes) await askReportDir(io);
   if (clientsToOffer) {
     io.out('');
     io.out(ui.step(3, steps, 'Add the server to your AI clients'));
@@ -453,6 +463,112 @@ function restartNote(io: SetupIO) {
   else {
     io.out('No AI client runs the server yet. Add it with:');
     io.out(`  ${ui.command(`${setupCommand()} clients add`)}`);
+  }
+}
+
+/** "~/x" → the home folder; a relative path is refused (the server's start folder is not the user's). */
+function reportDirInput(typed: string): string | null {
+  const t = typed.trim().replace(/^["']|["']$/g, '');
+  if (!t) return null;
+  const expanded = t === '~' || /^~[\\/]/.test(t) ? join(homedir(), t.slice(1)) : t;
+  return isAbsolute(expanded) ? resolve(expanded) : null;
+}
+
+/** Creates the folder, checks it can be written, saves it as reportDir. Throws SetupError with the reason. */
+function saveReportDir(folder: string): string {
+  try {
+    mkdirSync(folder, { recursive: true });
+    accessSync(folder, fsConstants.W_OK);
+  } catch (e) {
+    throw new SetupError(`The folder ${folder} cannot be used: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}. Nothing was changed.`);
+  }
+  const data = loadForEdit();
+  data.reportDir = folder;
+  writeStore(data);
+  return folder;
+}
+
+function reportDirSavedLines(io: SetupIO, folder: string) {
+  io.out(`${ui.green('Saved')} the report folder: ${folder}`);
+  io.out(ui.gray(`  ${REPORT_DIR_WHY}`));
+  io.out(ui.gray(`  ${REPORT_DIR_DESKTOP}`));
+  if (process.env.MCP_REPORT_DIR?.trim()) io.out(ui.yellow(`  MCP_REPORT_DIR is set here (${process.env.MCP_REPORT_DIR.trim()}); where a client sets it, it wins over this folder.`));
+}
+
+/** Step 2 of the guided add: offer a report folder when none is set (MCP_REPORT_DIR in this terminal is suggested). */
+async function askReportDir(io: SetupIO) {
+  const current = readReportDirSetting();
+  if (current.dir || current.error) return;
+  const suggested = process.env.MCP_REPORT_DIR?.trim() ? reportDirInput(process.env.MCP_REPORT_DIR) : null;
+  io.out('');
+  io.out(`Optional: a folder for reports. ${REPORT_DIR_WHY}`);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const typed = await io.ask(suggested ? `Report folder [${suggested}] (type "skip" to skip): ` : 'Report folder (full path; Enter to skip): ');
+    if (/^skip$/i.test(typed.trim()) || (!typed.trim() && !suggested)) {
+      io.out(ui.gray(`  Skipped. Set one later with: ${setupCommand()} reports <folder>`));
+      return;
+    }
+    const folder = typed.trim() ? reportDirInput(typed) : suggested;
+    if (!folder) {
+      io.err(`"${typed}" is not a full folder path (for example ${process.platform === 'win32' ? 'C:\\Users\\you\\Reports' : '~/Reports'}).`);
+      continue;
+    }
+    try {
+      reportDirSavedLines(io, saveReportDir(folder));
+    } catch (e) {
+      io.err((e as Error).message);
+      continue;
+    }
+    return;
+  }
+  io.out(ui.gray(`  Skipped. Set one later with: ${setupCommand()} reports <folder>`));
+}
+
+function cmdReports(io: SetupIO, arg: string | undefined) {
+  storeOffNote(io);
+  if (!arg) {
+    const current = readReportDirSetting();
+    const env = process.env.MCP_REPORT_DIR?.trim();
+    if (current.error) io.out(`${ui.red('The report folder setting cannot be used:')} ${current.error}.`);
+    else if (current.dir) io.out(`Report folder: ${current.dir}`);
+    else io.out(`No report folder is set. Set one with: ${ui.command(`${setupCommand()} reports <folder>`)}`);
+    io.out(ui.gray(`  ${REPORT_DIR_WHY}`));
+    io.out(ui.gray(`  ${REPORT_DIR_DESKTOP}`));
+    if (env) io.out(ui.yellow(`  MCP_REPORT_DIR is set in this terminal (${env}); where a client's configuration sets it, it wins.`));
+    return;
+  }
+  if (/^(off|none|clear)$/i.test(arg)) {
+    const data = loadForEdit();
+    if (data.reportDir === undefined) {
+      io.out('No report folder was set.');
+      return;
+    }
+    delete data.reportDir;
+    writeStore(data);
+    io.out(`${ui.green('Removed')} the report folder. Reports go to a temporary folder, and the AI writes them out where it cannot copy them.`);
+    return;
+  }
+  const folder = reportDirInput(arg);
+  if (!folder) throw new SetupError(`"${arg}" is not a full folder path. Nothing was changed.`, 2);
+  reportDirSavedLines(io, saveReportDir(folder));
+}
+
+/**
+ * A client entry about to be replaced sets MCP_REPORT_DIR: keep it as the report folder for every client (user request
+ * 2026-11-23: "copy it if it's already been set"). Only when none is set; never fails the client step.
+ */
+function adoptEntryReportDir(io: SetupIO, t: ClientTarget) {
+  const v = entryEnv(t).MCP_REPORT_DIR?.trim();
+  if (!v || !isAbsolute(v)) return;
+  const current = readReportDirSetting();
+  if (current.dir || current.error) return;
+  try {
+    const data = loadForEdit();
+    data.reportDir = v;
+    writeStore(data);
+    io.out(`${t.label}'s entry sets MCP_REPORT_DIR=${v}: saved it as the report folder for every AI client (${setupCommand()} reports to change it).`);
+  } catch {
+    // An unreadable profiles file: the profile import step already said how to fix it.
   }
 }
 
@@ -513,7 +629,8 @@ async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags)
   if (wasDefault) delete data.default;
   writeStore(data);
   io.out(`Removed profile "${name}".`);
-  if (entry.keyStore === 'os') {
+  // The raw file keeps broken entries (null, a string…) — removing one is how a user gets rid of it.
+  if ((entry as { keyStore?: unknown } | null | undefined)?.keyStore === 'os') {
     const del = deleteKeyFromKeychain(name);
     if (!del.ok) io.err(`Its key could not be removed from the OS keychain: ${del.error}. Remove "${KEYCHAIN_SERVICE}" / "${keychainAccount(name)}" there by hand.`);
     else if (del.existed) io.out('Its key was removed from the OS keychain.');
@@ -579,6 +696,9 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
     say(`  PROBLEM ${s.name}: ${s.reason}`);
     problems++;
   }
+  const reportDir = readReportDirSetting();
+  say(`  Report folder: ${reportDir.dir ?? (reportDir.error ? `PROBLEM — ${reportDir.error}` : `not set (reports are written out by the AI where it cannot copy them; ${setupCommand()} reports <folder>)`)}`);
+  if (reportDir.error) problems++;
   if (store.enabled && store.exists && !store.error && Object.keys(store.profiles).length > 1 && !store.defaultProfile) {
     say(`  PROBLEM: several profiles and no default — fix: ${setupCommand()} default <name>`);
     problems++;
@@ -944,6 +1064,7 @@ async function addToClients(io: SetupIO, ctx: ClientContext, targets: ClientTarg
       }
     }
     if (s.hasEntry) {
+      adoptEntryReportDir(io, t);
       const lost = s.entryHasKeys ? await importEntryProfiles(io, t, yes) : [];
       const saved = s.entryHasKeys && entryProfiles(t).some((p) => p.url && p.key);
       const question = lost.length
@@ -1011,6 +1132,7 @@ async function addToClaudeCode(io: SetupIO, ctx: ClientContext, yes: boolean, ex
     io.out(`Claude Code: ${ui.green('already set up')} (all your projects).`);
     return { changed: 0, attention: 0 };
   }
+  if (s.hasEntry) adoptEntryReportDir(io, t);
   const lost = s.hasEntry && s.entryHasKeys ? await importEntryProfiles(io, t, yes) : [];
   const saved = s.entryHasKeys && entryProfiles(t).some((p) => p.url && p.key);
   const where = `"${SERVER_ENTRY_NAME}" entry for all your projects`;
@@ -1231,6 +1353,9 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
     if (extra.length > 0) throw new SetupError(`Unexpected argument: ${extra[0]}\n\n${USAGE}`, 2);
 
     switch (command) {
+      case 'reports':
+        cmdReports(io, name);
+        break;
       case undefined:
         if (!io.interactive) {
           io.out(USAGE);

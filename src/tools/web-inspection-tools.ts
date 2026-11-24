@@ -37,7 +37,7 @@ function browserSessionSummary(s: ReturnType<typeof requireSession>): string {
 
 /** What the agent must know about the idle limit before it pauses for the user (measured live 2026-11-23). */
 function browserIdleNote(s: ReturnType<typeof requireSession>): string {
-  const minutes = Math.round((s.idleTimeoutSeconds ?? DESKTOP_BROWSER_IDLE_SECONDS) / 60);
+  const minutes = Math.floor((s.idleTimeoutSeconds ?? DESKTOP_BROWSER_IDLE_SECONDS) / 60);
   const limit = s.mobileOs
     ? `This session ends after ${minutes} minute(s) without a command (idleTimeoutSeconds; the phone stays held meanwhile).`
     : `This session ends after ${minutes} minutes without a command (a platform limit — it cannot be raised).`;

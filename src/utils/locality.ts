@@ -120,8 +120,8 @@ export function serverFsProjectDirParam(): string {
   return 'Ignored under Docker/remote — the server cannot reach your filesystem; run the returned command from the project directory instead.';
 }
 
-/** One-line remedy for "tools are missing / build looks stale" diagnostics. */
 /**
+ * One-line remedy for "tools are missing / build looks stale" diagnostics.
  * How to get a current build, for THIS install: the same steps the update notice gives (updateSteps by installKind —
  * npx, npm, a source checkout, Docker). It used to say `npm install -g` for every local install, which is wrong for
  * npx (a restart is enough) and for a source checkout (git pull + build).

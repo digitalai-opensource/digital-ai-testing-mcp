@@ -342,6 +342,23 @@ describe('Codex (TOML)', () => {
     expect(clientStatus(target('codex'), entry()).upToDate).toBe(true);
   });
 
+  it('a nested array inside a multi-line value of our table is not read as a table header', () => {
+    mkdirSync(join(home, '.codex'));
+    writeFileSync(
+      target('codex').file,
+      '[mcp_servers.digital-ai-testing]\ncommand = "npx"\nenabled_tools = [\n  ["a", "b"],\n  [ "c" ],\n]\nstartup_timeout_sec = 30\n\n[other]\nx = 1\n'
+    );
+    expect(writeClientEntry(target('codex'), entry()).ok).toBe(true);
+    const text = readFileSync(target('codex').file, 'utf8');
+    expect(text).toContain('enabled_tools = [\n  ["a", "b"],\n  [ "c" ],\n]');
+    expect(text.match(/startup_timeout_sec/g)).toHaveLength(1);
+    expect(text.match(/\[mcp_servers\.digital-ai-testing\]/g)).toHaveLength(1);
+    // Nothing of our old table is left below the new block.
+    expect(text.indexOf('startup_timeout_sec')).toBeLessThan(text.indexOf('[other]'));
+    expect(text.trimEnd().endsWith('[other]\nx = 1')).toBe(true);
+    expect(clientStatus(target('codex'), entry()).upToDate).toBe(true);
+  });
+
   it('entryProfiles reads the profiles of our env table (not another table\'s)', () => {
     mkdirSync(join(home, '.codex'));
     writeFileSync(

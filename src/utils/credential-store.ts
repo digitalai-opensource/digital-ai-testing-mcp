@@ -28,7 +28,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, chmodSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { join, posix, win32 } from 'node:path';
+import { isAbsolute, join, posix, win32 } from 'node:path';
 
 // ─── OS keychain ──────────────────────────────────────────────────────────────
 
@@ -396,6 +396,20 @@ export function readStoreFileRaw(env: NodeJS.ProcessEnv = process.env): { exists
     return { exists: true, error: 'the file\'s "profiles" is not an object' };
   }
   return { exists: true, data: obj };
+}
+
+/**
+ * The folder finished reports are saved to, set with `setup reports` (top-level "reportDir" in the profiles file; older
+ * servers ignore the field). Read without looking up any key. MCP_REPORT_DIR in a client's configuration wins over it.
+ */
+export function readReportDirSetting(env: NodeJS.ProcessEnv = process.env): { dir?: string; error?: string } {
+  if (!isStoreEnabled(env)) return {};
+  const raw = readStoreFileRaw(env);
+  if (!raw.data) return raw.error ? { error: raw.error } : {};
+  const v = raw.data.reportDir;
+  if (v === undefined) return {};
+  if (typeof v !== 'string' || !v.trim() || !isAbsolute(v.trim())) return { error: '"reportDir" must be the full path of a folder' };
+  return { dir: v.trim() };
 }
 
 /** Finds a profile entry by name, ignoring case (names are case-insensitive). */
