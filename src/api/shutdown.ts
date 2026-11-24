@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import { listActiveSessions, quitInspectionSession } from './webdriver.js';
 import { getActiveAccessKey, getActiveUrl } from './client.js';
 import type { InspectionSession } from '../types/digital-ai.js';
+import { cancelAllJobs } from '../utils/report-jobs.js';
 
 /**
  * Hands the open sessions to a detached worker (shutdown-worker.ts) that outlives this process. Returns false when the
@@ -117,6 +118,7 @@ export function installShutdownHandlers(
       return;
     }
     shuttingDown = (async () => {
+      cancelAllJobs(); // background reports live in this process; stop them cleanly instead of mid-write
       const sessions = listActiveSessions();
       const open = sessions.length;
       if (open === 0) {

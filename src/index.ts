@@ -33,6 +33,8 @@ import { registerPerformanceTools } from './tools/performance-tools.js';
 import { registerUsageReportTools } from './tools/usage-report-tools.js';
 import { registerTestRunTools } from './tools/test-run-tools.js';
 import { registerRemediationTools } from './tools/remediation-tools.js';
+import { registerReportTools, setReportRootsProvider } from './tools/report-tools.js';
+import { declaresUi, setUiCapabilityProvider } from './utils/report-view.js';
 import { isDebugMode, startRemediationSession, getRemediationSession, onDebugModeChange, instrumentHandler, debugInstructions, remediationDir, canWriteLocally } from './utils/remediation.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { makeToolsetTools } from './tools/toolset-tools.js';
@@ -42,6 +44,7 @@ import { computeWorkflowReadiness } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
 import { isUpdateCheckEnabled, updateSteps, withUpdateNotice } from './utils/update-check.js';
+import { withReportNotice } from './utils/report-jobs.js';
 import { runUpdateCheck } from './api/update-check.js';
 import { installShutdownHandlers } from './api/shutdown.js';
 import { describeStartingProfile, listProfiles, startupCredentialProblem } from './utils/profile-loader.js';
@@ -90,6 +93,8 @@ if (setupText) {
 // MCP's only reach into the consuming agent ahead of its first action, so it leads with
 // the one policy that keeps being bypassed: never author test code from guessed selectors.
 const SERVER_INSTRUCTIONS = `Digital.ai Testing — device farm, app lifecycle, reporting, and test authoring.
+
+REPORTS: for any request for a report — test summary / test execution report, failure analysis, device health, usage summary — call create_report: one call returns the finished branded HTML file, already saved or ready to hand over. Do not assemble it from get_daily_execution_trend, summarize_test_failures or list_test_reports. If your client loads tools on demand, load create_report by name. Other data: lay it out with render_report.
 
 TEST-AUTHORING POLICY — read this BEFORE you plan or create any test for an app:
 1. Decide the mode FIRST, before calling any tool or writing any file:
@@ -154,6 +159,7 @@ const modules: Array<[string, RegisterFn]> = [
   ['usage-reports', registerUsageReportTools],
   ['test-runs', registerTestRunTools],
   ['remediation', registerRemediationTools], // set_debug_mode, record_remediation_note (records only while debug mode is on)
+  ['report', registerReportTools], // render_report — core: reports come from every toolset
   ['meta', registerMetaTools],
   ['toolsets', makeToolsetTools(() => toolsetController)],
 ];
@@ -164,18 +170,24 @@ if (toolsetSelection.unknown.length > 0) {
 // Debug mode (MCP_DEBUG_MODE=true, or set_debug_mode for this run): every tool and placeholder is instrumented for
 // the remediation event log. The wrapper is always installed (debug mode can be turned on mid-run); off, it calls the
 // tool directly — instrumentHandler checks the mode on every call.
+// The client's workspace folders. Only clients that declare the roots capability answer (Claude Code does).
+async function clientRoots(): Promise<string[]> {
+  if (!server.server.getClientCapabilities()?.roots) return [];
+  const { roots } = await server.server.listRoots(undefined, { timeout: 3000 });
+  return roots.map((r) => r.uri);
+}
+// Finished reports go to a folder the client shares with the conversation when there is one (see report-tools.ts).
+setReportRootsProvider(clientRoots);
+// Whether the client renders MCP Apps views: a finished report is then shown inline (utils/report-view.ts).
+setUiCapabilityProvider(() => declaresUi(server.server.getClientCapabilities()));
 function startDebugSession(): void {
   if (getRemediationSession()) return; // turned off and on again: the same session continues
   const s = startRemediationSession({
     mcpVersion: version,
     toolsets: process.env.MCP_TOOLSETS || 'all',
     client: () => server.server.getClientVersion(),
-    // The client's workspace folders — where the remediation/ folder goes. Only clients that declare roots support answer.
-    roots: async () => {
-      if (!server.server.getClientCapabilities()?.roots) return [];
-      const { roots } = await server.server.listRoots(undefined, { timeout: 3000 });
-      return roots.map((r) => r.uri);
-    },
+    // The client's workspace folders — where the remediation/ folder goes.
+    roots: clientRoots,
   });
   console.error(
     `[${name}] Debug mode ON — remediation session ${s.id}: ` +
@@ -190,7 +202,7 @@ setToolCatalog(captured.tools); // get_server_info reports real per-area counts 
 // Update check (on unless MCP_UPDATE_CHECK=false): the first successful tool result after a newer release was found
 // carries a notice, at most once a day. Placeholders are skipped (their reply is guidance for the next call), and the
 // notice goes OUTSIDE the debug instrumentation so the event log measures the tool's own response.
-// With both switches off no wrapper is passed, so registration is byte-for-byte what it was.
+// With the update check off, the only wrapper is the background-report notice, which returns a result unchanged while no job exists.
 const updateCheck = isUpdateCheckEnabled();
 // Setup mode: every tool (and placeholder) keeps its name and schema but answers with the setup instructions.
 const setupModeHandler = setupText ? () => setupRequiredResult(setupText) : undefined;
@@ -202,7 +214,10 @@ const controller = registerWithToolsets(
     ? () => setupModeHandler
     : (tool, callback, placeholder) => {
         const handler = instrumentHandler(tool, callback, { placeholder });
-        return updateCheck && !placeholder ? withUpdateNotice(handler) : handler;
+        if (placeholder) return handler;
+        // A finished background report is announced first in the next result of ANY tool (the server cannot start a turn).
+        const withJobs = withReportNotice(handler);
+        return updateCheck ? withUpdateNotice(withJobs) : withJobs;
       }
 );
 // set_debug_mode turned it on mid-run: start the remediation session. record_remediation_note stays listed either way

@@ -265,12 +265,29 @@ const MAX_STREAM_ERROR_BODY_BYTES = 64 * 1024;
  * interceptor can't read a message out of a stream — the 403 "This endpoint requires Cloud Admin access" was lost that
  * way. The body is read here and turned into the same `Digital.ai API Error` the interceptor builds.
  */
-export async function apiDownloadStream(path: string, opts: { signal?: AbortSignal } = {}): Promise<NodeJS.ReadableStream> {
-  const res = await withRetry(async () => {
-    const r = await getClient().get<NodeJS.ReadableStream>(path, { responseType: 'stream', signal: opts.signal, validateStatus: () => true });
+export async function apiDownloadStream(
+  path: string,
+  opts: {
+    signal?: AbortSignal;
+    onHeaders?: (headers: Record<string, unknown>) => void;
+    /**
+     * Wait this long for the response to START (the client's default is 30 s). The platform builds a usage CSV before
+     * it sends a byte: 90 days of one busy project took 25 s and 180 days 35 s (measured live 2026-11-23).
+     */
+    timeoutMs?: number;
+    /** No automatic retry: a CSV that took too long to build would only be built again (3 × 30 s seen live). */
+    noRetry?: boolean;
+  } = {}
+): Promise<NodeJS.ReadableStream> {
+  const once = async () => {
+    const r = await getClient().get<NodeJS.ReadableStream>(path, {
+      responseType: 'stream', signal: opts.signal, validateStatus: () => true, ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+    });
     if (r.status < 400) return r;
     throw toApiError(r.status, await readStreamPrefix(r.data, MAX_STREAM_ERROR_BODY_BYTES), `Request failed with status code ${r.status}`);
-  });
+  };
+  const res = opts.noRetry ? await once() : await withRetry(once);
+  opts.onHeaders?.(res.headers as Record<string, unknown>);
   return res.data;
 }
 

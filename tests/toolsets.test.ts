@@ -10,6 +10,7 @@
  * Uses the real tool modules (all of them, as index.ts does) through an in-memory MCP client; no network.
  */
 import { describe, it, beforeAll } from 'vitest';
+import { REPORT_VIEW_TOOLS, REPORT_VIEW_URI } from '../src/utils/report-view.js';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -58,6 +59,7 @@ import { registerWebInspectionTools } from '../src/tools/web-inspection-tools.js
 import { registerPerformanceTools } from '../src/tools/performance-tools.js';
 import { registerUsageReportTools } from '../src/tools/usage-report-tools.js';
 import { registerTestRunTools } from '../src/tools/test-run-tools.js';
+import { registerReportTools } from '../src/tools/report-tools.js';
 import { registerMetaTools } from '../src/tools/meta-tools.js';
 import { DESTRUCTIVE_TOOL_RE, annotationsFor } from '../src/utils/tool-annotations.js';
 
@@ -74,7 +76,7 @@ function modules(getController: () => ToolsetController | undefined): Array<[str
     ['regions', registerRegionTools], ['nv-servers', registerNvServerTools], ['transactions', registerTransactionTools],
     ['coverage', registerCoverageTools], ['debug', registerDebugTools], ['inspection', registerInspectionTools],
     ['web-inspection', registerWebInspectionTools], ['performance', registerPerformanceTools], ['usage-reports', registerUsageReportTools],
-    ['test-runs', registerTestRunTools], ['meta', registerMetaTools], ['toolsets', makeToolsetTools(getController)],
+    ['test-runs', registerTestRunTools], ['report', registerReportTools], ['meta', registerMetaTools], ['toolsets', makeToolsetTools(getController)],
   ];
 }
 
@@ -152,6 +154,10 @@ describe('MCP_TOOLSETS unset → identical to direct registration', () => {
     assert.deepEqual(norm(viaToolsets), norm(direct));
     assert.ok(viaToolsets.every((t) => t.inputSchema.additionalProperties === false), 'every tool rejects unknown parameters');
     assert.ok(viaToolsets.every((t) => typeof t.annotations?.readOnlyHint === 'boolean'), 'every tool is annotated');
+    // The report tools name the inline report view (MCP Apps); nothing else carries tool metadata.
+    const withView = (viaToolsets as Array<ToolEntry & { _meta?: { ui?: { resourceUri?: string } } }>).filter((t) => t._meta?.ui?.resourceUri);
+    assert.deepEqual(withView.map((t) => t.name).sort(), [...REPORT_VIEW_TOOLS].sort());
+    assert.ok(withView.every((t) => t._meta!.ui!.resourceUri === REPORT_VIEW_URI));
     // A case-insensitive enum with a default must still publish that default (it was dropped when .default() was chained outside).
     const platform = viaToolsets.find((t) => t.name === 'start_inspection_session')!.inputSchema.properties!.platform as { default?: string; enum?: string[] };
     assert.equal(platform.default, 'android');

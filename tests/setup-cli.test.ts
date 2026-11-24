@@ -56,6 +56,8 @@ function scripted(s: Script = {}) {
     err: (t) => void err.push(t),
     ask: async (q) => {
       asked.push(q);
+      // The optional report-folder question of the guided add: skipped unless a test scripts an answer for it.
+      if (answers.length === 0 && /^Report folder/.test(q)) return '';
       if (answers.length === 0) throw new Error(`unexpected question: ${q}`);
       return answers.shift()!;
     },
@@ -133,6 +135,7 @@ describe('setup add', () => {
       'Digital.ai Testing URL (e.g. https://yourcompany.experitest.com): ',
       'Access key (input hidden): ',
       'Profile name [mobile-qa]: ',
+      'Report folder (full path; Enter to skip): ',
     ]);
     expect(readFile()).toMatchObject({ default: 'mobile-qa', profiles: { 'mobile-qa': { url: URL_A, keyStore: 'os' } } });
     expect(r.out).toContain('OK — Project User of project "Mobile QA".');
@@ -203,7 +206,8 @@ describe('setup add', () => {
     await add(['first', '--url', URL_A, '--key-stdin']);
     const r = await add(['second', '--url', URL_A], { interactive: true, secrets: [KEY2], answers: ['n'] });
     expect(r.code).toBe(0);
-    expect(r.asked.at(-1)).toBe('Make "second" the profile the server starts on (now "first")? [y/N] ');
+    expect(r.asked.at(-2)).toBe('Make "second" the profile the server starts on (now "first")? [y/N] ');
+    expect(r.asked.at(-1)).toBe('Report folder (full path; Enter to skip): ');
     expect(readFile().default).toBe('first');
     expect(r.all()).toContain('Default:  no — the server still starts on "first"; switch with switch_environment("second")');
     expect((await add(['third', '--url', URL_A, '--key-stdin', '--default'])).code).toBe(0);
@@ -353,6 +357,54 @@ describe('setup list / default / remove / test / path', () => {
     const t = scripted();
     expect(await runSetupCli(['path'], t.io)).toBe(0);
     expect(t.out).toEqual([storeFile()]);
+  });
+});
+
+describe('setup reports (the report folder)', () => {
+  it('sets, shows and removes the folder; creates it; refuses a relative path; keeps the profiles', async () => {
+    await add(['admin', '--url', URL_A, '--key-stdin']);
+    const folder = join(dir, 'My Reports');
+    let t = scripted();
+    expect(await runSetupCli(['reports', folder], t.io)).toBe(0);
+    expect(existsSync(folder)).toBe(true);
+    expect(readFile().reportDir).toBe(folder);
+    expect(readFile().profiles.admin).toEqual({ url: URL_A, keyStore: 'os' });
+    expect(t.all()).toContain(`Saved the report folder: ${folder}`);
+    expect(t.all()).toMatch(/instead of the AI writing each one out/);
+    expect(t.all()).toMatch(/Claude Desktop: also add this folder to a conversation/);
+    t = scripted();
+    expect(await runSetupCli(['reports'], t.io)).toBe(0);
+    expect(t.out[0]).toBe(`Report folder: ${folder}`);
+    expect(await runSetupCli(['reports', 'relative/dir'], scripted().io)).toBe(2);
+    expect(readFile().reportDir).toBe(folder);
+    t = scripted();
+    expect(await runSetupCli(['reports', 'off'], t.io)).toBe(0);
+    expect(readFile().reportDir).toBeUndefined();
+    expect(t.all()).toContain('Removed the report folder');
+  });
+
+  it('the guided add offers the folder, asks again after a bad path, and "skip" skips', async () => {
+    const folder = join(dir, 'reports');
+    let t = scripted({ interactive: true, answers: [URL_A, 'admin', 'not a path', folder], secrets: [KEY] });
+    expect(await runSetupCli([], t.io)).toBe(0);
+    expect(t.asked.filter((q) => q.startsWith('Report folder')).length).toBe(2);
+    expect(t.all()).toContain('"not a path" is not a full folder path');
+    expect(readFile().reportDir).toBe(folder);
+    // Already set: not asked again.
+    t = scripted({ interactive: true, answers: [URL_A, 'qa', 'n'], secrets: [KEY] });
+    expect(await runSetupCli([], t.io)).toBe(0);
+    expect(t.asked.some((q) => q.startsWith('Report folder'))).toBe(false);
+  });
+
+  it('doctor names the folder, or says it is not set', async () => {
+    await add(['admin', '--url', URL_A, '--key-stdin']);
+    let t = scripted();
+    await runSetupCli(['doctor', '--offline'], t.io);
+    expect(t.all()).toMatch(/Report folder: not set/);
+    await runSetupCli(['reports', join(dir, 'r')], scripted().io);
+    t = scripted();
+    await runSetupCli(['doctor', '--offline'], t.io);
+    expect(t.all()).toContain(`Report folder: ${join(dir, 'r')}`);
   });
 });
 
@@ -507,6 +559,16 @@ describe('setup clients add — importing the profiles of an entry it replaces',
     expect(r.all()).not.toContain(KEY_U);
     expect(r.asked[1]).toContain('are in the credential store now');
     expect(r.all()).toContain('Restart the AI clients');
+  });
+
+  it('an entry that sets MCP_REPORT_DIR: the folder is kept as the report folder for every client', async () => {
+    const folder = join(dir, 'entry-reports');
+    await add(['cloud', '--url', URL_A, '--key-stdin']);
+    writeEntry({ DIGITAL_AI_BASE_URL: URL_A, DIGITAL_AI_ACCESS_KEY: KEY, MCP_REPORT_DIR: folder });
+    const r = await clientsAdd([], { interactive: true, answers: ['y'] });
+    expect(r.code).toBe(0);
+    expect(readFile().reportDir).toBe(folder);
+    expect(r.all()).toContain(`sets MCP_REPORT_DIR=${folder}: saved it as the report folder for every AI client`);
   });
 
   it('profiles the store already holds (same URL and key, any name) are not asked about', async () => {

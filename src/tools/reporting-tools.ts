@@ -1242,6 +1242,7 @@ export function registerReportingTools(server: McpServer): void {
   server.tool(
     'summarize_test_failures',
     'Answer "why are my tests failing?" in one call: buckets failed tests by error classification and returns the breakdown (e.g. "44 failures: 38 element_not_found, 6 timeout"). ' +
+    'For a finished report file the user asked for, use create_report instead. ' +
     'Use this instead of fanning out get_test_report manually across many failures. ' +
     'Fast: the classification is read straight from the report list (200 failures in ~1.5 s). ' +
     'Scope with startDate/endDate (client-side window), projectName/projectId, and nameFilter (substring on test name).',
@@ -1337,7 +1338,7 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'get_project_test_summary',
-    'Return a pass/fail summary for a project. Status counts cover all six reporter statuses (Passed, Failed, Error, Incomplete, Skipped, Healed) and are all-time totals — the reporter API does not support date-range filtering for aggregate counts. Error = the test ended abnormally (crash, infrastructure, session ended early — since platform 26.9 these are no longer Incomplete). Pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error). Top failing and top erroring test names are filtered to the requested time window client-side from the most recent 200 of each.',
+    'Return a pass/fail summary for a project (for a finished report file, use create_report instead). Status counts cover all six reporter statuses (Passed, Failed, Error, Incomplete, Skipped, Healed) and are all-time totals — the reporter API does not support date-range filtering for aggregate counts. Error = the test ended abnormally (crash, infrastructure, session ended early — since platform 26.9 these are no longer Incomplete). Pass rate = (Passed+Healed)/(Passed+Healed+Failed+Error). Top failing and top erroring test names are filtered to the requested time window client-side from the most recent 200 of each.',
     {
       startDate: z
         .string()
@@ -1853,6 +1854,7 @@ export function registerReportingTools(server: McpServer): void {
   server.tool(
     'get_daily_execution_trend',
     'Show test execution counts and pass rates bucketed by day or week. ' +
+    'For a finished report file the user asked for, use create_report instead. ' +
     'Use this to detect volume drops (CI stopped running tests), quality degradation over a sprint, ' +
     'or spikes in failures following a deployment. ' +
     'Fetches records sorted newest-first and stops at maxRecords OR lookbackDays, whichever comes first.',

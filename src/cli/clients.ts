@@ -724,7 +724,7 @@ export interface EntryProfile {
 }
 
 /** The credential variables of our entry, as strings (JSON env/environment, or Codex's .env table). */
-function entryEnv(target: ClientTarget): Record<string, string> {
+export function entryEnv(target: ClientTarget): Record<string, string> {
   const out: Record<string, string> = {};
   if (!existsSync(target.file)) return out;
   if (target.format === 'codex-toml') {

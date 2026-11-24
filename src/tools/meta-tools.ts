@@ -4,6 +4,7 @@ import { getMyAccountInfo } from '../api/users.js';
 import { resetClient, getActiveProfileName, getActiveUrl } from '../api/client.js';
 import { getToolCatalog } from '../utils/tool-catalog.js';
 import { debugStatusLine } from '../utils/remediation.js';
+import { reportViewStatusLine } from '../utils/report-view.js';
 import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
 import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
@@ -11,6 +12,7 @@ import { listProfiles, getProfileCredentials, profileCount, getStoreStatus } fro
 import { computeWorkflowReadiness, WORKFLOW_DEPS } from '../utils/tool-registry.js';
 import { staleBuildRemedy } from '../utils/locality.js';
 import { updateStatusLine } from '../utils/update-check.js';
+import { exampleReportPrompts } from '../utils/report-recipes.js';
 
 // Canonical list of every tool registered by this server.
 // Update this when adding or removing tools so get_server_info stays accurate.
@@ -127,6 +129,8 @@ export const REGISTERED_TOOLS = [
   'execute_playwright_run',
   // Debug mode — both always listed; record_remediation_note records only while debug mode is on
   'set_debug_mode', 'record_remediation_note',
+  // Reports — branded self-contained HTML from a compact spec (core)
+  'render_report', 'create_report', 'create_test_summary_report', 'create_failure_analysis_report', 'create_device_health_report', 'create_usage_summary_report',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
@@ -184,6 +188,25 @@ export function capabilityLines(): string[] {
   return lines;
 }
 
+/**
+ * Example prompts after the FIRST successful connectivity check of this server run. Worded as an instruction to the
+ * agent: a bare "Try asking:" list was summarised away in Claude Desktop (seen live) and never reached the user.
+ */
+let examplesShown = false;
+export function connectivityExamples(role: string | undefined): string[] {
+  if (examplesShown) return [];
+  examplesShown = true;
+  return [
+    '',
+    'Show the user these example prompts as a short list, word for word (they show what this server can do; shown once per session):',
+    ...exampleReportPrompts(role).map((l) => `   ${l}`),
+  ];
+}
+/** Tests only. */
+export function resetConnectivityExamplesForTests(): void {
+  examplesShown = false;
+}
+
 export function registerMetaTools(server: McpServer): void {
   // ─── get_server_info ───────────────────────────────────────────────────────
 
@@ -224,7 +247,7 @@ export function registerMetaTools(server: McpServer): void {
 
       const lines = [
         `Server:           ${name} v${version}`,
-        ...[updateStatusLine(), debugStatusLine()].filter((l): l is string => l !== null),
+        ...[updateStatusLine(), debugStatusLine(), reportViewStatusLine()].filter((l): l is string => l !== null),
         `Target API:       ${activeUrl}`,
         envLine,
         projectLine,
@@ -295,7 +318,8 @@ export function registerMetaTools(server: McpServer): void {
           `   Authenticated as: ${info.username} (${info.firstName} ${info.lastName})`,
           `   Role: ${info.role}`,
           `   Project context: ${info.project?.name ?? 'none'} (ID: ${info.project?.id ?? 'n/a'})`,
-          ...[updateStatusLine(), debugStatusLine()].filter((l): l is string => l !== null).map((l) => `   ${l.replace(/\s{2,}/, ' ')}`),
+          ...[updateStatusLine(), debugStatusLine(), reportViewStatusLine()].filter((l): l is string => l !== null).map((l) => `   ${l.replace(/\s{2,}/, ' ')}`),
+          ...connectivityExamples(info.role),
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       } catch (e) {

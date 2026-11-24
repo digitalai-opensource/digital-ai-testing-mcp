@@ -74,3 +74,17 @@ describe('switch_environment role aliases narrow by the DETECTED role (UAT 2026-
     assert.match(any.text, /Multiple project profiles found: "admin", "griduser", "user"/);
   });
 });
+
+describe('check_connectivity example prompts (a bare list was summarised away)', () => {
+  it('are an instruction to show them, include the usage prompt only for a Cloud Admin, and appear once per run', async () => {
+    const { connectivityExamples, resetConnectivityExamplesForTests } = await import('../src/tools/meta-tools.js');
+    resetConnectivityExamplesForTests();
+    const first = connectivityExamples('Admin');
+    assert.match(first.join('\n'), /Show the user these example prompts as a short list, word for word/);
+    assert.match(first.join('\n'), /usage summary for project/);
+    assert.deepEqual(connectivityExamples('Admin'), [], 'shown once');
+    resetConnectivityExamplesForTests();
+    assert.doesNotMatch(connectivityExamples('User').join('\n'), /usage summary/);
+    resetConnectivityExamplesForTests();
+  });
+});
