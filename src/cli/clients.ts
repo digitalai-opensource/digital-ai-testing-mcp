@@ -673,8 +673,14 @@ function splitCodex(text: string): { before: string[]; ours: string[]; after: st
   const ours: string[] = [];
   const after: string[] = [];
   let state: 'before' | 'ours' | 'after' = 'before';
+  // Open brackets of a multi-line value: a line inside one that starts with "[" (a nested array) is not a table header.
+  let depth = 0;
   for (const line of lines) {
-    const isHeader = /^\s*\[/.test(line);
+    const isHeader = depth === 0 && /^\s*\[/.test(line);
+    if (!isHeader) {
+      const stripped = line.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""').replace(/#.*$/, '');
+      depth = Math.max(0, depth + (stripped.match(/[[{]/g)?.length ?? 0) - (stripped.match(/[\]}]/g)?.length ?? 0));
+    }
     if (isHeader && CODEX_HEADER_RE.test(line.trim())) {
       // Our table (or its .env sub-table), even if another table sits between them: all of it is replaced together.
       ours.push(line);

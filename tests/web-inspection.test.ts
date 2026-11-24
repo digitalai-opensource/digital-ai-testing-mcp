@@ -324,6 +324,11 @@ describe('mobile browser sessions (Chrome on Android / Safari on iOS — verifie
       assert.equal(desiredCaps.at(-1)!.newCommandTimeout, 900);
       await tools.call('stop_browser_inspection_session', { handle: long.handle });
 
+      // A limit that is not a whole number of minutes is rounded DOWN — 90 s must never read as "2 minute(s)".
+      const short = await tools.callJson('start_browser_inspection_session', { mobilePlatform: 'android', idleTimeoutSeconds: 90 });
+      assert.match(String(short.idleTimeoutNote), /ends after 1 minute\(s\) without a command/);
+      await tools.call('stop_browser_inspection_session', { handle: short.handle });
+
       const desktop = await tools.callJson('start_browser_inspection_session', { inspectionBrowser: 'chrome', captureBrowserLog: false });
       assert.equal(desiredCaps.at(-1)!.newCommandTimeout, undefined);
       assert.equal(sessionCaps.at(-1)!['appium:newCommandTimeout'], undefined);
@@ -363,6 +368,33 @@ describe('mobile browser sessions (Chrome on Android / Safari on iOS — verifie
 
     assert.equal(deadSessionAdvice(httpErr(404, { error: 'unknown command', message: 'no route' }), 'WEB00040'), null, 'a missing route is not a dead session');
     assert.equal(deadSessionAdvice(httpErr(400, { error: 'invalid argument', message: 'bad selector' }), 'WEB00040'), null);
+  });
+
+  it('W3C 404s about one element or browsing context of a live session are not a dead session', () => {
+    const httpErr = (status: number, value: Record<string, string>) => ({ response: { status, data: { value } } });
+    registerSession({ ...webSession('WEB00044'), idleTimeoutSeconds: 300, lastIdleMs: 320_000 });
+    for (const error of ['stale element reference', 'no such frame', 'no such window', 'no such shadow root', 'detached shadow root', 'no such cookie']) {
+      assert.equal(deadSessionAdvice(httpErr(404, { error, message: 'element is not attached to the page document' }), 'WEB00044'), null, error);
+    }
+    // A real dead-session 404 still is one.
+    assert.ok(deadSessionAdvice(httpErr(404, { error: 'invalid session id', message: 'gone' }), 'WEB00044'));
+  });
+
+  it('a chain of quick commands after a long pause does not carry the old idle gap forward', () => {
+    const httpErr = (status: number, value: Record<string, string>) => ({ response: { status, data: { value } } });
+    const realNow = Date.now;
+    let now = realNow();
+    Date.now = () => now;
+    try {
+      registerSession({ ...webSession('WEB00045'), lastUsedAt: now - 320_000 });
+      requireSession('WEB00045'); // command A after a 320 s pause
+      for (let i = 0; i < 4; i++) { now += 500; requireSession('WEB00045'); } // B, C, D, E — 500 ms apart
+      // E fails: 2 s after the pause was measured, so the pause is no longer the explanation.
+      const advice = String(deadSessionAdvice(httpErr(404, { error: 'invalid session id', message: 'gone' }), 'WEB00045'));
+      assert.doesNotMatch(advice, /idle for 320 s/);
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   it('refuses deviceQuery/region without mobilePlatform, and a browser that does not match the phone', async () => {

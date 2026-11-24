@@ -222,7 +222,7 @@ export async function createInspectionSession(
           : `The platform may still be waiting on the device or fail the start; rather than repeating the same query, widen it or pick another device. `) +
         `To wait longer instead, set INSPECTION_SESSION_TIMEOUT_MS (ms) in the MCP server's environment. ` +
         `The platform may still finish this start: the session would then hold the device unattended until its idle ` +
-        `timeout (${Math.round(idleLimit / 60)} min) and leave a report "${testName}" (its status and cause show the platform's final outcome — ` +
+        `timeout (${idleLimit} s) and leave a report "${testName}" (its status and cause show the platform's final outcome — ` +
         `find_latest_test_for_name) — run cleanup_inspection_sessions afterwards to delete it.`
       );
     }
@@ -472,8 +472,15 @@ function looksLikeDeadSession(e: unknown): boolean {
   if (!v || (v.error == null && v.message == null)) return true; // bare route 404: nothing to proxy to
   if (/invalid session id|no such session|session .*(not found|could not be found|terminated|expired|does not exist|has ended|is not running)/.test(msg)) return true;
   // 'unknown command' covers both a route the driver lacks and a wrapped seetest:client failure — neither is a dead session.
-  return v.error !== 'unknown command' && v.error !== 'no such element' && v.error !== 'no such alert' && v.error !== 'invalid argument';
+  // The other W3C errors answered with 404 (stale element, missing frame/window/shadow root/cookie) concern one element
+  // or browsing context of a LIVE session.
+  return !LIVE_SESSION_404_ERRORS.has(v.error ?? '');
 }
+
+const LIVE_SESSION_404_ERRORS: ReadonlySet<string> = new Set([
+  'unknown command', 'no such element', 'no such alert', 'invalid argument',
+  'stale element reference', 'no such frame', 'no such window', 'no such shadow root', 'detached shadow root', 'no such cookie',
+]);
 
 /** Recovery advice when `e` shows the session is gone (idle limit or agent crash), else null. Worded per session kind. */
 export function deadSessionAdvice(e: unknown, handle: string): string | null {
@@ -488,7 +495,7 @@ export function deadSessionAdvice(e: unknown, handle: string): string | null {
     s?.lastIdleMs != null && s.lastIdleMs > 60_000
       ? ` The session was idle for ${Math.round(s.lastIdleMs / 1000)} s before this command — ` +
         (desktop
-          ? `the platform ends a desktop browser session after ${Math.round((s.idleTimeoutSeconds ?? 300) / 60)} minutes without a command; it cannot be raised.`
+          ? `the platform ends a desktop browser session after ${Math.floor((s.idleTimeoutSeconds ?? 300) / 60)} minutes without a command; it cannot be raised.`
           : s.idleTimeoutSeconds
             ? `it was started with a ${s.idleTimeoutSeconds} s idle limit (${startTool} idleTimeoutSeconds raises it).`
             : 'the platform ends a session after about a minute without a command.')
@@ -2929,9 +2936,14 @@ export function requireSession(handle: string): InspectionSession {
   // so the gap preceding a failure is the key diagnostic (v36).
   // A tool and the API function it calls both look the session up; the second lookup, milliseconds later, must not
   // replace the real gap with ~0 (a 320 s idle desktop session lost its idle explanation that way, live 2026-11-23).
+  // Only a lookup within 1 s of the last MEASUREMENT keeps it: a chain of quick commands must not carry an old idle gap
+  // forward indefinitely and blame a later failure on it.
   const now = Date.now();
   const gap = now - s.lastUsedAt;
-  if (gap > 1000 || s.lastIdleMs == null) s.lastIdleMs = gap;
+  if (gap > 1000 || s.lastIdleMs == null || s.idleMeasuredAt == null || now - s.idleMeasuredAt > 1000) {
+    s.lastIdleMs = gap;
+    s.idleMeasuredAt = now;
+  }
   s.lastUsedAt = now;
   return s;
 }

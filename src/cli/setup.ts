@@ -513,7 +513,8 @@ async function cmdRemove(io: SetupIO, nameArg: string | undefined, flags: Flags)
   if (wasDefault) delete data.default;
   writeStore(data);
   io.out(`Removed profile "${name}".`);
-  if (entry.keyStore === 'os') {
+  // The raw file keeps broken entries (null, a string…) — removing one is how a user gets rid of it.
+  if ((entry as { keyStore?: unknown } | null | undefined)?.keyStore === 'os') {
     const del = deleteKeyFromKeychain(name);
     if (!del.ok) io.err(`Its key could not be removed from the OS keychain: ${del.error}. Remove "${KEYCHAIN_SERVICE}" / "${keychainAccount(name)}" there by hand.`);
     else if (del.existed) io.out('Its key was removed from the OS keychain.');

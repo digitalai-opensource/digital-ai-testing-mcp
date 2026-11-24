@@ -836,6 +836,7 @@ export interface InspectionSession {
   startedAt: number;        // Unix ms timestamp
   lastUsedAt: number;       // Unix ms of the most recent command — idle-timeout awareness
   lastIdleMs?: number;      // Idle gap measured at the start of the current command
+  idleMeasuredAt?: number;  // Unix ms when lastIdleMs was measured (a repeat lookup in the same call keeps it)
   idleTimeoutSeconds?: number; // newCommandTimeout sent at session start (mobile inspection sessions)
   // true unless the credential is a project-level role whose project has allowUsersDeleteTests=false
   // (resolved from the API at session start) — enables automatic report cleanup

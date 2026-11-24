@@ -611,7 +611,7 @@ export function registerInspectionTools(server: McpServer): void {
           cloudViewLink: session.cloudViewLink,
           reportUrl: session.reportUrl,
           idleTimeoutNote:
-            `This session ends after ${Math.round((session.idleTimeoutSeconds ?? 300) / 60)} minute(s) without a command ` +
+            `This session ends after ${Math.floor((session.idleTimeoutSeconds ?? 300) / 60)} minute(s) without a command ` +
             '(idleTimeoutSeconds; the device stays held for the user meanwhile). Before pausing to ask the user something, ' +
             'call take_inspection_screenshot — it resets the idle clock AND captures the state you are asking about. ' +
             'If the user takes longer than that, expect a 404 on your next call: stop_inspection_session to clean up, ' +

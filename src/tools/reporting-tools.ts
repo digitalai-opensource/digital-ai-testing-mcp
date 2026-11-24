@@ -136,10 +136,11 @@ export function webUserTwin<F extends { property: string; operator?: string }>(f
   return i < 0 ? undefined : filter.map((f, j) => (j === i ? { ...f, property: 'digitalai:user' } : f));
 }
 
-function compareValues(a: unknown, b: unknown): number {
-  if (a == null || b == null) return a == null ? (b == null ? 0 : 1) : -1; // missing values last
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return String(a).localeCompare(String(b));
+/** Ascending/descending comparison with missing values LAST in both directions (they must not push real records off a page). */
+function compareValues(a: unknown, b: unknown, descending: boolean): number {
+  if (a == null || b == null) return a == null ? (b == null ? 0 : 1) : -1;
+  const c = typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b));
+  return descending ? -c : c;
 }
 
 /** Two report lists, each in `sort` order (default newest first), as one: de-duplicated by uuid, same order. */
@@ -157,10 +158,9 @@ export function mergeReportLists(
     seen.add(id);
     return true;
   });
-  return unique.sort((x, y) => {
-    const c = compareValues((x as unknown as Record<string, unknown>)[property], (y as unknown as Record<string, unknown>)[property]);
-    return descending ? -c : c;
-  });
+  return unique.sort((x, y) =>
+    compareValues((x as unknown as Record<string, unknown>)[property], (y as unknown as Record<string, unknown>)[property], descending)
+  );
 }
 
 function mergedUserNote(mobile: number | null | undefined, web: number | null | undefined, counted: boolean): string {

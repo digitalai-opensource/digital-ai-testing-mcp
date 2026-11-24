@@ -326,6 +326,18 @@ describe('setup list / default / remove / test / path', () => {
     expect(t.all()).toContain('It was the default; the server now starts on the only profile left, "b"');
   });
 
+  it('remove deletes a malformed (null) profile entry without crashing', async () => {
+    await add(['a', '--url', URL_A, '--key-stdin']);
+    const f = readFile();
+    f.profiles.broken = null;
+    writeFileSync(storeFile(), JSON.stringify(f));
+    const t = scripted();
+    expect(await runSetupCli(['remove', 'broken', '--yes'], t.io)).toBe(0);
+    expect(readFile().profiles).toEqual({ a: { url: URL_A, keyStore: 'os' } });
+    expect(t.all()).toContain('Removed profile "broken"');
+    expect(kc.entries).toEqual({ a: KEY });
+  });
+
   it('test checks every profile and fails when one fails', async () => {
     await add(['good', '--url', URL_A, '--key-stdin']);
     await add(['bad', '--url', 'https://bad.example.com', '--key-stdin', '--skip-check']);

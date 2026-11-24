@@ -193,6 +193,12 @@ describe('web reports keep the user in digitalai:user (bug report 2026-11-21)', 
     const b = [r(3, '2026-11-19T10:00:00Z'), r(1, '2026-11-20T10:00:00Z')];
     assert.deepEqual(mergeReportLists(a, b).map((x) => x.test_id), [1, 3, 2]);
     assert.deepEqual(mergeReportLists(a, b, [{ property: 'test_id', descending: false }]).map((x) => x.test_id), [1, 2, 3]);
+    // Records without the sort value go LAST in both directions — first, they would push real records off a page.
+    const d = (test_id: number, duration?: number) => ({ test_id, uuid: `d${test_id}`, ...(duration == null ? {} : { duration }) }) as unknown as TestReport;
+    const mobile = [d(10, 900), d(11, 100)];
+    const web = [d(20), d(21, 500), d(22)];
+    assert.deepEqual(mergeReportLists(mobile, web, [{ property: 'duration', descending: true }]).map((x) => x.test_id), [10, 21, 11, 20, 22]);
+    assert.deepEqual(mergeReportLists(mobile, web, [{ property: 'duration', descending: false }]).map((x) => x.test_id), [11, 21, 10, 20, 22]);
     assert.equal(webUserTwin([{ property: 'status', operator: '=', value: 'Failed' }]), undefined);
     assert.equal(webUserTwin([{ property: 'user', operator: 'contains', value: 'me' }]), undefined);
     assert.equal(webUserTwin([{ property: 'user', operator: '=', value: 'a' }, { property: 'digitalai:user', operator: '=', value: 'a' }]), undefined);
