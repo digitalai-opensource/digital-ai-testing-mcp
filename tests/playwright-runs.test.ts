@@ -14,6 +14,7 @@ import {
   loadPlaywrightProject,
   buildPlaywrightConf,
   normalizePlaywrightStatus,
+  countsFromReports,
 } from '../src/api/playwright-runs.js';
 import { registerTestRunTools } from '../src/tools/test-run-tools.js';
 import { startStubApi, connectTools, reply, type StubApi, type ToolClient } from './helpers/offline.js';
@@ -58,6 +59,10 @@ beforeAll(async () => {
       const z = new AdmZip();
       z.addFile('run.log', Buffer.from('chromium: 1 passed'));
       return reply(200, [z.toBuffer()]);
+    }
+    // As live (2026-11-26): one Reporter record per test, found by test.run.id.
+    if (req.path === '/reporter/api/tests/list' && (req.json.filter ?? []).some((f: { property: string; value: unknown }) => f.property === 'test.run.id' && f.value === RUN)) {
+      return { count: 3, data: [{ test_id: 1, name: 'login-ok-chromium', status: 'Passed' }, { test_id: 2, name: 'cart-chromium', status: 'Failed' }, { test_id: 3, name: 'pay-chromium', status: 'Skipped' }] };
     }
     if (req.path === '/api/v1/test-run/123/status') return { data: { 'Test Run State': 'Finished', 'Number of passed tests': '2' } };
     return undefined;
@@ -130,6 +135,26 @@ describe('playwright runs (pure)', () => {
     assert.equal(q.counts.requested, 2);
     assert.equal(normalizePlaywrightStatus(RUN, { 'Test Run State': 'CANCELED' }).finished, true);
     assert.equal(normalizePlaywrightStatus(RUN, { 'Test Run State': 'RUNNING' }).finished, false);
+  });
+});
+
+describe('a finished Playwright run takes its test counts from the Reporter (verified live 2026-11-26)', () => {
+  it('countsFromReports sorts the statuses', () => {
+    assert.deepEqual(countsFromReports([{ status: 'Passed' }, { status: 'Healed' }, { status: 'Failed' }, { status: 'Error' }, { status: 'Skipped' }, { status: 'Incomplete' }]),
+      { total: 6, passed: 2, failed: 2, skipped: 1, other: 1 });
+  });
+  it('FINISHED: passed / failed / skipped from the run records; RUNNING: none asked for', async () => {
+    state = 'FINISHED';
+    const j = await tools.callJson('get_test_run_status', { testRunId: RUN });
+    assert.deepEqual([(j.counts as Record<string, unknown>).passed, (j.counts as Record<string, unknown>).failed, (j.counts as Record<string, unknown>).skipped, (j.counts as Record<string, unknown>).total], [1, 1, 1, 3]);
+    assert.equal(j.resultsNote, '3 test results in the Reporter.');
+    const human = await tools.call('get_test_run_status', { testRunId: RUN, outputFormat: 'human' });
+    assert.match(human.text, /Tests: ✅ passed 1 · ❌ failed 1 · ⏭️ skipped 1 — 3 test results in the Reporter\./);
+    state = 'RUNNING';
+    const before = api.requests.filter((r) => r.path === '/reporter/api/tests/list').length;
+    await tools.callJson('get_test_run_status', { testRunId: RUN });
+    assert.equal(api.requests.filter((r) => r.path === '/reporter/api/tests/list').length, before);
+    state = 'QUEUED';
   });
 });
 

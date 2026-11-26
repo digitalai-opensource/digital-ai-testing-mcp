@@ -307,7 +307,8 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   // (selectors may be source-derived or captured in a since-closed session), but worth surfacing.
   // Only for a file that locates elements: a config file or a base class has no selector to doubt, and the item came
   // back for every file of a generated page-objects project (UAT 2026-11-24).
-  if (listActiveSessions().length === 0 && SCRIPT_STEP_RE.test(content)) {
+  // Code lines only: a scaffold whose example locators sit in comments locates nothing (UAT 2026-11-25).
+  if (listActiveSessions().length === 0 && SCRIPT_STEP_RE.test(code)) {
     add('info', 'no live inspection session', 'No inspection session is active in this MCP process (this item depends on that, so the same file can come back without it while a session is open). If the selectors here were not captured from an inspection or taken from authoritative app source, they are guesses — re-verify before delivering.');
   }
 

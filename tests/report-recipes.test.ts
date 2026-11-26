@@ -261,11 +261,11 @@ describe('report wording (UAT 2026-11-24)', () => {
   it('device health lists every long-offline device', () => {
     const many: DeviceRow[] = Array.from({ length: 27 }, (_, k) => ({ name: `Phone ${k}`, serial: `S${k}`, os: 'Android', model: 'M', status: 'Offline', statusAgeMin: 3000 + k, region: 'US', agent: 'a' } as DeviceRow));
     const r = buildDeviceHealth({ devices: many, deviceCounts: null, failures: [], days: 3, now: T0 + 3 * DAY });
-    const table = section(r.spec, /Offline for More Than a Day/).blocks[0] as Extract<Section['blocks'][number], { type: 'table' }>;
+    const table = section(r.spec, /Offline or in Error for More Than a Day/).blocks[0] as Extract<Section['blocks'][number], { type: 'table' }>;
     assert.equal(table.rows.length, 27, 'the table agrees with the "27 devices" in the text');
     const html = renderReport(r.spec);
     assert.match(html, /Phone 26/);
-    assert.match(r.highlights.join(' '), /27 devices offline for more than a day/);
+    assert.match(r.highlights.join(' '), /27 devices offline or in error for more than a day/);
   });
 });
 
@@ -305,14 +305,14 @@ describe('device-health', () => {
 
   it('builds status, tiles worst first (degraded included) and the long-offline table', () => {
     const r = buildDeviceHealth({ devices, deviceCounts, failures, days: 3, now: T0 + 3 * DAY });
-    assert.match(r.highlights.join(' '), /2 of 5 devices available, 2 offline or in error\. 1 device offline for more than a day\. 1 device fail far more often/);
+    assert.match(r.highlights.join(' '), /2 of 5 devices available, 2 offline or in error\. 1 device offline or in error for more than a day\. 1 device fails far more often/);
     const tiles = section(r.spec, /^Devices$/).blocks[0] as Extract<Section['blocks'][number], { type: 'tiles' }>;
     const s24 = tiles.items.find((t) => t.name === 'Galaxy S24')!;
     assert.equal(s24.status, 'Degraded');
     assert.equal(s24.metric, '50% pass');
     assert.equal(tiles.items.find((t) => t.name === 'Pixel Fold')!.detail, 'M · US2', 'no "for 0 min"');
     assert.match(String(tiles.items.find((t) => t.name === 'iPhone 13')!.detail), /for 3 days/);
-    const offline = section(r.spec, /Offline for More Than a Day/).blocks[0] as Extract<Section['blocks'][number], { type: 'table' }>;
+    const offline = section(r.spec, /Offline or in Error for More Than a Day/).blocks[0] as Extract<Section['blocks'][number], { type: 'table' }>;
     assert.equal(offline.rows.length, 1);
     assert.match(renderReport(r.spec), /Devices Failing Far More Often Than the Pool/);
     assert.equal(r.spec.sections!.some((s) => /by Region|Agents with/.test(s.title ?? '')), false, 'one region, one agent: nothing to compare');
@@ -1236,5 +1236,66 @@ describe('license usage (peak concurrent sessions against the license)', () => {
       if (saved.dir === undefined) delete process.env.MCP_REPORT_DIR; else process.env.MCP_REPORT_DIR = saved.dir;
       if (saved.mode === undefined) delete process.env.MCP_DEPLOYMENT_MODE; else process.env.MCP_DEPLOYMENT_MODE = saved.mode;
     }
+  });
+});
+
+describe('report wording (UAT 2026-11-25)', () => {
+  const c = (passed: number, failed = 0) => ({ passed, failed, error: 0, incomplete: 0, skipped: 0, healed: 0, total: passed + failed });
+
+  it('failure analysis: the no-device bucket is web or no-device runs, never "a device problem"', () => {
+    const fails = [
+      ...Array.from({ length: 9 }, () => run(1, 'Failed', 'Web checkout', { cause: 'Timeout', serial: null, deviceName: null })),
+      run(0, 'Failed', 'Login', { deviceName: 'Pixel 8', serial: 'P' }), run(0, 'Failed', 'Login', { deviceName: 'Galaxy S24', serial: 'G' }),
+      run(2, 'Failed', 'Login', { deviceName: 'iPhone 15', serial: 'I' }),
+    ];
+    const r = buildFailureAnalysis({ failures: fails, totalRuns: 40, from: T0, to: T0 + 2 * DAY, days: 3 });
+    const means = String(section(r.spec, /Failures by Device$/).whatItMeans);
+    assert.match(means, /^Most failures \(9 failures, 75%\) were in runs without a device: web \(browser\) tests, or runs that ended before a device was assigned\. Look at those tests and their causes, not at the devices\./);
+    assert.doesNotMatch(means, /device problem/);
+    assert.match(r.highlights.join(' '), /75% of failures were in runs without a device/);
+  });
+
+  it('failure analysis: causes that differ only in a session id are one row, quoted from their informative part', () => {
+    const sid = (t: string) => `Could not start appium test. The test request with the provided session id: CLOUD-SID:2026-11-23_${t}-x timed out`;
+    const wrapped = "Cannot start the 'com.example.app' application. Consider checking the driver's troubleshooting documentation. Original error: INSTALL_FAILED_VERSION_DOWNGRADE on this device";
+    const fails = [
+      run(0, 'Error', 'A', { deviceName: 'P', serial: 'P', cause: sid('15-01-46') }), run(1, 'Error', 'B', { deviceName: 'P', serial: 'P', cause: sid('14-59-45') }),
+      run(1, 'Error', 'C', { deviceName: 'P', serial: 'P', cause: sid('09-00-01') }),
+      run(2, 'Failed', 'D', { deviceName: 'P', serial: 'P', cause: wrapped }),
+    ];
+    const r = buildFailureAnalysis({ failures: fails, totalRuns: 10, from: T0, to: T0 + 2 * DAY, days: 3 });
+    const rows = (section(r.spec, /Most Common Causes/).blocks[0] as Extract<Section['blocks'][number], { type: 'table' }>).rows;
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].n, 3);
+    assert.equal(rows[1].cause, 'INSTALL_FAILED_VERSION_DOWNGRADE on this device');
+  });
+
+  it('device health: the KPI counts devices, not tests; "1 day", not "1 days"', () => {
+    const dev = (name: string, status: string, age: number | null = null): DeviceRow => ({ name, serial: name, os: 'Android', model: 'M', status, statusAgeMin: age, region: 'US', agent: 'a' });
+    const r = buildDeviceHealth({ devices: [dev('A', 'Available'), dev('B', 'Offline', 1500)], deviceCounts: [], failures: [], days: 7, now: T0 });
+    const kpis = allSections(r.spec)[0].blocks[0] as Extract<Section['blocks'][number], { type: 'kpis' }>;
+    assert.ok(kpis.items.some((k) => k.label === 'Devices failing far more often (last 7 days)'));
+    assert.ok(!kpis.items.some((k) => /Failing tests/.test(k.label)));
+    const table = section(r.spec, /Offline or in Error for More Than a Day/).blocks[0] as Extract<Section['blocks'][number], { type: 'table' }>;
+    assert.equal(table.rows[0].age, '1 day');
+  });
+
+  it('test summary over one day: no "lowest day" and no "1 of 1 days"', () => {
+    const runs = [...Array.from({ length: 9 }, () => run(0, 'Passed')), run(0, 'Failed')];
+    const r = buildTestSummary({ runs, previous: null, failures: [], platforms: null, devicesUsed: null, from: T0, to: T0 + DAY - 1, days: 1, passRateGoal: 85 });
+    const text = JSON.stringify(r.spec);
+    assert.doesNotMatch(text, /lowest day|1 of 1 day/);
+    assert.match(text, /That meets the 85% goal\./);
+  });
+
+  it('test names: a trailing device serial is an id, and no separator is left at the end', () => {
+    assert.equal(testFamily('ResRel_Shared_Android_03R1KL'), 'ResRel_Shared_Android');
+    assert.equal(testFamily('ResRel_Shared_iOS_98401C'), 'ResRel_Shared_iOS');
+    assert.equal(testFamily('Container report - 2026-11-25'), 'Container report');
+    assert.equal(testFamily('Checkout_Smoke'), 'Checkout_Smoke', 'a word is not an id');
+    assert.equal(testFamily('Login_v2'), 'Login_v2');
+    const rel = buildTestReliability({ current: [{ values: ['ResRel_Shared_Android_03R1KL'], counts: c(1) }, { values: ['ResRel_Shared_Android_048DGP'], counts: c(1) },
+      { values: ['ResRel_Shared_Android_0A1B2C'], counts: c(1) }], previous: null, from: T0 - 6 * DAY, to: T0, days: 7 });
+    assert.match(rel.highlights[0], /^1 test ran in the last 7 days/);
   });
 });

@@ -62,11 +62,13 @@ export function loosePlan<F extends ReporterFilter>(groupBy: string[] | undefine
  * field). With `ignoreCase`, values that differ only in case are one group, shown in the spelling most runs have
  * (the platform column always as Android / iOS). `merged` lists, per field, the spellings that became one group.
  * `exactFields` are never folded: they name things (a project), not a value a test client spelled.
+ * With `ignoreCase` an empty value is "no value" too: a grouping by browser had a row for "" (1,759 runs) beside the one
+ * for none (1,651 runs), two rows for the same thing (live 2026-11-25).
  */
 export function mergeGroupRows(rows: GroupRow[], fields: string[], ignoreCase: boolean, exactFields: string[] = []): { rows: GroupRow[]; merged: Record<string, string[][]> } {
   const weight = (r: GroupRow) => (typeof r['_count_'] === 'number' ? (r['_count_'] as number) : 1);
   const folds = (f: string) => ignoreCase && !exactFields.includes(f);
-  const fold = (f: string, v: unknown) => (v == null ? null : folds(f) && typeof v === 'string' ? v.toLowerCase() : v);
+  const fold = (f: string, v: unknown) => (v == null || (folds(f) && v === '') ? null : folds(f) && typeof v === 'string' ? v.toLowerCase() : v);
   // Per field and folded value: the runs behind each stored spelling.
   const spellings = new Map<string, Map<string, Map<string, number>>>();
   const out = new Map<string, GroupRow>();
@@ -74,7 +76,7 @@ export function mergeGroupRows(rows: GroupRow[], fields: string[], ignoreCase: b
     const key = JSON.stringify(fields.map((f) => fold(f, row[f])));
     if (ignoreCase) for (const f of fields) {
       const v = row[f];
-      if (typeof v !== 'string' || !folds(f)) continue;
+      if (typeof v !== 'string' || v === '' || !folds(f)) continue;
       const byFold = spellings.get(f) ?? new Map<string, Map<string, number>>();
       spellings.set(f, byFold);
       const seen = byFold.get(v.toLowerCase()) ?? new Map<string, number>();
@@ -82,7 +84,7 @@ export function mergeGroupRows(rows: GroupRow[], fields: string[], ignoreCase: b
       seen.set(v, (seen.get(v) ?? 0) + weight(row));
     }
     const hit = out.get(key);
-    if (!hit) { out.set(key, { ...row }); continue; }
+    if (!hit) { out.set(key, { ...row, ...Object.fromEntries(fields.filter((f) => folds(f) && row[f] === '').map((f) => [f, null])) }); continue; }
     for (const [k, v] of Object.entries(row)) if (typeof v === 'number' && !fields.includes(k)) hit[k] = ((hit[k] as number | undefined) ?? 0) + v;
   }
   const merged: Record<string, string[][]> = {};

@@ -351,6 +351,7 @@ describe('report tools: create_report and render_report in the core, the per-rec
     const res = (await client.callTool({ name: 'create_license_usage_report', arguments: { days: '60' } })) as { content: Array<{ text?: string }>; isError?: boolean };
     const text = res.content.map((c) => c.text ?? '').join('');
     assert.match(text, /license-usage reads every session of the range .* takes up to 31 days/, text);
+    assert.match(text, /^create_license_usage_report failed: /, 'the refusal names the tool that was called, not create_report (UAT 2026-11-25)');
     assert.doesNotMatch(text, /toolset .* is loaded now|Nothing was executed/, 'this was the call, not guidance');
     await new Promise((r) => setTimeout(r, 20));
     assert.equal(listChanged(), 1, 'the toolset loaded with it');

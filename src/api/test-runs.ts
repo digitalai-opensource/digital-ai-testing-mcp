@@ -80,6 +80,8 @@ export interface TestRunStatus {
   browsersCompleted?: number | null;
   /** Playwright: why the run is QUEUED (live: "Waiting for licenses"). */
   queueReason?: string | null;
+  /** Playwright, finished: where the test counts came from (the run's Reporter records), or that none is there yet. */
+  resultsNote?: string;
 }
 
 /**

@@ -1,5 +1,7 @@
 # Contributing to digital-ai-testing-mcp
 
+This guide covers how to set up a development copy, the checks a change must pass, how to add a tool, and how commits and pull requests are written. To report a security problem, follow [SECURITY.md](SECURITY.md) instead of opening an issue.
+
 ## Commit Messages
 
 This repo follows the [Conventional Commits](https://www.conventionalcommits.org/) specification.
@@ -24,8 +26,8 @@ This repo follows the [Conventional Commits](https://www.conventionalcommits.org
 1. Branch off `main` — `git checkout -b type/short-description`
 2. Commit using Conventional Commits format above
 3. Push and open a PR targeting `main`
-4. CI must pass before merging. CI runs lint, typecheck, build and the offline test project; the live API project (`npm run test:api`) only runs locally, so run it before a release
-5. At least 1 approval required (use admin bypass for solo work)
+4. CI must pass before merging. It runs `npm run lint`, `npm run typecheck`, `npm run build` and `npm run test:offline`. The live API suites (`npm run test:api`) run only locally, against a tenant in your `.env`; run them before a release
+5. At least one approval is required
 6. Delete the branch after merging
 
 ## Local Development
@@ -47,17 +49,18 @@ npm run test:<suite>         # one suite (see the scripts in package.json)
 npm run test:live            # live API-behaviour probes (tests/live) — not part of npm test; run before a release
 npm run test:fidelity-score  # check the agent fidelity eval's scenarios and scorer (no model calls)
 npm run test:fidelity        # agent fidelity eval — spends model tokens; see tests/fidelity/README.md
-npx tsx tests/remediation-intake/digest.ts   # summarise debug-mode remediation notes (gitignored internal tooling; see README "Debug mode")
 ```
 
-See `.env.example` for required environment variables.
+See `.env.example` for the environment variables the live suites need.
+
+On Windows, run the tests from PowerShell or Command Prompt with the path as `C:\...`; from Git Bash (`/c/...`) every test file fails with "Vitest failed to find the runner".
 
 Text files are stored and checked out with LF line endings (`.gitattributes`); Windows script formats (`.ps1`, `.bat`, `.cmd`) keep CRLF.
 
 ## Adding a Tool
 
 1. Put the API call in `src/api/<domain>.ts` (throw `Error` on failure) and register the tool in `src/tools/<domain>-tools.ts` (catch and return `isError: true`).
-2. Add the name to `REGISTERED_TOOLS` in `src/tools/meta-tools.ts` — a test fails if the list and the registrations drift apart. A new tool module (a new `src/tools/*-tools.ts` file) must also be assigned to exactly one toolset in `TOOLSETS` (`src/utils/toolsets.ts`).
+2. Add the name to `REGISTERED_TOOLS` in `src/tools/meta-tools.ts` — a test fails if the list and the registrations drift apart. A new tool module (a new `src/tools/*-tools.ts` file) must also be assigned to exactly one toolset in `TOOLSETS` (`src/utils/toolsets.ts`); a single tool that belongs to a different toolset than its module goes in `TOOL_TOOLSETS` in the same file.
 3. Destructive tools use `checkDestructiveGuard(confirmDeletion, …)` and never set `isError` on the guard response. Tools that read or write local files use `validateInputPath` / `validateOutputPath`, and build their descriptions with the deployment-mode helpers in `src/utils/locality.ts` (npm and Docker differ in whose filesystem the path is on). Add a handler-level case for any guard or gate to `tests/tools.test.ts`.
 4. Never infer privilege from the access key's format. Role comes from the platform (`src/api/access-level.ts`); in tests, set it with `actAs(level)`.
 5. Verify against the live API any parameter you send and any response field you map — don't assume the platform honours it. Add a probe to `tests/live/api-behavior.live.ts` (`npm run test:live`).

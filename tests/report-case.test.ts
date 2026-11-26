@@ -110,6 +110,12 @@ describe('groups that differ only in letter case are one group', () => {
     assert.deepEqual(m.merged, { browserName: [['Chrome', 'chrome']] });
   });
 
+  it('an empty value and no value are one row; with the exact case they stay apart', () => {
+    const rows = [{ browserName: '', _count_: 1759 }, { browserName: null, _count_: 1651 }, { browserName: 'chrome', _count_: 12 }];
+    assert.deepEqual(mergeGroupRows(rows, ['browserName'], true).rows, [{ browserName: null, _count_: 3410 }, { browserName: 'chrome', _count_: 12 }]);
+    assert.equal(mergeGroupRows(rows, ['browserName'], false).rows.length, 3);
+  });
+
   it('with no grouping, the rows are one total', () => {
     assert.deepEqual(mergeGroupRows([{ _count_: 12, passedCount: 12 }, { _count_: 9, passedCount: 8, failedCount: 1 }], [], true).rows, [{ _count_: 21, passedCount: 20, failedCount: 1 }]);
   });

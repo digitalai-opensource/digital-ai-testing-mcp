@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Release Readiness | Digital.ai Testing</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>:root{--green:#649A3D;--green-dark:#4d7a2d;--teal:#356B63;--lime:#B9DD47;--gray-600:#232E40;--teal-dark:#274F4A;--light-green:#E1F2DA;--bright-blue:#279FEA;--dark-blue:#205AB7;--gray-100:#F2F2F4;--gray-200:#C1C5CD;--gray-300:#A4ADB6;--gray-400:#677485;--gray-500:#445267;--text:#2a2a2a;--text-body:#555555;--bg:#FFFFFF;--status-pass:#649A3D;--status-fail:#E8291A;--status-warn:#F7B731;--status-info:#279FEA;--status-skip:#A4ADB6;--border:#d8e4d0;--border-light:#eef4eb;--radius:12px;--radius-sm:6px}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Montserrat','Gotham',Arial,sans-serif;font-size:15px;line-height:1.6;color:var(--text-body);background:var(--bg);-webkit-font-smoothing:antialiased}
+.container{max-width:1200px;margin:0 auto;padding:0 32px}
+.mono,code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13px}
+.num{font-variant-numeric:tabular-nums}
+.eyebrow{display:block;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--green-dark)}
+.report-header{background:var(--gray-600);background-image:radial-gradient(ellipse at 15% 50%,rgba(100,154,61,.18) 0%,transparent 60%),radial-gradient(ellipse at 85% 50%,rgba(53,107,99,.14) 0%,transparent 60%);color:#fff;padding:36px 0 32px}
+.report-header .container{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-content:space-between}
+.report-header .eyebrow{color:var(--lime)}
+.report-header h1{color:#fff;font-size:32px;font-weight:700;line-height:1.2;letter-spacing:-.5px;margin:6px 0 8px}
+.report-header .sub{color:rgba(255,255,255,.85);font-size:15px}
+.report-header .meta{color:rgba(255,255,255,.72);font-size:14px;margin-top:6px}
+.report-header .meta strong{color:#fff;font-weight:600}
+.headline{text-align:right}
+.headline .value{font-size:36px;font-weight:700;line-height:1.1;color:#fff}
+.headline .label{font-size:13px;color:rgba(255,255,255,.72)}
+h2{font-size:24px;font-weight:700;color:var(--text);line-height:1.3;margin:40px 0 16px}
+h3{font-size:18px;font-weight:600;color:var(--text);line-height:1.4;margin:0 0 12px}
+section{margin-bottom:8px}
+.grid{display:grid;gap:16px}
+.card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;min-width:0}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+.kpi{background:#fff;border:1px solid var(--border);border-top:4px solid var(--green);border-radius:var(--radius);padding:20px 22px}
+.kpi .value,.stat .value{font-size:36px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .label,.stat .label{font-size:13px;font-weight:500;color:var(--gray-400);margin-top:6px}
+.kpi.accent-fail{border-top-color:var(--status-fail)}
+.stack{display:flex;height:34px;border-radius:var(--radius-sm);overflow:hidden;margin:14px 0 10px;background:var(--gray-100)}
+.stack div{display:flex;align-items:center;padding-left:10px;color:#fff;font-weight:600;font-size:13px;white-space:nowrap}
+.key{display:flex;gap:6px 18px;flex-wrap:wrap;font-size:13px;color:var(--gray-400);margin-top:8px}
+.key i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.track{background:var(--gray-100);height:16px;border-radius:3px;overflow:hidden;display:flex}
+.seg{height:100%}
+.hbars{display:flex;flex-direction:column;gap:10px}
+.hb{display:grid;grid-template-columns:minmax(120px,240px) 1fr 96px;gap:12px;align-items:center}
+.hb-name{font-size:13px;line-height:1.3;min-width:0;overflow:hidden}
+.hb-name b{display:block;font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hb-name span{color:var(--gray-400)}
+.hb-val{font-weight:600;color:var(--text);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;line-height:1;padding:5px 10px;border-radius:100px;color:var(--text);background:var(--gray-100);white-space:nowrap}
+.pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--status-skip)}
+.pill.pass{background:rgba(100,154,61,.14)}
+.pill.pass::before{background:var(--status-pass)}
+.pill.fail{background:rgba(232,41,26,.10)}
+.pill.fail::before{background:var(--status-fail)}
+.pill.warn{background:rgba(247,183,49,.18)}
+.pill.warn::before{background:var(--status-warn)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead th{background:var(--gray-100);color:var(--gray-500);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:10px 14px;border-bottom:2px solid var(--gray-200);position:sticky;top:0}
+tbody td,tbody th{padding:10px 14px;border-bottom:1px solid var(--border-light);vertical-align:top;text-align:left}
+tbody th{color:var(--text);font-weight:600}
+tbody tr:nth-child(even){background:#FAFCF9}
+tbody tr:hover{background:var(--light-green)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius)}
+.callout{border-left:4px solid var(--green);background:var(--light-green);padding:16px 20px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:var(--text)}
+.callout strong:first-child{display:block;margin-bottom:4px}
+.callout.means{margin-top:16px}
+.callout.risk{border-left-color:var(--status-fail);background:#FDF0EF}
+.source{font-size:12px;color:var(--gray-400);margin-top:40px;max-width:90ch}
+.report-footer{background:var(--gray-600);color:rgba(250,250,250,.6);font-size:13px;padding:28px 0;margin-top:48px}
+@media (max-width:720px){.container{padding:0 16px}.hb{grid-template-columns:110px 1fr 80px}.headline{text-align:left}}
+@media print{@page{size:Letter;margin:.5in}body{font-size:11pt}.report-header,.report-footer,.kpi,.pill,thead th,.callout,.stack,.seg,.track,.hm{-webkit-print-color-adjust:exact;print-color-adjust:exact}.kpi,.card,table,.callout,.findings li{break-inside:avoid}thead{display:table-header-group}tbody tr:hover{background:none}[role=tabpanel]{display:block!important}}</style>
+</head>
+<body>
+<header class="report-header"><div class="container"><div><span class="eyebrow">Digital.ai Testing</span><h1>Release Readiness</h1><p class="sub">The last 7 days against stated checks</p><p class="meta"><strong>Project:</strong> Mobile Banking · <strong>Range:</strong> Nov. 14, 2026 to Nov. 20, 2026 · Generated Nov. 20, 2026, 12:00 PM UTC</p></div><div class="headline"><div class="value">Not ready</div><div class="label">Against this report's checks</div></div></div></header>
+<main class="container"><section><h2>Verdict</h2><div class="grid"><div class="callout risk"><strong>Not ready</strong>3 of 6 checks failed (pass rate, newly failing tests, a platform under the goal); 2 more at risk. This is the outcome of the checks listed below, each computed from the platform's own counts; whether to release is a decision for the people who know what the failing tests cover.</div></div></section><section><h2>At a Glance</h2><div class="grid"><div class="kpi-row"><div class="kpi"><div class="value">1,270</div><div class="label">Runs, last 7 days</div></div><div class="kpi accent-fail"><div class="value">85.5%</div><div class="label">Pass rate (goal 90%)</div></div><div class="kpi"><div class="value">14</div><div class="label">Tests</div></div><div class="kpi accent-fail"><div class="value">1</div><div class="label">Newly failing</div></div><div class="kpi accent-fail"><div class="value">1</div><div class="label">Failing every run</div></div></div></div></section><section><h2>Checks</h2><div class="grid"><div class="table-wrap"><table><thead><tr><th>Check</th><th>Result</th><th>What the counts say</th></tr></thead><tbody><tr><td>Pass rate of at least 90%</td><td><span class="pill fail">Failed</span></td><td>85.5% over 1,239 verdicts. 57 fewer failures would reach the goal.</td></tr><tr><td>No newly failing test</td><td><span class="pill fail">Failed</span></td><td>1 test passed every run in the previous 7 days and fails at least half now: &quot;Deposit a check&quot;.</td></tr><tr><td>No test failing every run</td><td><span class="pill warn">At risk</span></td><td>1 test did not pass once: &quot;Open push notification&quot;. It also failed every run in the previous 7 days (known, but still open).</td></tr><tr><td>Every platform at 90% or more</td><td><span class="pill fail">Failed</span></td><td>Android 78.4% (551 verdicts), iOS 85.6% (347 verdicts).</td></tr><tr><td>No test near an even split</td><td><span class="pill warn">At risk</span></td><td>3 tests pass between 10% and 90% of their runs, so one green run of them is weak evidence: &quot;Reset password&quot;, &quot;Transfer between accounts&quot;, &quot;Pay a bill&quot;.</td></tr><tr><td>Runs without a verdict under 5%</td><td><span class="pill pass">Passed</span></td><td>31 runs of 1,270 ended incomplete or skipped (2.4%); the pass rate leaves them out.</td></tr></tbody></table></div></div><div class="callout means"><strong>What it means</strong>3 checks fail: pass rate, newly failing tests, a platform under the goal. At risk: tests failing every run, tests with mixed results. The goal of 90% was given with the request.</div></section><section><h2>Tests That Stand in the Way</h2><div class="grid"><div class="table-wrap"><table><thead><tr><th>Test</th><th>Standing</th><th class="num">Runs</th><th class="num">Failed or error</th><th>In the previous 7 days</th></tr></thead><tbody><tr><td>Deposit a check</td><td>Newly failing</td><td class="num">73</td><td class="num">47</td><td>86 of 86 passed</td></tr><tr><td>Open push notification</td><td>Fails every time (also before)</td><td class="num">39</td><td class="num">39</td><td>0 of 42 passed</td></tr></tbody></table></div></div><div class="callout means"><strong>What it means</strong>1 test broke between the two periods: start there, the change is recent. 1 test cannot pass at present, since before this period: fix, or take out of the release criteria on purpose.</div></section><section><h2>Results by Platform</h2><div class="grid"><div class="card"><div class="hbars"><div class="hb"><div class="hb-name" title="Android"><b>Android</b></div><div class="track"><div class="seg" style="width:76.73%;background:var(--status-pass)" title="Passed: 432"></div><div class="seg" style="width:21.14%;background:var(--status-fail)" title="Failed or error: 119"></div><div class="seg" style="width:2.13%;background:var(--status-skip)" title="Incomplete or skipped: 12"></div></div><div class="hb-val">563</div></div><div class="hb"><div class="hb-name" title="iOS"><b>iOS</b></div><div class="track"><div class="seg" style="width:52.75%;background:var(--status-pass)" title="Passed: 297"></div><div class="seg" style="width:8.88%;background:var(--status-fail)" title="Failed or error: 50"></div><div class="seg" style="width:1.78%;background:var(--status-skip)" title="Incomplete or skipped: 10"></div></div><div class="hb-val">357</div></div><div class="hb"><div class="hb-name" title="Web or no device"><b>Web or no device</b></div><div class="track"><div class="seg" style="width:58.61%;background:var(--status-pass)" title="Passed: 330"></div><div class="seg" style="width:1.95%;background:var(--status-fail)" title="Failed or error: 11"></div><div class="seg" style="width:1.60%;background:var(--status-skip)" title="Incomplete or skipped: 9"></div></div><div class="hb-val">350</div></div></div><div class="key"><span><i style="background:var(--status-pass)"></i>Passed</span><span><i style="background:var(--status-fail)"></i>Failed or error</span><span><i style="background:var(--status-skip)"></i>Incomplete or skipped</span></div></div></div><div class="callout means"><strong>What it means</strong>Android: 78.4% over 551 verdicts; iOS: 85.6% over 347 verdicts; Web or no device: 96.8% over 341 verdicts. The gap between platforms is 18.4 points: the release is not equally ready on each.</div></section><section><h2>Failures by Classification</h2><div class="grid"><div class="card"><div class="stack"><div style="width:27.78%;background:var(--green)" title="Script: 50 (27.8%)">27.8%</div><div style="width:22.78%;background:var(--teal)" title="Assertion: 41 (22.8%)">22.8%</div><div style="width:18.89%;background:var(--dark-blue)" title="Application: 34 (18.9%)">18.9%</div><div style="width:14.44%;background:var(--lime)" title="Device: 26 (14.4%)">14.4%</div><div style="width:11.11%;background:var(--gray-400)" title="Not classified: 20 (11.1%)"></div><div style="width:5.00%;background:var(--bright-blue)" title="Network: 9 (5.0%)"></div></div><div class="key"><span><i style="background:var(--green)"></i>Script: 50 (27.8%)</span><span><i style="background:var(--teal)"></i>Assertion: 41 (22.8%)</span><span><i style="background:var(--dark-blue)"></i>Application: 34 (18.9%)</span><span><i style="background:var(--lime)"></i>Device: 26 (14.4%)</span><span><i style="background:var(--gray-400)"></i>Not classified: 20 (11.1%)</span><span><i style="background:var(--bright-blue)"></i>Network: 9 (5.0%)</span></div></div></div><div class="callout means"><strong>What it means</strong>Script is the largest group (28%). Of the classified failures, 78% point at the test or the app (assertion, script, application), so the lab is not the main problem.</div></section><p class="source">Source: Digital.ai Testing reporter, the platform's own counts by test, platform and classification for project Mobile Banking, Nov. 14, 2026 to Nov. 20, 2026 and the 7 days before (nothing is sampled or cut off). Checks: pass rate at or above 90%; no test that passed every run before and fails at least half now; no test without a single pass (at risk when it also never passed before); every platform with 20 or more verdicts at the goal; no test passing between 10% and 90% of its runs; under 5% of runs without a verdict. A test is judged from 3 verdicts.</p></main>
+<footer class="report-footer"><div class="container">© 2026 Digital.ai Software, Inc. · Generated from Digital.ai Testing via MCP · Nov. 20, 2026, 12:00 PM UTC</div></footer>
+</body>
+</html>

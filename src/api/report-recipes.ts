@@ -2,6 +2,7 @@
  * Data collection for the report recipes (create_report). Each function returns plain records; the layout and the
  * interpretation are built in src/utils/report-recipes.ts.
  */
+import { stripAnsi } from '../utils/failure-cause.js';
 import { listTests, getGroupedTests, getGroupedTestsAllProjects } from './reporting.js';
 import { getMyAccountInfo } from './users.js';
 import { getReporterProjects } from './reporter-projects.js';
@@ -66,7 +67,7 @@ export async function scanRuns(cutoff: number, maxRecords: number, projectName?:
           serial: (r['device.serialNumber'] as string) || null,
           deviceName: (r['device.name'] as string) || null,
           deviceOs: (r['device.os'] as string) || null,
-          cause: (r.cause as string) ?? null,
+          cause: stripAnsi((r.cause as string) ?? null),
           errorCategory: (r.errorCategory as string) ?? null,
           duration: typeof r.duration === 'number' ? r.duration : null,
         });

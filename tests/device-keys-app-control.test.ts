@@ -652,3 +652,16 @@ describe('device_info battery (UAT 2026-11-14: {"level":1,"state":5} was read as
     assert.equal(describeBattery(undefined, 'ios'), undefined);
   });
 });
+
+describe('a device this server just released (UAT 2026-11-25, live 2026-11-26)', () => {
+  it('remembers the release by serial, whatever its case, for ten minutes', async () => {
+    const { recordReleasedDevice, secondsSinceReleased } = await import('../src/api/webdriver.js');
+    const t0 = 1_800_000_000_000;
+    recordReleasedDevice('R58M123ABC', t0);
+    assert.equal(secondsSinceReleased('r58m123abc', t0 + 4_400), 4);
+    assert.equal(secondsSinceReleased('R58M123ABC', t0 + 599_000), 599);
+    assert.equal(secondsSinceReleased('R58M123ABC', t0 + 600_000), null);
+    assert.equal(secondsSinceReleased('OTHER', t0), null);
+    assert.equal(secondsSinceReleased(undefined, t0), null);
+  });
+});

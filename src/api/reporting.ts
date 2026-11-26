@@ -1,3 +1,4 @@
+import { stripAnsi } from '../utils/failure-cause.js';
 import AdmZip from 'adm-zip';
 import { writeDownloadFile } from '../utils/write-download.js';
 import { apiGet, apiPost, apiDownload, apiDownloadRange, getActiveUrl } from './client.js';
@@ -80,10 +81,11 @@ function normalizeSingleTest(raw: RawSingleTest): TestReport {
     attachments_size: totalSize,
     subTestCount: raw.count ?? undefined,
     failedSubTestCount: raw.failedCount ?? undefined,
-    cause: raw.keyValuePairs?.cause ?? undefined,
+    // Runners such as Playwright write terminal colour codes into the failure text.
+    cause: stripAnsi(raw.keyValuePairs?.cause ?? undefined),
     errorCategory: raw.keyValuePairs?.errorCategory ?? undefined,
     errorClassification: raw.keyValuePairs?.errorClassification ?? undefined,
-    errorDetail: raw.keyValuePairs?.['error.object'] ?? undefined,
+    errorDetail: stripAnsi(raw.keyValuePairs?.['error.object'] ?? undefined),
     // Which pool the mobile automation test actually ran on (platform 26.7+): "shared" or "dedicated".
     ...(raw.keyValuePairs?.['device.pool.actual'] ? { devicePool: String(raw.keyValuePairs['device.pool.actual']) } : {}),
     ...(raw.projectName ? { projectName: raw.projectName } : {}),
@@ -159,7 +161,7 @@ export function buildRootCauseAnalysis(
   info: { enabled?: boolean } | null
 ): RootCauseAnalysis {
   const kv = raw.keyValuePairs ?? {};
-  const s = (k: string) => (kv[k] == null || kv[k] === '' ? undefined : String(kv[k]));
+  const s = (k: string) => (kv[k] == null || kv[k] === '' ? undefined : stripAnsi(String(kv[k])));
   let evidence: RcaEvidence[] = [];
   const ev = s('rca.evidence');
   if (ev) {

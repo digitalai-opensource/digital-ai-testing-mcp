@@ -222,6 +222,13 @@ describe('detectFabricationIssues — comments and URL placeholders (UAT 2026-11
     assert.ok(issues.some((i) => i.label === 'scaffold guard present'));
   });
 
+  it('no "no live inspection session" item for a file whose only locators are in comments (UAT 2026-11-25)', () => {
+    const commentedOnly = ["test('x', async ({ page }) => {", "  // await page.locator('#login').click();", "  // await page.goto('https://example.com');", "  throw new Error('PLACEHOLDER TEST BODY');", '});'].join('\n');
+    assert.ok(!detectFabricationIssues(commentedOnly).some((i) => i.label === 'no live inspection session'));
+    const real = ["test('x', async ({ page }) => {", "  await page.locator('#login').click();", '});'].join('\n');
+    assert.ok(detectFabricationIssues(real).some((i) => i.label === 'no live inspection session'), 'a file that locates elements keeps it');
+  });
+
   it('ignores a bracketed URL placeholder that only appears in a commented example line', () => {
     const filled = [
       "test('x', async ({ page }) => {",

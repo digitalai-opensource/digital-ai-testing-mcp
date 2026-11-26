@@ -1,3 +1,4 @@
+import { deviceNameHint } from './device-name-hint.js';
 import axios, { AxiosInstance } from 'axios';
 import type { InspectionSession } from '../types/digital-ai.js';
 import { deleteTests, listTests } from './reporting.js';
@@ -253,8 +254,9 @@ export async function createInspectionSession(
     }
     // The Grid often returns a bare 500 with no body when the device agent pool
     // is saturated (v36) — give the caller a diagnosis path instead of a status code.
+    const nameHint = /No available device matching/i.test(detail) ? await deviceNameHint(query) : '';
     throw new Error(
-      `Session creation failed: ${detail}. Diagnostics: ` +
+      `Session creation failed: ${detail}.${nameHint} Diagnostics: ` +
       (platform === 'ios'
         ? '(1) run check_ios_readiness — if available is 0, the device pool or platform agents are busy; '
         : '(1) run find_available_device(os: "android") or get_device_health_summary — if nothing is available, the device pool or platform agents are busy; ') +
@@ -324,6 +326,21 @@ export async function createInspectionSession(
   return session;
 }
 
+/**
+ * Devices this server released, by serial, with the time. Right after a stop the platform still shows the device as
+ * "In Use" and then "Cleanup" for a while (live 2026-11-26: "In Use" half a second after the stop); a start pinned to it
+ * then says so, and that the wait is the platform's reset after its own session (UAT 2026-11-25).
+ */
+const releasedDevices = new Map<string, number>();
+export function recordReleasedDevice(serial: string | undefined, at = Date.now()): void {
+  if (serial) releasedDevices.set(serial.toLowerCase(), at);
+}
+/** Seconds since this server released the device, or null when it did not (in the last 10 minutes). */
+export function secondsSinceReleased(serial: string | undefined, now = Date.now()): number | null {
+  const at = serial ? releasedDevices.get(serial.toLowerCase()) : undefined;
+  return at != null && now - at < 600_000 ? Math.max(0, Math.round((now - at) / 1000)) : null;
+}
+
 export async function quitInspectionSession(
   handle: string,
   keepReport = false
@@ -373,6 +390,7 @@ export async function quitInspectionSession(
     // Best-effort — session may already be expired
   }
 
+  recordReleasedDevice(session.deviceUDID);
   sessionRegistry.delete(handle);
 
   let reportDeleted = false;

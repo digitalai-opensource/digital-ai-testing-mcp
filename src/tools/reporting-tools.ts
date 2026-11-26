@@ -2122,11 +2122,14 @@ export function registerReportingTools(server: McpServer): void {
         const measured = scanCapped && lastSorted
           ? await measureTrendWindow(cutoffTs, maxRecords, MAX_RECORDS, projectId, projectName).catch(() => null)
           : null;
-        const suggestedMaxRecords = !scanCapped ? null
-          : measured?.neededRecords ?? (measured?.fittingLookbackDays != null ? MAX_RECORDS : Math.min(estimatedNeeded, MAX_RECORDS));
         const fittingLookbackDays = !scanCapped ? null
           : measured ? (measured.fittingLookbackDays ?? null)
           : estimatedNeeded > MAX_RECORDS ? Math.max(1, Math.floor((MAX_RECORDS / (records.length / coveredDays)) / 1.1)) : null;
+        // Only a maxRecords that covers the window, and never the one that was just used: when even 25,000 does not cover
+        // it, the shorter lookback is the only next step (UAT 2026-11-25: 25,000 was suggested again after 25,000 fell short).
+        const coveringMaxRecords = !scanCapped || fittingLookbackDays != null ? null
+          : measured?.neededRecords ?? Math.min(estimatedNeeded, MAX_RECORDS);
+        const suggestedMaxRecords = coveringMaxRecords != null && coveringMaxRecords > maxRecords ? coveringMaxRecords : null;
         const suggestionBasis = measured ? 'measured' : 'estimated from the rate observed so far';
         const structured = {
           bucketBy,
@@ -2140,7 +2143,7 @@ export function registerReportingTools(server: McpServer): void {
           ...(scanCapped
             ? {
                 missingRange: { from: new Date(cutoffTs).toISOString(), to: coveredFrom },
-                suggestedMaxRecords,
+                ...(suggestedMaxRecords != null ? { suggestedMaxRecords } : {}),
                 suggestionBasis,
                 ...(fittingLookbackDays != null ? { fittingLookbackDays } : {}),
               }
@@ -2172,8 +2175,11 @@ export function registerReportingTools(server: McpServer): void {
             `\n  ⚠️  INCOMPLETE WINDOW: the scan stopped at maxRecords (${maxRecords}) and only covers ${coveredFrom.slice(0, 10)} onward — ` +
             `days before that are MISSING from this trend, not days with zero executions. ` +
             (fittingLookbackDays != null
-              ? `At this project's rate even the 25,000 maximum won't cover ${lookbackDays} days — use lookbackDays: ${fittingLookbackDays} with maxRecords: 25000, or bucketBy "week" over several shorter calls.`
-              : `Re-run with maxRecords: ${suggestedMaxRecords} to cover the full ${lookbackDays}-day window (${suggestionBasis}).`)
+              ? `At this project's rate even the 25,000 maximum won't cover ${lookbackDays} days — use lookbackDays: ${fittingLookbackDays} with maxRecords: 25000, or bucketBy "week" over several shorter calls. ` +
+                'create_test_trend_report counts any range exactly, without this limit.'
+              : suggestedMaxRecords != null
+                ? `Re-run with maxRecords: ${suggestedMaxRecords} to cover the full ${lookbackDays}-day window (${suggestionBasis}).`
+                : `A shorter lookbackDays fits; create_test_trend_report counts any range exactly, without this limit.`)
           );
         }
         return respond(outputFormat, structured, lines.join('\n'));
