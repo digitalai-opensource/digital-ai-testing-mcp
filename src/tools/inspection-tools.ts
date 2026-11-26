@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { caseInsensitiveEnum } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import {
+import { secondsSinceReleased,
   createInspectionSession,
   quitInspectionSession,
   captureScreenshot,
@@ -502,10 +502,18 @@ export function registerInspectionTools(server: McpServer): void {
             }
           }
           if (resolved.displayStatus.toLowerCase() !== 'available' && resolved.displayStatus !== 'unknown') {
+            // Cleanup follows every session, including one this server just stopped (UAT 2026-11-25: the agent switched
+            // devices after a start seconds after its own stop was refused with no hint that the wait is short).
+            const cleaning = /clean/i.test(resolved.displayStatus);
+            const releasedAgo = secondsSinceReleased(resolved.udid);
             return {
               content: [{
                 type: 'text' as const,
-                text: `Error: device ${resolved.deviceName} is "${resolved.displayStatus}", not Available — the session would time out waiting for it. Pick another device with find_available_device, or wait for it to free up.`,
+                text: releasedAgo != null
+                  ? `Error: device ${resolved.deviceName} is "${resolved.displayStatus}": this server stopped a session on it ${releasedAgo} s ago, and the platform resets a device after every session before it is Available again. Retry with the same device in a minute or two (check it with list_devices), or pick another with find_available_device.`
+                  : cleaning
+                  ? `Error: device ${resolved.deviceName} is "${resolved.displayStatus}": the platform resets a device after every session, including one just stopped here, and it becomes Available again by itself. Retry with the same device in a minute or two (check it with list_devices), or pick another with find_available_device.`
+                  : `Error: device ${resolved.deviceName} is "${resolved.displayStatus}", not Available — the session would time out waiting for it. Pick another device with find_available_device, or wait for it to free up.`,
               }],
               isError: true,
             };

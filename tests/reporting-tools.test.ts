@@ -390,7 +390,7 @@ describe('get_daily_execution_trend when maxRecords caps the window', () => {
     spacingMs = 10 * 60_000;
     try {
       const r2 = await tools.callJson('get_daily_execution_trend', { lookbackDays: 365, maxRecords: 100 });
-      assert.equal(r2.suggestedMaxRecords, 25000);
+      assert.equal(r2.suggestedMaxRecords, undefined, 'no maxRecords is offered when even 25,000 does not cover the window');
       const fitting = r2.fittingLookbackDays;
       assert.ok(typeof fitting === 'number' && fitting > 100 && fitting < 200);
     } finally {

@@ -45,6 +45,8 @@ CLAUDE.md
 
 # Remediation Reports from the UAT Test Tooling
 reports/
+# ...except the example reports in the customer docs (made-up data, scripts/example-reports.ts)
+!docs/examples/reports/
 remediation/
 # Internal tooling for evaluating debug-mode remediation notes — kept on developer workstations, not published
 tests/remediation-intake/

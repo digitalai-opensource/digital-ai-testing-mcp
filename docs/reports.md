@@ -1,21 +1,25 @@
 # Reports
 
+This guide is for anyone who reads or shares results from Digital.ai Testing: test leads, release managers, lab administrators and the people they report to. It describes every report the server can build, how to ask for one, the options that narrow it, where the finished file goes, and the settings that change that.
+
 Ask for a report and the server builds it. It fetches the data, draws the charts and writes a short "What it means" under every section. You get one HTML file in Digital.ai branding that works offline and can be mailed or attached, and the AI sums up the highlights in the chat.
 
-There are two ways to get one:
+There are two kinds:
 
 - **A ready-made report** for a common question, such as a test summary, a release readiness check or a license usage report. One request, one report.
 - **A report of any data** you are looking at. The AI fetches the data with the ordinary tools and lays it out in the same design.
 
+Asking for a report instead of having the AI assemble one also costs far fewer tokens; see [Optimizing Token Consumption](../README.md#optimizing-token-consumption) in the README.
+
 **Contents**
 
-- [How to ask](#how-to-ask)
 - [Ready-made reports](#ready-made-reports)
   - [Test results](#test-results)
   - [Devices and the lab](#devices-and-the-lab)
   - [Usage and licenses](#usage-and-licenses)
   - [Performance](#performance)
 - [A report of any data](#a-report-of-any-data)
+- [How to ask](#how-to-ask)
 - [Options you can add](#options-you-can-add)
 - [Long ranges and background reports](#long-ranges-and-background-reports)
 - [Where reports appear and are saved](#where-reports-appear-and-are-saved)
@@ -25,45 +29,37 @@ There are two ways to get one:
 
 ---
 
-## How to ask
-
-Use plain language. You do not need a tool name.
-
-- *"Give me a test summary report for the last 7 days"*
-- *"Are we ready to release build 412?"*
-- *"Which tests started failing this week?"*
-- *"Are we near our license limit? Use the last 30 days."*
-- *"List the applications in the repository"*, then *"Show that as a report by platform"*
-
-Add a project, a number of days or a pass-rate goal to any request: *"...for project Payments, last 30 days, against a 95% goal"*.
-
-A quick question still gets a quick answer. *"How many devices are offline?"* is answered in a sentence. Say "report" when you want something to read or share.
-
----
-
 ## Ready-made reports
 
-| Report | Ask for | Default range | Access |
-|---|---|---|---|
-| [Test summary](#test-summary) | *"a test summary report"* | 7 days | Any |
-| [Test trend](#test-trend) | *"a test trend report for the last 90 days"* | 90 days, up to 365 | Any |
-| [Test breakdown](#test-breakdown) | *"test results by platform"* | 30 days, or all dates | Any |
-| [Test reliability](#test-reliability) | *"which tests are unreliable?"* | 7 days, up to 31 | Any |
-| [Release readiness](#release-readiness) | *"are we ready to release?"* | 7 days, up to 31 | Any |
-| [Failure analysis](#failure-analysis) | *"why are tests failing?"* | 7 days | Any |
-| [Test report inventory](#test-report-inventory) | *"how many test reports do we have?"* | All dates | Any; Cloud Admin covers every project |
-| [Device health](#device-health) | *"a device health report"* | 7 days of results | Any |
-| [Device coverage](#device-coverage) | *"which devices do our tests cover?"* | 30 days | Any |
-| [Device utilization](#device-utilization) | *"how much of the lab is used?"* | 30 days | Cloud Admin |
-| [License usage](#license-usage) | *"are we near our license limit?"* | 7 days, up to 31 | Cloud Admin |
-| [Usage summary](#usage-summary) | *"a usage summary"* | 90 days | Cloud Admin |
-| [Performance overview](#performance-overview) | *"a performance overview report"* | 90 days, or all dates | Any |
+| Report | Ask for | Default range | Access | Example |
+|---|---|---|---|---|
+| [Test summary](#test-summary) | *"a test summary report"* | 7 days | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-summary.html) |
+| [Test trend](#test-trend) | *"a test trend report for the last 90 days"* | 90 days, up to 365 | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-trend.html) |
+| [Test breakdown](#test-breakdown) | *"test results by platform"* | 30 days, or all dates | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-breakdown.html) |
+| [Test reliability](#test-reliability) | *"which tests are unreliable?"* | 7 days, up to 31 | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-reliability.html) |
+| [Release readiness](#release-readiness) | *"are we ready to release?"* | 7 days, up to 31 | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/release-readiness.html) |
+| [Failure analysis](#failure-analysis) | *"why are tests failing?"* | 7 days | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/failure-analysis.html) |
+| [Test report inventory](#test-report-inventory) | *"how many test reports do we have?"* | All dates | Any; Cloud Admin covers every project | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-inventory.html) |
+| [Device health](#device-health) | *"a device health report"* | 7 days of results | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-health.html) |
+| [Device coverage](#device-coverage) | *"which devices do our tests cover?"* | 30 days | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-coverage.html) |
+| [Device utilization](#device-utilization) | *"how much of the lab is used?"* | 30 days | Cloud Admin | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-utilization.html) |
+| [License usage](#license-usage) | *"are we near our license limit?"* | 7 days, up to 31 | Cloud Admin | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/license-usage.html) |
+| [Usage summary](#usage-summary) | *"a usage summary"* | 90 days | Cloud Admin | [One project](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-summary.html) · [Every project](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-overview.html) |
+| [Performance overview](#performance-overview) | *"a performance overview report"* | 90 days, or all dates | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-overview.html) |
 
 A project key sees its own project. A Cloud Admin key sees its own project by default and any project you name.
+
+More ways to ask for each report: [example prompts](examples.md#ready-made-reports).
+
+Every example is a real report built by the server from made-up data (no customer or tenant data), opened as a live
+page: tabs, charts and the print layout work as they do for you. The HTML and a screenshot of each are in
+[docs/examples/reports](examples/reports/); `npm run docs:example-reports` builds them again.
 
 ### Test results
 
 #### Test summary
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-summary.html"><img src="examples/reports/test-summary.png" alt="Test summary example" width="420"></a>
 
 *"Give me a test summary report for the last 7 days"*
 
@@ -81,6 +77,8 @@ Options: days, project, pass-rate goal, compare with the previous period (on by 
 
 #### Test trend
 
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-trend.html"><img src="examples/reports/test-trend.png" alt="Test trend example" width="420"></a>
+
 *"Create a test trend report for the last 90 days"* · *"How has our pass rate moved this year?"*
 
 Runs and pass rate over time, for ranges up to a year.
@@ -96,6 +94,8 @@ Options: days, project, pass-rate goal, [scope](#scope-to-one-build-platform-or-
 
 #### Test breakdown
 
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-breakdown.html"><img src="examples/reports/test-breakdown.png" alt="Test breakdown example" width="420"></a>
+
 *"Show test results by platform for the last 30 days"* · *"Compare pass rates by device model"* · *"Results by framework and platform"*
 
 Results split by one or two things you choose.
@@ -109,6 +109,8 @@ You can break results down by platform, device, model, OS version, manufacturer,
 Options: what to break down by (required), days or all dates, project, pass-rate goal, [scope](#scope-to-one-build-platform-or-column).
 
 #### Test reliability
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-reliability.html"><img src="examples/reports/test-reliability.png" alt="Test reliability example" width="420"></a>
 
 *"Which tests are unreliable?"* · *"Which tests started failing this week?"*
 
@@ -124,6 +126,8 @@ No test is called flaky. The counts show that a test passes and fails; they cann
 Options: days (up to 31), project, [scope](#scope-to-one-build-platform-or-column).
 
 #### Release readiness
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/release-readiness.html"><img src="examples/reports/release-readiness.png" alt="Release readiness example" width="420"></a>
 
 *"Are we ready to release?"* · *"Create a release readiness report for build 412"*
 
@@ -144,6 +148,8 @@ Options: days (up to 31), project, pass-rate goal, [scope](#scope-to-one-build-p
 
 #### Failure analysis
 
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/failure-analysis.html"><img src="examples/reports/failure-analysis.png" alt="Failure analysis example" width="420"></a>
+
 *"Why are tests failing this week? Make a failure analysis report"*
 
 - Failures by classification and by device
@@ -153,6 +159,8 @@ Options: days (up to 31), project, pass-rate goal, [scope](#scope-to-one-build-p
 Options: days, project.
 
 #### Test report inventory
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-inventory.html"><img src="examples/reports/test-inventory.png" alt="Test report inventory example" width="420"></a>
 
 *"Create a test report inventory"* · *"How many test reports do we have, by project and user?"*
 
@@ -171,6 +179,8 @@ Options: project (to limit it to one).
 
 #### Device health
 
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-health.html"><img src="examples/reports/device-health.png" alt="Device health example" width="420"></a>
+
 *"Show me a device health report"*
 
 - Pool status and devices by operating system
@@ -182,6 +192,8 @@ Options: project (to limit it to one).
 Options: days and project (these scope the test results only; the pool is every device your key sees).
 
 #### Device coverage
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-coverage.html"><img src="examples/reports/device-coverage.png" alt="Device coverage example" width="420"></a>
 
 *"Which devices and OS versions do our tests cover?"*
 
@@ -198,6 +210,8 @@ Options: days, project.
 
 #### Device utilization
 
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-utilization.html"><img src="examples/reports/device-utilization.png" alt="Device utilization example" width="420"></a>
+
 *"How much of our device lab is used?"* · *"Which devices are never reserved?"*
 
 Reserved hours per device against the hours the pool had, across every project.
@@ -212,6 +226,8 @@ Options: days, project. Cloud Admin.
 ### Usage and licenses
 
 #### License usage
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/license-usage.html"><img src="examples/reports/license-usage.png" alt="License usage example" width="420"></a>
 
 *"Are we near our license limit?"* · *"What was our peak concurrency this month?"*
 
@@ -229,6 +245,8 @@ Options: days (up to 31). Covers every project. Cloud Admin.
 
 #### Usage summary
 
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-summary.html"><img src="examples/reports/usage-summary.png" alt="Usage summary example" width="420"></a>
+
 *"Create a usage summary for project Payments for the last 90 days"* · *"Create a usage summary for all projects"*
 
 Reserved device hours.
@@ -242,6 +260,8 @@ Options: days, project, recent window. Cloud Admin.
 
 #### Performance overview
 
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-overview.html"><img src="examples/reports/performance-overview.png" alt="Performance overview example" width="420"></a>
+
 *"Create a performance overview report"* · *"Which transactions are slowest?"*
 
 Performance transactions recorded by your tests.
@@ -254,13 +274,15 @@ Performance transactions recorded by your tests.
 
 Speed Index is a score, lower is better. The report never turns a difference in Speed Index into milliseconds.
 
-For a like-for-like comparison of two versions, devices or networks, ask the AI to compare them; see [Performance Comparison Reports](../README.md#performance-comparison-reports).
+For a like-for-like comparison of two versions, devices or networks, ask the AI to compare them; see [Performance Comparison Reports](../README.md#performance-comparison).
 
 Options: days or all dates, project.
 
 ---
 
 ## A report of any data
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/any-data.html"><img src="examples/reports/any-data.png" alt="A report of any data: applications in the repository" width="420"></a>
 
 The ready-made reports cover common questions. For anything else, ask for a report of whatever you are looking at:
 
@@ -299,6 +321,22 @@ If the AI's layout is nearly right, the report is drawn anyway. A field name suc
 
 ---
 
+## How to ask
+
+Use plain language. You do not need a tool name.
+
+- *"Give me a test summary report for the last 7 days"*
+- *"Are we ready to release build 412?"*
+- *"Which tests started failing this week?"*
+- *"Are we near our license limit? Use the last 30 days."*
+- *"List the applications in the repository"*, then *"Show that as a report by platform"*
+
+Add a project, a number of days or a pass-rate goal to any request: *"...for project Payments, last 30 days, against a 95% goal"*.
+
+A quick question still gets a quick answer. *"How many devices are offline?"* is answered in a sentence. Say "report" when you want something to read or share.
+
+---
+
 ## Options you can add
 
 | Option | What it does | Example |
@@ -320,7 +358,11 @@ The test trend, test breakdown, test reliability and release readiness reports c
 - *"Show the test trend for iOS only"*
 - *"Results by device model, Appium Server tests only"*
 
-Any column on your test reports can be used, including custom ones your tests add (for example a build number). The scope is named at the top of the report and in its source line. The value has to match what the platform stores exactly; a test breakdown by that column lists the values.
+Any column on your test reports can be used, including custom ones your tests add (for example a build number). The scope is named at the top of the report and in its source line. A test breakdown by that column lists the values it holds.
+
+- **Letter case does not matter.** The platform keeps each value in the spelling the test client sent, so one browser can be stored as "Chrome" and as "chrome"; a scope of "chrome" counts both. Ask for the exact spelling only and the report counts that one and says the other spellings are left out.
+- **A custom column named like a plain word.** Plain words such as platform, device, model, framework, browser, user, test or category stand for the platform's own columns. If your tests add a column with one of those names, ask for the column name as written and the report uses your column.
+- **A user.** A report scoped to a user counts that user's mobile runs only, and says that web (Selenium) runs are not included: the platform records their user in a separate column. Asking for the user's test counts directly, without a report, counts both.
 
 ### Your own interpretation
 
@@ -353,7 +395,7 @@ This mostly applies to a usage summary of one busy project over many months, and
 |---|---|
 | **A report folder**, set once with [`setup reports <folder>`](../README.md#the-setup-command) or `MCP_REPORT_DIR` | Saved there in seconds; the AI tells you the path |
 | **A project folder the client works in** | Saved in its `digital-ai-reports/` folder, which carries its own `.gitignore` so a report is never committed |
-| Neither | A temporary file that the AI copies to where it keeps your files. An AI that cannot reach it asks whether to add a folder or to write the report out in the chat (about a minute) |
+| Neither | A temporary file that the AI copies to where it keeps your files. An AI that cannot reach it asks whether to add a folder or to write the report out in the chat (about a minute, and the tokens of the whole file; see [Optimizing Token Consumption](../README.md#ask-for-finished-work-not-raw-data)) |
 
 A path you name in the request always works, in every client.
 
@@ -416,10 +458,10 @@ You do not need tool names to ask for a report. They matter when you write instr
 | Recipe | Its own tool | Parameters beyond `projectName`, `title`, `outputPath` |
 |---|---|---|
 | `test-summary` | `create_test_summary_report` | `days`, `passRateGoal`, `compare`, `maxRecords`, `background` |
-| `test-trend` | `create_test_trend_report` | `days`, `passRateGoal`, `where` |
-| `test-breakdown` | `create_test_breakdown_report` | `groupBy` (required), `days`, `allDates`, `passRateGoal`, `where` |
-| `test-reliability` | `create_test_reliability_report` | `days`, `compare`, `where` |
-| `release-readiness` | `create_release_readiness_report` | `days`, `passRateGoal`, `where` |
+| `test-trend` | `create_test_trend_report` | `days`, `passRateGoal`, `where`, `exactCase`, `keysAsWritten` |
+| `test-breakdown` | `create_test_breakdown_report` | `groupBy` (required), `days`, `allDates`, `passRateGoal`, `where`, `exactCase`, `keysAsWritten` |
+| `test-reliability` | `create_test_reliability_report` | `days`, `compare`, `where`, `exactCase`, `keysAsWritten` |
+| `release-readiness` | `create_release_readiness_report` | `days`, `passRateGoal`, `where`, `exactCase`, `keysAsWritten` |
 | `failure-analysis` | `create_failure_analysis_report` | `days`, `maxRecords`, `background` |
 | `test-inventory` | `create_test_inventory_report` | none |
 | `device-health` | `create_device_health_report` | `days`, `maxRecords`, `background` |
@@ -443,13 +485,13 @@ Examples:
 { "recipe": "release-readiness", "where": { "digitalai:build": "412" }, "passRateGoal": 98 }
 ```
 
-`groupBy` takes one or two of: `platform`, `device`, `model`, `os version`, `manufacturer`, `framework`, `browser`, `browser version`, `user`, `test`, `classification`, `pool`, or a report column as written, such as `digitalai:build`.
+`groupBy` takes one or two of: `platform`, `device`, `model`, `os version`, `manufacturer`, `framework`, `browser`, `browser version`, `user`, `test`, `classification` (or `category`), `pool`, `day`, or a report column as written, such as `digitalai:build`.
 
 `where` takes the same names, each with the value to match. The value is the whole stored value, in any letter case: the platform keeps each value in the spelling the test client sent, so one browser can be stored as "Chrome" and as "chrome", and `{ "browser": "chrome" }` counts both. Add `"exactCase": true` to count only the spelling you wrote; the report then says that other spellings are left out. Groups in a report are always shown with such spellings merged.
 
 If your tests add a column of their own whose name is one of those plain words (a column called `category` or `platform`, for example), add `"keysAsWritten": true`: the names in `groupBy` and `where` are then sent to the platform exactly as written and your column is used.
 
-A report scoped to a `user` counts that user's mobile runs only, and says so. Web (Selenium) runs record their user in a separate column.
+A report scoped to a `user` counts that user's mobile runs only and says that web (Selenium) runs are not included; web runs record their user in a separate column. `get_grouped_test_reports` with a user filter counts both.
 
 `create_report` also handles what the per-report tools do not:
 

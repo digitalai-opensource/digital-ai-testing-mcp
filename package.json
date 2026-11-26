@@ -1,6 +1,6 @@
 {
   "name": "digital-ai-testing-mcp",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "MCP server for Digital.ai Testing — device farm, app lifecycle, test runs, reporting and analytics, performance, live mobile and browser inspection, and test authoring",
   "keywords": [
     "mcp",
@@ -36,6 +36,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
+    "docs:example-reports": "tsx scripts/example-reports.ts",
     "lint": "eslint src/**/*.ts tests/**/*.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -74,6 +75,7 @@
     "test:report-render": "vitest run tests/report-render.test.ts",
     "test:report-recipes": "vitest run tests/report-recipes.test.ts",
     "test:report-jobs": "vitest run tests/report-jobs.test.ts",
+    "test:failure-cause": "vitest run tests/failure-cause.test.ts",
     "test:report-case": "vitest run tests/report-case.test.ts",
     "test:report-pointer": "vitest run tests/report-pointer.test.ts",
     "test:server-options": "vitest run tests/server-options.test.ts",

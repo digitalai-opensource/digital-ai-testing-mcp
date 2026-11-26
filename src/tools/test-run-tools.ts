@@ -1,3 +1,5 @@
+import { listTests } from '../api/reporting.js';
+import { countsFromReports } from '../api/playwright-runs.js';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
@@ -134,6 +136,7 @@ function formatStatus(s: TestRunStatus): string {
       ...(s.queueReason ? [`   Queued because: ${s.queueReason}` +
         (/licen[cs]e/i.test(s.queueReason) ? ' — the cloud has no free Playwright (Cross Browser) license; a cloud admin must free or add capacity. cancel_test_run if it should not wait.' : '')] : []),
       ...(s.reporterLink ? [`   Reporter: ${s.reporterLink}`] : []),
+      ...(s.finished && (c.passed != null || c.failed != null) ? [`   Tests: ✅ passed ${n(c.passed)} · ❌ failed ${n(c.failed)} · ⏭️ skipped ${n(c.skipped)}${s.resultsNote ? ` — ${s.resultsNote}` : ''}`] : []),
       ...(s.finished
         ? [`   Results are in the Reporter with test.run.id=${s.testRunId}; logsPath on get_test_run_status downloads the run's logs (zip).`]
         : ['   Poll again with get_test_run_status (waitSeconds lets the tool wait for completion).']),
@@ -193,8 +196,9 @@ export function registerTestRunTools(server: McpServer): void {
     'Status of a test run started with execute_test_run (or the Test Run API): state (Starting / Running / Finished / Cancelled) ' +
     'and passed/failed/skipped/running/queued counts. Pass waitSeconds to keep polling until the run finishes or the wait ' +
     'elapses (max 50 — MCP clients time tool calls out at ~60 s; call again to keep waiting). Counts can briefly be unknown mid-run. ' +
-    'Also takes a Playwright run id (a UUID from execute_playwright_run): state (QUEUED / RUNNING / CANCELED …), browser ' +
-    'counts and the queue reason; logsPath saves that run\'s logs zip.',
+    'Also takes a Playwright run id (a UUID from execute_playwright_run): state (QUEUED / RUNNING / FINISHED / CANCELED), browser ' +
+    'counts and the queue reason; once finished, passed/failed/skipped from the run\'s Reporter records. A run can show RUNNING for several ' +
+    'minutes before its first test (container start and npm install). logsPath saves that run\'s logs zip.',
     {
       testRunId: z.string().describe('The Test Run Id returned by execute_test_run or execute_playwright_run.'),
       waitSeconds: z.number().int().min(0).max(50).optional().describe('Poll every 10 s for up to this many seconds (max 50) until the run finishes. Default 0 (single check).'),
@@ -215,6 +219,16 @@ export function registerTestRunTools(server: McpServer): void {
         while (!s.finished && Date.now() + 10_000 <= deadline) {
           await new Promise((r) => setTimeout(r, 10_000));
           s = await fetchStatus(testRunId);
+        }
+        // A finished Playwright run: the status counts browsers only, the test results are its Reporter records.
+        if (playwright && s.finished) {
+          const reports = await listTests({ limit: 1000, page: 1, returnTotalCount: false, filter: [{ property: 'test.run.id', operator: '=', value: testRunId }] })
+            .then((r) => r.data ?? []).catch(() => null);
+          if (reports) {
+            const t = countsFromReports(reports);
+            s = { ...s, counts: { ...s.counts, total: reports.length ? t.total : s.counts.total, passed: t.passed, failed: t.failed, skipped: t.skipped },
+              resultsNote: reports.length ? `${t.total} test result${t.total === 1 ? '' : 's'} in the Reporter.` : 'No test result in the Reporter yet; results can land a little after the run finishes.' };
+          }
         }
         if (logsPath) {
           const logs = await downloadPlaywrightLogs(testRunId);

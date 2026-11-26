@@ -885,7 +885,8 @@ const createShape = {
   };
 type CreateArgs = { [K in keyof typeof createShape]?: z.infer<(typeof createShape)[K]> };
 
-async function createHandler({ recipe, days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten, background, jobId, cancel, runId, whatItMeans, title, outputPath, fileName, attach }: CreateArgs) {
+async function createHandler({ recipe, days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten, background, jobId, cancel, runId, whatItMeans, title, outputPath, fileName, attach }: CreateArgs,
+  /** The tool that was called, for the error text: a per-recipe tool's refusal said "create_report failed". */ tool = 'create_report') {
     const text = (t: string, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text' as const, text: t }] });
     try {
       // Save an already delivered report into a folder the user shared (no rendering, no fetching).
@@ -1004,7 +1005,7 @@ async function createHandler({ recipe, days, recentDays, projectName, passRateGo
       const r = await produce({ prefetched: est.prefetched, timeoutMs: limit + 15_000 });
       return await deliver(r, extras(r));
     } catch (e) {
-      return text(`create_report failed: ${(e as Error).message}`, true);
+      return text(`${tool} failed: ${(e as Error).message}`, true);
     }
 }
 
@@ -1102,7 +1103,7 @@ export function registerReportTools(server: McpServer): void {
   };
   const recipeTool = (name: string) => {
     const t = RECIPE_TOOLS.find((x) => x.name === name)!;
-    return [t.description, Object.fromEntries(t.keys.map((k) => [k, slim[k] ? shape[k].describe(slim[k]) : shape[k]])), (args: CreateArgs) => createHandler({ ...args, recipe: t.recipe })] as const;
+    return [t.description, Object.fromEntries(t.keys.map((k) => [k, slim[k] ? shape[k].describe(slim[k]) : shape[k]])), (args: CreateArgs) => createHandler({ ...args, recipe: t.recipe }, t.name)] as const;
   };
   server.tool('create_test_summary_report', ...recipeTool('create_test_summary_report'));
   server.tool('create_failure_analysis_report', ...recipeTool('create_failure_analysis_report'));
@@ -1137,7 +1138,7 @@ export function registerReportTools(server: McpServer): void {
         // What was read differently from how it was written comes first: the report is drawn, and the agent knows what is not in it.
         const warnings = [...read.notes, ...specWarnings(s)];
         const blocks = (s.tabs ? s.tabs.flatMap((t) => t.sections) : s.sections ?? []).reduce((n, x) => n + x.blocks.length, 0);
-        return await deliver(f, [`${s.tabs ? `${s.tabs.length} tabs · ` : ''}${blocks} blocks.`, ...(warnings.length ? ['', 'Check:', ...warnings.map((w) => `- ${w}`)] : [])]);
+        return await deliver(f, [`${s.tabs ? `${s.tabs.length === 1 ? '1 tab' : `${s.tabs.length} tabs`} · ` : ''}${blocks === 1 ? '1 block' : `${blocks} blocks`}.`, ...(warnings.length ? ['', 'Check:', ...warnings.map((w) => `- ${w}`)] : [])]);
       } catch (e) {
         return { isError: true, content: [{ type: 'text' as const, text: `render_report failed: ${(e as Error).message}` }] };
       }

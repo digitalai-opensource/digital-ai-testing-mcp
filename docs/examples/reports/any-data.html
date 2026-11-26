@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Applications in the Repository | Digital.ai Testing</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>:root{--green:#649A3D;--green-dark:#4d7a2d;--teal:#356B63;--lime:#B9DD47;--gray-600:#232E40;--teal-dark:#274F4A;--light-green:#E1F2DA;--bright-blue:#279FEA;--dark-blue:#205AB7;--gray-100:#F2F2F4;--gray-200:#C1C5CD;--gray-300:#A4ADB6;--gray-400:#677485;--gray-500:#445267;--text:#2a2a2a;--text-body:#555555;--bg:#FFFFFF;--status-pass:#649A3D;--status-fail:#E8291A;--status-warn:#F7B731;--status-info:#279FEA;--status-skip:#A4ADB6;--border:#d8e4d0;--border-light:#eef4eb;--radius:12px;--radius-sm:6px}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Montserrat','Gotham',Arial,sans-serif;font-size:15px;line-height:1.6;color:var(--text-body);background:var(--bg);-webkit-font-smoothing:antialiased}
+.container{max-width:1200px;margin:0 auto;padding:0 32px}
+.mono,code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13px}
+.num{font-variant-numeric:tabular-nums}
+.eyebrow{display:block;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--green-dark)}
+.report-header{background:var(--gray-600);background-image:radial-gradient(ellipse at 15% 50%,rgba(100,154,61,.18) 0%,transparent 60%),radial-gradient(ellipse at 85% 50%,rgba(53,107,99,.14) 0%,transparent 60%);color:#fff;padding:36px 0 32px}
+.report-header .container{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-content:space-between}
+.report-header .eyebrow{color:var(--lime)}
+.report-header h1{color:#fff;font-size:32px;font-weight:700;line-height:1.2;letter-spacing:-.5px;margin:6px 0 8px}
+.report-header .sub{color:rgba(255,255,255,.85);font-size:15px}
+.report-header .meta{color:rgba(255,255,255,.72);font-size:14px;margin-top:6px}
+.report-header .meta strong{color:#fff;font-weight:600}
+.headline{text-align:right}
+.headline .value{font-size:36px;font-weight:700;line-height:1.1;color:#fff}
+.headline .label{font-size:13px;color:rgba(255,255,255,.72)}
+h2{font-size:24px;font-weight:700;color:var(--text);line-height:1.3;margin:40px 0 16px}
+h3{font-size:18px;font-weight:600;color:var(--text);line-height:1.4;margin:0 0 12px}
+section{margin-bottom:8px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;min-width:0}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+.kpi{background:#fff;border:1px solid var(--border);border-top:4px solid var(--green);border-radius:var(--radius);padding:20px 22px}
+.kpi .value,.stat .value{font-size:36px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .label,.stat .label{font-size:13px;font-weight:500;color:var(--gray-400);margin-top:6px}
+.kpi.accent-teal{border-top-color:var(--teal)}
+.kpi.accent-fail{border-top-color:var(--status-fail)}
+.stack{display:flex;height:34px;border-radius:var(--radius-sm);overflow:hidden;margin:14px 0 10px;background:var(--gray-100)}
+.stack div{display:flex;align-items:center;padding-left:10px;color:#fff;font-weight:600;font-size:13px;white-space:nowrap}
+.key{display:flex;gap:6px 18px;flex-wrap:wrap;font-size:13px;color:var(--gray-400);margin-top:8px}
+.key i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.track{background:var(--gray-100);height:16px;border-radius:3px;overflow:hidden;display:flex}
+.seg{height:100%}
+.hbars{display:flex;flex-direction:column;gap:10px}
+.hb{display:grid;grid-template-columns:minmax(120px,240px) 1fr 96px;gap:12px;align-items:center}
+.hb-name{font-size:13px;line-height:1.3;min-width:0;overflow:hidden}
+.hb-name b{display:block;font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hb-name span{color:var(--gray-400)}
+.hb-val{font-weight:600;color:var(--text);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto}
+.ch{width:100%;min-width:520px;height:auto;display:block}
+.ch text{font-family:'Montserrat',Arial,sans-serif;font-size:12px;fill:var(--gray-400)}
+.ch .grid{stroke:var(--gray-200);stroke-opacity:.5;stroke-width:1}
+.ch .axis{stroke:var(--gray-200);stroke-width:1}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead th{background:var(--gray-100);color:var(--gray-500);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:10px 14px;border-bottom:2px solid var(--gray-200);position:sticky;top:0}
+tbody td,tbody th{padding:10px 14px;border-bottom:1px solid var(--border-light);vertical-align:top;text-align:left}
+tbody th{color:var(--text);font-weight:600}
+tbody tr:nth-child(even){background:#FAFCF9}
+tbody tr:hover{background:var(--light-green)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius)}
+.callout{border-left:4px solid var(--green);background:var(--light-green);padding:16px 20px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:var(--text)}
+.callout strong:first-child{display:block;margin-bottom:4px}
+.callout.means{margin-top:16px}
+.source{font-size:12px;color:var(--gray-400);margin-top:40px;max-width:90ch}
+.report-footer{background:var(--gray-600);color:rgba(250,250,250,.6);font-size:13px;padding:28px 0;margin-top:48px}
+@media (max-width:720px){.container{padding:0 16px}.hb{grid-template-columns:110px 1fr 80px}.headline{text-align:left}}
+@media print{@page{size:Letter;margin:.5in}body{font-size:11pt}.report-header,.report-footer,.kpi,.pill,thead th,.callout,.stack,.seg,.track,.hm{-webkit-print-color-adjust:exact;print-color-adjust:exact}.kpi,.card,table,.callout,.findings li{break-inside:avoid}thead{display:table-header-group}tbody tr:hover{background:none}[role=tabpanel]{display:block!important}}</style>
+</head>
+<body>
+<header class="report-header"><div class="container"><div><span class="eyebrow">Digital.ai Testing</span><h1>Applications in the Repository</h1><p class="sub">Every build uploaded to the app repository, by platform and project</p><p class="meta"><strong>Date:</strong> Nov. 20, 2026 · <strong>Builds:</strong> 64 · Generated Nov. 20, 2026, 12:00 PM UTC</p></div><div class="headline"><div class="value">64</div><div class="label">Builds</div></div></div></header>
+<main class="container"><section><h2>At a Glance</h2><div class="grid"><div class="kpi-row"><div class="kpi"><div class="value">64</div><div class="label">Builds</div></div><div class="kpi accent-teal"><div class="value">9</div><div class="label">Distinct apps</div></div><div class="kpi accent-teal"><div class="value">38</div><div class="label">Android builds</div></div><div class="kpi accent-teal"><div class="value">26</div><div class="label">iOS builds</div></div><div class="kpi accent-fail"><div class="value">21</div><div class="label">Older than 90 days</div></div></div></div></section><section><h2>Builds by Platform</h2><div class="grid g2"><div class="card"><div class="stat"><div class="value">64</div><div class="label">builds</div></div><div class="stack"><div style="width:59.38%;background:var(--green)" title="Android: 38 (59.4%)">59.4%</div><div style="width:40.63%;background:var(--teal)" title="iOS: 26 (40.6%)">40.6%</div></div><div class="key"><span><i style="background:var(--green)"></i>Android: 38 (59.4%)</span><span><i style="background:var(--teal)"></i>iOS: 26 (40.6%)</span></div></div><div class="card"><div class="hbars"><div class="hb"><div class="hb-name" title="Mobile Banking"><b>Mobile Banking</b></div><div class="track"><div class="seg" style="width:58.06%;background:var(--green)" title="Android: 18"></div><div class="seg" style="width:41.94%;background:var(--teal)" title="iOS: 13"></div></div><div class="hb-val">31</div></div><div class="hb"><div class="hb-name" title="Payments"><b>Payments</b></div><div class="track"><div class="seg" style="width:35.48%;background:var(--green)" title="Android: 11"></div><div class="seg" style="width:25.81%;background:var(--teal)" title="iOS: 8"></div></div><div class="hb-val">19</div></div><div class="hb"><div class="hb-name" title="QA Sandbox"><b>QA Sandbox</b></div><div class="track"><div class="seg" style="width:22.58%;background:var(--green)" title="Android: 7"></div><div class="seg" style="width:12.90%;background:var(--teal)" title="iOS: 4"></div></div><div class="hb-val">11</div></div><div class="hb"><div class="hb-name" title="Web Store"><b>Web Store</b></div><div class="track"><div class="seg" style="width:6.45%;background:var(--green)" title="Android: 2"></div><div class="seg" style="width:3.23%;background:var(--teal)" title="iOS: 1"></div></div><div class="hb-val">3</div></div></div><div class="key"><span><i style="background:var(--green)"></i>Android</span><span><i style="background:var(--teal)"></i>iOS</span></div></div></div><div class="callout means"><strong>What it means</strong>Mobile Banking holds almost half of all builds. Android builds outnumber iOS builds in every project, mostly because each Android release is uploaded as a debug and a release build.</div></section><section><h2>Uploads per Month</h2><div class="grid"><div class="card"><div class="scroll"><svg class="ch" viewBox="0 0 1080 280" role="img" aria-label="Line chart"><line x1="48" x2="1068" y1="246.0" y2="246.0" class="grid"/><text x="42" y="250.0" text-anchor="end">2</text><line x1="48" x2="1068" y1="174.7" y2="174.7" class="grid"/><text x="42" y="178.7" text-anchor="end">4</text><line x1="48" x2="1068" y1="103.3" y2="103.3" class="grid"/><text x="42" y="107.3" text-anchor="end">6</text><line x1="48" x2="1068" y1="32.0" y2="32.0" class="grid"/><text x="42" y="36.0" text-anchor="end">8</text><polyline points="48.0,174.7 252.0,139.0 456.0,103.3 660.0,67.7 864.0,32.0 1068.0,32.0" fill="none" stroke="var(--green)" stroke-width="2"/><circle cx="48.0" cy="174.7" r="3" fill="var(--green)"><title>June · Android: 4</title></circle><circle cx="252.0" cy="139.0" r="3" fill="var(--green)"><title>July · Android: 5</title></circle><circle cx="456.0" cy="103.3" r="3" fill="var(--green)"><title>Aug. · Android: 6</title></circle><circle cx="660.0" cy="67.7" r="3" fill="var(--green)"><title>Sept. · Android: 7</title></circle><circle cx="864.0" cy="32.0" r="3" fill="var(--green)"><title>Oct. · Android: 8</title></circle><circle cx="1068.0" cy="32.0" r="3" fill="var(--green)"><title>Nov. · Android: 8</title></circle><polyline points="48.0,210.3 252.0,210.3 456.0,174.7 660.0,139.0 864.0,139.0 1068.0,103.3" fill="none" stroke="var(--teal)" stroke-width="2"/><circle cx="48.0" cy="210.3" r="3" fill="var(--teal)"><title>June · iOS: 3</title></circle><circle cx="252.0" cy="210.3" r="3" fill="var(--teal)"><title>July · iOS: 3</title></circle><circle cx="456.0" cy="174.7" r="3" fill="var(--teal)"><title>Aug. · iOS: 4</title></circle><circle cx="660.0" cy="139.0" r="3" fill="var(--teal)"><title>Sept. · iOS: 5</title></circle><circle cx="864.0" cy="139.0" r="3" fill="var(--teal)"><title>Oct. · iOS: 5</title></circle><circle cx="1068.0" cy="103.3" r="3" fill="var(--teal)"><title>Nov. · iOS: 6</title></circle><text x="48.0" y="264" text-anchor="start">June</text><text x="252.0" y="264" text-anchor="middle">July</text><text x="456.0" y="264" text-anchor="middle">Aug.</text><text x="660.0" y="264" text-anchor="middle">Sept.</text><text x="864.0" y="264" text-anchor="middle">Oct.</text><text x="1068.0" y="264" text-anchor="end">Nov.</text><line x1="48" x2="1068" y1="246" y2="246" class="axis"/></svg></div><div class="key"><span><i style="background:var(--green)"></i>Android</span><span><i style="background:var(--teal)"></i>iOS</span></div></div></div><div class="callout means"><strong>What it means</strong>Uploads have doubled since June, in step with the move to a release every two weeks.</div></section><section><h2>Largest Apps</h2><div class="grid"><div class="table-wrap"><table><thead><tr><th>App</th><th>Platform</th><th>Latest version</th><th class="num">Builds</th><th class="num">Size</th></tr></thead><tbody><tr><td>Mobile Bank</td><td>Android</td><td class="mono" title="4.3.0 (812)">4.3.0 (812)</td><td class="num">14</td><td class="num">61.4 MB</td></tr><tr><td>Mobile Bank</td><td>iOS</td><td class="mono" title="4.3.0 (812)">4.3.0 (812)</td><td class="num">11</td><td class="num">88.2 MB</td></tr><tr><td>Pay Wallet</td><td>Android</td><td class="mono" title="2.8.1 (305)">2.8.1 (305)</td><td class="num">9</td><td class="num">38.7 MB</td></tr><tr><td>Pay Wallet</td><td>iOS</td><td class="mono" title="2.8.1 (305)">2.8.1 (305)</td><td class="num">7</td><td class="num">52.0 MB</td></tr><tr><td>Store Companion</td><td>Android</td><td class="mono" title="1.4.0 (77)">1.4.0 (77)</td><td class="num">2</td><td class="num">24.9 MB</td></tr></tbody></table></div></div><div class="callout means"><strong>What it means</strong>The iOS builds are about 40% larger than the Android builds of the same version; 21 builds are older than 90 days and are candidates for cleanup.</div></section><p class="source">Source: the application repository, 64 builds. Example data.</p></main>
+<footer class="report-footer"><div class="container">© 2026 Digital.ai Software, Inc. · Generated from Digital.ai Testing via MCP · Nov. 20, 2026, 12:00 PM UTC</div></footer>
+</body>
+</html>

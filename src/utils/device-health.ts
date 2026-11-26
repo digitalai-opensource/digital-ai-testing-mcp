@@ -9,6 +9,8 @@
  * same window — the test is fine, the device is not.
  */
 
+import { causeGroupKey } from './failure-cause.js';
+
 export interface RunRecord {
   name: string;
   status: string;
@@ -49,7 +51,8 @@ export interface DeviceHealthOptions {
 }
 
 const ratio = (a: number, b: number) => (b === 0 ? 0 : Math.round((a / b) * 1000) / 1000);
-const causeKey = (c: string | null) => (c ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) || '(no cause recorded)';
+// Grouped by the informative part of the cause, without session ids, UUIDs or times (failure-cause.ts).
+const causeKey = (c: string | null) => causeGroupKey(c);
 
 export function analyzeDeviceHealth(records: RunRecord[], opts: DeviceHealthOptions): { devices: DeviceHealth[]; baselineFailRatio: number; runsWithoutDevice: number } {
   const withDevice = records.filter((r) => r.serial);

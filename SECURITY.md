@@ -32,14 +32,19 @@ We aim to acknowledge reports within **5 business days** and to produce a fix or
 
 ### Credential Handling
 
-This server reads a `DIGITAL_AI_ACCESS_KEY` from environment variables or a `.env` file. This key grants access to your Digital.ai Testing environment.
+An access key grants access to your Digital.ai Testing environment. The server reads it from one of two places:
 
-- **Never commit `.env` to source control.** The `.gitignore` excludes it by default.
+- **The `setup` command** (recommended) checks the key with the platform and saves it in the operating system's keychain (Windows Credential Manager, macOS Keychain, or the Secret Service on Linux). The key is typed at a hidden prompt or piped with `--key-stdin`, never passed as an argument, and never printed. The AI clients that `setup` configures get an entry without the key. A plain-file store is available with `--plain-file` when no keychain can be used. See [The setup command](README.md#the-setup-command).
+- **Environment variables** (`DIGITAL_AI_ACCESS_KEY`, `DAI_PROFILE_*`), set in the AI client's configuration or in a `.env` file. **Never commit `.env` to source control**; the `.gitignore` excludes it.
+
+Further:
+
 - Cloud Admin access keys (either the long `eyJ…` or the short `aut_1_…` format — format does not indicate privilege) grant full administrative access to the platform — user management, project deletion, device control. Treat them with the same care as a root credential.
 - Project Admin / Project User keys are narrower in scope but still grant installation, test execution, and reporting access for the assigned project.
-- Several tools return the active access key in plaintext in their output: `get_remote_debug_command` (the rdb script), every `get_*_upload_command` and `get_*_download_command` tool, `get_test_run_command`, and the generated test boilerplate. Each output carries a warning. Treat it as a secret: don't commit it or paste it into tickets, and delete generated scripts after use.
+- **Generated tests never contain a key.** Every test the server generates (mobile and web, every language) reads `DIGITAL_AI_ACCESS_KEY` from the environment and stops with a clear message when it is unset; the answer explains how to set the variable locally and in CI.
+- **Command generators do contain the key**, because they produce one-shot commands to run on your machine: `get_remote_debug_command` (the rdb script), every `get_*_upload_command` and `get_*_download_command` tool, and `get_test_run_command`. Each output carries a warning. Treat it as a secret: don't commit it or paste it into tickets, and delete generated scripts after use.
 - Every tool that reads a local file to send it to the platform (application, repository and provisioning-profile uploads, test-run bundles, pushing a file to a device) validates the path first and refuses credential-file names (`.env*`, SSH private keys). A steered or mistaken request cannot publish secrets to the cloud.
-- Credentials are resolved through the active connection profile (`switch_environment`), never raw environment variables — generated artifacts (boilerplate, rdb scripts) always carry the currently active profile's key, so a project-scoped key can be used for customer-facing output.
+- Credentials are resolved through the active connection profile (`switch_environment`), never read from raw environment variables, so generated commands and scripts always carry the active profile's key, never another one.
 - The access level of each profile is read from the platform (`GET /api/v1/users/my-account-info`), never guessed from the key, and `list_environments` shows it. Role restrictions are enforced by the platform itself; give an AI assistant the least-privileged profile that covers the task.
 
 ### Update check (`MCP_UPDATE_CHECK`)
@@ -48,7 +53,7 @@ On by default. At startup, at most once every 24 hours, the server sends one una
 
 ### Debug mode (`MCP_DEBUG_MODE`)
 
-Off by default. When set to `true`, the server captures remediation notes and a tool-call event log. With the npm package it writes them to a `remediation/` folder in the root of the project the AI is working in (or in `MCP_REMEDIATION_DIR`); with Docker the event log stays in memory and each note is returned to the AI assistant, which saves it to that folder itself. The folder gets its own `.gitignore` so it is not committed. Each session file records the machine name and OS user name. Access keys, tokens, emails and signed-URL parameters are redacted, but notes can still contain customer data such as app, device, project and test names, on-screen text and error messages. Review them before sharing them outside your organization, and leave debug mode off on customer tenants unless that has been agreed.
+Off by default. When set to `true`, the server captures remediation notes and a tool-call event log. With the npm package it writes them to a `remediation/` folder in the root of the project the AI is working in (or in `MCP_REMEDIATION_DIR`); with Docker the event log stays in memory and each note is returned to the AI assistant, which saves it to that folder itself. The folder gets its own `.gitignore` so it is not committed. Each session file records the machine name and OS user name. Access keys, tokens, emails and signed-URL parameters are redacted, and text typed into a device or the clipboard, and any parameter named like a password or secret, is logged only as its length. Notes can still contain customer data such as app, device, project and test names, on-screen text and error messages. Review them before sharing them outside your organization, and leave debug mode off on customer tenants unless that has been agreed.
 
 ### What This Server Can Do
 
@@ -68,6 +73,10 @@ Deletions, releases and cancellations are guarded by an explicit `confirmDeletio
 
 Not every consequential action has a confirmation step: rebooting or resetting a device, creating reservations, starting test runs, installing apps and changing project settings run as soon as they are called. Deleting test reports with a project-level role is refused up front when the project does not allow it; every other role restriction is enforced by the platform. To limit what an assistant can reach, use a least-privileged profile, load only the toolsets you need (`MCP_TOOLSETS`), and add the rules in [docs/recommended-agent-guardrails.md](docs/recommended-agent-guardrails.md) to your project's agent instructions.
 
+### Reports
+
+Finished reports are saved only to a folder you chose (`setup reports <folder>`, `MCP_REPORT_DIR`, or a path named in the request), to a `digital-ai-reports/` folder in the project the AI client works in, or to a temporary folder that is cleared after a day. The server opens no browser or other application. See [Where reports appear and are saved](docs/reports.md#where-reports-appear-and-are-saved).
+
 ### Transport Security
 
 The server communicates over the MCP stdio transport. There is no HTTP listener, no open port, and no web-facing interface. Network access is outbound only — to the configured `DIGITAL_AI_BASE_URL` (and any `DAI_PROFILE_*_URL`). Use an `https://` URL: the server does not upgrade or reject plain-HTTP URLs.
@@ -78,7 +87,7 @@ With the npm package (the recommended install), the server runs as your own user
 
 ### Dependency Audit
 
-Runtime dependencies are minimal (the MCP SDK, Axios, adm-zip, dotenv, form-data, Zod). Development dependencies include TypeScript, ESLint, tsx and Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies. As of the latest release, it reports no findings.
+Runtime dependencies are few: the MCP SDK and its apps client (for the inline report view), Axios, adm-zip, dotenv, form-data and Zod, plus one optional dependency for keychain access. Development dependencies include TypeScript, ESLint, tsx and Vitest. Run `npm audit --omit=dev` to check for vulnerabilities in production dependencies. As of the latest release, it reports no findings.
 
 ---
 

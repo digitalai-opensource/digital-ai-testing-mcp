@@ -51,14 +51,16 @@ There is nothing else to install. The first start downloads the server (about 20
 - [Connecting AI Clients](#connecting-ai-clients) — [Claude Desktop](#claude-desktop) · [Claude Code (VS Code)](#claude-code-vs-code) · [Claude Code (JetBrains)](#claude-code-jetbrains--android-studio) · [GitHub Copilot](#github-copilot-vs-code) · [Cursor](#cursor) · [Docker configs](#docker-client-configuration)
 - [The setup command](#the-setup-command) — profiles in the OS keychain · [AI clients](#adding-the-server-to-ai-clients) · [diagnosing problems](#if-something-goes-wrong)
 - [Access Keys](#access-keys) — access levels, finding your key, multiple profiles
-- [Configuration](#configuration) — [Toolsets](#toolsets-reducing-context-size) · [Debug mode](#debug-mode-remediation-notes)
+- [Configuration](#configuration) — [Debug mode](#debug-mode-remediation-notes)
+- [Optimizing Token Consumption](#optimizing-token-consumption) — [toolsets](#toolsets-reducing-context-size) · [finished work, not raw data](#ask-for-finished-work-not-raw-data) · [short lists](#keep-lists-and-inspection-results-short) · [switching things off](#switch-off-what-you-dont-need)
 
 **Use it**
-- [What You Can Do](#what-you-can-do) — [example prompts](#example-prompts) · [ready-made reports](#ready-made-reports) · [tasks at a glance](#tasks-at-a-glance) · [all capability areas](#all-capability-areas)
+- [What You Can Do](#what-you-can-do) — [example prompts](#example-prompts) · [tasks at a glance](#tasks-at-a-glance) · [all capability areas](#all-capability-areas)
+- [Explore Apps and Browsers Live](#explore-apps-and-browsers-live) — mobile and browser inspection, remote debug
 - [Creating Tests](#creating-tests) — [mobile](#mobile-app-tests-get_test_boilerplate) · [Test Orchestrator](#test-orchestrator-default-for-java-on-appium-server) · [web](#web-tests-get_web_test_boilerplate) · [validating a test](#check-a-test-before-you-deliver-it-validate_test_script)
-- [Test Results and Root Cause Analysis](#test-results-and-root-cause-analysis)
-- [Performance Comparison Reports](#performance-comparison-reports)
-- [Workflow Reference](#workflow-reference) — [POC lifecycle](#poc-lifecycle) · [Project lifecycle](#project-lifecycle)
+- [Running Tests](#running-tests) — Espresso, XCUITest, Maestro, Playwright
+- [Results, Reports and Analysis](#results-reports-and-analysis) — [ready-made reports](#ready-made-reports) · [investigating failures](#investigating-failures) · [performance comparison](#performance-comparison) · [usage reports](#usage-reports)
+- [Managing Projects](#managing-projects) — [project lifecycle](#project-lifecycle) · [POC variant](#poc-variant)
 - [Safety Guards](#safety-guards)
 
 **Help and reference**
@@ -576,27 +578,6 @@ Set these as environment variables: in the client's `env` block (npm install) or
 
 Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure named profiles for multi-project or multi-environment use. See [Using multiple keys](#using-multiple-keys) and `.env.example` for examples.
 
-### Toolsets (reducing context size)
-
-All 229 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
-
-Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The report tools named after one report are the exception: their first call builds the report when its arguments are valid, so a report is one call under any setting. The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
-
-| Toolset | Covers |
-|---|---|
-| `devices` | Devices, device groups, reservations, health, agents, regions, the device health and device coverage reports |
-| `apps` | Application repository, file repository, provisioning profiles |
-| `reporting` | Test reports, analytics, root-cause analysis, test views, coverage, the test report tools (summary, trend, breakdown, reliability, release readiness, failure analysis, inventory) |
-| `performance` | Performance transactions and comparisons, NV servers, the performance overview report |
-| `inspection` | Live device and browser inspection, Android Auto / CarPlay, remote debug |
-| `authoring` | Test boilerplate, Espresso / XCUITest / Maestro / Playwright test runs |
-| `browsers` | Browser listing and Selenium sessions |
-| `admin` | Users, projects, backups, usage reports, the usage summary, device utilization and license usage reports, POC and project workflows |
-
-Set it without editing a configuration file: `setup options toolsets reporting` (see [the setup command](#the-setup-command)).
-
-Always loaded in full: environment and connection tools (`get_server_info`, `switch_environment`, …), `enable_toolset`, `validate_test_script`, and the two general report tools, `create_report` and `render_report`. `create_report` builds every report in one call under any setting; the report tools named after one report (`create_test_summary_report` and the others) load with the toolset shown above.
-
 ### Debug mode (remediation notes)
 
 Set `MCP_DEBUG_MODE=true` while evaluating or developing the MCP to collect feedback for improving it. With the default `false`, nothing changes.
@@ -642,52 +623,82 @@ To share notes, send the `remediation/` folder (or several, from different machi
 
 ---
 
+## Optimizing Token Consumption
+
+What the AI reads costs tokens: the tool list in every conversation, and every result it receives. The server keeps both small by default; these settings and habits make them smaller still. None of them hides a capability.
+
+### Toolsets (reducing context size)
+
+Every tool definition the server lists is read by the AI before it does anything, in every conversation. Set `MCP_TOOLSETS` to the areas you use and the others are listed with one line each instead of their full description:
+
+| `MCP_TOOLSETS` | Size of the tool list | Share of the full list |
+|---|---|---|
+| *(unset: everything in full)* | about 390,000 characters (roughly 100K tokens) | 100% |
+| `reporting` or `inspection` | about 180,000 characters (roughly 45K tokens) | 46% |
+| `authoring` | about 170,000 characters | 44% |
+| `admin`, `devices`, `apps` or `performance` | 150,000 to 165,000 characters | 39–42% |
+| `inspection,authoring` | about 220,000 characters (roughly 55K tokens) | 56% |
+| `core` | about 128,000 characters (roughly 32K tokens) | 33% |
+
+Measured on 2.5.1 with all 229 tools. Tokens are estimated at about four characters each; the exact count depends on the AI model. The server's instructions add about 7,500 characters whatever the setting.
+
+Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The report tools named after one report are the exception: their first call builds the report when its arguments are valid, so a report is one call under any setting. The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
+
+| Toolset | Covers |
+|---|---|
+| `devices` | Devices, device groups, reservations, health, agents, regions, the device health and device coverage reports |
+| `apps` | Application repository, file repository, provisioning profiles |
+| `reporting` | Test reports, analytics, root-cause analysis, test views, coverage, the test report tools (summary, trend, breakdown, reliability, release readiness, failure analysis, inventory) |
+| `performance` | Performance transactions and comparisons, NV servers, the performance overview report |
+| `inspection` | Live device and browser inspection, Android Auto / CarPlay, remote debug |
+| `authoring` | Test boilerplate, Espresso / XCUITest / Maestro / Playwright test runs |
+| `browsers` | Browser listing and Selenium sessions |
+| `admin` | Users, projects, backups, usage reports, the usage summary, device utilization and license usage reports, project (and POC) workflows |
+
+Set it without editing a configuration file: `setup options toolsets reporting` (see [the setup command](#the-setup-command)).
+
+Always loaded in full: environment and connection tools (`get_server_info`, `switch_environment`, …), `enable_toolset`, `validate_test_script`, and the two general report tools, `create_report` and `render_report`. `create_report` builds every report in one call under any setting; the report tools named after one report (`create_test_summary_report` and the others) load with the toolset shown above.
+
+### Ask for finished work, not raw data
+
+- **Ask for a report rather than having the AI build one.** The server fetches the data, draws the charts and writes the file, so a [ready-made report](#ready-made-reports) costs the AI a few hundred tokens; writing the same page itself takes about 7,000 output tokens (measured). For other data, `render_report` takes a short outline and the server builds the page.
+- **Set a report folder** with `setup reports <folder>` if your AI client does not show reports inline. Without one, some clients have the AI write the report file out again, which costs about a minute and 6,000 tokens per report. Claude Desktop shows reports in the conversation and needs no folder.
+- **Let the platform count.** For "how many", "what share" or "by platform" questions, the grouped test counts and the count-based reports (trend, breakdown, reliability, release readiness, inventory) are counted by the platform and read no individual runs: a year of history comes back in seconds and a few kilobytes. A grouping with very many groups returns the 500 largest (`maxGroups`) and says how many were left out.
+- **Prefer summaries to exports.** `summarize_usage_report` returns totals from a usage CSV that can be tens of megabytes; `summarize_test_failures` and `get_device_health_summary` do the same for failures and devices.
+
+### Keep lists and inspection results short
+
+- **Filter before you raise limits.** Lists stop at 50 records by default (`maxResults` or `limit`, up to 500), and the answer says when more exist. A filter (status, platform, user, date range) is cheaper than a longer list.
+- **`list_test_reports fields: "compact"`** returns only the main columns, about half the size; call `get_test_report` for the records that matter.
+- **Inspection:** `get_element_tree` leaves out the raw page source unless you ask for it (`includeRawXml`), and `find_elements` details the first 20 matches. A screenshot is an image and costs more than the element list, so ask for elements when text is enough.
+
+### Switch off what you don't need
+
+- **Debug mode** (`MCP_DEBUG_MODE`, off by default) has the AI write notes about problems it meets, which costs extra tokens. Turn it on for a pilot or while investigating, then off again (*"turn off debug mode"*).
+- **The report suggestion line.** A result that holds a list of data starts with one line (about 250 characters) suggesting a report, at most once per tool every two minutes. `setup options report-pointer false` or `MCP_REPORT_POINTER=false` turns it off.
+
+All of these settings can be kept with `setup options` (see [the setup command](#the-setup-command)) instead of in each AI client's configuration.
+
+[↑ Back to top](#table-of-contents)
+
+---
+
 ## What You Can Do
+
+The server follows the work as it happens: find a device, **explore** an app or web page on it, **create** a test from what you saw, **run** suites on the platform, **understand the results** (finished reports, failure analysis, performance comparisons, usage), and **manage the projects** and the lab around it. Each step has its own section below; you never need tool names, only plain requests.
 
 ### Example prompts
 
-Once connected, talk to the server in plain language — no tool names needed:
-
-- *"Show me the overall health of the device farm — how many devices are available, reserved, and offline?"*
+- *"Show me the overall health of the device farm: how many devices are available, reserved, and offline?"*
 - *"Find an available Android phone running at least version 13 in the US2 region"*
+- *"Open my app on that phone and show me the login screen's elements"*
+- *"Find an available Android phone, then generate a Java JUnit5 test for the demo app"*
 - *"Did all tests in the QA project pass today? I need a go/no-go for the release."*
-- *"Install the latest build of com.mycompany.app on all available Android devices"*
-- *"Find an available Android phone, then generate a Java JUnit5 test boilerplate"*
-- *"Show the pass/fail breakdown by OS — are Android and iOS failing at different rates?"*
+- *"Why are tests failing this week? Make a failure analysis report"*
 - *"Did the latest release introduce a CPU regression? Compare version 10553 vs 10554 on Android."*
-- *"Set up a new POC for Acme Corp — 6 devices in US2, 3 iOS and 3 Android, for the next 4 weeks"*
+- *"Set up a project for the Payments team with 6 devices in US2, 3 iOS and 3 Android"*
 
-**[→ docs/examples.md](docs/examples.md)** has 200+ prompts organized by scenario: farm health, device groups, regression sign-off, test analytics, performance, usage reports, interactive inspection, POC lifecycle, and more.
-
-### Ready-made reports
-
-Ask for a report and the server builds it: it fetches the data, draws the charts and writes a short "What it means" for every section. You get **one HTML file** in Digital.ai branding that works offline and can be mailed or attached, and the AI sums up the highlights. In Claude Desktop the report is shown right in the conversation, with Download and Full screen buttons.
-
-| Ask for… | You get |
-|---|---|
-| *"Give me a test summary report for the last 7 days"* | Runs and pass rate against the previous period, runs per day, results by platform, the most frequent failures |
-| *"Create a test trend report for the last 90 days"* | Runs and pass rate per day, week or month over up to a year, exact for any number of runs |
-| *"Show test results by platform"* / *"Compare pass rates by device model"* | Results broken down by one or two things: platform, device, model, OS version, framework, browser, user, test, or any custom report column |
-| *"Which tests are unreliable?"* / *"Which tests started failing this week?"* | Every test sorted into passes every time, fails every time, mixed results and newly failing, against the period before |
-| *"Are we ready to release build 412?"* | A verdict (Ready, Ready with risks, Not ready) from checks the report states in full, and the tests that stand in the way |
-| *"Why are tests failing this week?"* | Failures by classification and device, a device-by-day heatmap, the most common causes |
-| *"How many test reports do we have, by project and user?"* | Every test report on the instance, all dates, with storage per project against its quota |
-| *"Show me a device health report"* | Pool status, offline and degraded devices, devices that fail far more often than the rest, offline devices by region and agent |
-| *"Which devices and OS versions do our tests cover?"* | Devices with and without a test run, runs by OS version and model, OS versions no test ran on |
-| *"How much of our device lab is used?"* *(Cloud Admin)* | Reserved hours per device against the hours the pool had, devices never reserved, demand by model |
-| *"Are we near our license limit?"* *(Cloud Admin)* | The most sessions open at once per license type against the licensed number, with the day and hour of each peak |
-| *"Create a usage summary for project Payments"* / *"...for all projects"* *(Cloud Admin)* | Reserved hours, users and devices for one project, or an overview of every project |
-| *"Create a performance overview report"* | Median Speed Index, duration, CPU and memory per transaction, by network profile and app version |
-
-Add a project, a number of days or a pass-rate goal to any of them. Several can be limited to one build or platform (*"...for build 412"*).
-
-**A report of any data.** The ready-made reports cover the common questions. For anything else, ask for a report of whatever you are looking at (*"list the applications in the repository"*, then *"show that as a report by platform"*): the AI fetches the data with the ordinary tools and lays it out in the same design. A quick question still gets a quick answer.
-
-**Where the report goes.** In Claude Desktop it appears inside the conversation. In other AI clients it is a file: in the report folder you set once with [`setup reports <folder>`](#the-setup-command), in the project folder the client works in, or a temporary file the AI hands over. No browser or other app is opened, and nothing is written into your personal folders unless you choose a folder for reports.
-
-**Long ranges.** Every request first measures how long the report will take. One that would take longer than a tool call can wait is offered as a smaller range, or as a background report that you can check on or cancel.
-
-**[→ docs/reports.md](docs/reports.md)** describes every report and what it contains, the options, reports of any data and their building blocks, where reports are saved, background reports, and the rules the reports follow so that a number means the same thing in each.
+**[→ docs/examples.md](docs/examples.md)** has 200+ prompts organized by scenario: farm health, device groups, regression sign-off, test analytics, performance, usage reports, interactive inspection, project setup, and more.
 
 ### Tasks at a glance
 
@@ -695,38 +706,14 @@ Add a project, a number of days or a pass-rate goal to any of them. Several can 
 |---|---|
 | Check farm health, find a device, reserve it, manage groups and tags | [Devices](docs/tools.md#devices), [Device Groups](docs/tools.md#device-groups), [Health & Diagnostics](docs/tools.md#health--diagnostics), [Reservations](docs/tools.md#reservations) |
 | Upload, install or find the latest build of an app; manage test files and iOS profiles | [Applications](docs/tools.md#applications), [Repository](docs/tools.md#repository), [Provisioning Profiles](docs/tools.md#provisioning-profiles) |
-| Explore an app or web page live with the AI | [Interactive inspection](#interactive-inspection) below |
+| Explore an app or web page live with the AI | [Explore Apps and Browsers Live](#explore-apps-and-browsers-live) |
 | Create an automated test | [Creating Tests](#creating-tests) |
-| Run Espresso, XCUITest, Maestro or Playwright suites on the platform | [Test runs](#test-runs-espresso-xcuitest-maestro) below |
-| Find out why tests failed, and track pass rates and trends | [Test Results and Root Cause Analysis](#test-results-and-root-cause-analysis) |
+| Run Espresso, XCUITest, Maestro or Playwright suites on the platform | [Running Tests](#running-tests) |
 | Get a finished report to read or share (test summary, release readiness, device health, license usage, or any data) | [Ready-made reports](#ready-made-reports) · [docs/reports.md](docs/reports.md) |
-| Compare performance between versions, devices or networks | [Performance Comparison Reports](#performance-comparison-reports) |
-| Export or summarize platform usage *(Cloud Admin)* | [Usage reports](#usage-reports) below |
-| Set up or wind down a POC or project; manage users | [Workflow Reference](#workflow-reference), [Users](docs/tools.md#users), [Projects](docs/tools.md#projects) |
-
-#### Interactive inspection
-
-An inspection session opens a live connection to a real device or browser so the AI can see the screen and interact with it — useful for exploring an app and capturing real element IDs before writing a test.
-
-- **Mobile** ([tools](docs/tools.md#mobile-inspection-sessions)) — Android and iOS, on both Appium Grid and Appium Server projects: screenshots, element discovery, the full gesture set, keys, app/device control (including background/resume, mid-session install from the repository and a webview-cache reset), hybrid-app webview contexts (`webview_context`), the live device log, HAR and device-log capture into the file repository, network toggles and NV network conditions, camera image injection, device diagnostics (battery, screen, dark mode, iOS accessibility audit), Android Auto / CarPlay projection, audio play/record on devices with an audio line, and mock biometric authentication. The session shares a watch-only live view URL so you can follow along. iOS behaves differently in a few places ([limitation 29](docs/limitations.md#29-ios-inspection-sessions-differ-from-android)), and Appium Grid projects support fewer commands ([limitation 18](docs/limitations.md#18-appium-grid-projects-support-fewer-commands-than-appium-server)).
-- **Browser** ([tools](docs/tools.md#web-inspection-sessions)) — desktop browsers, or Chrome / Safari on a cloud phone (`mobilePlatform`): navigate, discover elements (including inside Shadow DOM), verify CSS selectors, read the console and failed network requests (`get_browser_log`; Chrome, Edge, Firefox and Opera), open staging sites with self-signed certificates (`acceptInsecureCerts`) and generate browser-neutral Selenium scripts. See [limitation 39](docs/limitations.md#39-browser-inspection-sessions-what-differs-by-browser).
-- **Remote debug** ([tools](docs/tools.md#remote-debug)) — `get_remote_debug_command` makes a cloud device appear as if it were plugged into your machine (over ADB for Android, usbmuxd for iOS), so Android Studio, Xcode and command-line ADB can use it — for example for shell commands or file push. Install the app **before** connecting (see [Troubleshooting](#common-symptoms)).
-
-Example prompts: [Interactive Inspection](docs/examples.md#interactive-inspection-ai-driven-test-building), [Android Auto / CarPlay](docs/examples.md#android-auto--carplay), [Web Browser Inspection](docs/examples.md#web-browser-inspection-ai-driven-browser-test-building).
-
-#### Test runs (Espresso, XCUITest, Maestro)
-
-The platform runs these suites itself: `execute_test_run` starts a run, `get_test_run_status` follows it, `cancel_test_run` stops it, and `get_test_run_command` gives a command to start it from your own machine. `generate_maestro_flow` builds a Maestro flow from structured steps. Maestro is Android-only. Espresso and Maestro runs are verified; XCUITest uses the same API but is not yet verified end to end.
-
-**Playwright** projects run through the platform's Execution Service: `execute_playwright_run` uploads the project (a folder or .zip), and the platform runs it in Microsoft's Playwright image on chromium, firefox or webkit; `get_test_run_status` and `cancel_test_run` take its run id. It needs a Cross Browser license — a run that stays queued with "Waiting for licenses" has no capacity on your cloud. See [limitation 38](docs/limitations.md#38-playwright-known-issues).
-
-See [Test Runs](docs/tools.md#test-runs-espresso--xcuitest--maestro) and [example prompts](docs/examples.md#test-runs-espresso-xcuitest-maestro).
-
-Appium and Selenium tests are different: you run them from your own Appium or Selenium client (IDE, CI scripts), and the server manages the devices, apps, reservations and results they use.
-
-#### Usage reports
-
-Cloud Admins can export the platform's usage-report CSVs — device reservations, users/devices/browser usage, user statistics, license usage — or have `summarize_usage_report` aggregate one in memory and return just the summary, with no file written. Usage data is kept for 2 years (platform 25.9+); earlier periods come back empty or partial. A large unfiltered export runs only after you explicitly agree (`confirmLargeExport`, see [Safety Guards](#safety-guards)). See [Usage Reports](docs/tools.md#usage-reports), [limitation 21](docs/limitations.md#21-usage-reports-2-year-retention-large-exports) and [example prompts](docs/examples.md#usage-reports-platform-administration--finops).
+| Find out why a test failed | [Investigating failures](#investigating-failures) |
+| Compare performance between versions, devices or networks | [Performance comparison](#performance-comparison) |
+| Export or summarize platform usage *(Cloud Admin)* | [Usage reports](#usage-reports) |
+| Set up, wind down or delete a project; manage users | [Managing Projects](#managing-projects), [Users](docs/tools.md#users), [Projects](docs/tools.md#projects) |
 
 ### All capability areas
 
@@ -754,7 +741,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 | [Regions](docs/tools.md#regions) | 2 | Region status and infrastructure topology *(Cloud Admin)* |
 | [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(Cloud Admin)* |
 | [Server, Environments & Toolsets](docs/tools.md#server-environments--toolsets) | 8 | Server info, connectivity and workflow readiness checks, named connection profiles and runtime switching, toolset loading, debug mode on/off and remediation notes |
-| [Workflows](docs/tools.md#workflows) | 6 | POC and project lifecycle orchestration |
+| [Workflows](docs/tools.md#workflows) | 6 | Project lifecycle orchestration (set up, release, tear down), with a POC variant |
 | [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | Ready-to-run Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python, Robot Framework) that report the real outcome, Test Orchestrator agent install; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud Android or iOS device as if it were attached locally (ADB / usbmuxd) |
 | [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 30 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay projection, audio play/record, mock biometric authentication |
@@ -763,6 +750,20 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 | [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with User Tag, Device Tag and Device Group columns (tag/group lists are split when grouping), 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
 | [Reports](docs/reports.md) | 15 | Finished, branded HTML reports in one call: 13 ready-made reports (test summary, trend, breakdown, reliability, release readiness, failure analysis, inventory, device health, coverage and utilization, license usage, usage summary, performance overview) and a report of any data |
 | [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 7 guided prompts |
+
+[↑ Back to top](#table-of-contents)
+
+---
+
+## Explore Apps and Browsers Live
+
+An inspection session opens a live connection to a real device or browser so the AI can see the screen and interact with it — useful for exploring an app and capturing real element IDs before writing a test.
+
+- **Mobile** ([tools](docs/tools.md#mobile-inspection-sessions)) — Android and iOS, on both Appium Grid and Appium Server projects: screenshots, element discovery, the full gesture set, keys, app/device control (including background/resume, mid-session install from the repository and a webview-cache reset), hybrid-app webview contexts (`webview_context`), the live device log, HAR and device-log capture into the file repository, network toggles and NV network conditions, camera image injection, device diagnostics (battery, screen, dark mode, iOS accessibility audit), Android Auto / CarPlay projection, audio play/record on devices with an audio line, and mock biometric authentication. The session shares a watch-only live view URL so you can follow along. iOS behaves differently in a few places ([limitation 29](docs/limitations.md#29-ios-inspection-sessions-differ-from-android)), and Appium Grid projects support fewer commands ([limitation 18](docs/limitations.md#18-appium-grid-projects-support-fewer-commands-than-appium-server)).
+- **Browser** ([tools](docs/tools.md#web-inspection-sessions)) — desktop browsers, or Chrome / Safari on a cloud phone (`mobilePlatform`): navigate, discover elements (including inside Shadow DOM), verify CSS selectors, read the console and failed network requests (`get_browser_log`; Chrome, Edge, Firefox and Opera), open staging sites with self-signed certificates (`acceptInsecureCerts`) and generate browser-neutral Selenium scripts. See [limitation 39](docs/limitations.md#39-browser-inspection-sessions-what-differs-by-browser).
+- **Remote debug** ([tools](docs/tools.md#remote-debug)) — `get_remote_debug_command` makes a cloud device appear as if it were plugged into your machine (over ADB for Android, usbmuxd for iOS), so Android Studio, Xcode and command-line ADB can use it — for example for shell commands or file push. Install the app **before** connecting (see [Troubleshooting](#common-symptoms)).
+
+Example prompts: [Interactive Inspection](docs/examples.md#interactive-inspection-ai-driven-test-building), [Android Auto / CarPlay](docs/examples.md#android-auto--carplay), [Web Browser Inspection](docs/examples.md#web-browser-inspection-ai-driven-browser-test-building).
 
 [↑ Back to top](#table-of-contents)
 
@@ -927,7 +928,64 @@ A final check for the case the boilerplate gate can't catch: a test written by h
 
 ---
 
-## Test Results and Root Cause Analysis
+## Running Tests
+
+There are two ways to run tests. **Appium and Selenium tests** run from your own client (IDE, CI scripts) against the cloud, and the server manages the devices, apps, reservations and results they use. **Espresso, XCUITest, Maestro and Playwright suites** are run by the platform itself, and the server starts and follows them.
+
+For Espresso, XCUITest and Maestro, `execute_test_run` starts a run, `get_test_run_status` follows it, `cancel_test_run` stops it, and `get_test_run_command` gives a command to start it from your own machine. `generate_maestro_flow` builds a Maestro flow from structured steps. Maestro is Android-only. Espresso and Maestro runs are verified; XCUITest uses the same API but is not yet verified end to end.
+
+**Playwright** projects run through the platform's Execution Service: `execute_playwright_run` uploads the project (a folder or .zip), and the platform runs it in Microsoft's Playwright image on chromium, firefox or webkit; `get_test_run_status` and `cancel_test_run` take its run id. Each test becomes a Reporter record, and `get_test_run_status` shows passed and failed once the run has finished; a run can show RUNNING for a few minutes while its container starts. It needs a Cross Browser license: a run that stays queued with "Waiting for licenses" has no capacity on your cloud. See [limitation 38](docs/limitations.md#38-playwright-known-issues).
+
+See [Test Runs](docs/tools.md#test-runs-espresso--xcuitest--maestro) and [example prompts](docs/examples.md#test-runs-espresso-xcuitest-maestro).
+
+[↑ Back to top](#table-of-contents)
+
+---
+
+## Results, Reports and Analysis
+
+Everything the platform records about your tests, devices and usage can be read in four ways, from the broadest to the most detailed:
+
+- **[Ready-made reports](#ready-made-reports):** a finished, branded report in one request, for a team, a manager or a release decision.
+- **[Investigating failures](#investigating-failures):** one test or one failure at a time, down to its cause, log and video.
+- **[Performance comparison](#performance-comparison):** two sets of performance measurements compared fairly.
+- **[Usage reports](#usage-reports):** the platform's own usage exports *(Cloud Admin)*.
+
+A report and a direct question read the same platform data, so they give the same numbers.
+
+### Ready-made reports
+
+Ask for a report and the server builds it: it fetches the data, draws the charts and writes a short "What it means" for every section. You get **one HTML file** in Digital.ai branding that works offline and can be mailed or attached, and the AI sums up the highlights. In Claude Desktop the report is shown right in the conversation, with Download and Full screen buttons.
+
+| Ask for… (each opens an example) | You get |
+|---|---|
+| [*"Give me a test summary report for the last 7 days"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-summary.html) | Runs and pass rate against the previous period, runs per day, results by platform, the most frequent failures |
+| [*"Create a test trend report for the last 90 days"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-trend.html) | Runs and pass rate per day, week or month over up to a year, exact for any number of runs |
+| [*"Show test results by platform"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-breakdown.html) / [*"Compare pass rates by device model"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-breakdown.html) | Results broken down by one or two things: platform, device, model, OS version, framework, browser, user, test, or any custom report column |
+| [*"Which tests are unreliable?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-reliability.html) / [*"Which tests started failing this week?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-reliability.html) | Every test sorted into passes every time, fails every time, mixed results and newly failing, against the period before |
+| [*"Are we ready to release build 412?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/release-readiness.html) | A verdict (Ready, Ready with risks, Not ready) from checks the report states in full, and the tests that stand in the way |
+| [*"Why are tests failing this week?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/failure-analysis.html) | Failures by classification and device, a device-by-day heatmap, the most common causes |
+| [*"How many test reports do we have, by project and user?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/test-inventory.html) | Every test report on the instance, all dates, with storage per project against its quota |
+| [*"Show me a device health report"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-health.html) | Pool status, offline and degraded devices, devices that fail far more often than the rest, offline devices by region and agent |
+| [*"Which devices and OS versions do our tests cover?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-coverage.html) | Devices with and without a test run, runs by OS version and model, OS versions no test ran on |
+| [*"How much of our device lab is used?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/device-utilization.html) *(Cloud Admin)* | Reserved hours per device against the hours the pool had, devices never reserved, demand by model |
+| [*"Are we near our license limit?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/license-usage.html) *(Cloud Admin)* | The most sessions open at once per license type against the licensed number, with the day and hour of each peak |
+| [*"Create a usage summary for project Payments"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-summary.html) / [*"...for all projects"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-overview.html) *(Cloud Admin)* | Reserved hours, users and devices for one project, or an overview of every project |
+| [*"Create a performance overview report"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-overview.html) | Median Speed Index, duration, CPU and memory per transaction, by network profile and app version |
+
+Add a project, a number of days or a pass-rate goal to any of them. Several can be limited to one build or platform (*"...for build 412"*).
+
+**A report of any data.** The ready-made reports cover the common questions. For anything else, ask for a report of whatever you are looking at (*"list the applications in the repository"*, then *"show that as a report by platform"*): the AI fetches the data with the ordinary tools and lays it out in the same design. A quick question still gets a quick answer.
+
+**Where the report goes.** In Claude Desktop it appears inside the conversation. In other AI clients it is a file: in the report folder you set once with [`setup reports <folder>`](#the-setup-command), in the project folder the client works in, or a temporary file the AI hands over. No browser or other app is opened, and nothing is written into your personal folders unless you choose a folder for reports.
+
+**Long ranges.** Every request first measures how long the report will take. One that would take longer than a tool call can wait is offered as a smaller range, or as a background report that you can check on or cancel.
+
+**[→ docs/reports.md](docs/reports.md)** describes every report and what it contains, the options, reports of any data and their building blocks, where reports are saved, background reports, and the rules the reports follow so that a number means the same thing in each.
+
+### Investigating failures
+
+*As a report:* the tools below answer about one test or one failure at a time and return its details, not a report. For failures in aggregate, ask for the [failure analysis report](#ready-made-reports) (*"Why are tests failing this week?"*), which groups them by cause, classification and device.
 
 The reporting tools search test reports, summarize pass/fail results and explain failures. Field names, filter properties and ID types are in the [Test reporting schema](docs/tools.md#test-reporting-schema); more prompts are in [Root Cause Analysis](docs/examples.md#root-cause-analysis-why-tests-are-failing) and [Functional Test Analytics](docs/examples.md#functional-test-analytics).
 
@@ -984,13 +1042,11 @@ get_test_attachments_download_command(uuid: "…", localPlatform: "macos")
   → a curl command you run locally; the file never transits the container
 ```
 
-Tests missing from the results? See [Troubleshooting](#common-symptoms) — a project with its own reporter needs `projectName`.
+Tests missing from the results? See [Troubleshooting](#common-symptoms): a project with its own reporter needs `projectName`.
 
-[↑ Back to top](#table-of-contents)
+### Performance comparison
 
----
-
-## Performance Comparison Reports
+*As a report:* the comparison tools return numbers and a verdict, not a report. Ask for the result *"as a report"* and the AI lays it out with `render_report` in the same branded design; for a summary of every transaction, ask for the [performance overview report](#ready-made-reports).
 
 Compare performance (Speed Index, CPU, memory, battery, duration) between two sets of conditions — app v1 vs v2, device A vs device B, OS version X vs Y, region to region, two network profiles, or two automation scripts. Works with all access levels — Cloud Admin sees all projects; project-level keys (Project Admin and Project User) see only their own project's transactions.
 
@@ -1007,25 +1063,96 @@ The headline metric is reported three ways every time — **trimmed mean, median
 
 The **`performance_comparison_report` prompt** runs the full workflow end to end: define the axis → scrub confounds → negotiate sample size → **require explicit plan confirmation with a time estimate** → run the series with outlier-driven re-runs → report the delta with root-cause reasoning. True host/background interference can't be observed directly; the report approximates device quietness (idle, healthy status, no concurrent reservation) and states that limit explicitly.
 
-To record new performance samples from a generated test, see [performance transactions](#mobile-app-tests-get_test_boilerplate) in Creating Tests. More prompts: [Performance Testing Analytics](docs/examples.md#performance-testing-analytics).
+To record new performance samples from a generated test, see [performance transactions](#mobile-app-tests-get_test_boilerplate) in Creating Tests; for a summary of every transaction, ask for the performance overview report. More prompts: [Performance Testing Analytics](docs/examples.md#performance-testing-analytics).
+
+### Usage reports
+
+*As a report:* the tools below export or summarize the platform's usage CSVs. For a finished report, ask for the [usage summary](#ready-made-reports) (one project or every project), the device utilization report or the license usage report.
+
+Cloud Admins can export the platform's usage-report CSVs — device reservations, users/devices/browser usage, user statistics, license usage — or have `summarize_usage_report` aggregate one in memory and return just the summary, with no file written. Usage data is kept for 2 years (platform 25.9+); earlier periods come back empty or partial. A large unfiltered export runs only after you explicitly agree (`confirmLargeExport`, see [Safety Guards](#safety-guards)). See [Usage Reports](docs/tools.md#usage-reports), [limitation 21](docs/limitations.md#21-usage-reports-2-year-retention-large-exports) and [example prompts](docs/examples.md#usage-reports-platform-administration--finops).
 
 [↑ Back to top](#table-of-contents)
 
 ---
 
-## Workflow Reference
+## Managing Projects
 
-Six workflow tools set up and wind down POC and project environments. They don't make changes themselves: each returns a guided, numbered plan that the AI then carries out with the individual tools (`create_device_group`, `create_user`, …), pausing for your confirmation at the points the plan specifies. The plans use Cloud Admin tools (user, group and project administration), so run them with a Cloud Admin profile.
+Three workflow tools set up and wind down a project and the devices and users that come with it. They don't make changes themselves: each returns a guided, numbered plan that the AI then carries out with the individual tools (`create_device_group`, `create_user`, …), pausing for your confirmation at the points the plan specifies. The plans use Cloud Admin tools (user, group and project administration), so run them with a Cloud Admin profile.
 
-| Goal | POC | General project |
+| Goal | Tool |
+|---|---|
+| Set up a project: devices, users, app | [`setup_project`](#setup_project--provision-a-new-project-environment) |
+| Release its devices and users, keep the project | [`close_project_resources`](#close_project_resources--release-resources-without-deleting) |
+| Delete everything | [`teardown_project`](#teardown_project--full-project-deletion) |
+
+Users who belong to several projects are removed from this project only, never deleted from the platform.
+
+### Project lifecycle
+
+#### `setup_project` — Provision a new project environment
+
+If you call it with only a project name (no `region`, `deviceCount` or `users`), the workflow first asks whether to create a **simple** project record only, or a **full** environment (device group, device allocation, user provisioning, app assignment) — and for a full environment, collects those parameters. If any of them are supplied, it goes straight to the full setup and asks you to confirm the parameters.
+
+Full setup steps:
+
+1. Create (or reuse) the project with the specified name and automation type; record `projectMemo` in project notes
+2. Create (or reuse) a device group and link it to the project
+3. Pre-flight check that the target app exists in the repository
+4. Select available devices matching the target OS and region — presented to the operator for confirmation
+5. Add the selected devices to the project group
+6. Tag each device with a project-derived tag
+7. Remove devices from other groups — only when `isolateDevices: true`; by default existing group links (including Default) are kept intact
+8. Create users, assign them to the project with the specified roles, remove them from Default, and tag each account
+9. Assign the specified application to the project
+
+**Required parameters:**
+
+| Parameter | Description |
+|---|---|
+| `projectName` | The name for the new project |
+
+**Optional parameters:**
+
+| Parameter | Default | Description |
 |---|---|---|
-| Set up | [`create_poc`](#create_poc--onboard-a-new-poc-environment) | [`setup_project`](#setup_project--provision-a-new-project-environment) |
-| Release devices and users, keep the project | [`close_poc`](#close_poc--wind-down-without-deleting) | [`close_project_resources`](#close_project_resources--release-resources-without-deleting) |
-| Delete everything | [`delete_poc`](#delete_poc--full-teardown) | [`teardown_project`](#teardown_project--full-project-deletion) |
+| `region` | _(none)_ | Target region for device selection — needed for a full setup; without it, devices are selected from all regions |
+| `deviceCount` | `6` | Total devices to allocate |
+| `iosCount` | `ceil(deviceCount / 2)` | iOS device count |
+| `androidCount` | `floor(deviceCount / 2)` | Android device count |
+| `automationType` | `"appium-server"` | `"appium-server"` or `"appium-grid"` |
+| `isolateDevices` | `false` | Remove devices from all other groups before assignment |
+| `users` | `[]` | Array of `{email, firstName, lastName, role}` |
+| `appName` | `"ExperiBank"` | App to assign to the project |
+| `androidPackageName` | `"com.experitest.ExperiBank"` | Android package used to find the app |
+| `iosBundleId` | `"com.experitest.ExperiBank"` | iOS bundle ID used to find the app |
+| `projectMemo` | _(none)_ | Notes to record on the project |
 
-### POC Lifecycle
+#### `close_project_resources` — Release resources without deleting
 
-Three tools cover the full POC lifecycle. All derive the project name (`"<Customer> POC"`) and device tag (`"<customername>poc"`) from `customerName` — pass the same value to all three tools.
+Winds down the project environment while leaving the project record intact:
+
+1. Locate the project and its associated device group
+2. List the devices in the project group
+3. Remove the project-derived tag from each device
+4. Return devices to the Default group
+5. Process the users carrying the project tag (applied by `setup_project`): **delete accounts with no other project memberships; revoke project access only for multi-project users** (each action individually confirmed by the operator)
+
+Only `projectName` is required. Active sessions and installed apps on the devices are not touched — release sessions with `release_orphaned_sessions` and remove apps with `uninstall_application` separately if needed.
+
+#### `teardown_project` — Full project deletion
+
+Performs all `close_project_resources` steps, then permanently deletes the device group and the project. Requires `confirmDeletion: true`.
+
+The workflow presents a full inventory summary before any irreversible action; user processing is confirmed once for the whole batch via this inventory rather than user by user. Users who belong to other projects are protected in the same way.
+
+**Best practice:** Run `close_project_resources` first, then confirm the project is no longer needed before calling `teardown_project`.
+
+### POC variant
+
+> For proof-of-concept environments. `create_poc`, `close_poc` and `delete_poc` follow the same three steps as the project tools, with names and tags derived from a customer name (`"Acme Corp"` → project `"Acme Corp POC"`, device tag `"acmecorppoc"`), a Salesforce opportunity URL and an end date recorded in the project notes, and the ExperiBank demo app by default. Pass the same `customerName` to all three. Details: [Workflows](docs/tools.md#workflows).
+
+<details>
+<summary>POC workflow steps and parameters</summary>
 
 #### `create_poc` — Onboard a new POC environment
 
@@ -1088,67 +1215,7 @@ Before any destructive action, the workflow gathers a full inventory (project ID
 
 **Best practice:** Run `close_poc` first — it winds down the POC while preserving the project and device group. Note that `close_poc` is not fully reversible: device moves and tag removal can be undone, but it permanently deletes POC-only user accounts (each deletion requires per-user operator confirmation). Use `delete_poc` only once the project data is confirmed no longer needed. Calling `delete_poc` without `confirmDeletion: true` returns a safe explanation and suggests `close_poc` as the alternative.
 
-### Project Lifecycle
-
-Three tools mirror the POC lifecycle for general project management. They follow the same rule for users who belong to several projects: those users are removed from this project only, never deleted from the platform.
-
-#### `setup_project` — Provision a new project environment
-
-If you call it with only a project name (no `region`, `deviceCount` or `users`), the workflow first asks whether to create a **simple** project record only, or a **full** environment (device group, device allocation, user provisioning, app assignment) — and for a full environment, collects those parameters. If any of them are supplied, it goes straight to the full setup and asks you to confirm the parameters.
-
-Full setup steps:
-
-1. Create (or reuse) the project with the specified name and automation type; record `projectMemo` in project notes
-2. Create (or reuse) a device group and link it to the project
-3. Pre-flight check that the target app exists in the repository
-4. Select available devices matching the target OS and region — presented to the operator for confirmation
-5. Add the selected devices to the project group
-6. Tag each device with a project-derived tag
-7. Remove devices from other groups — only when `isolateDevices: true`; by default existing group links (including Default) are kept intact
-8. Create users, assign them to the project with the specified roles, remove them from Default, and tag each account
-9. Assign the specified application to the project
-
-**Required parameters:**
-
-| Parameter | Description |
-|---|---|
-| `projectName` | The name for the new project |
-
-**Optional parameters:**
-
-| Parameter | Default | Description |
-|---|---|---|
-| `region` | _(none)_ | Target region for device selection — needed for a full setup; without it, devices are selected from all regions |
-| `deviceCount` | `6` | Total devices to allocate |
-| `iosCount` | `ceil(deviceCount / 2)` | iOS device count |
-| `androidCount` | `floor(deviceCount / 2)` | Android device count |
-| `automationType` | `"appium-server"` | `"appium-server"` or `"appium-grid"` |
-| `isolateDevices` | `false` | Remove devices from all other groups before assignment |
-| `users` | `[]` | Array of `{email, firstName, lastName, role}` |
-| `appName` | `"ExperiBank"` | App to assign to the project |
-| `androidPackageName` | `"com.experitest.ExperiBank"` | Android package used to find the app |
-| `iosBundleId` | `"com.experitest.ExperiBank"` | iOS bundle ID used to find the app |
-| `projectMemo` | _(none)_ | Notes to record on the project |
-
-#### `close_project_resources` — Release resources without deleting
-
-Winds down the project environment while leaving the project record intact:
-
-1. Locate the project and its associated device group
-2. List the devices in the project group
-3. Remove the project-derived tag from each device
-4. Return devices to the Default group
-5. Process the users carrying the project tag (applied by `setup_project`): **delete accounts with no other project memberships; revoke project access only for multi-project users** (each action individually confirmed by the operator)
-
-Only `projectName` is required. Active sessions and installed apps on the devices are not touched — release sessions with `release_orphaned_sessions` and remove apps with `uninstall_application` separately if needed.
-
-#### `teardown_project` — Full project deletion
-
-Performs all `close_project_resources` steps, then permanently deletes the device group and the project. Requires `confirmDeletion: true`.
-
-The workflow presents a full inventory summary before any irreversible action; as with `delete_poc`, user processing is confirmed once for the whole batch via this inventory rather than user by user. Users who belong to other projects are protected in the same way.
-
-**Best practice:** Run `close_project_resources` first, then confirm the project is no longer needed before calling `teardown_project`.
+</details>
 
 [↑ Back to top](#table-of-contents)
 
@@ -1219,15 +1286,15 @@ Run this sequence:
   "allWorkflowsReady": true,
   "registeredToolCount": 229,
   "workflows": {
-    "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
-    "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }
+    "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] },
+    "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] }
   }
 }
 ```
 
 If `ready` is `false`, `missingRead` and `missingWrite` list exactly which tools are absent. The most common cause is an outdated install — see [Upgrading](#upgrading).
 
-The server also logs a readiness check at startup (visible in your terminal, or `docker logs`/your AI client's MCP server logs if running in a container): `Workflow readiness: all workflows ready ✓`, or `⚠️ DEGRADED: create_poc — missing: ...` when tools are absent.
+The server also logs a readiness check at startup (visible in your terminal, or `docker logs`/your AI client's MCP server logs if running in a container): `Workflow readiness: all workflows ready ✓`, or `⚠️ DEGRADED: setup_project — missing: ...` when tools are absent.
 
 [↑ Back to top](#table-of-contents)
 
@@ -1249,7 +1316,7 @@ The default is `"json"` because the main consumers are AI agents that need to pi
 ```
 # Example: pass device group IDs without string manipulation
 list_device_groups { outputFormat: "json" }
-→ {"deviceGroups":[{"id":"7","name":"Default"},{"id":"12","name":"Acme Corp POC"}]}
+→ {"deviceGroups":[{"id":"7","name":"Default"},{"id":"12","name":"Payments"}]}
 
 get_devices_in_group { groupId: "7" }
 → {"devices":[{"id":"abc123","name":"iPhone 14 Pro",...}]}
@@ -1316,12 +1383,12 @@ For test **logs**, `get_test_log` is simpler still — it returns the Appium/dev
 
 The ones you're most likely to run into:
 
-1. **Appium and Selenium tests aren't started by the server.** You launch them from your own Appium or Selenium client (IDE, CI scripts); the server manages the devices, apps, reservations and results. Espresso, XCUITest and Maestro suites are different — the platform runs them itself (see [Test runs](#test-runs-espresso-xcuitest-maestro)).
+1. **Appium and Selenium tests aren't started by the server.** You launch them from your own Appium or Selenium client (IDE, CI scripts); the server manages the devices, apps, reservations and results. Espresso, XCUITest and Maestro suites are different — the platform runs them itself (see [Test runs](#running-tests)).
 2. **iOS inspection sessions differ from Android:** no clearing app data, no clipboard on Appium Grid devices, and back navigation uses the navigation-bar button (iOS has no Back button). See [limitation 29](docs/limitations.md#29-ios-inspection-sessions-differ-from-android).
 3. **Appium Grid projects support fewer commands than Appium Server** — for example no `-ios predicate string` locator, no Android Auto / CarPlay projection, no pinch/zoom, no webview contexts. See [limitation 18](docs/limitations.md#18-appium-grid-projects-support-fewer-commands-than-appium-server).
 4. **Under Docker, file tools work on the container's filesystem, not yours.** Use the command-generator tools instead — see [Local File Transfer](#local-file-transfer-docker--remote-deployments-only) and [limitation 15](docs/limitations.md#15-local-file-io-runs-on-the-mcp-servers-filesystem-not-yours).
 5. **Usage reports go back 2 years** (platform 25.9+), and large unfiltered exports need your explicit approval. See [limitation 21](docs/limitations.md#21-usage-reports-2-year-retention-large-exports).
-6. **There's no way to disable or lock a user.** Removing access for a user created only for a POC means deleting the account — which is why `close_poc` asks for confirmation per user.
+6. **There's no way to disable or lock a user.** Removing access for a user created only for one project means deleting the account, which is why `close_project_resources` (and `close_poc`) asks for confirmation per user.
 7. **Deleting test reports with a project-level key depends on a per-project setting** (`allowUsersDeleteTests`). Cloud Admin can always delete. When the setting is off, the tools refuse up front for a Project Admin and explain how to get it enabled; a Project User cannot read the setting, so the platform returns its own 403.
 8. **Playwright needs a Cross Browser license, and its Selenium-agent route is experimental.** An `execute_playwright_run` job without free capacity stays queued with "Waiting for licenses". Projects generated for the Selenium agent run on Chrome and Edge only, and the Digital.ai report shows Passed even when a test failed — read the Playwright report. See [limitation 38](docs/limitations.md#38-playwright-known-issues).
 

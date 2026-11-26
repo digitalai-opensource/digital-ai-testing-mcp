@@ -1,3 +1,4 @@
+import { deviceNameHint } from './device-name-hint.js';
 import { canonicalBrowserName } from '../utils/browser-name.js';
 import axios, { AxiosInstance } from 'axios';
 import type { InspectionSession } from '../types/digital-ai.js';
@@ -129,9 +130,9 @@ export async function createBrowserInspectionSession(
     }, mobile ? { timeout: MOBILE_BROWSER_TIMEOUT_MS } : undefined);
   } catch (e) {
     if (mobile) {
-      const cleanup = await cleanUpFailedSessionReport(reportName, projectName, requestedAt);
+      const [cleanup, nameHint] = await Promise.all([cleanUpFailedSessionReport(reportName, projectName, requestedAt), deviceNameHint(deviceQuery)]);
       throw new Error(
-        `Mobile browser session failed (${browserName} on ${mobile.platform}, query ${deviceQuery}): ${describeError(e)}.` +
+        `Mobile browser session failed (${browserName} on ${mobile.platform}, query ${deviceQuery}): ${describeError(e)}.${nameHint}` +
         ` Check find_available_device for a free ${mobile.platform} phone, or narrow the query with region.${cleanup}`
       );
     }

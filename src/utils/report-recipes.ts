@@ -9,6 +9,9 @@
 import type { Block, ReportSpec, Section } from './report-render.js';
 import { tallyStatuses, passRate, statusOutcome, type StatusCounts } from './test-status.js';
 import { INFRA_CATEGORIES, type RunRecord } from './device-health.js';
+import { causeQuote, causeGroupKey } from './failure-cause.js';
+
+export { causeQuote } from './failure-cause.js';
 
 export interface RecipeResult { spec: ReportSpec; highlights: string[] }
 
@@ -107,20 +110,6 @@ export function classificationMeans(failures: number, classified: number, infra:
 }
 
 /**
- * A failure cause short enough to quote. Appium wraps the real error ("An unknown server-side error occurred while
- * processing the command. Original error: <the informative part>"), and a cut at a fixed length ended the quote right
- * before it: the part after "Original error:" is quoted when there is one. Cut at a word boundary.
- */
-export function causeQuote(cause: string, max = 120): string {
-  const flat = cause.replace(/\s+/g, ' ').trim();
-  const inner = /Original error:\s*(.+)$/i.exec(flat)?.[1] ?? flat;
-  if (inner.length <= max) return inner;
-  const cut = inner.slice(0, max);
-  const at = cut.lastIndexOf(' ');
-  return `${(at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s.,;:]+$/, '')}…`;
-}
-
-/**
  * A test name without its run-specific parts (hex/UUID ids, dates, times, trailing run numbers), so "Login 0000811-ABC
  * 2397" and "Login 0000811-DEF 2398" count as one test. Live data: 925 of 928 failures had distinct raw names.
  */
@@ -130,8 +119,12 @@ export function testFamily(name: string): string {
     .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ')
     .replace(/\b(?=[0-9a-f-]*\d)[0-9a-f]{6,}(?:-[0-9a-f]{3,})*\b/gi, ' ')
     .replace(/\b[A-Z0-9]{10,}\b/g, (m) => (/\d/.test(m) && /[A-Z]/.test(m) ? ' ' : m))
+    // A trailing device serial or short run code (_03R1KL, _98401C): letters AND digits, 6 or more, at the end only.
+    .replace(/[\s_-]+(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,}\s*$/, '')
     .replace(/(?:[\s_#-]+\d+)+\s*$/g, '')
     .replace(/\s+/g, ' ')
+    // A separator left at the end once a date or id was taken off ("Container report - 2026-11-25" → "Container report").
+    .replace(/[\s_#:,;\-–—]+$/, '')
     .trim();
   return out || name.trim();
 }
@@ -227,8 +220,10 @@ export function buildTestSummary(i: TestSummaryInput): RecipeResult {
   const worst = valid.reduce<[number, number] | null>((w, x) => (w == null || x[0] < w[0] ? x : w), null);
   const rateMeans = rate == null ? 'No run in this range reached a verdict.' :
     `Pass rate was ${pct1(rate)}${delta != null ? `, ${delta >= 0 ? 'up' : 'down'} ${Math.abs(delta).toFixed(1)} points on the ${prevPeriod}` : ''}.` +
-    (worst ? ` The lowest ${unit} was ${cats[worst[1]]} at ${worst[0].toFixed(1)}%.` : '') +
-    (i.passRateGoal != null ? ` ${valid.filter(([v]) => v >= i.passRateGoal!).length} of ${valid.length} ${unit}s met the ${i.passRateGoal}% goal.` : '');
+    // With one day there is no "lowest day" and no "1 of 1 days" (UAT 2026-11-25).
+    (worst && valid.length > 1 ? ` The lowest ${unit} was ${cats[worst[1]]} at ${worst[0].toFixed(1)}%.` : '') +
+    (i.passRateGoal == null ? '' : valid.length === 1 ? ` That ${valid[0][0] >= i.passRateGoal ? 'meets' : 'is below'} the ${i.passRateGoal}% goal.`
+      : ` ${valid.filter(([v]) => v >= i.passRateGoal!).length} of ${valid.length} ${unit}s met the ${i.passRateGoal}% goal.`);
 
   // Platforms (counted by the reporter for the window).
   const plat = (i.platforms ?? []).map((g) => ({ label: osLabel({ deviceOs: g.key } as TestRun), c: g.counts })).sort((a, b) => b.c.total - a.c.total);
@@ -735,10 +730,13 @@ export function buildTestTrend(i: { daysRows: BreakdownRow[]; platforms: Breakdo
 
 // ── Failure analysis ────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** The bucket of failures with no device: web (browser) runs and runs that never got a device. */
+const NO_DEVICE = 'No device (web or other)';
+
 export function buildFailureAnalysis(i: { failures: TestRun[]; totalRuns: number | null; from: number; to: number; days: number; projectName?: string; capped?: boolean }): RecipeResult {
   const fails = i.failures;
   const highlights: string[] = [];
-  const devName = (r: TestRun) => r.deviceName ? r.deviceName : r.serial ? r.serial : 'No device (web or other)';
+  const devName = (r: TestRun) => r.deviceName ? r.deviceName : r.serial ? r.serial : NO_DEVICE;
   const byDevice = countBy(fails, devName);
   const tests = new Set(fails.map((r) => r.name)).size;
   const infra = fails.filter((r) => INFRA_CATEGORIES.has((r.errorCategory ?? '').toLowerCase())).length;
@@ -756,9 +754,14 @@ export function buildFailureAnalysis(i: { failures: TestRun[]; totalRuns: number
   }
   const dev = topN(byDevice, 10);
   const devShare = byDevice[0][1] / fails.length;
-  const devMeans = `${byDevice[0][0]} has the most failures (${plural(byDevice[0][1], 'failure')}, ${Math.round(devShare * 100)}% of all).` +
-    (devShare > 0.3 && byDevice.length > 3 ? ' One device carrying this share usually means a device problem rather than a test problem; check it before re-running.' : '');
-  highlights.push(byDevice[0][0].startsWith('No device')
+  // The no-device bucket is web (browser) runs and runs that never got a device: not a device, so never "a device problem".
+  const noDeviceTop = byDevice[0][0] === NO_DEVICE;
+  const devMeans = noDeviceTop
+    ? `Most failures (${plural(byDevice[0][1], 'failure')}, ${Math.round(devShare * 100)}%) were in runs without a device: web (browser) tests, or runs that ended before a device was assigned. Look at those tests and their causes, not at the devices.` +
+      (byDevice.length > 1 ? ` Among the devices, ${byDevice[1][0]} has the most (${plural(byDevice[1][1], 'failure')}).` : '')
+    : `${byDevice[0][0]} has the most failures (${plural(byDevice[0][1], 'failure')}, ${Math.round(devShare * 100)}% of all).` +
+      (devShare > 0.3 && byDevice.length > 3 ? ' One device carrying this share usually means a device problem rather than a test problem; check it before re-running.' : '');
+  highlights.push(noDeviceTop
     ? `${Math.round(devShare * 100)}% of failures were in runs without a device (web or other).`
     : `${byDevice[0][0]} carries ${Math.round(devShare * 100)}% of failures.`);
 
@@ -775,7 +778,8 @@ export function buildFailureAnalysis(i: { failures: TestRun[]; totalRuns: number
   const classifiedN = fails.filter((r) => r.errorCategory && r.errorCategory.toLowerCase() !== 'unclassified').length;
 
   // Causes table.
-  const causeKey = (r: TestRun) => (r.cause ?? '').replace(/\s+/g, ' ').trim().slice(0, 140) || '(no cause recorded)';
+  // Grouped by the informative part of the cause with session ids, UUIDs and times taken out (failure-cause.ts).
+  const causeKey = (r: TestRun) => causeGroupKey(r.cause);
   const byCause = countBy(fails, causeKey).slice(0, 12);
   const example = (cause: string) => fails.find((r) => causeKey(r) === cause);
   const noCause = byCause[0][0] === '(no cause recorded)';
@@ -806,7 +810,7 @@ export function buildFailureAnalysis(i: { failures: TestRun[]; totalRuns: number
         { label: 'Causes', sections: [
           { title: 'Most Common Causes', blocks: [{ type: 'table', columns: [
             { key: 'cause', label: 'Cause' }, { key: 'n', label: 'Failures', format: 'number' }, { key: 'cat', label: 'Classification' }, { key: 'test', label: 'Example test' }],
-          rows: byCause.map(([cause, n]) => ({ cause, n, cat: catLabel(example(cause)?.errorCategory ?? null), test: example(cause)?.name ?? '' })) }], whatItMeans: causeMeans },
+          rows: byCause.map(([cause, n]) => ({ cause: example(cause)?.cause ? causeQuote(example(cause)!.cause!, 200) : cause, n, cat: catLabel(example(cause)?.errorCategory ?? null), test: example(cause)?.name ?? '' })) }], whatItMeans: causeMeans },
         ] },
       ],
       source: `Source: Digital.ai Testing reporter, ${plural(fails.length, 'failed or error run')}${i.totalRuns != null ? ` of ${plural(i.totalRuns, 'run')}` : ''}, ${longDate(i.from)} to ${longDate(i.to)}. ` +
@@ -836,8 +840,11 @@ export function deviceStats(counts: GroupCounts, failures: TestRun[]): { stats: 
     const serial = g.key!.toLowerCase();
     const mine = failures.filter((r) => (r.serial ?? '').toLowerCase() === serial);
     const infra = mine.filter((r) => INFRA_CATEGORIES.has((r.errorCategory ?? '').toLowerCase())).length;
-    const causes = countBy(mine, (r) => (r.cause ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) || '(no cause recorded)');
-    return { serial: g.key!, name: mine.find((r) => r.deviceName)?.deviceName ?? g.key!, runs, failures: f, failRatio: runs ? f / runs : 0, infraShare: mine.length ? infra / mine.length : 0, topCause: causes[0]?.[0] ?? '' };
+    const causes = countBy(mine, (r) => causeGroupKey(r.cause));
+    const top = causes[0]?.[0];
+    const topExample = top ? mine.find((r) => causeGroupKey(r.cause) === top)?.cause : undefined;
+    return { serial: g.key!, name: mine.find((r) => r.deviceName)?.deviceName ?? g.key!, runs, failures: f, failRatio: runs ? f / runs : 0, infraShare: mine.length ? infra / mine.length : 0,
+      topCause: topExample ? causeQuote(topExample, 160) : top ?? '' };
   });
   return { stats, baseline };
 }
@@ -862,15 +869,15 @@ export function buildDeviceHealth(i: { devices: DeviceRow[]; deviceCounts: Group
     { value: available.toLocaleString('en-US'), label: 'Available' },
     { value: inUse.toLocaleString('en-US'), label: 'In use or reserved', accent: 'teal' },
     { value: offline.toLocaleString('en-US'), label: 'Offline or error', accent: 'fail' },
-    ...(health ? [{ value: flagged.length.toLocaleString('en-US'), label: `Failing tests (last ${i.days} days)`, accent: 'fail' as const }] : []),
+    ...(health ? [{ value: flagged.length.toLocaleString('en-US'), label: `Devices failing far more often (last ${plural(i.days, 'day')})`, accent: 'fail' as const }] : []),
   ] };
   highlights.push(`${available} of ${i.devices.length} devices available, ${offline} offline or in error.`);
-  if (longOffline.length) highlights.push(`${plural(longOffline.length, 'device')} offline for more than a day.`);
-  if (flagged.length) highlights.push(`${plural(flagged.length, 'device')} fail far more often than the rest of the pool.`);
+  if (longOffline.length) highlights.push(`${plural(longOffline.length, 'device')} offline or in error for more than a day.`);
+  if (flagged.length) highlights.push(`${plural(flagged.length, 'device')} fail${flagged.length === 1 ? 's' : ''} far more often than the rest of the pool.`);
 
   const shareMeans = `${Math.round((available / Math.max(1, i.devices.length)) * 100)}% of the pool is free right now and ${Math.round((offline / Math.max(1, i.devices.length)) * 100)}% is offline or in error.` +
-    (longOffline.length ? ` ${plural(longOffline.length, 'device')} ${longOffline.length === 1 ? 'has' : 'have'} been offline for more than 24 hours and still count toward the pool; a device query can route tests to them.` : '');
-  const ageText = (m: number | null) => m == null || m < 1 ? '' : m >= 1440 ? `${Math.round(m / 1440)} days` : m >= 60 ? `${Math.round(m / 60)} hours` : `${m} min`;
+    (longOffline.length ? ` ${plural(longOffline.length, 'device')} ${longOffline.length === 1 ? 'has' : 'have'} been offline or in error for more than 24 hours and still count toward the pool; a device query can route tests to them.` : '');
+  const ageText = (m: number | null) => m == null || m < 1 ? '' : m >= 1440 ? plural(Math.round(m / 1440), 'day') : m >= 60 ? `${Math.round(m / 60)} hours` : `${m} min`;
   const tileStatus = (d: DeviceRow) => flaggedSerials.has(sameSerial(d.serial)) && /^available$/i.test(d.status) ? 'Degraded' : d.status || 'Unknown';
   const attention = i.devices.filter((d) => !/^(available|in use|reserved)$/i.test(d.status) || flaggedSerials.has(sameSerial(d.serial)));
   const tileSet = i.devices.length <= 60 ? i.devices : attention.slice(0, 60);
@@ -933,7 +940,7 @@ export function buildDeviceHealth(i: { devices: DeviceRow[]; deviceCounts: Group
     })) }], whatItMeans: tilesMeans },
   ];
   if (longOffline.length) {
-    sections.push({ title: 'Offline for More Than a Day', blocks: [{ type: 'table', columns: [
+    sections.push({ title: 'Offline or in Error for More Than a Day', blocks: [{ type: 'table', columns: [
       { key: 'name', label: 'Device' }, { key: 'model', label: 'Model' }, { key: 'status', label: 'Status', format: 'status' }, { key: 'age', label: 'For' }, { key: 'agent', label: 'Agent' }, { key: 'region', label: 'Region' }],
     // Every one of them: the text and the tiles say how many, and a table that stopped at 25 of 27 contradicted both.
     maxRows: 500, rows: longOffline.map((d) => ({ name: d.name || d.serial, model: d.model, status: d.status, age: ageText(d.statusAgeMin), agent: d.agent, region: d.region })) }],
@@ -1100,7 +1107,7 @@ export function buildUsageSummary(i: { rows: ReservationRow[]; from: number; to:
   const devicesAll = new Set(i.rows.map((r) => r.device)).size;
   const perMonth = hoursAll / (days / 30);
   const r1 = (x: number) => Math.round(x * 10) / 10;
-  highlights.push(`${r1(hoursAll)} reserved hours over ${days} days, ${r1(hoursRecent)} in the last ${i.recentDays}.`);
+  highlights.push(`${r1(hoursAll).toLocaleString('en-US')} reserved hours over ${days} days, ${r1(hoursRecent).toLocaleString('en-US')} in the last ${i.recentDays}.`);
 
   const keys = buckets(i.from, i.to, 'week', true);
   const weekly = keys.map((k) => r1(sum(i.rows.filter((r) => bucketStart(r.start, 'week', true) === k))));

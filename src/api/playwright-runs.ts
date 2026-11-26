@@ -17,8 +17,12 @@
  *    body/digitalai.json or in playwright configuration file"; a zip with no Playwright files gets the same 400; a
  *    non-zip → 400 "Project folder is empty". With explicit conf.browsers the nested zip is ACCEPTED at submit — whether
  *    it would run is unknown, so loadPlaywrightProject reports `nestedRoot` and the tool refuses it.
- * UNVERIFIED: every run on the dev tenant stayed QUEUED "Waiting for licenses" (two projects), so the states after
- * RUNNING, the browser counts of a real run and the log contents have not been seen. Re-probe when a license exists.
+ * Until 2026-11-25 every run on the dev tenant stayed QUEUED "Waiting for licenses" (a tenant configuration CloudOps
+ * fixed). Verified end to end 2026-11-26 (one chromium test, @playwright/test 1.49.0): RUNNING within ~40 s, RUNNING
+ * with an empty 22-byte log zip for several minutes (container start and an npm install), then FINISHED with
+ * "Number of browsers completed": 1. The status carries browser counts only; the test results are one Reporter record
+ * per test (test.run.id = the run uuid, named <spec>-<title>-<project>), which playwrightRunResults reads. The log zip
+ * then held one <browser>-<imageVersion>-<uuid>.log: the npm install, pw:api lines and a step tree.
  */
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, join } from 'path';
@@ -185,6 +189,22 @@ export function normalizePlaywrightStatus(id: string, d: Record<string, unknown>
     browsersCompleted: num(d['Number of browsers completed']),
     queueReason: d['Reason for Queue'] != null ? String(d['Reason for Queue']) : null,
   };
+}
+
+/**
+ * Pure: the test counts of a finished Playwright run from its Reporter records. The Execution Service status counts
+ * browsers, not tests, so a finished run showed passed/failed as empty (2026-11-26).
+ */
+export function countsFromReports(records: Array<{ status?: string | null }>): { total: number; passed: number; failed: number; skipped: number; other: number } {
+  const c = { total: records.length, passed: 0, failed: 0, skipped: 0, other: 0 };
+  for (const r of records) {
+    const s = String(r.status ?? '').toLowerCase();
+    if (s === 'passed' || s === 'healed') c.passed++;
+    else if (s === 'failed' || s === 'error') c.failed++;
+    else if (s === 'skipped') c.skipped++;
+    else c.other++;
+  }
+  return c;
 }
 
 export async function getPlaywrightRunStatus(id: string): Promise<TestRunStatus> {
