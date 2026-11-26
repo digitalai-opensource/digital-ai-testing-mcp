@@ -1,5 +1,5 @@
-import { writeFile } from 'fs/promises';
 import { StringDecoder } from 'node:string_decoder';
+import { writeDownloadFile } from '../utils/write-download.js';
 import { apiDownloadStream } from './client.js';
 import { USAGE_REPORT_TYPES, usageReportUtcMs, type UsageReportType } from '../utils/usage-report-guard.js';
 import { parseCsv, parseCsvSections } from '../utils/csv.js';
@@ -186,7 +186,7 @@ export async function downloadUsageReport(
 ): Promise<{ bytes: number; fetchMs: number }> {
   try {
     const { data, fetchMs } = await fetchUsageReportCsv(reportType, params);
-    await writeFile(localPath, data);
+    await writeDownloadFile(localPath, data);
     return { bytes: data.length, fetchMs };
   } catch (e) {
     throw new Error(`downloadUsageReport failed: ${(e as Error).message}`);

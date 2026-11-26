@@ -82,7 +82,9 @@ describe('check_connectivity example prompts (a bare list was summarised away)',
     const first = connectivityExamples('Admin');
     assert.match(first.join('\n'), /Show the user these example prompts as a short list, word for word/);
     assert.match(first.join('\n'), /usage summary for project/);
-    assert.deepEqual(connectivityExamples('Admin'), [], 'shown once');
+    const later = connectivityExamples('Admin').join('\n');
+    assert.ok(!/usage summary for project/.test(later), 'the list itself is shown once');
+    assert.match(later, /Example prompts were shown on the first check_connectivity of this server run/, 'later calls say so in one line');
     resetConnectivityExamplesForTests();
     assert.doesNotMatch(connectivityExamples('User').join('\n'), /usage summary/);
     resetConnectivityExamplesForTests();

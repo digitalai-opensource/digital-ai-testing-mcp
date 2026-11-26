@@ -276,6 +276,9 @@ describe('update steps follow the install', () => {
     assert.match(updateSteps('npm', 'linux'), /`npm install -g digital-ai-testing-mcp@latest`/);
     // Windows PowerShell's default execution policy refuses npm.ps1 — npm.cmd runs in every Windows shell.
     assert.match(updateSteps('npm', 'win32'), /`npm\.cmd install -g digital-ai-testing-mcp@latest`/);
+    // A global install also hears about the entry that updates itself, and about the slow first start after a release.
+    assert.match(updateSteps('npm', 'win32'), /`npx\.cmd -y digital-ai-testing-mcp@latest` in the client configuration[\s\S]*setup clients add[\s\S]*reconnect once/);
+    assert.match(updateSteps('npm', 'linux'), /`npx -y digital-ai-testing-mcp@latest`/);
     assert.match(updateSteps('npx'), /^Restart your AI client.*digital-ai-testing-mcp@latest/);
     assert.doesNotMatch(updateSteps('npx'), /npm install/);
     assert.match(updateSteps('source'), /git pull.*npm ci.*npm run build/);

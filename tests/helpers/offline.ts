@@ -146,3 +146,37 @@ export async function connectTools(...registrars: Array<(server: McpServer) => v
     close: () => client.close(),
   };
 }
+export interface GroupedBody { groupBy?: string[]; pivotBy?: string[]; filter?: Array<{ property: string; operator: string; value: unknown }> }
+
+/**
+ * What the reporter's grouped endpoint answers for a set of runs (a run with `n` stands for n runs). As on the platform
+ * (verified live 2026-11-25): "=" matches one spelling only, "contains" ignores letter case, one row per group with
+ * `_count_` and, with pivotBy status, `<status>Count` columns; no grouping gives one row, also when nothing matched.
+ * Filters on `ignore` (default: the test_id bounds of a time range) are not applied.
+ */
+export function groupedAnswer(runs: Array<Record<string, unknown>>, body: GroupedBody, ignore: string[] = ['test_id']): { count: number; data: Array<Record<string, unknown>> } {
+  const keys = body.groupBy ?? [];
+  const matches = (run: Record<string, unknown>) => (body.filter ?? []).every((f) => {
+    if (ignore.includes(f.property)) return true;
+    const v = run[f.property];
+    if (f.operator === '=') return v === f.value;
+    if (f.operator === 'contains') return v != null && String(v).toLowerCase().includes(String(f.value).toLowerCase());
+    if (f.operator === '>=') return Number(v) >= Number(f.value);
+    if (f.operator === '<') return Number(v) < Number(f.value);
+    throw new Error(`groupedAnswer: operator ${f.operator} is not imitated`);
+  });
+  const groups = new Map<string, Record<string, unknown>>();
+  for (const run of runs.filter(matches)) {
+    const n = typeof run.n === 'number' ? run.n : 1;
+    const id = JSON.stringify(keys.map((k) => run[k] ?? null));
+    const row = groups.get(id) ?? { ...Object.fromEntries(keys.map((k) => [k, run[k] ?? null])), _count_: 0 };
+    row._count_ = (row._count_ as number) + n;
+    if (body.pivotBy?.includes('status') && run.status) {
+      const col = `${String(run.status).toLowerCase()}Count`;
+      row[col] = ((row[col] as number | undefined) ?? 0) + n;
+    }
+    groups.set(id, row);
+  }
+  const data = groups.size || keys.length ? [...groups.values()] : [{ _count_: 0 }];
+  return { count: data.length, data };
+}

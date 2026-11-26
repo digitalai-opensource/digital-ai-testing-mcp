@@ -31,6 +31,11 @@ describe('selectLogLines', () => {
     const last = selectLogLines(LOG, { maxLines: 1, contains: 'error', context: 1 });
     assert.equal(last.text, 'line 14\nline 15 ERROR boom\nline 16');
     assert.equal(last.truncated, true);
+    // The header words the cut by matches: 1 of 2 matches shown, in 3 lines with context.
+    assert.equal(last.matches, 2);
+    assert.equal(last.shownMatches, 1);
+    assert.equal(last.shownLines, 3);
+    assert.equal(selectLogLines(LOG, { maxLines: 3 }).shownMatches, undefined, 'only with contains');
     const both = selectLogLines(LOG, { maxLines: 2, contains: 'error', context: 3 });
     assert.equal(both.shownLines, 14, 'two matches with 3 lines of context each');
     assert.equal(both.truncated, false);

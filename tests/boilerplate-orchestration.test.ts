@@ -634,6 +634,32 @@ describe('get_test_boilerplate — structure: "page-objects" (release 4)', () =>
     }
   });
 
+  it('validate_test_script takes the whole project in one call, and doubts selectors only in files that have some', async () => {
+    account.isAppiumOss = true; account.fail = false;
+    const g = (await gen({ platform: 'android', language: 'nodejs', structure: 'page-objects' })).json as Gen;
+    const js = g.files.filter((f) => f.filename.endsWith('.js'));
+    assert.ok(js.length >= 5, String(js.length));
+    const res = await call('validate_test_script', { files: js.map((f) => ({ fileName: f.filename, content: f.content })), outputFormat: 'json' });
+    const v = JSON.parse(res.content.map((c) => c.text ?? '').join(''));
+    assert.equal(v.verdict, 'pass');
+    assert.equal(v.fileCount, js.length);
+    assert.deepEqual(v.failedFiles, []);
+    assert.deepEqual(v.files.map((f: { fileName: string }) => f.fileName), js.map((f) => f.filename));
+    const info = (name: RegExp) => v.files.find((f: { fileName: string }) => name.test(f.fileName)).issues.filter((i: { label: string }) => i.label === 'no live inspection session').length;
+    assert.equal(info(/wdio\.conf\.js$/), 0, 'a config file has no selector to doubt');
+    assert.equal(info(/LoginScreen\.js$/), 1, 'a screen file with locators keeps the reminder');
+    // One bad file fails the call and is named.
+    const bad = await call('validate_test_script', { files: [{ fileName: 'ok.js', content: 'const x = 1;' }, { fileName: 'bad.js', content: 'await $("<resource-id from get_element_tree>").click();' }], outputFormat: 'json' });
+    assert.equal(bad.isError, true);
+    const b = JSON.parse(bad.content.map((c) => c.text ?? '').join(''));
+    assert.equal(b.verdict, 'fail');
+    assert.deepEqual(b.failedFiles, ['bad.js']);
+    assert.equal(b.files[0].verdict, 'pass');
+    const none = await call('validate_test_script', {});
+    assert.equal(none.isError, true);
+    assert.match(none.content.map((c) => c.text ?? '').join(''), /pass scriptContent \(one file\) or files/);
+  });
+
   it('Node (both modes): screenobjects folder + spec requiring LoginScreen', async () => {
     for (const oss of [true, false]) {
       account.isAppiumOss = oss; account.fail = false;

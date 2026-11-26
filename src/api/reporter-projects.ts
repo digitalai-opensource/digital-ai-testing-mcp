@@ -15,6 +15,18 @@ export async function getReporterProjects(): Promise<ReporterProject[]> {
   }
 }
 
+/**
+ * The reporter's answer for a project name it does not have is a 500 with a Java NullPointerException text
+ * ("Cannot invoke …Project.getName() because project is null", verified live 2026-11-24 for a cloud project that never
+ * produced a report and for a made-up name). Returns the message to show instead, or null for any other error.
+ */
+export function explainUnknownReporterProject(message: string, projectName?: string): string | null {
+  if (!/Project\.getName\(\)"? because "project" is null/.test(message)) return null;
+  return `The reporter has no project named ${projectName ? `"${projectName}"` : 'that'}. A cloud project that never produced a test report has ` +
+    'none, and the reporter keeps its own project list, which differs from list_projects (some reporter projects have no ' +
+    'cloud project, and the reverse): get_reporter_project_storage lists the reporter\'s projects by name and id.';
+}
+
 /** Shared parameter text for every reporter tool's projectId. */
 export const REPORTER_PROJECT_ID_DESC =
   'REPORTER project ID — the project_id on a report record, or the id from get_reporter_project_storage. It is NOT the ' +

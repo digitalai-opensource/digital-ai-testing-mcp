@@ -2494,6 +2494,8 @@ export async function mockAuthentication(
 // records no entries, so the ZIP is ~290 bytes — the tool says so instead of handing over an empty capture.
 
 export type CaptureKind = 'har' | 'device_log';
+/** Size of a device-log capture that holds no log line (header and footer only). */
+export const DEVICE_LOG_EMPTY_BYTES = 120;
 
 export async function sessionCapture(
   handle: string,
@@ -2538,6 +2540,12 @@ export async function sessionCapture(
   }
   if (kind === 'har' && repositoryFile && repositoryFile.size < 400) {
     note = 'The HAR holds no entries: the platform does not record HTTP traffic while NV tunneling is on for the device (platform docs), and this tenant tunnels every device. Use a performance transaction for network byte counts instead.';
+  }
+  // A device-log file with no log lines holds only the platform's header and footer, 104 bytes (seen twice, UAT
+  // 2026-11-24: a 4 s window on Android while get_device_log on the same session had 3,571 lines).
+  if (kind === 'device_log' && repositoryFile && repositoryFile.size <= DEVICE_LOG_EMPTY_BYTES) {
+    note = 'The capture is EMPTY: the file holds only the platform header and footer, no log lines. A short window can come back like this; ' +
+      'capture for longer with app activity in between, or read the log of this session directly with get_device_log.';
   }
   return { file, repositoryFile, note };
 }

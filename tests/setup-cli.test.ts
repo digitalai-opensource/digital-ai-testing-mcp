@@ -408,6 +408,73 @@ describe('setup reports (the report folder)', () => {
   });
 });
 
+describe('setup options (server options, so no client configuration file is edited by hand)', () => {
+  it('lists every option with what the server does when it is not set', async () => {
+    const t = scripted();
+    expect(await runSetupCli(['options'], t.io)).toBe(0);
+    const text = t.all();
+    for (const name of ['toolsets', 'report-pointer', 'update-check', 'debug', 'idle-timeout']) expect(text).toContain(name);
+    expect(text).toMatch(/toolsets\s+\(MCP_TOOLSETS\)\s+not set; the server uses all/);
+    expect(text).toMatch(/options <name> <value>/);
+    expect(text).toMatch(/options <name> default/);
+  });
+
+  it('sets, shows, changes and removes an option by short name or variable name, and keeps the profiles', async () => {
+    await add(['admin', '--url', URL_A, '--key-stdin']);
+    let t = scripted();
+    expect(await runSetupCli(['options', 'toolsets', 'core'], t.io)).toBe(0);
+    expect(readFile().options).toEqual({ MCP_TOOLSETS: 'core' });
+    expect(readFile().profiles.admin).toEqual({ url: URL_A, keyStore: 'os' });
+    expect(t.all()).toContain('Saved toolsets = core  (MCP_TOOLSETS)');
+    expect(t.all()).toMatch(/Restart the AI clients/);
+    expect(await runSetupCli(['options', 'toolsets', 'Reporting', 'devices'], scripted().io)).toBe(0);
+    expect(await runSetupCli(['option', 'MCP_REPORT_POINTER', 'off'], scripted().io)).toBe(0);
+    expect(readFile().options).toEqual({ MCP_TOOLSETS: 'reporting,devices', MCP_REPORT_POINTER: 'false' });
+    t = scripted();
+    expect(await runSetupCli(['options', 'toolsets'], t.io)).toBe(0);
+    expect(t.all()).toMatch(/toolsets\s+\(MCP_TOOLSETS\)\s+= reporting,devices/);
+    t = scripted();
+    expect(await runSetupCli(['options', 'toolsets', 'default'], t.io)).toBe(0);
+    expect(readFile().options).toEqual({ MCP_REPORT_POINTER: 'false' });
+    expect(t.all()).toContain('Removed toolsets. The server uses all again.');
+    expect(await runSetupCli(['options', 'report-pointer', 'default'], scripted().io)).toBe(0);
+    expect(readFile().options).toBeUndefined();
+    t = scripted();
+    expect(await runSetupCli(['options', 'debug', 'default'], t.io)).toBe(0);
+    expect(t.all()).toContain('debug was not set. The server uses false.');
+  });
+
+  it('refuses a value that cannot be used, an unknown option and a second value, and changes nothing', async () => {
+    let t = scripted();
+    expect(await runSetupCli(['options', 'toolsets', 'reports'], t.io)).toBe(2);
+    expect(t.all()).toMatch(/toolsets: unknown toolset: reports \(valid: devices, apps, reporting,.*core, all\)\. Nothing was changed\./);
+    t = scripted();
+    expect(await runSetupCli(['options', 'DIGITAL_AI_ACCESS_KEY', 'aut_1_x'], t.io)).toBe(2);
+    expect(t.all()).toMatch(/"DIGITAL_AI_ACCESS_KEY" is not a server option\. Options: toolsets, report-pointer, update-check, debug, idle-timeout\./);
+    expect(t.all()).not.toContain('aut_1_x');
+    expect(await runSetupCli(['options', 'idle-timeout', '30'], scripted().io)).toBe(2);
+    expect(await runSetupCli(['options', 'debug', 'true', 'false'], scripted().io)).toBe(2);
+    expect(existsSync(storeFile()) ? readFile().options : undefined).toBeUndefined();
+  });
+
+  it('doctor lists the stored options, and counts one that cannot be used as a problem', async () => {
+    await add(['admin', '--url', URL_A, '--key-stdin']);
+    let t = scripted();
+    await runSetupCli(['doctor', '--offline'], t.io);
+    expect(t.all()).toMatch(/Server options: none set/);
+    await runSetupCli(['options', 'toolsets', 'core'], scripted().io);
+    t = scripted();
+    await runSetupCli(['doctor', '--offline'], t.io);
+    expect(t.all()).toContain('Server options: MCP_TOOLSETS=core');
+    const file = readFile();
+    file.options.MCP_SESSION_IDLE_TIMEOUT_SECONDS = '5';
+    writeFileSync(storeFile(), JSON.stringify(file));
+    t = scripted();
+    expect(await runSetupCli(['doctor', '--offline'], t.io)).toBe(1);
+    expect(t.all()).toMatch(/PROBLEM — option MCP_SESSION_IDLE_TIMEOUT_SECONDS: use a whole number of seconds from 60 to 1800; it is ignored/);
+  });
+});
+
 describe('setup doctor', () => {
   const ENV_KEY = 'aut_1_doctorEnvKeyValue';
   afterEach(() => {

@@ -102,7 +102,7 @@ beforeAll(async () => {
     }
     if (/\/elements$/.test(req.path)) { findBodies.push(req.json as { using: string; value: string }); return { value: [{ 'element-6066-11e4-a52e-4f735466cecf': 'el-1' }] }; }
     if (/\/actions$/.test(req.path)) { actionBodies.push(req.json); return { value: null }; }
-    if (req.path === '/api/v1/files') return { status: 'SUCCESS', data: [{ id: 501, uniqueName: 'mcp-har-x.har', size: 290, projectName: 'Default', extension: 'har' }, { id: 502, uniqueName: 'runlog.log', size: 33000, projectName: 'Default', extension: 'log' }], code: 'OK' };
+    if (req.path === '/api/v1/files') return { status: 'SUCCESS', data: [{ id: 501, uniqueName: 'mcp-har-x.har', size: 290, projectName: 'Default', extension: 'har' }, { id: 502, uniqueName: 'runlog.log', size: 33000, projectName: 'Default', extension: 'log' }, { id: 503, uniqueName: 'emptylog.log', size: 104, projectName: 'Default', extension: 'log' }], code: 'OK' };
     if (req.path === '/reporter/api/tests/delete') return deleteFails ? reply(400, { message: 'org.hibernate.TransientPropertyValueException: Persistent instance of Attachment references an unsaved transient instance of TestTransactionServer' }) : {};
     if (/\/alert\/text$/.test(req.path)) return alertOpen ? { value: 'Are you sure you want to send payment?' } : reply(404, { value: { error: 'no such alert', message: 'An attempt was made to operate on a modal dialog when one was not open' } });
     if (/\/element\/el-1\/attribute\/(\w+)$/.test(req.path)) {
@@ -385,7 +385,12 @@ describe('release-3 session tools (verified live 2026-10-18)', () => {
     assert.deepEqual(executed.at(-1), { script: 'seetest:client.stopHarRecording', args: [] });
     r = await tools.call('session_capture', { handle: h, kind: 'device_log', action: 'stop' });
     assert.match(r.text, /id 502, 33000 bytes/);
-    assert.doesNotMatch(r.text, /holds no entries/);
+    assert.doesNotMatch(r.text, /holds no entries|EMPTY/);
+    // A device log with no log line is the platform's header and footer only (104 bytes): said, not reported as a success.
+    await tools.call('session_capture', { handle: h, kind: 'device_log', action: 'start', name: 'emptylog' });
+    r = await tools.call('session_capture', { handle: h, kind: 'device_log', action: 'stop' });
+    assert.match(r.text, /id 503, 104 bytes/);
+    assert.match(r.text, /The capture is EMPTY: .*get_device_log/);
     r = await tools.call('session_capture', { handle: h, kind: 'har', action: 'stop' });
     assert.equal(r.res.isError, true);
     await tools.call('stop_inspection_session', { handle: h });

@@ -1703,7 +1703,14 @@ export function registerInspectionTools(server: McpServer): void {
           }
           case 'accessibility_audit': {
             const findings = await accessibilityAudit(args.handle);
-            const lines = findings.slice(0, 30).map((f, i) => `${i + 1}. ${String(f.type ?? f.auditType ?? 'issue')}: ${String(f.detailedDescription ?? f.compactDescription ?? f.elementDescription ?? '').split('\n')[0].slice(0, 200)}`);
+            // Name the element each finding is about: five identical "will not be able to change the font size of this
+            // element" lines could not be acted on (UAT 2026-11-24). XCUITest sends it as elementDescription.
+            const firstLine = (v: unknown, max: number) => String(v ?? '').split('\n')[0].trim().slice(0, max);
+            const lines = findings.slice(0, 30).map((f, i) => {
+              const what = firstLine(f.detailedDescription ?? f.compactDescription, 200);
+              const element = firstLine(f.elementDescription, 160);
+              return `${i + 1}. ${String(f.type ?? f.auditType ?? 'issue')}: ${what || element}${what && element ? ` — element: ${element}` : ''}`;
+            });
             return { content: [{ type: 'text' as const, text: findings.length ? `${findings.length} accessibility finding(s) on this screen:\n${lines.join('\n')}${findings.length > 30 ? `\n… ${findings.length - 30} more` : ''}` : 'No accessibility findings on this screen.' }] };
           }
           case 'shell': {

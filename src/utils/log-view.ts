@@ -24,6 +24,8 @@ export interface LogView {
   shownLines: number;
   /** Lines that matched `contains`; undefined without a filter. */
   matches?: number;
+  /** With `contains`: how many of the shown lines match (the rest are context). */
+  shownMatches?: number;
   /** True when maxLines or maxChars cut the selection. */
   truncated: boolean;
   /** True when maxChars (not maxLines) was the limit that cut it. */
@@ -90,5 +92,6 @@ export function selectLogLines(content: string, opts: LogViewOptions): LogView {
   const text = kept
     .map((idx) => (idx === -1 ? '--' : lines[idx].length > maxChars ? lines[idx].slice(-maxChars) : lines[idx]))
     .join('\n');
-  return { text, totalLines: lines.length, shownLines: real, matches, truncated, charCapped };
+  const shownMatches = opts.contains ? kept.filter((idx) => idx >= 0 && lines[idx].toLowerCase().includes(opts.contains!.toLowerCase())).length : undefined;
+  return { text, totalLines: lines.length, shownLines: real, matches, shownMatches, truncated, charCapped };
 }

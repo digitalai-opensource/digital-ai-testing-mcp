@@ -58,6 +58,7 @@ docs/*.md
 !docs/examples.md
 !docs/limitations.md
 !docs/recommended-agent-guardrails.md
+!docs/reports.md
 
 # Internal best-practice source baseline — never published (names third-party sources)
 docs/best-practice-review.md

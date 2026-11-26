@@ -22,9 +22,50 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { annotationsFor } from './tool-annotations.js';
 import { toolUiMeta } from './report-view.js';
 
+/** The declared kind of a parameter, looking through optional / default / nullable. Null for a pipe, a union or anything else. */
+function baseKind(node: unknown, depth = 0): string | null {
+  const def = (node as { _def?: Record<string, unknown> } | undefined)?._def;
+  if (!def || depth > 6) return null;
+  if (['optional', 'default', 'nullable', 'readonly', 'catch'].includes(def.type as string)) return baseKind(def.innerType, depth + 1);
+  return typeof def.type === 'string' ? def.type : null;
+}
+
+const asNumber = (v: unknown) => (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : v);
+const asBoolean = (v: unknown) => (typeof v === 'string' && /^(true|false)$/i.test(v.trim()) ? v.trim().toLowerCase() === 'true' : v);
+const asJson = (v: unknown) => {
+  if (typeof v !== 'string' || !/^\s*[[{]/.test(v)) return v;
+  try { return JSON.parse(v) as unknown; } catch { return v; }
+};
+
+/**
+ * A parameter declared as a number, a boolean, a list or an object also accepts the same value written as text ("1",
+ * "true", '["platform"]'). A client that never reloads its tool list keeps a placeholder's definition, which has no
+ * parameters and so no types: Claude Desktop then sent days as "1" and the call was refused with "expected number,
+ * received string" (2026-11-25). Only an exact number, true/false or JSON text is read; anything else fails as before,
+ * and a parameter declared as text is never touched. The published schema is unchanged (the wrapper is a preprocess).
+ */
+function lenient(node: unknown): unknown {
+  const kind = baseKind(node);
+  const read = kind === 'number' ? asNumber : kind === 'boolean' ? asBoolean : kind === 'array' || kind === 'object' || kind === 'record' ? asJson : null;
+  return read ? z.preprocess(read, node as z.ZodType) : node;
+}
+
 /** The tool's zod shape as a STRICT object: unknown keys fail validation (and the JSON schema says additionalProperties: false). */
 function strictShape(shape: Record<string, unknown>) {
-  return z.strictObject(shape as z.ZodRawShape);
+  // An unknown parameter is answered with the parameters the tool does take. An agent whose client kept a placeholder's
+  // definition has no schema to read: it guessed days, fromDate, startDate, since … on one tool, and each refusal said
+  // only "Unrecognized key" (Claude Desktop, 2026-11-25).
+  const takes = () => Object.entries(shape).map(([key, node]) => {
+    const optional = typeof (node as { isOptional?: () => boolean })?.isOptional === 'function' && (node as { isOptional: () => boolean }).isOptional();
+    return `${key}${optional ? '' : '*'}: ${zodTypeLabel(node)}`;
+  }).join(', ');
+  return z.strictObject(Object.fromEntries(Object.entries(shape).map(([k, node]) => [k, lenient(node)])) as z.ZodRawShape, {
+    error: (issue) => {
+      if (issue.code !== 'unrecognized_keys') return undefined;
+      const keys = (issue as unknown as { keys: string[] }).keys;
+      return `Unrecognized key${keys.length === 1 ? '' : 's'}: ${keys.map((k) => `"${k}"`).join(', ')}. This tool takes (* = required): ${takes() || 'no parameters'}`;
+    },
+  });
 }
 
 export type RegisterFn = (server: McpServer) => void;
@@ -56,23 +97,44 @@ export function captureRegistrations(modules: Array<[string, RegisterFn]>): Capt
 
 /** User-facing toolsets → tool modules. Every tool module except the core belongs to exactly one toolset. */
 export const TOOLSETS: Record<string, { modules: string[]; description: string }> = {
-  devices: { modules: ['devices', 'device-groups', 'reservations', 'health', 'agents', 'regions'], description: 'devices, device groups, reservations, health, agents, regions' },
+  devices: { modules: ['devices', 'device-groups', 'reservations', 'health', 'agents', 'regions'], description: 'devices, device groups, reservations, health, agents, regions, device health and coverage reports' },
   apps: { modules: ['applications', 'repository', 'provisioning-profiles'], description: 'application repository, file repository, provisioning profiles' },
-  reporting: { modules: ['reporting', 'test-views', 'coverage'], description: 'test reports, analytics, root-cause analysis, test views, coverage' },
-  performance: { modules: ['transactions', 'performance', 'nv-servers'], description: 'performance transactions and comparisons, NV servers' },
+  reporting: { modules: ['reporting', 'test-views', 'coverage'], description: 'test reports, analytics, root-cause analysis, test views, coverage, the test report recipes' },
+  performance: { modules: ['transactions', 'performance', 'nv-servers'], description: 'performance transactions and comparisons, NV servers, performance overview report' },
   inspection: { modules: ['inspection', 'web-inspection', 'debug'], description: 'live device and browser inspection sessions, Android Auto/CarPlay, remote debug' },
   authoring: { modules: ['boilerplate', 'test-runs'], description: 'test boilerplate, Espresso/XCUITest/Maestro test runs' },
   browsers: { modules: ['browsers'], description: 'browser listing and Selenium sessions' },
-  admin: { modules: ['users', 'projects', 'backup', 'usage-reports', 'workflows'], description: 'users, projects, backups, usage reports, POC/project workflows' },
+  admin: { modules: ['users', 'projects', 'backup', 'usage-reports', 'workflows'], description: 'users, projects, backups, usage reports, usage, utilization and license reports, POC/project workflows' },
 };
 
 /** Always loaded in full: connection/environment basics, toolset control, and the test-delivery backstop. */
 export const CORE_MODULES = ['meta', 'toolsets', 'report'];
 export const CORE_TOOLS = ['validate_test_script'];
 
+/**
+ * Tools of a core module that belong to a toolset all the same. The report module is core for create_report and
+ * render_report: one call to create_report reaches every recipe, so reports work under any MCP_TOOLSETS setting. The
+ * per-recipe entry points are named the way people ask and there are many of them: kept in the core they were 18,000
+ * characters of every trimmed tool list, a fifth of a "core" one (measured 2026-11-24). As placeholders they stay
+ * listed by name with the first sentence of their description, which is what an agent picks them by.
+ */
+export const TOOL_TOOLSETS: Record<string, string> = {
+  create_test_summary_report: 'reporting', create_failure_analysis_report: 'reporting', create_test_inventory_report: 'reporting',
+  create_test_breakdown_report: 'reporting', create_test_trend_report: 'reporting', create_test_reliability_report: 'reporting',
+  create_release_readiness_report: 'reporting',
+  create_device_health_report: 'devices', create_device_coverage_report: 'devices',
+  create_usage_summary_report: 'admin', create_device_utilization_report: 'admin', create_license_usage_report: 'admin',
+  create_performance_overview_report: 'performance',
+};
+
 export function toolsetOfModule(module: string): string | null {
   for (const [name, t] of Object.entries(TOOLSETS)) if (t.modules.includes(module)) return name;
   return null;
+}
+
+/** The toolset a tool loads with: its own assignment (TOOL_TOOLSETS), else its module's. Null for the core. */
+export function toolsetOfTool(tool: { name: string; module: string }): string | null {
+  return TOOL_TOOLSETS[tool.name] ?? toolsetOfModule(tool.module);
 }
 
 export interface Selection { all: boolean; toolsets: Set<string>; unknown: string[] }
@@ -99,7 +161,8 @@ export function describeShape(shape: Record<string, unknown>): string[] {
     let description = n?.description;
     while (!description && n?._def?.innerType) { n = n._def.innerType as typeof n; description = n?.description; }
     const optional = typeof (node as { isOptional?: () => boolean })?.isOptional === 'function' && (node as { isOptional: () => boolean }).isOptional();
-    lines.push(`- ${key}${optional ? '' : ' (required)'}: ${description ?? ''}`.trimEnd());
+    // The type is part of the guidance: an agent that reads this in place of a schema otherwise guesses it (text for a number).
+    lines.push(`- ${key}${optional ? '' : ' (required)'} <${zodTypeLabel(node)}>: ${description ?? ''}`.trimEnd());
   }
   return lines;
 }
@@ -137,6 +200,7 @@ function zodTypeLabel(node: unknown, depth = 0): string {
     case 'literal':
       return (def.values as unknown[]).map((v) => JSON.stringify(v)).join('|');
     case 'object':
+    case 'record': // a map of names to values: "object" is the word an agent sends the right thing for
       return 'object';
     case 'union':
       return (def.options as unknown[]).map((o) => zodTypeLabel(o, depth + 1)).join('|');
@@ -154,7 +218,22 @@ function firstSentence(text: string, max = 150): string {
 
 /** Kept short — it repeats for every unloaded tool. enable_toolset's description explains the mechanism in full. */
 export function placeholderDescription(tool: CapturedTool, toolset: string): string {
+  if (runsOnFirstCall(tool.name)) {
+    const params = Object.entries(tool.shape).map(([key, node]) => `${key}: ${zodTypeLabel(node)}`).join(', ');
+    return `[${toolset} toolset — loads on first call and runs] ${firstSentence(tool.description, 120)} Takes: ${params}.`;
+  }
   return `[${toolset} toolset — loads on first call; that first call runs nothing and returns the full parameters] ${firstSentence(tool.description, 120)}`;
+}
+
+/**
+ * The per-recipe report tools run on their FIRST call when its arguments are valid, instead of answering with guidance
+ * and waiting for a second call. They are picked by name, their parameters are few and listed in the placeholder's own
+ * text, they change nothing on the platform, and the guidance a placeholder exists to deliver (gates, ordering, destructive
+ * steps) does not apply to them. In Claude Desktop under MCP_TOOLSETS=core a test summary took three calls: guidance, a
+ * refused retry, then create_report (2026-11-25). Every other placeholder keeps "the first call runs nothing".
+ */
+export function runsOnFirstCall(toolName: string): boolean {
+  return toolName in TOOL_TOOLSETS;
 }
 
 export interface ToolsetController {
@@ -181,7 +260,7 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
   const loaded = new Set<string>(selection.toolsets);
   const handles = new Map<string, { tool: CapturedTool; handle: RegisteredTool; toolset: string | null }>();
   const isFull = (t: CapturedTool, toolset: string | null) =>
-    selection.all || CORE_MODULES.includes(t.module) || CORE_TOOLS.includes(t.name) || toolset == null || loaded.has(toolset);
+    selection.all || CORE_TOOLS.includes(t.name) || (CORE_MODULES.includes(t.module) && !TOOL_TOOLSETS[t.name]) || toolset == null || loaded.has(toolset);
 
   const controller: ToolsetController = {
     loaded: () => [...loaded].sort(),
@@ -219,13 +298,13 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
         toolset,
         description: t.description,
         loaded: loaded.has(toolset),
-        tools: captured.tools.filter((x) => t.modules.includes(x.module)).length,
+        tools: captured.tools.filter((x) => toolsetOfTool(x) === toolset).length,
       }));
     },
   };
 
   for (const tool of captured.tools) {
-    const toolset = toolsetOfModule(tool.module);
+    const toolset = toolsetOfTool(tool);
     if (isFull(tool, toolset)) {
       const callback = wrap ? wrap(tool.name, tool.callback, false) : tool.callback;
       // Strict input: an unknown parameter is an error, never silently dropped. With the SDK's default (strip)
@@ -238,11 +317,19 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
       continue;
     }
     const ts = toolset!;
-    const placeholder = async () => {
+    const direct = runsOnFirstCall(tool.name);
+    const placeholder = async (args: unknown, extra: unknown) => {
       controller.enable([ts]);
+      let refused = '';
+      if (direct) {
+        const parsed = strictShape(tool.shape).safeParse(args ?? {});
+        // Valid arguments: this IS the call. It goes through the same wrapper as the loaded tool (notices, instrumentation).
+        if (parsed.success) return (wrap ? wrap(tool.name, tool.callback, false) : tool.callback)(parsed.data, extra);
+        refused = `These arguments cannot be used: ${parsed.error.issues.slice(0, 6).map((i) => `${i.path.join('.') || '(arguments)'}: ${i.message}`).join('; ')}.`;
+      }
       const guidance = [
         `The "${ts}" toolset (${TOOLSETS[ts].description}) was not loaded in this server; it is loaded now.`,
-        `Nothing was executed. Read ${tool.name}'s full guidance below, then call ${tool.name} again with its parameters.`,
+        `Nothing was executed. ${refused ? `${refused} ` : ''}Read ${tool.name}'s full guidance below, then call ${tool.name} again with its parameters.`,
         '',
         `${tool.name} — full description:`,
         tool.description,
@@ -253,9 +340,13 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
       return { content: [{ type: 'text' as const, text: guidance }] };
     };
     // A placeholder accepts ANY arguments (an agent may send the real parameters on its first call) and runs nothing.
+    // A report tool's placeholder names the inline report view as the full tool does: a client that never reloads its
+    // tool list (Claude Desktop, 2026-11-22) keeps this definition, and the real call that follows must still be drawn.
+    // The guidance answer holds no report, and the view asks the client to take its empty frame away.
+    const placeholderUi = toolUiMeta(tool.name);
     const handle = server.registerTool(
       tool.name,
-      { description: placeholderDescription(tool, ts), inputSchema: z.looseObject({}), annotations: annotationsFor(tool.name, { placeholder: true }) },
+      { description: placeholderDescription(tool, ts), inputSchema: z.looseObject({}), annotations: annotationsFor(tool.name, { placeholder: !direct }), ...(placeholderUi ? { _meta: placeholderUi } : {}) },
       (wrap ? wrap(tool.name, placeholder, true) : placeholder) as never,
     );
     handles.set(tool.name, { tool, handle, toolset });

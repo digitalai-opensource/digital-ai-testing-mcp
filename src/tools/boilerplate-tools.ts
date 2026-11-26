@@ -305,8 +305,10 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
 
   // 7. Soft signal: no inspection session ran in this process — can't be a hard fail
   // (selectors may be source-derived or captured in a since-closed session), but worth surfacing.
-  if (listActiveSessions().length === 0) {
-    add('info', 'no live inspection session', 'No inspection session is active in this MCP process. If the selectors here were not captured from an inspection or taken from authoritative app source, they are guesses — re-verify before delivering.');
+  // Only for a file that locates elements: a config file or a base class has no selector to doubt, and the item came
+  // back for every file of a generated page-objects project (UAT 2026-11-24).
+  if (listActiveSessions().length === 0 && SCRIPT_STEP_RE.test(content)) {
+    add('info', 'no live inspection session', 'No inspection session is active in this MCP process (this item depends on that, so the same file can come back without it while a session is open). If the selectors here were not captured from an inspection or taken from authoritative app source, they are guesses — re-verify before delivering.');
   }
 
   return issues;
@@ -1670,7 +1672,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           serverMode: isAppiumOss ? 'oss' : 'grid',
           serverModeNote: isAppiumOss
             ? 'Appium Server (OSS) — standard W3C WebDriver protocol. ' +
-              'Java: java-client 11.x + selenium-java 4.51 (Java 17+), UiAutomator2Options/XCUITestOptions, AppiumBy, URI.create(...).toURL() (no DesiredCapabilities, no MobileBy). ' +
+              'Java: java-client 11.x + selenium-java 4.51 (Java 11+; a Java 17 or 21 JDK only when the Test Orchestrator agent is attached), UiAutomator2Options/XCUITestOptions, AppiumBy, URI.create(...).toURL() (no DesiredCapabilities, no MobileBy). ' +
               'Python: Appium-Python-Client 6.x, UiAutomator2Options / XCUITestOptions. ' +
               'If you need Grid mode, switch to a Grid-enabled profile and regenerate — the APIs are incompatible.'
             : 'Appium Grid (legacy) — Digital.ai JWP-era protocol, NOT standard Appium Server. ' +
@@ -1884,7 +1886,7 @@ export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'validate_test_script',
     'Backstop check for a generated or hand-written mobile test BEFORE you present or save it. ' +
-    'Pass the full script content; this scans for the markers of a non-functional test: unreplaced ' +
+    'Pass the full script content (or files: [{fileName, content}] for a project of several files, one call for all); this scans for the markers of a non-functional test: unreplaced ' +
     '<…> placeholder selectors, the deliberate scaffold fail-guard (or a scaffold whose guard was removed without any ' +
     'real step being written), placeholder/fabricated credentials, ' +
     'and resource IDs from a known prior fabrication incident. Returns isError when any high-severity ' +
@@ -1896,12 +1898,52 @@ export function registerBoilerplateTools(server: McpServer): void {
     'selectors. A clean result is necessary but not sufficient — it cannot confirm selectors are REAL, only ' +
     'that obvious placeholders are gone; the authoritative source for selectors is still a live inspection.',
     {
-      scriptContent: z.string().describe('The full text of the test script to validate.'),
+      scriptContent: z.string().optional().describe('The full text of ONE test script to validate. For a project of several files use files instead.'),
       fileName: z.string().optional().describe('Optional file name, used only to label the result.'),
+      files: z.array(z.object({ fileName: z.string(), content: z.string() })).min(1).max(40).optional()
+        .describe('Several files in ONE call (a page-objects project, a spec plus its config): each gets its own verdict and the answer an overall one. Use instead of scriptContent.'),
       outputFormat: outputFormatParam,
     },
-    async ({ scriptContent, fileName, outputFormat }) => {
-      const issues = detectFabricationIssues(scriptContent);
+    async ({ scriptContent, fileName, files, outputFormat }) => {
+      if (!files && scriptContent === undefined) {
+        return { content: [{ type: 'text' as const, text: 'Error: pass scriptContent (one file) or files ([{ fileName, content }], several files in one call).' }], isError: true };
+      }
+      if (files) {
+        // One call for a multi-file project: six files used to take six calls, each sending a whole file back (UAT 2026-11-24).
+        const perFile = files.map((f) => {
+          const found = detectFabricationIssues(f.content);
+          const highN = found.filter((i) => i.severity === 'high').length;
+          return { fileName: f.fileName, verdict: highN > 0 ? 'fail' : 'pass', highSeverityCount: highN, warningCount: found.filter((i) => i.severity === 'warn').length, issues: found };
+        });
+        const highTotal = perFile.reduce((n, f) => n + f.highSeverityCount, 0);
+        const overall = highTotal > 0 ? 'fail' : 'pass';
+        const structuredAll = {
+          verdict: overall,
+          fileCount: perFile.length,
+          failedFiles: perFile.filter((f) => f.verdict === 'fail').map((f) => f.fileName),
+          highSeverityCount: highTotal,
+          warningCount: perFile.reduce((n, f) => n + f.warningCount, 0),
+          files: perFile,
+          guidance: overall === 'fail'
+            ? 'Do NOT present these files as a finished test. Replace every flagged placeholder with element IDs captured from a live ' +
+              'inspection (start_inspection_session -> get_element_tree, or open_mobile_studio), and obtain real credentials from the user.'
+            : 'No placeholder/fabrication markers found in any file. This does NOT prove the selectors are real — only that obvious ' +
+              'placeholders are absent. If you did not capture these from an inspection or app source, verify before delivering.',
+        };
+        const out = [
+          `${overall === 'fail' ? '⛔ FAIL' : '✅ PASS'} — validate_test_script (${perFile.length} files)`,
+          '',
+          ...perFile.flatMap((f) => [
+            `${f.verdict === 'fail' ? '⛔' : '✅'} ${f.fileName}${f.issues.length ? '' : ' — no issues'}`,
+            ...f.issues.map((i) => `    ${i.severity === 'high' ? '⛔' : i.severity === 'warn' ? '⚠️' : 'ℹ️'} [${i.label}] ${i.detail}`),
+          ]),
+          '',
+          structuredAll.guidance,
+        ];
+        const resAll = respond(outputFormat, structuredAll, out.join('\n'));
+        return highTotal > 0 ? { ...resAll, isError: true } : resAll;
+      }
+      const issues = detectFabricationIssues(scriptContent ?? '');
       const high = issues.filter((i) => i.severity === 'high');
       const label = fileName ? ` (${fileName})` : '';
       const verdict = high.length > 0 ? 'fail' : 'pass';

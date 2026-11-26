@@ -1,5 +1,5 @@
 import { createReadStream } from 'fs';
-import { writeFile } from 'fs/promises';
+import { writeDownloadFile } from '../utils/write-download.js';
 import FormData from 'form-data';
 import { apiGet, apiDelete, apiPostForm, apiDownload } from './client.js';
 import type { ApiResponse, ProvisioningProfile } from '../types/digital-ai.js';
@@ -49,7 +49,7 @@ export async function downloadProvisioningProfile(
 ): Promise<void> {
   try {
     const data = await apiDownload(`/api/v1/provisioning-profiles/${profileUUID}/download`);
-    await writeFile(localPath, data);
+    await writeDownloadFile(localPath, data);
   } catch (e) {
     throw new Error(`downloadProvisioningProfile failed: ${(e as Error).message}`);
   }

@@ -132,7 +132,10 @@ export function updateSteps(kind: InstallKind = installKind(), platform: NodeJS.
   switch (kind) {
     case 'npm':
       // npm.cmd on Windows: Windows PowerShell's default execution policy refuses npm.ps1 (see npxCommand in version.ts).
-      return `Run \`${platform === 'win32' ? 'npm.cmd' : 'npm'} install -g digital-ai-testing-mcp@latest\`, then ${RESTART} (a server that is already running keeps its version).`;
+      // A global install stays on its version until someone updates it by hand; the README's recommended entry does not.
+      return `Run \`${platform === 'win32' ? 'npm.cmd' : 'npm'} install -g digital-ai-testing-mcp@latest\`, then ${RESTART} (a server that is already running keeps its version). ` +
+        `To stop updating by hand, start the server with \`${platform === 'win32' ? 'npx.cmd' : 'npx'} -y digital-ai-testing-mcp@latest\` in the client configuration instead ` +
+        '(the README\'s recommended entry; `setup clients add` writes it): each start then runs the newest release. The first start after a release downloads it and can outlast a client\'s connect timeout; reconnect once.';
     case 'npx':
       return (
         `${RESTART[0].toUpperCase()}${RESTART.slice(1)} — npx fetches the newest release when the server starts. ` +

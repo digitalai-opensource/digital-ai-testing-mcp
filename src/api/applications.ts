@@ -1,5 +1,5 @@
 import { createReadStream } from 'fs';
-import { writeFile } from 'fs/promises';
+import { writeDownloadFile } from '../utils/write-download.js';
 import FormData from 'form-data';
 import { apiGet, apiPost, apiPatch, apiPostForm, apiDownload } from './client.js';
 import type {
@@ -191,7 +191,7 @@ export async function extractLanguageFiles(
 ): Promise<void> {
   try {
     const data = await apiDownload(`/api/v1/applications/${applicationId}/language-file`);
-    await writeFile(localPath, data);
+    await writeDownloadFile(localPath, data);
   } catch (e) {
     throw new Error(`extractLanguageFiles failed: ${(e as Error).message}`);
   }

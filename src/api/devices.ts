@@ -1,5 +1,5 @@
-import { writeFile } from 'fs/promises';
 import { apiGet, apiPost, apiPut, apiDelete, apiDownload } from './client.js';
+import { writeDownloadFile } from '../utils/write-download.js';
 import type {
   ApiResponse,
   Device,
@@ -144,7 +144,7 @@ export async function downloadIosAppContainer(
 ): Promise<void> {
   try {
     const data = await apiDownload(`/api/v1/devices/${deviceId}/app-container/${bundleId}`);
-    await writeFile(localPath, data);
+    await writeDownloadFile(localPath, data);
   } catch (e) {
     throw new Error(`downloadIosAppContainer failed: ${(e as Error).message}`);
   }

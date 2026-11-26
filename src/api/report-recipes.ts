@@ -2,15 +2,19 @@
  * Data collection for the report recipes (create_report). Each function returns plain records; the layout and the
  * interpretation are built in src/utils/report-recipes.ts.
  */
-import { listTests, getGroupedTests } from './reporting.js';
+import { listTests, getGroupedTests, getGroupedTestsAllProjects } from './reporting.js';
+import { getMyAccountInfo } from './users.js';
+import { getReporterProjects } from './reporter-projects.js';
 import { countsFromPivotRow, type StatusCounts } from '../utils/test-status.js';
 import type { TestFilterField } from '../types/digital-ai.js';
 import { serverSortAvailable } from './access-level.js';
 import { getAllDevices } from './devices.js';
 import { getAllProjects } from './projects.js';
+import { getLicenseInfo } from './license.js';
 import { fetchUsageReportCsv, UsageProbeStop, type FetchUsageReportOptions } from './usage-reports.js';
-import { parseCsvSections } from '../utils/csv.js';
-import type { TestRun, DeviceRow, ReservationRow, DeviceUsageRow, UserUsageRow } from '../utils/report-recipes.js';
+import { parseCsvSections, scanCsvRows } from '../utils/csv.js';
+import { foldBreakdownRows, type TestRun, type PoolDevice, type LicenseSession, type LicenseLimits, type ReservationRow, type DeviceUsageRow, type UserUsageRow, type InventoryRow, type BreakdownRow } from '../utils/report-recipes.js';
+import { loosePlan } from '../utils/report-case.js';
 
 const PAGE = 1000;
 const WAVE = 4;
@@ -92,14 +96,20 @@ export async function scanFailures(cutoff: number, maxRecords: number, projectNa
 export async function groupedCounts(groupBy: string, minTestId: number, projectName?: string): Promise<Array<{ key: string | null; counts: StatusCounts }>> {
   const res = (await getGroupedTests({ groupBy: [groupBy], pivotBy: ['status'], filter: [{ property: 'test_id', operator: '>=', value: minTestId as unknown as string }], returnTotalCount: true }, undefined, projectName)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
   const rows = Array.isArray(res) ? res : res.data ?? [];
-  return rows.map((r) => ({ key: (r[groupBy] as string | null) ?? null, counts: countsFromPivotRow(r) }));
+  // Values that differ only in letter case are one group (ANDROID / Android would otherwise be two rows of one platform).
+  return foldBreakdownRows(rows.map((r) => ({ values: [r[groupBy] == null || r[groupBy] === '' ? null : String(r[groupBy])], counts: countsFromPivotRow(r) })))
+    .map((r) => ({ key: r.values[0], counts: r.counts }));
 }
 
-export async function deviceRows(): Promise<DeviceRow[]> {
+export async function deviceRows(): Promise<PoolDevice[]> {
   const devices = await getAllDevices();
   return devices.map((d) => ({
+    id: d.id == null ? undefined : String(d.id),
+    osVersion: d.osVersion,
+    manufacturer: d.manufacturer,
     name: d.deviceName,
-    serial: d.udid || d.iosUdid || d.id,
+    // Always text (the id fallback may arrive as a number): the coverage report matches serials by lower case.
+    serial: String(d.udid || d.iosUdid || d.id || ''),
     os: d.deviceOs,
     model: d.modelName || d.model,
     status: d.displayStatus || d.currentStatus,
@@ -107,6 +117,11 @@ export async function deviceRows(): Promise<DeviceRow[]> {
     region: d.region,
     agent: d.agentName,
   }));
+}
+
+/** The project of the active access key (a reporter call without a project answers for this one), when the platform names it. */
+export async function ownProjectName(): Promise<string | undefined> {
+  return getMyAccountInfo().then((a) => a.project?.name || undefined).catch(() => undefined);
 }
 
 /** Cloud project id for a name (the usage CSV takes the CLOUD id; reporter ids differ). */
@@ -159,10 +174,48 @@ export async function deviceUsageRows(projectId: number, startDate: string, endD
   const sec = parseCsvSections(data.toString('utf8')).find((s) => s.headers.some((h) => /^project$/i.test(h)));
   if (!sec) return [];
   const col = (re: RegExp) => sec.headers.findIndex((h) => re.test(h));
-  const [name, os, ver, project, hours] = [/^device name$/i, /^os$/i, /^os version$/i, /^project$/i, /hours/i].map(col);
+  const [name, os, ver, project, hours, id] = [/^device name$/i, /^os$/i, /^os version$/i, /^project$/i, /hours/i, /^device id$/i].map(col);
   return sec.rows.filter((r) => r[project]).map((r) => ({
+    ...(id >= 0 && r[id] ? { deviceId: r[id] } : {}),
     device: r[name] || '(unknown device)', os: r[os] ?? '', osVersion: r[ver] ?? '', project: r[project], hours: Number(r[hours]) || 0,
   }));
+}
+
+/**
+ * Every session of the License Usage report for a UTC date range, all projects: start, end, session type (Mobile execution,
+ * Browsers, Manual testing, Development, Virtual Devices) and license type (Dedicated Devices, Browsers, Virtual Devices).
+ * One row per session: 3 days were 24,705 rows and 6.3 MB (2026-11-24); 30 days 172,916 rows and 48 MB, downloaded in 16 s
+ * (2026-11-25). Read row by row, keeping five values of each: building the whole table first would be four million strings.
+ */
+export async function licenseSessions(startDate: string, endDate: string, opts: FetchUsageReportOptions = {}): Promise<{ sessions: LicenseSession[]; bytes: number }> {
+  const { data } = await fetchUsageReportCsv('License Usage', { startDate, endDate }, opts);
+  const sessions: LicenseSession[] = [];
+  let cols: number[] | null = null;
+  let ended = false;
+  // A few dozen distinct names repeat on 170,000 rows: keep one copy of each.
+  const seen = new Map<string, string>();
+  const one = (v: string | undefined) => { const k = v ?? ''; let s = seen.get(k); if (s === undefined) { s = k; seen.set(k, s); } return s; };
+  scanCsvRows(data, (r) => {
+    if (ended) return;
+    if (!cols) {
+      // The session table starts at the row that names its columns (a summary section may come before it).
+      if (r.some((h) => /^session start timestamp$/i.test(h))) {
+        cols = [/^session start timestamp$/i, /^session end timestamp$/i, /^session type$/i, /^license type$/i, /^project$/i].map((re) => r.findIndex((h) => re.test(h)));
+      }
+      return;
+    }
+    if (r.length === 1 && r[0] === '') { ended = true; return; } // a blank line ends the table
+    const [start, end, kind, license, project] = cols;
+    const s = Number(r[start]), e = Number(r[end]);
+    if (!r[start] || !Number.isFinite(s) || !Number.isFinite(e)) return;
+    sessions.push({ start: s, end: e, sessionType: one(r[kind]), licenseType: one(r[license]), project: one(r[project]) });
+  });
+  return { sessions, bytes: data.length };
+}
+
+/** The licensed numbers, or null when the key may not read them. */
+export async function licenseLimits(): Promise<LicenseLimits | null> {
+  return getLicenseInfo().then((l) => ({ dedicatedDevices: Number(l.dedicatedDevices) || 0, sharedDevices: Number(l.sharedDevices) || 0, virtualDevices: Number(l.virtualDevices) || 0, browsers: Number(l.browsers) || 0 })).catch(() => null);
 }
 
 /** Reserved hours per user per project: the per-user section of the Users Usage report (all projects, 30 days: 5 KB, ~17 s live). */
@@ -171,8 +224,113 @@ export async function userUsageRows(startDate: string, endDate: string, opts: Fe
   const sec = parseCsvSections(data.toString('utf8')).find((s) => s.headers.some((h) => /^username$/i.test(h)));
   if (!sec) return [];
   const col = (re: RegExp) => sec.headers.findIndex((h) => re.test(h));
-  const [user, project, hours] = [/^username$/i, /^project$/i, /duration/i].map(col);
-  return sec.rows.filter((r) => r[user]).map((r) => ({ user: r[user], project: r[project] ?? '', hours: Number(r[hours]) || 0 }));
+  const [user, project, hours, tag] = [/^username$/i, /^project$/i, /duration/i, /^user tag$/i].map(col);
+  return sec.rows.filter((r) => r[user]).map((r) => ({ user: r[user], project: r[project] ?? '', hours: Number(r[hours]) || 0, ...(tag >= 0 && r[tag] ? { tags: r[tag] } : {}) }));
+}
+
+/**
+ * Every test report this access key can see, counted by project, user and status. No window: these are the platform's
+ * own counts (the grouped endpoint), so nothing is read run by run and nothing is capped — 4,011,046 reports in 85
+ * projects took 12.3 s live (2026-11-24), where paging the runs would have been 8,000 list calls.
+ * Mobile reports carry the user in "user", web (Selenium) reports in "digitalai:user": both are grouped and a row is filed
+ * under whichever it has. `projectName` limits it to one project. A key that cannot list reporter projects (Project User)
+ * gets its own project, the only one it can see.
+ */
+export async function inventoryData(o: { projectName?: string; signal?: AbortSignal; onProgress?: (done: number, total: number) => void } = {}): Promise<{
+  rows: InventoryRow[]; projects: string[]; reporterOnly: string[] | null; failed: Array<{ project: string; error: string }>; scope: 'all' | 'one' | 'own';
+  storage?: Array<{ project: string; mb: number; quotaMb: number }> | null;
+}> {
+  const request = { groupBy: ['user', 'digitalai:user'], pivotBy: ['status' as const] };
+  const toRow = (project: string, r: Record<string, unknown>): InventoryRow =>
+    ({ project, user: ((r['user'] ?? r['digitalai:user']) as string | null | undefined) ?? null, counts: countsFromPivotRow(r) });
+  const single = async (project: string | undefined, label: string, scope: 'one' | 'own') => {
+    const res = (await getGroupedTests(request, undefined, project)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+    return { rows: (Array.isArray(res) ? res : res.data ?? []).map((r) => toRow(label, r)), projects: [label], reporterOnly: null, failed: [], scope };
+  };
+  if (o.projectName) return single(o.projectName, o.projectName, 'one');
+  let all: Awaited<ReturnType<typeof getGroupedTestsAllProjects>>;
+  try {
+    all = await getGroupedTestsAllProjects(request, { signal: o.signal, onProgress: o.onProgress });
+  } catch (e) {
+    if (!/cannot list the reporter's projects/.test((e as Error).message)) throw e;
+    const own = await getMyAccountInfo().then((a) => a.project?.name).catch(() => undefined);
+    return single(undefined, own ?? 'This access key\'s project', 'own');
+  }
+  // Reporter projects with no cloud project of the same name (old POCs whose cloud project was deleted).
+  const cloud = await getAllProjects().then((ps) => new Set(ps.map((p) => p.name.toLowerCase()))).catch(() => null);
+  // Storage and quota per reporter project (the same list the counts were asked from).
+  const storage = await getReporterProjects().then((ps) => ps.map((p) => ({ project: String(p.name), mb: Number(p.currentDiskStorageInMB) || 0, quotaMb: Number(p.diskStorageThresholdInMB) || 0 }))).catch(() => null);
+  return {
+    storage,
+    rows: all.rows.map((r) => toRow(String(r['project']), r)),
+    projects: all.projects,
+    reporterOnly: cloud ? all.projects.filter((p) => !cloud.has(p.toLowerCase())) : null,
+    failed: all.failed,
+    scope: 'all',
+  };
+}
+
+// ── Counts for a window (no run is read) ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The id of the first test that started at or after `t`, or null when none did. The reporter cannot filter on
+ * start_time, but it filters on a numeric test_id and ids grow with time, so the window's first id is found by a binary
+ * search over ids: each step asks for the one record with the smallest id >= mid. Live 2026-11-24: 90 days back in a
+ * project of 830,000 reports took 19 steps and 1.0 s. With that id, counts for any window come from the grouped
+ * endpoint (230,158 runs of 90 days in 7 s) where reading the runs stops at 25,000.
+ */
+export async function firstTestIdSince(t: number, projectName?: string): Promise<number | null> {
+  const one = async (request: Parameters<typeof listTests>[0]) => {
+    const page = await listTests({ limit: 1, page: 1, returnTotalCount: false, ...request }, undefined, projectName);
+    if (request.sort && !page.sortApplied) throw new Error('The reporter refused a sorted list for this access key, so a time window cannot be bounded: ask for all dates.');
+    return (page.data ?? [])[0] as { test_id?: number; start_time?: string } | undefined;
+  };
+  const newest = await one({ sort: [{ property: 'start_time', descending: true }] });
+  if (!newest || Date.parse(String(newest.start_time)) < t) return null;
+  let lo = 1, hi = Number(newest.test_id);
+  for (let step = 0; lo < hi && step < 40; step++) {
+    const mid = Math.floor((lo + hi) / 2);
+    const rec = await one({ filter: [{ property: 'test_id', operator: '>=', value: mid as unknown as string }], sort: [{ property: 'test_id', descending: false }] });
+    if (!rec || Date.parse(String(rec.start_time)) >= t) hi = mid;
+    else lo = Number(rec.test_id) + 1;
+  }
+  return lo;
+}
+
+/**
+ * Counts by one or two report keys with a status pivot, from `minTestId` on (null: all dates). Keys verified live as
+ * group keys (2026-11-24): device.os, device.name, device.model, device.version, device.manufacture, test.framework,
+ * browserName, browserVersion, device.pool.actual, errorCategory, user, name, date (a day, "2026-11-24"), and custom
+ * digitalai:<key> columns. A grouping by user also groups by digitalai:user (web reports keep the user there).
+ * Letter case: group values that differ only in case are one row, and `where` matches every stored spelling of its value
+ * (the platform's "=" matches one: browserName = "chrome" 1,243 runs, = "Chrome" 809, live 2026-11-25) unless `exactCase`.
+ */
+export async function breakdownCounts(keys: string[], minTestId: number | null, projectName?: string, /** Exclusive upper bound: the period before a window. */ belowTestId?: number,
+  /** Only runs whose column equals the value. Verified live 2026-11-24: equality filters combine with the id bound. */ where?: Record<string, string>,
+  /** Match `where` by the exact spelling the platform stores. */ exactCase = false): Promise<BreakdownRow[]> {
+  const groupBy = keys.includes('user') && !keys.includes('digitalai:user') ? [...keys, 'digitalai:user'] : keys;
+  // Both bounds are NUMBERS; a range (>= and <) adds up exactly (verified live 2026-11-24).
+  const filter: TestFilterField[] = [
+    ...(minTestId != null ? [{ property: 'test_id', operator: '>=', value: minTestId }] : []),
+    ...(belowTestId != null ? [{ property: 'test_id', operator: '<', value: belowTestId }] : []),
+    ...Object.entries(where ?? {}).map(([property, value]) => ({ property, operator: '=', value })),
+  ];
+  // Sent as "contains" with the key grouped as well; only the groups whose value equals the wanted one are kept (report-case.ts).
+  const plan = exactCase ? null : loosePlan(groupBy, filter);
+  const sent = plan?.filter ?? filter;
+  const res = (await getGroupedTests({
+    groupBy: plan?.groupBy ?? groupBy, pivotBy: ['status'],
+    ...(sent.length ? { filter: sent } : {}),
+  }, undefined, projectName)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+  const raw = Array.isArray(res) ? res : res.data ?? [];
+  const rows = plan ? plan.apply(raw).rows : raw;
+  return foldBreakdownRows(rows.map((r) => ({
+    values: keys.map((k) => {
+      const v = k === 'user' ? r['user'] ?? r['digitalai:user'] : r[k];
+      return v == null || v === '' ? null : String(v);
+    }),
+    counts: countsFromPivotRow(r),
+  })));
 }
 
 // ── Estimates ──────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { createReadStream } from 'fs';
-import { writeFile } from 'fs/promises';
+import { writeDownloadFile } from '../utils/write-download.js';
 import FormData from 'form-data';
 import { createHash } from 'crypto';
 import { apiGet, apiDelete, apiPostForm, apiDownload, getActiveUrl, getActiveAccessKey } from './client.js';
@@ -106,7 +106,7 @@ export async function uploadFile(
 export async function downloadFile(fileId: number, localPath: string): Promise<void> {
   try {
     const data = await apiDownload(`/api/v1/files/${fileId}/download`);
-    await writeFile(localPath, data);
+    await writeDownloadFile(localPath, data);
   } catch (e) {
     throw new Error(`downloadFile failed: ${(e as Error).message}`);
   }

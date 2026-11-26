@@ -112,7 +112,7 @@ export function registerWebInspectionTools(server: McpServer): void {
       deviceQuery: z
         .string()
         .optional()
-        .describe('mobilePlatform only: XPath device query, e.g. "@os=\'android\' and @model=\'Pixel 7\'". Default: any phone of that platform.'),
+        .describe('mobilePlatform only: XPath device query, e.g. "@os=\'android\' and @model=\'Pixel 7\'". Default: any phone of that platform, picked by the platform: it does NOT skip phones another team marked do-not-use (DoNotTake, OCCUPIED and the like), as find_available_device does. To stay off those, call find_available_device first and pin its phone here, e.g. "@os=\'android\' and @name=\'<device name>\'".'),
       region: z
         .string()
         .optional()

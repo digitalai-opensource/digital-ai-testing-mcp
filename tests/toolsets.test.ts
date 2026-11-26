@@ -24,8 +24,10 @@ import {
   parseToolsetSelection,
   registerWithToolsets,
   toolsetOfModule,
+  toolsetOfTool,
   describeShape,
   TOOLSETS,
+  TOOL_TOOLSETS,
   CORE_MODULES,
   type RegisterFn,
   type ToolsetController,
@@ -105,6 +107,8 @@ async function bootDirect() {
 }
 
 const PLACEHOLDER = /^\[[a-z]+ toolset — loads on first call; that first call runs nothing and returns the full parameters\]/;
+/** The report tools named after one report: their first call is the call, when its arguments are valid. */
+const RUNS = /^\[[a-z]+ toolset — loads on first call and runs\] .* Takes: /;
 
 beforeAll(() => resetClient('https://unreachable.invalid', 'aut_1_toolsets', 'toolsets'));
 
@@ -137,8 +141,8 @@ describe('selection parsing and module coverage', () => {
     const cap = captureRegistrations([['boilerplate', registerBoilerplateTools]]);
     const tool = cap.tools.find((t) => t.name === 'get_test_boilerplate')!;
     const lines = describeShape(tool.shape);
-    assert.ok(lines.some((l) => /^- platform \(required\): /.test(l)), lines.slice(0, 3).join('\n'));
-    assert.ok(lines.some((l) => /^- confirmSelectorsVerified: .*inspection/i.test(l)));
+    assert.ok(lines.some((l) => /^- platform \(required\) <"android"\|"ios">: /.test(l)), lines.slice(0, 3).join('\n'));
+    assert.ok(lines.some((l) => /^- confirmSelectorsVerified <boolean>: .*inspection/i.test(l)), 'the type is part of the guidance');
   });
 });
 
@@ -198,7 +202,7 @@ describe('MCP_TOOLSETS=reporting → placeholders that load themselves', () => {
     assert.match(text, /"authoring" toolset .* is loaded now/);
     assert.match(text, /Nothing was executed/);
     assert.match(text, /inspection gate|NEVER fabricate|confirmSelectorsVerified/i, 'the full description must be handed back');
-    assert.match(text, /- platform \(required\):/);
+    assert.match(text, /- platform \(required\) <"android"\|"ios">:/);
     const after = new Map((await list()).map((t) => [t.name, t]));
     assert.doesNotMatch(after.get('get_test_boilerplate')!.description ?? '', PLACEHOLDER);
     assert.ok(Object.keys(after.get('get_test_boilerplate')!.inputSchema.properties ?? {}).includes('platform'));
@@ -293,5 +297,133 @@ describe('tool annotations cover every guarded tool', () => {
     const { SAFE_TOOLS } = await import('./fidelity/safety.js');
     assert.equal(SAFE_TOOLS.includes('find_unhealthy_devices'), false);
     assert.equal(SAFE_TOOLS.includes('find_available_device'), true);
+  });
+});
+
+describe('report tools: create_report and render_report in the core, the per-recipe tools in toolsets', () => {
+  type WithView = ToolEntry & { _meta?: { ui?: { resourceUri?: string } } };
+  const RECIPE_TOOL = /^create_.+_report$/;
+
+  it('every per-recipe report tool is assigned to a toolset, so a new one cannot land in the always-loaded core unnoticed', async () => {
+    const all = await bootDirect();
+    const recipeTools = all.map((t) => t.name).filter((n) => RECIPE_TOOL.test(n)).sort();
+    assert.deepEqual(Object.keys(TOOL_TOOLSETS).sort(), recipeTools);
+    for (const [name, toolset] of Object.entries(TOOL_TOOLSETS)) {
+      assert.ok(TOOLSETS[toolset], `${name} → ${toolset}`);
+      assert.ok(REPORT_VIEW_TOOLS.includes(name), `${name} shows its report inline`);
+      assert.equal(toolsetOfTool({ name, module: 'report' }), toolset);
+    }
+    assert.equal(toolsetOfTool({ name: 'create_report', module: 'report' }), null, 'the core');
+    assert.equal(toolsetOfTool({ name: 'list_devices', module: 'devices' }), 'devices');
+  });
+
+  it('MCP_TOOLSETS=core: reports still work in one call through create_report; the recipe tools keep their name, their keywords, their parameters as text, and the inline view', async () => {
+    const { list } = await boot('core');
+    const byName = new Map((await list() as WithView[]).map((t) => [t.name, t]));
+    for (const core of ['create_report', 'render_report']) {
+      assert.doesNotMatch(byName.get(core)!.description ?? '', /^\[/, `${core} stays full`);
+      assert.ok(Object.keys(byName.get(core)!.inputSchema.properties ?? {}).length > 0);
+    }
+    assert.ok(Object.keys(byName.get('create_report')!.inputSchema.properties ?? {}).includes('recipe'));
+    for (const [name, toolset] of Object.entries(TOOL_TOOLSETS)) {
+      const t = byName.get(name)!;
+      assert.match(t.description ?? '', RUNS, name);
+      assert.doesNotMatch(t.description ?? '', PLACEHOLDER, `${name} does not say "runs nothing": it runs`);
+      assert.ok((t.description ?? '').startsWith(`[${toolset} toolset`), `${name}: ${t.description}`);
+      assert.deepEqual(Object.keys(t.inputSchema.properties ?? {}), []);
+      assert.equal(t.annotations?.readOnlyHint, false, `${name} is not marked as a call that runs nothing`);
+      assert.equal(t._meta?.ui?.resourceUri, REPORT_VIEW_URI, `${name}: a client that never reloads its list must still draw the report`);
+    }
+    const summary = byName.get('create_test_summary_report')!.description ?? '';
+    assert.match(summary, /Test summary report \(test execution summary, pass rate report/, 'the words people ask with survive');
+    assert.match(summary, /Takes: days: number, projectName: string, passRateGoal: number, compare: boolean, maxRecords: number, background: boolean, title: string, outputPath: string\.$/);
+    assert.match(byName.get('create_test_breakdown_report')!.description ?? '', /Takes: groupBy: string\[\], days: number, allDates: boolean, .*where: object/);
+    assert.match(byName.get('create_license_usage_report')!.description ?? '', /License usage report \(license utilization, peak concurrency/);
+    assert.match(byName.get('list_devices')!.description ?? '', PLACEHOLDER, 'every other placeholder still runs nothing on its first call');
+    const weight = Object.keys(TOOL_TOOLSETS).reduce((n, name) => n + JSON.stringify(byName.get(name)).length, 0);
+    assert.ok(weight < 9500, `13 recipe tools as placeholders: ${weight} chars (they were 18,000 in full)`);
+  });
+
+  it('a recipe tool RUNS on its first call when the arguments are valid, also when a number arrives as text (Claude Desktop 2026-11-25)', async () => {
+    const { client, list, listChanged } = await boot('core');
+    // Desktop kept the placeholder's definition (no parameters, so no types) and sent days as "60". The real tool answers:
+    // its own refusal of a range that is too long, reached before any network call.
+    const res = (await client.callTool({ name: 'create_license_usage_report', arguments: { days: '60' } })) as { content: Array<{ text?: string }>; isError?: boolean };
+    const text = res.content.map((c) => c.text ?? '').join('');
+    assert.match(text, /license-usage reads every session of the range .* takes up to 31 days/, text);
+    assert.doesNotMatch(text, /toolset .* is loaded now|Nothing was executed/, 'this was the call, not guidance');
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(listChanged(), 1, 'the toolset loaded with it');
+    const after = new Map((await list() as WithView[]).map((t) => [t.name, t]));
+    for (const n of ['create_license_usage_report', 'create_usage_summary_report', 'list_users']) assert.doesNotMatch(after.get(n)!.description ?? '', /^\[/, `${n} loads with the admin toolset`);
+    assert.ok(Object.keys(after.get('create_license_usage_report')!.inputSchema.properties ?? {}).includes('days'));
+    assert.equal(after.get('create_license_usage_report')!._meta?.ui?.resourceUri, REPORT_VIEW_URI);
+    assert.match(after.get('create_test_summary_report')!.description ?? '', RUNS, 'the reporting toolset was not asked for');
+    // No arguments at all is valid for a report with defaults; here the tool itself says what it needs.
+    const bare = (await client.callTool({ name: 'create_test_breakdown_report', arguments: {} })) as { content: Array<{ text?: string }> };
+    assert.match(bare.content.map((c) => c.text ?? '').join(''), /test-breakdown needs groupBy/);
+  });
+
+  it('arguments the tool does not take: nothing runs, and the guidance names the problem and every parameter with its type', async () => {
+    const { client, list } = await boot('core');
+    const res = (await client.callTool({ name: 'create_device_health_report', arguments: { period: 'last week' } })) as { content: Array<{ text?: string }>; isError?: boolean; _meta?: unknown };
+    const text = res.content.map((c) => c.text ?? '').join('');
+    assert.notEqual(res.isError, true);
+    assert.match(text, /"devices" toolset .* is loaded now/);
+    assert.match(text, /Nothing was executed\. These arguments cannot be used: \(arguments\): Unrecognized key: "period"\. This tool takes \(\* = required\): days: number, projectName: string, .*\. Read create_device_health_report's full guidance below/);
+    assert.match(text, /Device health report \(which devices need attention/);
+    assert.match(text, /- days <number>: Length of the range in days\./);
+    assert.equal(res._meta, undefined, 'no report in a guidance answer: the view takes its empty frame away');
+    const wrongType = (await client.callTool({ name: 'create_test_summary_report', arguments: { days: 'yesterday' } })) as { content: Array<{ text?: string }> };
+    assert.match(wrongType.content.map((c) => c.text ?? '').join(''), /These arguments cannot be used: days: Invalid input: expected number, received string\./);
+    const after = new Map((await list() as WithView[]).map((t) => [t.name, t]));
+    for (const n of ['create_device_health_report', 'create_device_coverage_report', 'list_devices']) assert.doesNotMatch(after.get(n)!.description ?? '', /^\[/, `${n} loads with the devices toolset`);
+    assert.equal(after.get('create_device_health_report')!.inputSchema.additionalProperties, false);
+  });
+
+  it('a typed parameter also accepts its value written as text; text that is not that value, and unknown keys, are still refused', async () => {
+    const { client, list } = await boot(undefined);
+    const call = async (args: Record<string, unknown>) => {
+      try {
+        const r = (await client.callTool({ name: 'create_report', arguments: args })) as { content: Array<{ text?: string }> };
+        return r.content.map((c) => c.text ?? '').join('');
+      } catch (e) { return String((e as Error).message); }
+    };
+    // Each answer below comes from the tool itself, before any network call: validation let the arguments through.
+    assert.match(await call({ recipe: 'license-usage', days: '60', title: '123' }), /takes up to 31 days/, 'a number as text; a text parameter stays text');
+    assert.match(await call({ recipe: 'test-breakdown', allDates: 'TRUE' }), /test-breakdown needs groupBy/, 'a boolean as text');
+    assert.match(await call({ recipe: 'license-usage', where: '{"platform":"iOS"}' }), /where is for test-breakdown, test-trend, test-reliability, release-readiness; license-usage does not take it/, 'an object as JSON text');
+    assert.match(await call({ recipe: 'license-usage', days: 60, groupBy: '["platform"]' }), /takes up to 31 days/, 'a list as JSON text');
+    assert.match(await call({ recipe: 'license-usage', days: 'sixty' }), /expected number, received string/);
+    assert.match(await call({ recipe: 'license-usage', days: '6 0' }), /expected number, received string/);
+    assert.match(await call({ recipe: 'license-usage', allDates: 'yes' }), /expected boolean, received string/);
+    assert.match(await call({ recipe: 'license-usage', groupBy: 'platform' }), /expected array, received string/);
+    // An unknown parameter is answered with the parameters the tool takes: an agent without the schema guessed eight names in a row.
+    assert.match(await call({ recipe: 'license-usage', dayz: 3 }), /Unrecognized key: "dayz"\. This tool takes \(\* = required\): recipe: .*, days: number, .*where: object/);
+    assert.match(await call({ recipe: 'license-usage', dayz: 3, since: 'x' }), /Unrecognized keys: "dayz", "since"\. This tool takes/);
+    // What clients are told is unchanged: the published schema still says integer, boolean, array.
+    const props = (await list()).find((t) => t.name === 'create_report')!.inputSchema.properties as Record<string, { type?: string }>;
+    assert.deepEqual([props.days.type, props.allDates.type, props.groupBy.type, props.title.type], ['integer', 'boolean', 'array', 'string']);
+  });
+
+  it('a selected toolset brings its own recipe tools in full and leaves the others as placeholders; toolset counts include them', async () => {
+    const { client, list } = await boot('reporting');
+    const byName = new Map((await list()).map((t) => [t.name, t]));
+    for (const n of ['create_test_summary_report', 'create_test_trend_report', 'create_release_readiness_report']) assert.doesNotMatch(byName.get(n)!.description ?? '', PLACEHOLDER, n);
+    for (const n of ['create_device_health_report', 'create_usage_summary_report', 'create_performance_overview_report']) assert.match(byName.get(n)!.description ?? '', RUNS, n);
+    const listing = (await client.callTool({ name: 'enable_toolset', arguments: { outputFormat: 'json' } })) as { content: Array<{ text?: string }> };
+    const sets = JSON.parse(listing.content[0].text!).toolsets as Array<{ toolset: string; tools: number }>;
+    // Counted from the registrations themselves: each toolset holds its modules' tools plus the recipe tools assigned to it,
+    // and every tool is either in exactly one toolset or in the core.
+    const captured = captureRegistrations(modules(() => undefined)).tools;
+    for (const s of sets) {
+      const own = captured.filter((t) => TOOLSETS[s.toolset].modules.includes(t.module)).length;
+      const assigned = Object.values(TOOL_TOOLSETS).filter((ts) => ts === s.toolset).length;
+      assert.equal(s.tools, own + assigned, s.toolset);
+    }
+    assert.equal(sets.find((s) => s.toolset === 'reporting')!.tools - captured.filter((t) => TOOLSETS.reporting.modules.includes(t.module)).length, 7);
+    const core = captured.filter((t) => toolsetOfTool(t) == null).map((t) => t.name);
+    assert.ok(core.includes('create_report') && core.includes('render_report') && !core.some((n) => TOOL_TOOLSETS[n]));
+    assert.equal(sets.reduce((n, s) => n + s.tools, 0) + core.length, captured.length);
   });
 });

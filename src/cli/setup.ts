@@ -9,6 +9,7 @@
  * All terminal I/O goes through SetupIO so tests can drive the command without a terminal.
  */
 import { parseArgs } from 'node:util';
+import { SERVER_OPTIONS, findServerOption, readStoredOptions, type ServerOption } from '../utils/server-options.js';
 import { createInterface } from 'node:readline';
 import { verifyCredential, type CredentialCheck } from '../api/access-level.js';
 import { isKnownNotCloudAdmin, type AccessInfo } from '../utils/access-level.js';
@@ -96,6 +97,7 @@ Commands:
   doctor              A report for support: install, profiles, keychain and AI clients (never a key)
   path                Show where the profiles file is
   reports [folder|off]  Show or set the folder finished reports are saved to (fast, no rewriting by the AI)
+  options [name [value|default]]  Show or set server options (a smaller tool list, the report pointer, debug mode, …)
   repair              Restore the profiles file from its backup
   reset               Delete the profiles file, its backups and the keys it keeps in the OS keychain
   clients             Show which AI clients are set up to start this server
@@ -524,6 +526,63 @@ async function askReportDir(io: SetupIO) {
   io.out(ui.gray(`  Skipped. Set one later with: ${setupCommand()} reports <folder>`));
 }
 
+/**
+ * `setup options`: server options kept in the profiles file, so no client configuration file has to be edited by hand.
+ * The server reads them at start; a variable set in a client's configuration still wins. See src/utils/server-options.ts.
+ */
+function cmdOptions(io: SetupIO, nameArg: string | undefined, valueArgs: string[]) {
+  storeOffNote(io);
+  const { options: stored, problems } = readStoredOptions();
+  const describe = (o: ServerOption) => {
+    const inTerminal = (process.env[o.env] ?? '').trim();
+    io.out(`${ui.command(o.alias)}  (${o.env})  ${stored[o.env] !== undefined ? ui.green(`= ${stored[o.env]}`) : ui.gray(`not set; the server uses ${o.fallback}`)}`);
+    io.out(ui.gray(`    ${o.about}`));
+    if (inTerminal) io.out(ui.yellow(`    ${o.env} is set in this terminal (${inTerminal}); where a client's configuration sets it, that value wins.`));
+  };
+  if (!nameArg) {
+    io.out('Server options (they apply to every AI client that starts this server from your profiles):');
+    for (const o of SERVER_OPTIONS) describe(o);
+    for (const p of problems) io.out(ui.red(`  ${p}`));
+    io.out('');
+    io.out(`Set one:    ${ui.command(`${setupCommand()} options <name> <value>`)}`);
+    io.out(`Remove it:  ${ui.command(`${setupCommand()} options <name> default`)}`);
+    return;
+  }
+  const option = findServerOption(nameArg);
+  if (!option) throw new SetupError(`"${nameArg}" is not a server option. Options: ${SERVER_OPTIONS.map((o) => o.alias).join(', ')}. Nothing was changed.`, 2);
+  if (!valueArgs.length) {
+    describe(option);
+    return;
+  }
+  // Toolsets may be typed with spaces between them ("reporting devices"); every other option takes one value.
+  if (valueArgs.length > 1 && option.env !== 'MCP_TOOLSETS') throw new SetupError(`${option.alias} takes one value. Nothing was changed.`, 2);
+  const typed = valueArgs.join(',');
+  const data = loadForEdit();
+  const current = data.options && typeof data.options === 'object' && !Array.isArray(data.options) ? { ...(data.options as Record<string, unknown>) } : {};
+  const existing = Object.keys(current).find((k) => findServerOption(k) === option);
+  if (/^(default|unset|clear|remove)$/i.test(typed)) {
+    if (!existing) {
+      io.out(`${option.alias} was not set. The server uses ${option.fallback}.`);
+      return;
+    }
+    delete current[existing];
+    if (Object.keys(current).length) data.options = current; else delete data.options;
+    writeStore(data);
+    io.out(`${ui.green('Removed')} ${option.alias}. The server uses ${option.fallback} again.`);
+    io.out(RESTART_CLIENTS);
+    return;
+  }
+  const checked = option.check(typed);
+  if ('error' in checked) throw new SetupError(`${option.alias}: ${checked.error}. Nothing was changed.`, 2);
+  if (existing && existing !== option.env) delete current[existing];
+  current[option.env] = checked.value;
+  data.options = current;
+  writeStore(data);
+  io.out(`${ui.green('Saved')} ${option.alias} = ${checked.value}  (${option.env})`);
+  if ((process.env[option.env] ?? '').trim()) io.out(ui.yellow(`  ${option.env} is also set in this terminal; where a client's configuration sets it, that value wins.`));
+  io.out(RESTART_CLIENTS);
+}
+
 function cmdReports(io: SetupIO, arg: string | undefined) {
   storeOffNote(io);
   if (!arg) {
@@ -699,6 +758,10 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
   const reportDir = readReportDirSetting();
   say(`  Report folder: ${reportDir.dir ?? (reportDir.error ? `PROBLEM — ${reportDir.error}` : `not set (reports are written out by the AI where it cannot copy them; ${setupCommand()} reports <folder>)`)}`);
   if (reportDir.error) problems++;
+  const serverOptions = readStoredOptions();
+  const optionList = Object.entries(serverOptions.options).map(([k, v]) => `${k}=${v}`);
+  say(`  Server options: ${optionList.join(', ') || `none set (${setupCommand()} options lists them)`}`);
+  for (const p of serverOptions.problems) { say(`    PROBLEM — ${p}`); problems++; }
   if (store.enabled && store.exists && !store.error && Object.keys(store.profiles).length > 1 && !store.defaultProfile) {
     say(`  PROBLEM: several profiles and no default — fix: ${setupCommand()} default <name>`);
     problems++;
@@ -1348,6 +1411,10 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
     const flags = parsed.values as Flags & { help?: boolean };
     if (flags.help || command === 'help') {
       io.out(USAGE);
+      return 0;
+    }
+    if (command === 'options' || command === 'option') {
+      cmdOptions(io, name, extra);
       return 0;
     }
     if (extra.length > 0) throw new SetupError(`Unexpected argument: ${extra[0]}\n\n${USAGE}`, 2);
