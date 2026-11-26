@@ -140,3 +140,40 @@ describe('find_unhealthy_devices handler', () => {
     assert.match(text, /letters, digits and underscores/);
   });
 });
+
+describe('get_license_utilization', () => {
+  let api: StubApi;
+  let tools: ToolClient;
+  beforeAll(async () => {
+    const device = (id: number, displayStatus: string) => ({ id, udid: `U${id}`, deviceName: `D${id}`, deviceOs: 'Android', displayStatus, currentStatus: 'online' });
+    api = await startStubApi((req) => {
+      if (req.path === '/api/v2/license') return { dedicatedDevices: 10, sharedDevices: 0, virtualDevices: 0, browsers: 5 };
+      if (req.path === '/api/v2/sessions') return [];
+      if (req.path === '/api/v1/devices') {
+        return { status: 'SUCCESS', code: 'OK', data: [device(1, 'Available'), device(2, 'Available'), device(3, 'In Use'), device(4, 'Offline'), device(5, 'Offline'), device(6, 'Error'), device(7, 'Unauthorized')] };
+      }
+      return undefined;
+    });
+    tools = await connectTools(registerHealthTools);
+  });
+  afterAll(async () => { await tools.close(); await api.close(); });
+
+  it('puts every device in one bucket: offline is Offline only, and the rest is named', async () => {
+    const j = await tools.callJson('get_license_utilization', {});
+    const d = j.devices as Record<string, unknown>;
+    assert.equal(d.total, 7);
+    assert.equal(d.inUse, 1);
+    assert.equal(d.available, 2);
+    assert.equal(d.offline, 2, 'Error devices are not counted as offline (they were: 31 against 26 in the health summary)');
+    assert.equal(d.other, 2);
+    assert.deepEqual(d.otherByStatus, { Error: 1, Unauthorized: 1 });
+    assert.equal((d.inUse as number) + (d.available as number) + (d.offline as number) + (d.other as number), d.total);
+  });
+
+  it('the text answer shows the same buckets: Offline alone, and the other statuses by name', async () => {
+    const r = await tools.call('get_license_utilization', { outputFormat: 'human' });
+    assert.match(r.text, /Offline:\s+2\n/);
+    assert.match(r.text, /Other:\s+2 \(Error 1, Unauthorized 1\)/);
+    assert.doesNotMatch(r.text, /Offline \/ Error/, 'the Offline line no longer holds Error devices');
+  });
+});

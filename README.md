@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **220 tools**, **2 resources** and **7 prompts** across 27 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **229 tools**, **2 resources** and **7 prompts** across 28 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -385,6 +385,7 @@ npx -y digital-ai-testing-mcp@latest setup clients        # which AI clients are
 npx -y digital-ai-testing-mcp@latest setup clients add    # add the server to every AI client found
 npx -y digital-ai-testing-mcp@latest setup doctor         # a report for support (never contains a key)
 npx -y digital-ai-testing-mcp@latest setup reports <folder>  # where finished reports are saved
+npx -y digital-ai-testing-mcp@latest setup options          # server options: a smaller tool list, the report pointer, debug mode
 
 # Windows (PowerShell or Command Prompt)
 npx.cmd -y digital-ai-testing-mcp@latest setup
@@ -394,6 +395,7 @@ npx.cmd -y digital-ai-testing-mcp@latest setup clients
 npx.cmd -y digital-ai-testing-mcp@latest setup clients add
 npx.cmd -y digital-ai-testing-mcp@latest setup doctor
 npx.cmd -y digital-ai-testing-mcp@latest setup reports <folder>
+npx.cmd -y digital-ai-testing-mcp@latest setup options
 ```
 
 **All commands.** The table and the rest of this section write only the part after `setup`. Always type the whole command: `setup list` means `npx -y digital-ai-testing-mcp@latest setup list` (`npx.cmd` on Windows). With a global npm install, the command starts with `digital-ai-testing-mcp setup`; from a source checkout, `node dist/index.js setup`.
@@ -402,7 +404,8 @@ npx.cmd -y digital-ai-testing-mcp@latest setup reports <folder>
 |---|---|
 | `setup` | Guided: asks for the URL and the access key, checks them, saves them, and offers to set up your AI clients |
 | `setup add [name]` | Adds a connection profile, or replaces one with the same name |
-| `setup reports [folder\|off]` | Shows, sets or removes the folder finished reports are saved to. The guided `setup` offers it too, and `setup clients add` keeps an `MCP_REPORT_DIR` from an entry it replaces. See [Where reports are saved](#where-reports-are-saved) |
+| `setup reports [folder\|off]` | Shows, sets or removes the folder finished reports are saved to. The guided `setup` offers it too, and `setup clients add` keeps an `MCP_REPORT_DIR` from an entry it replaces. See [Where reports are saved](docs/reports.md#where-reports-appear-and-are-saved) |
+| `setup options [name [value\|default]]` | Shows, sets or removes a server option without editing an AI client's configuration file: `toolsets` (`MCP_TOOLSETS`), `report-pointer` (`MCP_REPORT_POINTER`), `update-check` (`MCP_UPDATE_CHECK`), `debug` (`MCP_DEBUG_MODE`), `idle-timeout` (`MCP_SESSION_IDLE_TIMEOUT_SECONDS`). For example `setup options toolsets core`, `setup options report-pointer off`, `setup options toolsets default`. Every value is checked. The options are kept in the profiles file and apply to every AI client that starts the server from your profiles; the same variable in a client's configuration wins. Restart the client afterwards. `get_server_info` and `setup doctor` show which are in effect |
 | `setup list` | Lists your profiles, where each key is kept, and which one the server starts on |
 | `setup default <name>` | Makes `<name>` the profile the server starts on |
 | `setup remove <name>` | Deletes a profile and its key |
@@ -554,6 +557,7 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `MCP_CREDENTIAL_STORE_DIR` | Optional | `%APPDATA%\digital-ai-testing` (Windows), `~/.config/digital-ai-testing` (macOS, Linux) | Folder of the saved profiles file (`profiles.json`). Keys that profiles in a moved folder keep in the OS keychain are named `<profile>@<folder>`, apart from your usual ones |
 | `MCP_TOOLSETS` | Optional | all | Comma-separated toolsets to load in full: `devices`, `apps`, `reporting`, `performance`, `inspection`, `authoring`, `browsers`, `admin` (or `all`, or `core` for only the always-loaded core). See [Toolsets](#toolsets-reducing-context-size) |
 | `MCP_UPDATE_CHECK` | Optional | `true` | `false` turns off the daily check for a newer release and its notice. See [Update notices](#update-notices) |
+| `MCP_REPORT_POINTER` | Optional | `true` | `false` removes the one-line note that data tools add to a large result, telling the AI it can present the data as a report |
 | `MCP_DEBUG_MODE` | Optional | `false` | `true` records remediation notes and a tool-call event log to help improve this MCP. You can also turn it on or off by asking the AI, until the server restarts. See [Debug mode](#debug-mode-remediation-notes) |
 | `MCP_REMEDIATION_DIR` | Optional | — | Debug mode only: folder to write remediation files to (overrides project detection) |
 | `REQUEST_TIMEOUT_MS` | Optional | `30000` | API request timeout in milliseconds |
@@ -561,7 +565,7 @@ Set these as environment variables: in the client's `env` block (npm install) or
 | `INSPECTION_SESSION_TIMEOUT_MS` | Optional | `120000` (`240000` for `@emulator='true'` queries and automotive projection) | How long `start_inspection_session` waits for the platform to allocate a device. Emulators and simulators boot inside that request (an iOS simulator took 154 s live). Raising it only helps a slow boot: an emulator can also fail to boot after several minutes, so after a timeout try another model or OS version before waiting longer |
 | `USAGE_REPORT_TIMEOUT_MS` | Optional | `240000` | Wall-clock cap on one usage-report CSV fetch (`download_usage_report` / `summarize_usage_report`). An unfiltered month can be ~12 MB and take minutes to transfer; a fetch that outlives the cap returns an error that says how to narrow it |
 | `ACCESS_PROBE_TIMEOUT_MS` | Optional | `8000` | Timeout for the access-level detection call |
-| `MCP_REPORT_DIR` | Optional | — | A folder on the server's machine where finished reports are saved (wins over the folder set with `setup reports`). See [Where reports are saved](#where-reports-are-saved) |
+| `MCP_REPORT_DIR` | Optional | — | A folder on the server's machine where finished reports are saved (wins over the folder set with `setup reports`). See [Where reports are saved](docs/reports.md#where-reports-appear-and-are-saved) |
 | `MCP_REPORT_SYNC_LIMIT_MS` | Optional | `45000` | A `create_report` request estimated to take longer than this is not run during the tool call: the answer gives the estimate, a smaller window that fits, and the option to run it as a background job. Raise it if your AI client waits longer for a tool call |
 | `MCP_SESSION_IDLE_TIMEOUT_SECONDS` | Optional | `300` | How long an inspection session may sit without a command before the platform ends it and frees the device (60–1800). Without a limit the platform ended idle sessions after roughly 1–2 minutes, which is shorter than a pause between prompts. `start_inspection_session` also takes `idleTimeoutSeconds` per session. Browser sessions on a phone use it too (they ended before 90 s idle without it); desktop browser sessions always end after 5 minutes idle — a platform limit this setting cannot raise |
 | `MCP_SHUTDOWN_TIMEOUT_MS` | Optional | `8000` | When the AI client closes the server, open inspection and browser sessions are closed (device released, session report deleted) by a short-lived background process. Only if that process can't start does the server close them itself, waiting at most this long |
@@ -574,22 +578,24 @@ Additional `DAI_PROFILE_{NAME}_URL` / `DAI_PROFILE_{NAME}_KEY` pairs configure n
 
 ### Toolsets (reducing context size)
 
-All 220 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
+All 229 tool definitions together take up roughly 70K tokens of your AI's context. If your AI client is short on context — or runs several MCP servers — set `MCP_TOOLSETS` to the areas you use, e.g. `MCP_TOOLSETS=reporting` (about 26K tokens), `MCP_TOOLSETS=inspection,authoring` (about 34K), or `MCP_TOOLSETS=core` (about 17K — only the always-loaded core in full).
 
-Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
+Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The report tools named after one report are the exception: their first call builds the report when its arguments are valid, so a report is one call under any setting. The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
 | Toolset | Covers |
 |---|---|
-| `devices` | Devices, device groups, reservations, health, agents, regions |
+| `devices` | Devices, device groups, reservations, health, agents, regions, the device health and device coverage reports |
 | `apps` | Application repository, file repository, provisioning profiles |
-| `reporting` | Test reports, analytics, root-cause analysis, test views, coverage |
-| `performance` | Performance transactions and comparisons, NV servers |
+| `reporting` | Test reports, analytics, root-cause analysis, test views, coverage, the test report tools (summary, trend, breakdown, reliability, release readiness, failure analysis, inventory) |
+| `performance` | Performance transactions and comparisons, NV servers, the performance overview report |
 | `inspection` | Live device and browser inspection, Android Auto / CarPlay, remote debug |
 | `authoring` | Test boilerplate, Espresso / XCUITest / Maestro / Playwright test runs |
 | `browsers` | Browser listing and Selenium sessions |
-| `admin` | Users, projects, backups, usage reports, POC and project workflows |
+| `admin` | Users, projects, backups, usage reports, the usage summary, device utilization and license usage reports, POC and project workflows |
 
-Always loaded in full: environment and connection tools (`get_server_info`, `switch_environment`, …), `enable_toolset`, and `validate_test_script`.
+Set it without editing a configuration file: `setup options toolsets reporting` (see [the setup command](#the-setup-command)).
+
+Always loaded in full: environment and connection tools (`get_server_info`, `switch_environment`, …), `enable_toolset`, `validate_test_script`, and the two general report tools, `create_report` and `render_report`. `create_report` builds every report in one call under any setting; the report tools named after one report (`create_test_summary_report` and the others) load with the toolset shown above.
 
 ### Debug mode (remediation notes)
 
@@ -655,35 +661,33 @@ Once connected, talk to the server in plain language — no tool names needed:
 
 ### Ready-made reports
 
-Ask for a report and the server builds it: it fetches the data, draws the charts and writes a short "What it means" for every section. You get **one HTML file** in Digital.ai branding that works offline and can be mailed or attached, and the AI sums up the highlights. In Claude Desktop the report is shown right in the conversation. No browser or other app is opened, and nothing is written into your personal folders unless you choose a folder for reports (see [Where reports are saved](#where-reports-are-saved)).
+Ask for a report and the server builds it: it fetches the data, draws the charts and writes a short "What it means" for every section. You get **one HTML file** in Digital.ai branding that works offline and can be mailed or attached, and the AI sums up the highlights. In Claude Desktop the report is shown right in the conversation, with Download and Full screen buttons.
 
 | Ask for… | You get |
 |---|---|
-| *"Give me a test summary report for the last 7 days"* | Runs and pass rate against the previous period, runs per day, pass rate over time, results by platform, the most frequent failures (test names that differ only in run ids count as one), and how the platform classified the failures |
-| *"Why are tests failing this week? Make a failure analysis report"* | Failures by classification and by device, a device-by-day heatmap, and the most common causes with an example test |
-| *"Show me a device health report"* | Pool status, devices by OS, status tiles (worst first), devices offline for more than a day, and devices that fail far more often than the rest of the pool |
-| *"Create a usage summary for project Payments for the last 90 days"* *(Cloud Admin)* | Reserved hours and active users, weekly hours with the last 30 days shaded, top users and top devices |
-| *"Create a usage summary for all projects for the last 180 days"* *(Cloud Admin)* | Reserved hours for every project in about 30 seconds: hours by project, device and platform, a table of every project, and the recent 30 days against the whole range. Users are included for ranges up to 31 days. There is no weekly trend at this level; name a project for that |
+| *"Give me a test summary report for the last 7 days"* | Runs and pass rate against the previous period, runs per day, results by platform, the most frequent failures |
+| *"Create a test trend report for the last 90 days"* | Runs and pass rate per day, week or month over up to a year, exact for any number of runs |
+| *"Show test results by platform"* / *"Compare pass rates by device model"* | Results broken down by one or two things: platform, device, model, OS version, framework, browser, user, test, or any custom report column |
+| *"Which tests are unreliable?"* / *"Which tests started failing this week?"* | Every test sorted into passes every time, fails every time, mixed results and newly failing, against the period before |
+| *"Are we ready to release build 412?"* | A verdict (Ready, Ready with risks, Not ready) from checks the report states in full, and the tests that stand in the way |
+| *"Why are tests failing this week?"* | Failures by classification and device, a device-by-day heatmap, the most common causes |
+| *"How many test reports do we have, by project and user?"* | Every test report on the instance, all dates, with storage per project against its quota |
+| *"Show me a device health report"* | Pool status, offline and degraded devices, devices that fail far more often than the rest, offline devices by region and agent |
+| *"Which devices and OS versions do our tests cover?"* | Devices with and without a test run, runs by OS version and model, OS versions no test ran on |
+| *"How much of our device lab is used?"* *(Cloud Admin)* | Reserved hours per device against the hours the pool had, devices never reserved, demand by model |
+| *"Are we near our license limit?"* *(Cloud Admin)* | The most sessions open at once per license type against the licensed number, with the day and hour of each peak |
+| *"Create a usage summary for project Payments"* / *"...for all projects"* *(Cloud Admin)* | Reserved hours, users and devices for one project, or an overview of every project |
+| *"Create a performance overview report"* | Median Speed Index, duration, CPU and memory per transaction, by network profile and app version |
 
-Add a project name, a number of days or a pass-rate goal to any of them. A test report reads at most 10,000 runs by default (up to 25,000 on request). When a busy project has more than that in the window, the report says at the top how many days it actually covers.
+Add a project, a number of days or a pass-rate goal to any of them. Several can be limited to one build or platform (*"...for build 412"*).
 
-#### Where reports are saved
+**A report of any data.** The ready-made reports cover the common questions. For anything else, ask for a report of whatever you are looking at (*"list the applications in the repository"*, then *"show that as a report by platform"*): the AI fetches the data with the ordinary tools and lays it out in the same design. A quick question still gets a quick answer.
 
-**In Claude Desktop the report appears inside the conversation.** It is drawn under the AI's tool call with **Download** and **Full screen** buttons, about 20 to 30 seconds after you ask. You need no folder, and the AI does not copy or rewrite the file. Download asks you where to save it. This uses MCP Apps, which Claude Desktop supports (verified on Windows); if a report folder is set, a copy is saved there as well.
+**Where the report goes.** In Claude Desktop it appears inside the conversation. In other AI clients it is a file: in the report folder you set once with [`setup reports <folder>`](#the-setup-command), in the project folder the client works in, or a temporary file the AI hands over. No browser or other app is opened, and nothing is written into your personal folders unless you choose a folder for reports.
 
-**In AI clients that do not show such views (Claude Code and other coding agents), the report is a file:**
+**Long ranges.** Every request first measures how long the report will take. One that would take longer than a tool call can wait is offered as a smaller range, or as a background report that you can check on or cancel.
 
-| You have… | What happens |
-|---|---|
-| **A report folder** set once with [`setup reports <folder>`](#the-setup-command) (or `MCP_REPORT_DIR` in the client's configuration) | Saved there in seconds; the AI tells you the path |
-| **A project folder the client works in** (Claude Code and other coding agents) | Saved in its `digital-ai-reports/` folder, which carries its own `.gitignore` so a report is never committed |
-| Neither | A temporary file that the AI copies to where it keeps your files. An AI that cannot reach it asks you whether to add a folder or to have the report written out in the chat (about a minute) |
-
-A path you name in the request (*"save it to C:\Reports\q4.html"*, `outputPath`) always works, in every client.
-
-Files in the temporary folder (`digital-ai-testing-reports` in your system's temp folder) are removed after a day. Under Docker the container's disk is not yours: reports come back to the AI to save, unless `MCP_REPORT_DIR` points at a mounted folder.
-
-**Long reports.** Every request first measures how long it will take, in a few seconds and without doing the work: one page of test runs for the reporter recipes; for a usage summary, the exact reserved hours of the range plus eight sample days, because the platform builds the whole CSV before it sends anything (180 days of a busy project measured 169 MB and over a minute live). If the estimate is longer than a tool call can wait (45 s by default, `MCP_REPORT_SYNC_LIMIT_MS`), nothing runs; the AI tells you the estimate and asks whether you want a smaller window that fits or the full report **in the background**. A background report runs inside the server under its own deadline (about twice the estimate), and you can ask for its progress or cancel it at any time. When it is done the next answer from the AI says the report is ready (or ask *"is my report ready?"*), and the AI collects it and delivers it like any report. With a report folder set, the file is saved there as soon as it is finished, whether or not you ask again. Waiting costs no AI tokens: the download and processing happen in the server. Background reports stop if the AI client closes the server. To put your own words in a section, say so: the AI replaces the generated "What it means" without fetching the data again. For any other data the AI can lay out a report itself with `render_report`. A report reads up to 10,000 test runs; on a busy project a long window says when it was cut short.
+**[→ docs/reports.md](docs/reports.md)** describes every report and what it contains, the options, reports of any data and their building blocks, where reports are saved, background reports, and the rules the reports follow so that a number means the same thing in each.
 
 ### Tasks at a glance
 
@@ -695,7 +699,7 @@ Files in the temporary folder (`digital-ai-testing-reports` in your system's tem
 | Create an automated test | [Creating Tests](#creating-tests) |
 | Run Espresso, XCUITest, Maestro or Playwright suites on the platform | [Test runs](#test-runs-espresso-xcuitest-maestro) below |
 | Find out why tests failed, and track pass rates and trends | [Test Results and Root Cause Analysis](#test-results-and-root-cause-analysis) |
-| Get a finished report to read or share (test summary, failures, device health, usage) | [Ready-made reports](#ready-made-reports) |
+| Get a finished report to read or share (test summary, release readiness, device health, license usage, or any data) | [Ready-made reports](#ready-made-reports) · [docs/reports.md](docs/reports.md) |
 | Compare performance between versions, devices or networks | [Performance Comparison Reports](#performance-comparison-reports) |
 | Export or summarize platform usage *(Cloud Admin)* | [Usage reports](#usage-reports) below |
 | Set up or wind down a POC or project; manage users | [Workflow Reference](#workflow-reference), [Users](docs/tools.md#users), [Projects](docs/tools.md#projects) |
@@ -726,7 +730,7 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 
 ### All capability areas
 
-220 tools across 27 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+229 tools across 28 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -754,9 +758,10 @@ Cloud Admins can export the platform's usage-report CSVs — device reservations
 | [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | Ready-to-run Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python, Robot Framework) that report the real outcome, Test Orchestrator agent install; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud Android or iOS device as if it were attached locally (ADB / usbmuxd) |
 | [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 30 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay projection, audio play/record, mock biometric authentication |
-| [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 8 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
+| [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 9 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
 | [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation |
 | [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with User Tag, Device Tag and Device Group columns (tag/group lists are split when grouping), 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
+| [Reports](docs/reports.md) | 15 | Finished, branded HTML reports in one call: 13 ready-made reports (test summary, trend, breakdown, reliability, release readiness, failure analysis, inventory, device health, coverage and utilization, license usage, usage summary, performance overview) and a report of any data |
 | [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 7 guided prompts |
 
 [↑ Back to top](#table-of-contents)
@@ -1202,7 +1207,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 220) and active profile
+1. get_server_info           — confirm tool count (expect 229) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -1212,7 +1217,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 220,
+  "registeredToolCount": 229,
   "workflows": {
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] },
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] }

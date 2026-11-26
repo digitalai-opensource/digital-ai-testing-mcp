@@ -405,10 +405,11 @@ export function formatGroupedTestReports(result: unknown): string {
 
   const totalLine = obj['totalCount'] !== undefined ? `Total: ${obj['totalCount']}\n\n` : '';
 
-  const headers = Object.keys(rows[0]);
-  const colWidths = headers.map((h) =>
-    Math.max(h.length, ...rows.map((r) => String(r[h] ?? '').length))
-  );
+  // Every column any row has, in the order first seen: a pivot row carries a status column only when it has runs of that
+  // status, so the first row's keys alone dropped (say) failedCount for every group when the first group had no failure.
+  const headers = [...rows.reduce((seen, r) => { for (const k of Object.keys(r)) seen.add(k); return seen; }, new Set<string>())];
+  // A loop, not Math.max(...rows): a spread of 100,000+ rows is "Maximum call stack size exceeded" (every test name, all dates).
+  const colWidths = headers.map((h) => rows.reduce((w, r) => Math.max(w, String(r[h] ?? '').length), h.length));
   const divider = colWidths.map((w) => '─'.repeat(w + 2)).join('┼');
   const headerRow = headers.map((h, i) => ` ${h.padEnd(colWidths[i])} `).join('│');
   const dataRows = rows.map((r) =>

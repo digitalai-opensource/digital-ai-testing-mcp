@@ -181,6 +181,9 @@ const RETRYABLE_POST_PATHS = new Set([
 const TRANSIENT_STATUS_RE = /\[(429|500|502|503|504|unknown)\]/;
 // axios reports an AbortSignal that fired as `[unknown]: canceled` — a deliberate deadline, not a transient fault.
 const CANCELED_RE = /\bcancel(l)?ed\b/i;
+// The reporter answers 500 with this text for a project name it does not have: the same answer every time, so the two
+// retries only tripled the wait (seen live 2026-11-24).
+const NO_REPORTER_PROJECT_RE = /Project\.getName\(\)"? because "project" is null/;
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
   for (let attempt = 0; ; attempt++) {
@@ -188,7 +191,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
       return await fn();
     } catch (e) {
       const msg = (e as Error).message;
-      if (attempt >= retries || !TRANSIENT_STATUS_RE.test(msg) || CANCELED_RE.test(msg)) throw e;
+      if (attempt >= retries || !TRANSIENT_STATUS_RE.test(msg) || CANCELED_RE.test(msg) || NO_REPORTER_PROJECT_RE.test(msg)) throw e;
       await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
     }
   }

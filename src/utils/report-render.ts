@@ -71,6 +71,10 @@ export function fmt(v: number | null | undefined, f: NumberFormat = {}): string 
   const n = v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
   return f.unit ? (f.unit === '%' ? `${n}%` : `${n} ${f.unit}`) : n;
 }
+/** The most decimal places any of the values carries, at most two. */
+export function dataDecimals(values: Array<number | null | undefined>): number {
+  return values.reduce<number>((d, v) => (v == null || !Number.isFinite(v) ? d : Math.max(d, Math.min(2, (String(v).split('.')[1] ?? '').length))), 0);
+}
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'x';
 
 // ── Palette ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -157,7 +161,7 @@ function verticalBars(b: Extract<Block, { type: 'bar' }>): string {
   const parts: string[] = [];
   for (let v = 0; v <= max + 1e-9; v += step) {
     parts.push(`<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid"/>`,
-      `<text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${esc(fmt(v, { decimals: Number.isInteger(step) ? 0 : 1 }))}</text>`);
+      `<text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${esc(fmt(v, { decimals: Number.isInteger(step) ? 0 : 1, unit: b.unit === '%' ? '%' : undefined }))}</text>`);
   }
   const hi = b.highlight ? [indexOfCat(b.categories, b.highlight.from), indexOfCat(b.categories, b.highlight.to ?? b.categories[n - 1])] : null;
   if (hi && hi[0] >= 0 && hi[1] >= hi[0]) {
@@ -167,6 +171,10 @@ function verticalBars(b: Extract<Block, { type: 'bar' }>): string {
   }
   const partial = new Set((b.partial ?? []).map((c) => indexOfCat(b.categories, c)));
   const labelEvery = Math.ceil(n / 24);
+  // Value labels carry the precision of the data and its unit: 91.5 and 84.2 with unit "%" were printed "92" and "84"
+  // beside a text that said "7.3 points" (UAT 2026-11-24), and a whole count under 10 was printed "3.0".
+  const labelDecimals = b.decimals ?? dataDecimals(b.series.flatMap((x) => x.values));
+  const labelUnit = b.unit === '%' || n <= 12 ? b.unit : undefined;
   b.categories.forEach((cat, i) => {
     const cx = L + i * band + band / 2;
     const op = partial.has(i) ? ' opacity="0.45"' : '';
@@ -178,7 +186,7 @@ function verticalBars(b: Extract<Block, { type: 'bar' }>): string {
         parts.push(`<rect x="${(cx - barW / 2).toFixed(1)}" y="${y(base + v).toFixed(1)}" width="${barW.toFixed(1)}" height="${(y(base) - y(base + v)).toFixed(1)}" rx="2" fill="${seriesColor(s, si)}"${op}><title>${esc(`${cat} · ${s.name}: ${fmt(v, b)}`)}</title></rect>`);
         base += v;
       });
-      if (n <= 31 && base > 0) parts.push(`<text x="${cx.toFixed(1)}" y="${(y(base) - 5).toFixed(1)}" text-anchor="middle" class="val">${esc(fmt(base, { decimals: b.decimals ?? (base < 10 ? 1 : 0) }))}</text>`);
+      if (n <= 31 && base > 0) parts.push(`<text x="${cx.toFixed(1)}" y="${(y(base) - 5).toFixed(1)}" text-anchor="middle" class="val">${esc(fmt(base, { decimals: labelDecimals, unit: labelUnit }))}</text>`);
     } else {
       const w = barW / b.series.length;
       b.series.forEach((s, si) => {
@@ -231,7 +239,7 @@ function lineChart(b: Extract<Block, { type: 'line' }>): string {
   const parts: string[] = [];
   for (let v = min; v <= max + 1e-9; v += step) {
     parts.push(`<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid"/>`,
-      `<text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${esc(fmt(v, { decimals: Number.isInteger(step) ? 0 : 1 }))}</text>`);
+      `<text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${esc(fmt(v, { decimals: Number.isInteger(step) ? 0 : 1, unit: b.unit === '%' ? '%' : undefined }))}</text>`);
   }
   if (b.highlight) {
     const i0 = indexOfCat(b.categories, b.highlight.from), i1 = indexOfCat(b.categories, b.highlight.to ?? b.categories[n - 1]);

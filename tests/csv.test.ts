@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { parseCsv, parseCsvSections } from '../src/utils/csv.js';
+import { parseCsv, parseCsvSections, scanCsvRows, splitCsvLine } from '../src/utils/csv.js';
 
 describe('parseCsv', () => {
   it('parses a simple header + rows', () => {
@@ -67,5 +67,31 @@ describe('parseCsvSections', () => {
     assert.equal(sections[0].rows.length, 1);
     assert.equal(sections[1].headers.at(-1), 'User Tag');
     assert.equal(sections[1].rows.length, 1);
+  });
+});
+
+describe('scanCsvRows: a large file row by row', () => {
+  const scan = (text: string) => { const rows: string[][] = []; scanCsvRows(Buffer.from(text, 'utf8'), (r) => rows.push(r)); return rows; };
+
+  it('gives the same rows as parseCsv, without building the table', () => {
+    const text = 'a,b,c\r\n1,"x, y",3\r\n4,"say ""hi""",6\n7,,9';
+    const { headers, rows } = parseCsv(text.replace(/\r/g, ''));
+    assert.deepEqual(scan(text), [headers, ...rows]);
+    assert.deepEqual(splitCsvLine('1,"x, y","say ""hi""",'), ['1', 'x, y', 'say "hi"', '']);
+    assert.deepEqual(splitCsvLine(''), ['']);
+  });
+
+  it('a line break inside a quoted field stays in its row; a blank line arrives as one empty field', () => {
+    assert.deepEqual(scan('id,note\n1,"first line\nsecond line"\n\n2,plain\n'), [['id', 'note'], ['1', 'first line\nsecond line'], [''], ['2', 'plain']]);
+    assert.deepEqual(scan(''), []);
+  });
+
+  it('reads 50,000 rows and lets the caller keep two values of each', () => {
+    const lines = ['start,end,kind'];
+    for (let k = 0; k < 50_000; k++) lines.push(`${1_000_000 + k},${1_000_500 + k},${k % 2 ? 'Browsers' : 'Mobile execution'}`);
+    let n = 0, sum = 0;
+    scanCsvRows(Buffer.from(lines.join('\n')), (r) => { if (r[0] === 'start') return; n++; sum += Number(r[1]) - Number(r[0]); });
+    assert.equal(n, 50_000);
+    assert.equal(sum, 50_000 * 500);
   });
 });

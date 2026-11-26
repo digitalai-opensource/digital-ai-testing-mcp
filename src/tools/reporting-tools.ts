@@ -12,6 +12,7 @@ import {
   listTests,
   listTestsSortedDesc,
   getGroupedTests,
+  getGroupedTestsAllProjects,
   getDistinctKeyValues,
   deleteTests,
   downloadTestAttachments,
@@ -22,6 +23,9 @@ import {
 } from '../api/reporting.js';
 import { normaliseDeviceOs } from '../api/transactions.js';
 import { REPORTER_PROJECT_ID_DESC, resolveReporterProjectName } from '../api/reporter-projects.js';
+import { firstTestIdSince } from '../api/report-recipes.js';
+import { loosePlan, mergeGroupRows } from '../utils/report-case.js';
+import { addDays, dayStart, reportKey, KNOWN_REPORT_KEYS, REPORT_KEYS_HELP } from '../utils/report-recipes.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
 import { checkDeleteAllowed, serverSortAvailable } from '../api/access-level.js';
 import { checkDestructiveGuard } from '../utils/destructive-guard.js';
@@ -96,15 +100,18 @@ export function projectIdFilterNote(filter: Array<{ property: string }> | undefi
     'returns nothing, as here. To query another project, drop the filter and pass projectId (the reporter project id) or projectName.';
 }
 
+/** A request still "Running" after this long is past the default test timeout (4 h) and is probably stuck. */
+const STALE_RUNNING_MINUTES = 240;
+
 /**
  * Web (Selenium) reports keep the user in the key "digitalai:user"; mobile reports use "user" (verified live 2026-11-22
  * on Default: user = <email> → 364 mobile reports and no web ones; digitalai:user = <email> → 110 web reports, 32 of them
- * Failed — a "delete my failed reports" cleanup had missed all 32). The reporter cannot group on digitalai:user (one
- * bucket for everything), so a user grouping can never include web reports.
+ * Failed — a "delete my failed reports" cleanup had missed all 32). Grouping on digitalai:user DOES work (verified live
+ * 2026-11-24: 56 groups, 55 with a value; an earlier note here said it could not), so a grouping by user also groups by
+ * digitalai:user and files each web report under its own user (see get_grouped_test_reports).
  */
 export function webUserNote(
-  filter: Array<{ property: string; operator?: string; value?: unknown }> | undefined,
-  groupBy?: string[]
+  filter: Array<{ property: string; operator?: string; value?: unknown }> | undefined
 ): string | undefined {
   const userFilter = filter?.find((f) => f.property === 'user');
   const notes: string[] = [];
@@ -115,15 +122,13 @@ export function webUserNote(
       `{"property":"digitalai:user","operator":"=","value":${JSON.stringify(userFilter.value ?? '<email>')}} instead of the user filter.`
     );
   }
-  if (groupBy?.includes('user')) {
-    notes.push(
-      'Note: web (Selenium) reports have no "user" value (they keep it in "digitalai:user", which the reporter cannot ' +
-      'group by), so they all fall in the null user row. To count one user\'s reports including web ones, add the filter ' +
-      'user = <email>: it also queries digitalai:user and files the web reports under that user.'
-    );
-  }
   return notes.length ? notes.join(' ') : undefined;
 }
+
+/** Group rows get_grouped_test_reports returns unless maxGroups says otherwise: about 40 KB of answer. */
+const DEFAULT_MAX_GROUPS = 500;
+/** The most maxGroups can ask for. */
+const MAX_GROUPS = 5000;
 
 /**
  * A `user = <email>` filter rewritten for web reports (`digitalai:user = <email>`), or undefined when there is nothing to
@@ -693,15 +698,18 @@ export function registerReportingTools(server: McpServer): void {
     'Useful for dashboards: pass/fail by OS, by test name, by environment, etc. ' +
     'Shared vs dedicated devices: groupBy ["device.pool.actual"] with pivotBy ["status"] (platform 26.7+; null = not recorded, e.g. browser tests or older runs). ' +
     'Note: null OS values represent browser/Selenium sessions. ' +
-    'When groupBy includes "device.os", the MCP normalises case variants ("ANDROID"/"IOS") to ' +
-    '"Android"/"iOS" and merges their counts, so you always receive at most 3 rows: Android, iOS, null.',
+    'LETTER CASE is ignored by default: an "=" filter on text counts every stored spelling ("chrome" finds Chrome and chrome), and group values ' +
+    'that differ only in case are one row (the platform always as Android / iOS, so at most 3 rows: Android, iOS, null). exactCase: true turns both off. ' +
+    'TIME RANGE: days (the last N days) or startDate / endDate limit the counts to runs of that range, exactly; a filter on start_time is not possible. ' +
+    'For a finished report of the same counts use create_test_breakdown_report.',
     {
       groupBy: z
         .array(z.string())
         .optional()
         .describe(
           'Fields to group results by, e.g. ["device.os"], ["status"], or ["device.os","status"] for multi-dimensional grouping. ' +
-          'Each unique value combination becomes one row. Omit to get a single aggregate row for the entire dataset.'
+          'Each unique value combination becomes one row. Omit to get a single aggregate row for the entire dataset. ' +
+          `Keys: ${REPORT_KEYS_HELP}. The plain word in brackets is accepted in place of the key.`
         ),
       pivotBy: z
         .array(z.enum(['success', 'status']))
@@ -716,17 +724,75 @@ export function registerReportingTools(server: McpServer): void {
           value: z.union([z.string(), z.number(), z.boolean()]),
         }))
         .optional()
-        .describe('Scope the aggregation to matching records. Same filter syntax as list_test_reports.'),
+        .describe('Scope the aggregation to matching records. Same filter syntax as list_test_reports; property takes the keys listed under groupBy, e.g. ' +
+          '[{"property": "test.framework", "operator": "=", "value": "Appium Server"}]. Here "=" on a text value ignores letter case. get_distinct_test_key_values lists the values a key holds.'),
+      keysAsWritten: z.boolean().optional().describe('true: send every key exactly as written. For a custom column whose name is one of the plain words (a column named "category", "platform" or "device"), which is otherwise read as the built-in key. Default false.'),
+      maxGroups: z.number().int().min(1).max(MAX_GROUPS).optional()
+        .describe('Most group rows to return (default 500). When there are more, the groups with the most runs are returned and the answer says how many were left out; count and totalRecords still cover every group.'),
+      exactCase: z.boolean().optional()
+        .describe('true: match "=" filters and group values by the exact spelling the platform stores ("Chrome" and "chrome" stay apart). Default false: letter case is ignored.'),
+      days: z.number().int().min(1).max(365).optional()
+        .describe('Only runs of the last N days (whole days, today included). The server finds the first run of the range and counts from it, so the counts are exact. Not with startDate or allProjects.'),
+      startDate: z.string().optional()
+        .describe('Only runs started at or after this time, ISO 8601 ("2026-11-18" or "2026-11-18T00:00:00Z"). Not with days or allProjects.'),
+      endDate: z.string().optional()
+        .describe('Only runs started before this time, ISO 8601. Usually with startDate. Not with allProjects.'),
       returnTotalCount: z
         .boolean()
         .optional()
         .describe('If true, adds totalRecords — the number of test records across all groups (the response\x27s count is the number of groups).'),
       projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
-      projectName: z.string().optional().describe('Scope to this project name.'),
+      projectName: z.string().optional().describe('Scope to this project name. Without projectName, projectId or allProjects the answer covers the access key\'s OWN project only (the answer\'s scope field says so).'),
+      allProjects: z.boolean().optional().describe('Run the query for EVERY reporter project this key can see (Cloud Admin: the whole instance) and add a "project" column to each row; about 15 s for 85 projects. For all-time counts by project, user and status as a finished report, use create_test_inventory_report.'),
       outputFormat: outputFormatParam,
     },
-    async ({ groupBy, pivotBy, filter, returnTotalCount, projectId, projectName, outputFormat }) => {
+    async ({ groupBy: writtenGroupBy, pivotBy, filter: writtenFilter, keysAsWritten, maxGroups, exactCase, days, startDate, endDate, returnTotalCount, projectId, projectName, allProjects, outputFormat }) => {
       try {
+        // The plain words (platform, framework, model …) are read as the platform's keys, as the report tools read them.
+        // keysAsWritten: a tenant's own column can carry one of those words as its name (addTestProperty("category", …));
+        // read as the built-in key it could not be reached under any spelling.
+        const keyOf = (k: string) => (keysAsWritten ? k.trim() : reportKey(k));
+        const askedGroupBy = writtenGroupBy?.map(keyOf);
+        const askedFilter = writtenFilter?.map((f) => ({ ...f, property: keyOf(f.property) }));
+        const readAs = Object.fromEntries([...(writtenGroupBy ?? []), ...(writtenFilter ?? []).map((f) => f.property)].filter((k) => keyOf(k) !== k.trim()).map((k) => [k, keyOf(k)]));
+        if (allProjects && (projectId !== undefined || projectName)) {
+          return { content: [{ type: 'text', text: 'Error: allProjects covers every project; leave out projectId and projectName, or leave out allProjects.' }], isError: true };
+        }
+        // A time range. The reporter cannot filter on start_time, but test ids grow with time: the first run of the range
+        // is found by its id and the counts are bounded by ids, so they are exact (see firstTestIdSince). An agent asked for
+        // "the last 7 days" tried days, fromDate, startDate, since, lastDays … on this tool, eight refused calls (2026-11-25).
+        let filter = askedFilter;
+        let range: string | undefined;
+        if (days !== undefined || startDate || endDate) {
+          const fail = (text: string) => ({ content: [{ type: 'text' as const, text: `Error: ${text}` }], isError: true });
+          if (allProjects) return fail('a time range needs one project (test ids are counted per project): leave out allProjects, or leave out days / startDate / endDate.');
+          if (days !== undefined && startDate) return fail('give days or startDate, not both.');
+          const now = Date.now();
+          const from = days !== undefined ? dayStart(addDays(now, -(days - 1))) : startDate ? Date.parse(startDate) : undefined;
+          const to = endDate ? Date.parse(endDate) : undefined;
+          if (Number.isNaN(from) || Number.isNaN(to)) return fail('startDate and endDate take ISO 8601, for example "2026-11-18" or "2026-11-18T00:00:00Z".');
+          if (from !== undefined && to !== undefined && to <= from) return fail('endDate must be after startDate.');
+          const inProject = projectName ?? (projectId !== undefined ? await resolveReporterProjectName(projectId, undefined) : undefined);
+          const [minId, maxId] = await Promise.all([
+            from !== undefined ? firstTestIdSince(from, inProject) : Promise.resolve(undefined),
+            to !== undefined ? firstTestIdSince(to, inProject) : Promise.resolve(undefined)]);
+          const iso = (t: number) => new Date(t).toISOString().replace('.000Z', 'Z');
+          range = `runs started ${from !== undefined ? `from ${iso(from)}` : ''}${from !== undefined && to !== undefined ? ' ' : ''}${to !== undefined ? `before ${iso(to)}` : ''}` +
+            `${days !== undefined ? ` (the last ${days} day${days === 1 ? '' : 's'}, in the server's time zone)` : ''}`;
+          if (from !== undefined && minId === null) {
+            // No run started at or after the range's first moment.
+            const empty = { scope: projectName ? `project ${projectName}` : projectId !== undefined ? `reporter project ${projectId}` : 'the access key\'s own project', range, count: 0, data: [], totalRecords: 0 };
+            return respond(outputFormat, empty, `No test run in this range (${range}).`);
+          }
+          // A null upper id means no run started at or after endDate: nothing to cut off.
+          filter = [...(askedFilter ?? []),
+            ...(minId != null ? [{ property: 'test_id', operator: '>=', value: minId }] : []),
+            ...(maxId != null ? [{ property: 'test_id', operator: '<', value: maxId }] : [])];
+        }
+        // Web (Selenium) reports keep the user in digitalai:user: a grouping by user asks for both keys and files each row
+        // under whichever it has, so web reports are counted under their user and not in one null row.
+        const bothUserKeys = !!askedGroupBy?.includes('user') && !askedGroupBy.includes('digitalai:user') && !webUserTwin(filter);
+        const groupBy = bothUserKeys ? [...askedGroupBy!, 'digitalai:user'] : askedGroupBy;
         const request = {
           ...(groupBy && { groupBy }),
           ...(pivotBy && { pivotBy }),
@@ -736,64 +802,134 @@ export function registerReportingTools(server: McpServer): void {
         type Grouped = { count?: number | null; data?: Array<Record<string, unknown>> };
         // A user filter also runs as digitalai:user (web reports keep the user there) and the rows are summed per group.
         const twin = webUserTwin(filter);
-        const [own, web] = await Promise.all([
-          getGroupedTests(request, projectId, projectName) as Promise<Grouped>,
-          twin ? (getGroupedTests({ ...request, filter: twin }, projectId, projectName) as Promise<Grouped>) : undefined,
-        ]);
+        let across: { projects: string[]; failed: Array<{ project: string; error: string }> } | undefined;
+        // The platform's "=" matches one spelling only (browserName = "chrome" 1,243 runs, = "Chrome" 809, live 2026-11-25).
+        // By default the filter is sent as "contains" (which ignores case), the key is grouped as well, and only the groups
+        // whose value equals the wanted one, case aside, are kept (see report-case.ts).
+        const matchedSpellings: Record<string, string[]> = {};
+        const run = async (req: typeof request): Promise<Grouped> => {
+          const plan = exactCase ? null : loosePlan(req.groupBy, req.filter);
+          const sent = plan ? { ...req, groupBy: plan.groupBy, filter: plan.filter } : req;
+          let res: Grouped;
+          if (!allProjects) res = await getGroupedTests(sent, projectId, projectName) as Grouped;
+          else {
+            const r = await getGroupedTestsAllProjects(sent);
+            across = { projects: r.projects, failed: [...(across?.failed ?? []), ...r.failed] };
+            res = { count: r.rows.length, data: r.rows };
+          }
+          if (!plan) return res;
+          const kept = plan.apply(res.data ?? []);
+          for (const [k, v] of Object.entries(kept.matched)) matchedSpellings[k] = [...new Set([...(matchedSpellings[k] ?? []), ...v])].sort();
+          return { ...res, data: kept.rows };
+        };
+        // With the case ignored, the web query also groups by digitalai:user in a grouping by user, so each web row is
+        // filed under the spelling the platform STORES and not under the one the caller wrote (which then showed up as
+        // a merged "spelling" no run has). The loosened filter groups that key anyway, so the request is the same.
+        const groupsUser = !!groupBy?.includes('user');
+        const keepWebUser = groupsUser && !exactCase && !groupBy!.includes('digitalai:user');
+        const [own, web] = await Promise.all([run(request),
+          twin ? run({ ...request, filter: twin, ...(keepWebUser && { groupBy: [...groupBy!, 'digitalai:user'] }) }) : undefined]);
         let result: Grouped = own;
         let userNote: string | undefined;
         if (web) {
           const userValue = filter?.find((f) => f.property === 'user')?.value;
           // Web rows have no "user" value; a grouping by user files them under the filtered user, where they belong.
-          const webRows = (web.data ?? []).map((r) => (groupBy?.includes('user') ? { ...r, user: userValue } : r));
+          const webRows = (web.data ?? []).map((r) => {
+            if (!groupsUser) return r;
+            if (!keepWebUser) return { ...r, user: userValue };
+            const { ['digitalai:user']: webUser, ...rest } = r;
+            return { ...rest, user: webUser ?? userValue };
+          });
           const records = (rows: Array<Record<string, unknown>> | undefined) =>
             (rows ?? []).reduce((n, r) => n + (typeof r['_count_'] === 'number' ? (r['_count_'] as number) : 0), 0);
           userNote = mergedUserNote(records(own.data), records(webRows), true);
           result = { ...own, data: [...(own.data ?? []), ...webRows] };
         } else {
-          userNote = webUserNote(filter, groupBy);
+          userNote = webUserNote(filter);
+          if (bothUserKeys && Array.isArray(result?.data)) {
+            let webRows = 0;
+            result = { ...result, data: result.data.map((row) => {
+              const { ['digitalai:user']: webUser, ...rest } = row;
+              if (rest['user'] == null && webUser != null) { webRows++; return { ...rest, user: webUser }; }
+              return rest;
+            }) };
+            if (webRows) userNote = [userNote, 'Web (Selenium) reports are counted under their user: they keep it in "digitalai:user", which was grouped as well and merged into the user column.'].filter(Boolean).join(' ');
+          }
         }
 
-        // Normalise device.os case variants ("ANDROID"/"IOS") to canonical form and merge their counts so consumers
-        // see at most 3 rows: Android, iOS, null. The same per-group merge sums the mobile and web rows of a user filter.
-        const hasOs = !!groupBy?.includes('device.os');
-        if ((hasOs || web) && Array.isArray(result?.data)) {
-          const fields = groupBy ?? [];
-          const OS_NORM: Record<string, string> = { android: 'Android', ios: 'iOS' };
-          const merged: Record<string, Record<string, unknown>> = {};
-          for (const row of result.data) {
-            const rawOs = row['device.os'];
-            const normOs = rawOs == null ? null : (OS_NORM[(String(rawOs)).toLowerCase()] ?? String(rawOs));
-            // Key on EVERY group-by field (OS normalised). Keying on the OS alone collapsed multi-field groupings —
-            // ["device.os","status"] merged Passed and Failed into one row per OS.
-            const key = JSON.stringify(fields.map((f) => (f === 'device.os' ? normOs : row[f] ?? null)));
-            if (!merged[key]) {
-              merged[key] = hasOs ? { ...row, 'device.os': normOs } : { ...row };
-            } else {
-              // Sum all numeric count fields (group-by fields are never summed)
-              for (const [k, v] of Object.entries(row)) {
-                if (typeof v === 'number' && !fields.includes(k)) {
-                  merged[key][k] = ((merged[key][k] as number) ?? 0) + v;
-                }
-              }
-            }
-          }
-          const rows = Object.values(merged);
-          // `count` is the number of groups — after merging it must describe the rows actually returned (UAT 2026-10-09:
+        // One row per group. Values that differ only in letter case are one group (ANDROID / Android, Chrome / chrome),
+        // shown in the spelling most runs have; exactCase keeps them apart. The same merge sums the mobile and web rows of
+        // a user filter and the spellings a loosened filter matched. Keyed on EVERY group-by field: keying on the OS alone
+        // once collapsed ["device.os","status"] into one row per OS.
+        const fields = [...(allProjects ? ['project'] : []), ...(askedGroupBy ?? [])];
+        const loosened = Object.keys(matchedSpellings).length > 0;
+        let spellingsMerged: Record<string, string[][]> = {};
+        if ((!exactCase || web || bothUserKeys) && Array.isArray(result?.data)) {
+          // A project is named, not spelled by a test client: two projects whose names differ only in case stay two rows.
+          const m = mergeGroupRows(result.data, fields, !exactCase, allProjects ? ['project'] : []);
+          spellingsMerged = m.merged;
+          // A question with no grouping is answered with one row, also when nothing matched.
+          const rows = !m.rows.length && !fields.length && loosened ? [{ _count_: 0 }] : m.rows;
+          // `count` is the number of groups: after merging it must describe the rows actually returned (UAT 2026-10-09:
           // count 5 with 3 rows).
           result = { ...result, data: rows, ...(result.count != null ? { count: rows.length } : {}) };
         }
-
         // The platform's `count` is the number of GROUPS; it returns no record total even when asked. Compute it from
         // the per-group _count_ so returnTotalCount does what it says (UAT 2026-10-10 run 3).
-        let payload: object = result;
-        if (returnTotalCount === true && Array.isArray(result?.data)) {
-          const totalRecords = result.data.reduce((n, row) => n + (typeof row['_count_'] === 'number' ? (row['_count_'] as number) : 0), 0);
-          payload = { ...result, totalRecords };
+        const runsIn = (rows: Array<Record<string, unknown>>) => rows.reduce((n, row) => n + (typeof row['_count_'] === 'number' ? (row['_count_'] as number) : 0), 0);
+        const everyGroup = Array.isArray(result?.data) ? result.data : null;
+        const totalRecords = everyGroup ? runsIn(everyGroup) : 0;
+        // A grouping by test name returns one group per name, and names carry run ids: 60,208 rows / 4.5 MB for 30 days,
+        // and for all dates the answer could not even be formatted (live 2026-11-25). Return the largest groups and say
+        // how many were left out; the totals are still those of every group.
+        const cap = maxGroups ?? DEFAULT_MAX_GROUPS;
+        let cutNote: string | undefined;
+        if (everyGroup && everyGroup.length > cap) {
+          const shown = [...everyGroup].sort((a, b) => runsIn([b]) - runsIn([a])).slice(0, cap);
+          const n = (x: number) => x.toLocaleString('en-US');
+          cutNote = `${n(everyGroup.length)} groups: ${cap === 1 ? 'the one with the most runs is returned' : `the ${n(cap)} with the most runs are returned`} (${n(runsIn(shown))} of ${n(totalRecords)} runs). ` +
+            `To see the rest, narrow the question (days, a filter)${cap < MAX_GROUPS ? ` or raise maxGroups (up to ${n(MAX_GROUPS)})` : ''}.` +
+            (askedGroupBy?.includes('name') ? ' Test names often differ only in run ids or dates: create_test_breakdown_report with groupBy ["test"] counts those as one test.' : '');
+          result = { ...result, data: shown };
+          // Spellings merged in a group that was left out say nothing about the rows returned, and there can be very many.
+          const returned = (f: string) => new Set(shown.map((r) => r[f]).filter((v): v is string => typeof v === 'string').map((v) => v.toLowerCase()));
+          spellingsMerged = Object.fromEntries(Object.entries(spellingsMerged)
+            .map(([f, lists]) => { const values = returned(f); return [f, lists.filter((list) => values.has(list[0].toLowerCase()))] as const; })
+            .filter(([, lists]) => lists.length));
         }
-        if (userNote) payload = { ...payload, note: userNote };
+        // Say what the case-blind matching did, only where it changed the answer: a filter that matched another spelling
+        // than the one written (or several), and group values that were merged.
+        const writtenValue = (k: string) => String((filter ?? []).find((f) => f.property === (k === 'digitalai:user' && !filter?.some((x) => x.property === k) ? 'user' : k) && (f.operator ?? '=') === '=')?.value ?? '');
+        const filterMatched = Object.fromEntries(Object.entries(matchedSpellings).filter(([k, v]) => v.length > 1 || (v.length === 1 && v[0] !== writtenValue(k))));
+        const caseInfo = {
+          ...(Object.keys(filterMatched).length ? { filterMatched } : {}),
+          ...(Object.keys(spellingsMerged).length ? { spellingsMerged } : {}),
+        };
+        const caseNote = Object.keys(caseInfo).length ? 'Letter case was ignored (exactCase: true counts each stored spelling on its own).' : undefined;
 
-        return respond(outputFormat, payload, formatGroupedTestReports(result) + (userNote ? `\n\n${userNote}` : ''));
+        let payload: object = result;
+        if (returnTotalCount === true && everyGroup) payload = { ...result, totalRecords };
+        if (cutNote) payload = { ...payload, groupsReturned: cap, groupsCut: cutNote };
+        // A key no run has a value for comes back as one group with nothing in it: say so, and which keys exist.
+        // Judged from EVERY group, not the rows returned: the largest groups of a custom column are often the runs
+        // without it, and cut to those the answer said no run has a value while the smaller groups did.
+        const rowsOut = everyGroup ?? [];
+        const emptyKeys = (askedGroupBy ?? []).filter((k) => !KNOWN_REPORT_KEYS.includes(k) && rowsOut.length > 0 && rowsOut.every((r) => r[k] == null));
+        const keyNote = emptyKeys.length ? `No run has a value for ${emptyKeys.map((k) => `"${k}"`).join(', ')}. Keys the platform groups by: ${REPORT_KEYS_HELP}.` : undefined;
+        if (keyNote) userNote = [userNote, keyNote].filter(Boolean).join(' ');
+        if (userNote) payload = { ...payload, note: userNote };
+        if (caseNote) payload = { ...payload, ...caseInfo, caseNote };
+        // Named with its way out: a tenant's own column of that name is reached with keysAsWritten.
+        if (Object.keys(readAs).length) payload = { keysReadAs: readAs, keysReadAsNote: 'Plain words were read as the built-in keys. For a custom column with one of these names, add keysAsWritten: true.', ...payload };
+        // Say which projects the numbers cover: a query with no project answers for the key's own project only, and an
+        // agent took that for the instance total (829,454 of 4.0 million, 2026-11-24).
+        const scope = across ? `all ${across.projects.length} reporter projects this access key can see`
+          : projectName ? `project ${projectName}` : projectId !== undefined ? `reporter project ${projectId}`
+            : 'the access key\'s own project ONLY, not the whole instance (allProjects: true covers every project; create_test_inventory_report builds the all-time report)';
+        payload = { scope, ...(range ? { range } : {}), ...(across ? { projectsQueried: across.projects.length, ...(across.failed.length ? { projectsFailed: across.failed } : {}) } : {}), ...payload };
+
+        return respond(outputFormat, payload, `Scope: ${scope}.${range ? `\nRange: ${range}.` : ''}\n\n` + formatGroupedTestReports(result) + (userNote ? `\n\n${userNote}` : '') + (caseNote ? `\n\n${caseNote}${Object.entries(filterMatched).map(([k, v]) => ` ${k} matched ${v.map((y) => `"${y}"`).join(', ')}.`).join('')}` : '') + (cutNote ? `\n\n${cutNote}` : '') +
+          (across?.failed.length ? `\n\n⚠️ ${across.failed.length} project(s) did not answer and are not counted: ${across.failed.map((f) => f.project).join(', ')}.` : ''));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }
@@ -804,30 +940,40 @@ export function registerReportingTools(server: McpServer): void {
 
   server.tool(
     'get_distinct_test_key_values',
-    'Return every distinct value recorded for one or more test report keys. Useful for discovering what devices, browsers, environments, or other dimensions appear in test history. NOTE: this tool requires browser session authentication on some platforms — if you receive a CSRF/401 error, the endpoint is not accessible via API key on your deployment. Use get_grouped_test_reports with a keys array as an alternative.',
+    'Return every distinct value recorded for one or more test report keys. Useful for discovering what devices, browsers, environments, or other dimensions appear in test history. NOTE: this tool requires browser session authentication on some platforms — if you receive a CSRF/401 error, the endpoint is not accessible via API key on your deployment. Use get_grouped_test_reports with the same keys as groupBy as an alternative.',
     {
       keys: z
         .array(z.string())
         .min(1)
-        .describe('One or more key names, e.g. ["device.os", "browser", "environment"].'),
+        .optional()
+        .describe(`Key names. Omit for the main ones (platform, framework, browser, device pool). Keys: ${REPORT_KEYS_HELP}. The plain word in brackets is accepted in place of the key.`),
+      keysAsWritten: z.boolean().optional().describe('true: send every key exactly as written. For a custom column whose name is one of the plain words (a column named "category", "platform" or "device"), which is otherwise read as the built-in key. Default false.'),
       projectId: z.number().int().optional().describe(REPORTER_PROJECT_ID_DESC),
       projectName: z.string().optional().describe('Scope to this project name.'),
       outputFormat: outputFormatParam,
     },
-    async ({ keys, projectId, projectName, outputFormat }) => {
+    async ({ keys: writtenKeys, keysAsWritten, projectId, projectName, outputFormat }) => {
       try {
+        // No keys: the main ones, so "what can I filter by?" is one call and not a refusal.
+        const keys = [...new Set((writtenKeys ?? ['device.os', 'test.framework', 'browserName', 'device.pool.actual']).map((k) => (keysAsWritten ? k.trim() : reportKey(k))))];
         const raw = await getDistinctKeyValues(keys, projectId, projectName);
-        // device.os comes back as ANDROID/Android/IOS/iOS; fold the case variants the same way get_grouped_test_reports
-        // does, so the two tools agree (UAT 2026-10-10). The platform's own spellings are kept under rawValues.
+        // Values come back in every spelling a client sent (ANDROID / Android, Chrome / chrome). Fold the case variants
+        // the same way get_grouped_test_reports does, so the two tools agree (UAT 2026-10-10) and a value is listed once:
+        // filters match it in any case. The platform's own spellings are kept under rawValues.
         const result: Record<string, unknown> = { ...raw };
-        const rawOs = (raw as Record<string, unknown>)['device.os'];
-        if (Array.isArray(rawOs)) {
-          const folded = [...new Set(rawOs.map((v) => (v == null ? v : normaliseDeviceOs(String(v)))))];
-          if (folded.length !== rawOs.length) {
-            result['device.os'] = folded;
-            result.rawValues = { 'device.os': rawOs };
+        const rawValuesOf: Record<string, unknown[]> = {};
+        for (const key of Object.keys(raw)) {
+          const stored = (raw as Record<string, unknown>)[key];
+          if (!Array.isArray(stored)) continue;
+          const first = new Map<string, unknown>();
+          for (const v of stored) {
+            const shown = key === 'device.os' && v != null ? normaliseDeviceOs(String(v)) : v;
+            const id = typeof shown === 'string' ? shown.toLowerCase() : JSON.stringify(shown ?? null);
+            if (!first.has(id)) first.set(id, shown);
           }
+          if (first.size !== stored.length) { result[key] = [...first.values()]; rawValuesOf[key] = stored; }
         }
+        if (Object.keys(rawValuesOf).length) result.rawValues = rawValuesOf;
         const lines: string[] = [];
         for (const key of Object.keys(raw)) {
           const rawValues = result[key];
@@ -843,12 +989,15 @@ export function registerReportingTools(server: McpServer): void {
             for (const v of values) lines.push(`  • ${v}`);
           }
         }
+        const none = keys.filter((k) => { const v = (raw as Record<string, unknown>)[k]; return v == null || (Array.isArray(v) && v.filter((x) => x != null && x !== '').length === 0); });
+        const note = none.length ? `No value is recorded for ${none.map((k) => `"${k}"`).join(', ')}. Keys the platform keeps: ${REPORT_KEYS_HELP}.` : undefined;
+        if (note) { result.note = note; lines.push('', note); }
         return respond(outputFormat, result, lines.join('\n') || 'No values found.');
       } catch (e) {
         const msg = (e as Error).message;
         if (msg.startsWith('PLATFORM_LIMITATION:')) {
           return {
-            content: [{ type: 'text', text: `⚠️ Platform limitation: This endpoint requires browser session authentication and is not available via API key on this deployment.\n\nAlternative: use get_grouped_test_reports with a keys array to enumerate value combinations for the same keys.` }],
+            content: [{ type: 'text', text: `⚠️ Platform limitation: This endpoint requires browser session authentication and is not available via API key on this deployment.\n\nAlternative: use get_grouped_test_reports with the same keys as groupBy to enumerate their value combinations.` }],
             isError: true,
           };
         }
@@ -1227,7 +1376,13 @@ export function registerReportingTools(server: McpServer): void {
         const parts = [`${filename} — ${view.totalLines} lines`];
         if (fellBackFrom) parts.unshift(`no ${fellBackFrom} log in this report — showing its only log instead`);
         if (contains !== undefined) parts.push(`${view.matches} line(s) contain "${contains}"`);
-        parts.push(view.truncated ? `showing the last ${view.shownLines}` : `showing ${view.shownLines}`);
+        // With contains the budget counts MATCHES and whole groups are kept: "66 line(s) contain … showing the last 56"
+        // read as 56 of the 66 matching lines when it was 21 matches in 56 lines (UAT 2026-11-24).
+        if (contains !== undefined && view.shownMatches !== undefined) {
+          parts.push(`showing ${view.truncated ? 'the last ' : ''}${view.shownMatches} match(es) (${view.shownLines} lines with context)`);
+        } else {
+          parts.push(view.truncated ? `showing the last ${view.shownLines}` : `showing ${view.shownLines}`);
+        }
         if (view.charCapped) parts.push(`cut at maxChars=${maxChars ?? DEFAULT_LOG_MAX_CHARS} — narrow with contains or lower maxLines`);
         const header = `[${parts.join(' — ')}]\n\n`;
         return { content: [{ type: 'text', text: header + view.text }] };
@@ -1542,8 +1697,18 @@ export function registerReportingTools(server: McpServer): void {
         const scoped = live.filter((r) =>
           (projectName === undefined || (r.projectName ?? '').toLowerCase() === projectName.toLowerCase()) &&
           (projectId === undefined || r.projectId === projectId));
-        const shown = scoped.slice(0, limit ?? 50);
-        const structured = { source: 'running-test-requests', count: shown.length, total: scoped.length, executions: shown };
+        // The live list keeps requests the platform never closed: five health checks "Running" for 48 hours sat beside
+        // runs started minutes ago (UAT 2026-11-24). Tests time out after 4 h by default, so anything older is marked.
+        const nowMs = Date.now();
+        const aged = scoped.map((r) => {
+          const since = Date.parse(r.startedAt ?? r.createdAt ?? '');
+          const runningMinutes = Number.isFinite(since) ? Math.max(0, Math.floor((nowMs - since) / 60_000)) : null;
+          return { ...r, runningMinutes, ...(runningMinutes != null && runningMinutes > STALE_RUNNING_MINUTES ? { possiblyStale: true } : {}) };
+        });
+        const staleCount = aged.filter((r) => 'possiblyStale' in r).length;
+        const shown = aged.slice(0, limit ?? 50);
+        const staleNote = staleCount ? `${staleCount} of these ${staleCount === 1 ? 'has' : 'have'} been "Running" for more than 4 hours (the default test timeout) and ${staleCount === 1 ? 'is' : 'are'} probably stuck, not running: marked possiblyStale.` : undefined;
+        const structured = { source: 'running-test-requests', count: shown.length, total: scoped.length, ...(staleNote ? { staleCount, note: staleNote } : {}), executions: shown };
         if (shown.length === 0) {
           return respond(outputFormat, structured, `No test executions are running${projectName || projectId ? ' in that project' : ''} (platform's live list).`);
         }
@@ -1556,10 +1721,11 @@ export function registerReportingTools(server: McpServer): void {
             `  • ${r.name}   [${r.status}${r.executionType ? `, ${r.executionType}` : ''}]`,
             `    Project: ${r.projectName ?? '?'}   User: ${r.username ?? '?'}`,
             `    Device: ${r.deviceName ?? r.browser ?? '?'}${r.deviceOs ? ` (${r.deviceOs} ${r.deviceOsVersion ?? ''})` : ''}${r.appiumServerVersion ? `   Appium ${r.appiumServerVersion}` : ''}`,
-            `    Started: ${since ?? '?'}${elapsed !== null ? `   Elapsed: ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : ''}`,
+            `    Started: ${since ?? '?'}${elapsed !== null ? `   Elapsed: ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : ''}${'possiblyStale' in r ? '   ⚠️ probably stuck (over 4 h)' : ''}`,
             ''
           );
         }
+        if (staleNote) lines.push(`⚠️ ${staleNote}`);
         return respond(outputFormat, structured, lines.join('\n'));
       }
 

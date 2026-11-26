@@ -4,14 +4,16 @@ import { dirname, basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { getDeploymentMode } from '../utils/deployment-mode.js';
-import { readReportDirSetting } from '../utils/credential-store.js';
+import { configuredReportFolder } from '../utils/report-folder.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { renderReport, type ReportSpec } from '../utils/report-render.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { REPORT_META_KEY, REPORT_VIEW_URI, VIEW_MIME_TYPE, clientDeclaresUi, noteViewRead, reportViewHtml, viewActive } from '../utils/report-view.js';
-import { buildTestSummary, buildFailureAnalysis, buildDeviceHealth, buildUsageSummary, buildUsageOverview, addDays, isoDate, type RecipeResult, type ReservationRow } from '../utils/report-recipes.js';
+import { buildTestSummary, buildFailureAnalysis, buildDeviceHealth, buildUsageSummary, buildUsageOverview, buildTestInventory, buildTestBreakdown, buildTestTrend, buildTestReliability, buildReleaseReadiness, buildDeviceCoverage, buildDeviceUtilization, buildLicenseUsage, reportKey, reportKeyLabel, addDays, dayStart, isoDate, type RecipeResult, type ReservationRow } from '../utils/report-recipes.js';
+import { buildPerformanceOverview } from '../utils/report-performance.js';
+import { listTransactions } from '../api/transactions.js';
 import { startJob, getJob, cancelJob, listJobs, describeJob, jobDeadlineMs, fmtDuration, markJobNotified, markJobCollected, type JobResult } from '../utils/report-jobs.js';
-import { scanRuns, scanFailures, groupedCounts, deviceRows, cloudProjectId, reservationRows, deviceUsageRows, userUsageRows, estimateReporterRecipe, estimateUsageRecipe, type WorkEstimate } from '../api/report-recipes.js';
+import { scanRuns, scanFailures, groupedCounts, deviceRows, cloudProjectId, reservationRows, deviceUsageRows, userUsageRows, inventoryData, licenseSessions, licenseLimits, firstTestIdSince, breakdownCounts, ownProjectName, estimateReporterRecipe, estimateUsageRecipe, type WorkEstimate } from '../api/report-recipes.js';
 
 // ── Full spec validation (server side) ─────────────────────────────────────────────────────────────────────────────
 // The PUBLISHED schema stays small (it is paid for in every conversation); the detailed check runs here and names the
@@ -77,6 +79,103 @@ export function specErrors(e: z.ZodError): string[] {
   return e.issues.slice(0, 12).map((i) => `${i.path.join('.') || '(spec)'}: ${i.message}`);
 }
 
+/** What each block type takes, read from the schema itself: { kpis: ['items'], bar: ['title', 'categories', …], … }. */
+export const BLOCK_FIELDS: Record<string, string[]> = Object.fromEntries(block.options.map((o) => {
+  const shape = (o as unknown as { shape: Record<string, { value?: unknown; values?: Set<unknown> }> }).shape;
+  const type = String(shape.type.value ?? [...(shape.type.values ?? [])][0]);
+  return [type, Object.keys(shape).filter((k) => k !== 'type')];
+}));
+
+/**
+ * Field names an agent reaches for by habit (the block's own name, a chart library's "labels" and "data"), read as the
+ * field the block takes. Only when that field is absent and the value has the right kind: nothing is guessed twice.
+ */
+const BLOCK_ALIASES: Record<string, Record<string, string>> = {
+  kpis: { kpis: 'items', cards: 'items', metrics: 'items' },
+  tiles: { tiles: 'items' },
+  findings: { findings: 'items' },
+  share: { share: 'parts', segments: 'parts', items: 'parts' },
+  timeline: { timeline: 'events', items: 'events' },
+  calendar: { calendar: 'days', data: 'days' },
+  compare: { compare: 'groups', items: 'groups' },
+  table: { data: 'rows', table: 'rows' },
+  bar: { labels: 'categories' },
+  line: { labels: 'categories' },
+  callout: { body: 'text', content: 'text', message: 'text' },
+  text: { body: 'text', content: 'text' },
+};
+const SERIES_ALIASES: Record<string, string> = { data: 'values', value: 'values' };
+
+type Loose = Record<string, unknown>;
+const isObject = (v: unknown): v is Loose => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Read a report spec the way a careful reader would, so a near miss costs a note and not a second call.
+ *
+ * A refused spec is expensive: the agent sends the WHOLE outline again (seen in Claude Desktop, 2026-11-25: a valid KPI
+ * block with one extra key "kpis" was refused, and the report came a full retype later). So:
+ *  - a habitual field name is read as the field the block takes (kpis → items, labels → categories, data → values);
+ *  - a key the spec does not know is left out and NAMED in the answer, never dropped silently;
+ *  - anything that leaves nothing to draw (a missing field, a wrong type, an unknown block type) is still an error, and
+ *    the error says which fields that block takes.
+ */
+export function readSpec(input: unknown): { ok: true; spec: ReportSpec; notes: string[] } | { ok: false; errors: string[] } {
+  const notes: string[] = [];
+  let spec: unknown = input;
+  try { spec = structuredClone(input); } catch { /* not cloneable: validate it as it is */ }
+  const takes = (b: unknown) => (isObject(b) && typeof b.type === 'string' && BLOCK_FIELDS[b.type] ? ` A ${b.type} block takes: ${BLOCK_FIELDS[b.type].join(', ')}.` : '');
+  const at = (path: PropertyKey[]): unknown => path.reduce<unknown>((v, k) => (v == null ? v : (v as Record<PropertyKey, unknown>)[k]), spec);
+  /** The block a path lies in, if any ("…blocks.2.series.0" → the block at blocks.2). */
+  const blockOf = (path: PropertyKey[]) => { const k = path.lastIndexOf('blocks'); return k >= 0 && path.length > k + 1 ? at(path.slice(0, k + 2)) : undefined; };
+
+  const rename = (obj: Loose, aliases: Record<string, string>, where: string) => {
+    for (const [from, to] of Object.entries(aliases)) {
+      if (!(from in obj) || to in obj) continue;
+      const v = obj[from];
+      if (to === 'text' ? typeof v !== 'string' : !Array.isArray(v)) continue;
+      obj[to] = v;
+      delete obj[from];
+      notes.push(`${where}: read "${from}" as "${to}".`);
+    }
+  };
+  const top = isObject(spec) ? spec : {};
+  const groups: Array<[string, unknown]> = [
+    ...(Array.isArray(top.tabs) ? top.tabs.flatMap((t, ti): Array<[string, unknown]> => (isObject(t) && Array.isArray(t.sections) ? t.sections.map((s, si): [string, unknown] => [`tabs.${ti}.sections.${si}`, s]) : [])) : []),
+    ...(Array.isArray(top.sections) ? top.sections.map((s, si): [string, unknown] => [`sections.${si}`, s]) : []),
+  ];
+  for (const [path, sec] of groups) {
+    if (!isObject(sec) || !Array.isArray(sec.blocks)) continue;
+    sec.blocks.forEach((b, bi) => {
+      if (!isObject(b) || typeof b.type !== 'string') return;
+      rename(b, BLOCK_ALIASES[b.type] ?? {}, `${path}.blocks.${bi}`);
+      if ((b.type === 'bar' || b.type === 'line') && Array.isArray(b.series)) {
+        b.series.forEach((s, si) => { if (isObject(s)) rename(s, SERIES_ALIASES, `${path}.blocks.${bi}.series.${si}`); });
+      }
+    });
+  }
+
+  for (let pass = 0; pass < 4; pass++) {
+    const parsed = reportSpecSchema.safeParse(spec);
+    if (parsed.success) return { ok: true, spec: parsed.data as ReportSpec, notes };
+    const issues = parsed.error.issues;
+    const unknownOnly = issues.every((i) => i.code === 'unrecognized_keys');
+    if (!unknownOnly || pass === 3) {
+      const hints = new Set<string>();
+      for (const i of issues.slice(0, 12)) { const h = takes(blockOf(i.path)); if (h) hints.add(h.trim()); }
+      return { ok: false, errors: [...specErrors(parsed.error), ...hints] };
+    }
+    for (const i of issues) {
+      const holder = at(i.path);
+      if (!isObject(holder)) continue;
+      for (const key of (i as unknown as { keys: string[] }).keys) {
+        delete holder[key];
+        notes.push(`${i.path.join('.') || '(spec)'}: left out "${key}" (not a field here; it is not in the report).${takes(holder)}`);
+      }
+    }
+  }
+  return { ok: false, errors: ['the report spec could not be read'] };
+}
+
 /** Problems that validate but would draw a misleading chart. */
 export function specWarnings(spec: ReportSpec): string[] {
   const out: string[] = [];
@@ -116,6 +215,15 @@ let rootsProvider: RootsProvider | null = null;
 /** index.ts passes the client's workspace roots (only clients that declare the roots capability answer). */
 export function setReportRootsProvider(fn: RootsProvider | null): void { rootsProvider = fn; }
 
+let localClient: () => boolean = () => false;
+/**
+ * index.ts: whether the connected client works on this machine (it shares workspace folders, or is a coding agent).
+ * Such a client reaches a saved report by its path, so the steps for a sandboxed agent are left out of its answers:
+ * in a coding agent every report answer carried about seven lines to read and discard (UAT 2026-11-24).
+ */
+export function setLocalClientProvider(fn: (() => boolean) | null): void { localClient = fn ?? (() => false); }
+const isLocalClient = (): boolean => { try { return localClient(); } catch { return false; } };
+
 export const SHARED_REPORT_SUBFOLDER = 'digital-ai-reports';
 export const reportTempDir = () => join(tmpdir(), 'digital-ai-testing-reports');
 const TEMP_KEEP_MS = 24 * 3_600_000;
@@ -123,10 +231,8 @@ const TEMP_KEEP_MS = 24 * 3_600_000;
 type Placement = { kind: 'configured' | 'shared' | 'temp'; dir: string; source?: 'env' | 'setup' } | { kind: 'none' };
 
 async function reportFolder(): Promise<Placement> {
-  const configured = process.env.MCP_REPORT_DIR?.trim();
-  if (configured) return { kind: 'configured', dir: configured, source: 'env' }; // also under Docker: a mounted volume the user set up
-  const stored = getDeploymentMode() === 'local' ? readReportDirSetting() : {};
-  if (stored.dir) return { kind: 'configured', dir: stored.dir, source: 'setup' };
+  const configured = configuredReportFolder();
+  if (configured) return { kind: 'configured', dir: configured.dir, source: configured.source };
   if (getDeploymentMode() !== 'local') return { kind: 'none' };
   if (rootsProvider) {
     try {
@@ -304,7 +410,7 @@ export async function deliver(file: ReportFile, extra: string[] = [], opts: { at
     }
     if (viewActive()) return inline(`It is also saved where the user asked: ${file.savedTo}.`);
     return said([`✅ Report saved where the user asked: ${file.savedTo} (${kb} KB, self-contained, works offline).`,
-      OUTPUTS_COPY, 'Tell the user the full path and the highlights in a sentence or two.'], false);
+      ...(isLocalClient() ? [] : [OUTPUTS_COPY]), 'Tell the user the full path and the highlights in a sentence or two.'], false);
   }
   const { place, path, writeError } = await writeToReportFolder(file);
   if (path && (place.kind === 'configured' || place.kind === 'shared')) {
@@ -312,10 +418,10 @@ export async function deliver(file: ReportFile, extra: string[] = [], opts: { at
       : place.source === 'setup' ? 'the report folder set with setup' : 'the folder set for reports (MCP_REPORT_DIR)';
     metaPath = path;
     if (viewActive()) return inline(`It is also saved at ${path} (${where}).`);
-    if (place.kind === 'shared') {
+    // A client that shares its workspace, or any other client on this machine, opens the file by its path.
+    if (place.kind === 'shared' || isLocalClient()) {
       return said([`✅ Report saved: ${path} (${kb} KB, one self-contained HTML file that works offline), in ${where}.`,
-        `It is already saved: do not re-create or paste it. ${OUTPUTS_COPY}`,
-        'Tell the user the full path, then the highlights in a sentence or two.'], false);
+        'It is already saved: do not re-create or paste it. Tell the user the full path, then the highlights in a sentence or two.'], false);
     }
     // A configured folder is a path on the user's machine; an agent in a sandbox (Claude Desktop) sees it only as a folder
     // added to the conversation, under another path. Asked to judge whether it "can reach" the path, it skipped the copy
@@ -401,7 +507,7 @@ const DESCRIPTION =
 
 // ── Recipes ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const RECIPES = ['test-summary', 'failure-analysis', 'device-health', 'usage-summary'] as const;
+const RECIPES = ['test-summary', 'failure-analysis', 'device-health', 'usage-summary', 'test-inventory', 'test-breakdown', 'test-trend', 'test-reliability', 'device-coverage', 'device-utilization', 'performance-overview', 'release-readiness', 'license-usage'] as const;
 type Recipe = (typeof RECIPES)[number];
 
 /** Rendered recipe specs kept for an hour, so the agent can swap in its own interpretation without refetching. */
@@ -435,13 +541,51 @@ const sectionTitles = (spec: ReportSpec) => (spec.tabs ? spec.tabs.flatMap((t) =
 const isoDay = (t: number) => isoDate(t);
 const minTestId = (runs: Array<{ test_id: number }>) => runs.length ? runs.reduce((m, r) => (r.test_id && r.test_id < m ? r.test_id : m), Number.MAX_SAFE_INTEGER) : null;
 
-interface RecipeOpts { days?: number; recentDays?: number; projectName?: string; passRateGoal?: number; compare?: boolean; maxRecords?: number }
+interface RecipeOpts { days?: number; recentDays?: number; projectName?: string; passRateGoal?: number; compare?: boolean; maxRecords?: number; groupBy?: string[]; allDates?: boolean; where?: Record<string, string>; exactCase?: boolean; keysAsWritten?: boolean }
 interface RunCtx { signal?: AbortSignal; progress?: (text: string) => void; timeoutMs?: number; prefetched?: ReservationRow[] }
 
-const defaultDays = (r: Recipe) => (r === 'usage-summary' ? 90 : 7);
+const defaultDays = (r: Recipe) => (r === 'usage-summary' || r === 'test-trend' || r === 'performance-overview' ? 90 : r === 'test-breakdown' || r === 'device-coverage' || r === 'device-utilization' ? 30 : 7);
+/** test-reliability reads counts per test NAME for two periods: 30 days of a busy project is 60,000 names and 10 MB (live 2026-11-24). */
+const RELIABILITY_MAX_DAYS = 31;
+/**
+ * license-usage reads one row per session, row by row: 3 days 31,011 sessions in 6.9 s, 7 days 50,435 in 10.5 s (live
+ * 2026-11-24); 30 days 172,916 sessions, 48 MB (2026-11-25). A month is what people ask for ("the last 30 days").
+ */
+const LICENSE_MAX_DAYS = 31;
+const BREAKDOWN_KEYS_HELP = 'groupBy takes one or two of: platform, device, model, "os version", manufacturer, framework, browser, "browser version", ' +
+  'user, test, classification, pool, or any report key as written (for example a custom digitalai:<key> column).';
+
+/** Recipes that count from the reporter's grouped endpoint, where an equality filter on any report column can be added. */
+const WHERE_RECIPES: Recipe[] = ['test-breakdown', 'test-trend', 'test-reliability', 'release-readiness'];
+/** A written key as the platform's key: the plain words are read as the built-in keys unless the caller asks for keys as written. */
+const keyOf = (k: string, asWritten?: boolean) => (asWritten ? k.trim() : reportKey(k));
+const whereFilter = (where?: Record<string, string>, asWritten?: boolean) => (where && Object.keys(where).length ? Object.fromEntries(Object.entries(where).map(([k, v]) => [keyOf(k, asWritten), v])) : undefined);
+
+/** Say on the report itself that it counts only part of the runs. */
+function scoped(r: RecipeResult, where?: Record<string, string>, exactCase = false, asWritten = false): RecipeResult {
+  if (!where || !Object.keys(where).length) return r;
+  const text = Object.entries(where).map(([k, v]) => `${reportKeyLabel(keyOf(k, asWritten)).toLowerCase().replace(/\bos\b/g, 'OS')} = ${v}`).join(' and ');
+  // Web (Selenium) reports keep their user in digitalai:user, so a scope on "user" counts the mobile runs only. Say so:
+  // the scope line read as all of that user's runs (a user with 364 mobile and 110 web runs showed 364).
+  const byUser = Object.keys(where).some((k) => keyOf(k, asWritten) === 'user');
+  const web = byUser ? ' Web (Selenium) runs are not included: the platform records their user in a separate column.' : '';
+  // Values are stored in more than one spelling (ANDROID / Android, Chrome / chrome). By default every spelling counts.
+  // With exactCase only the one written does, while the report still shows spellings merged: say so, or a scoped
+  // report reads as all runs of that value.
+  const how = exactCase ? ' Only the exact spelling is counted: runs stored in another spelling (upper or lower case) are left out.' : '';
+  return { highlights: [`Scope: only runs where ${text}.${how}${web}${byUser ? ' get_grouped_test_reports with a user filter counts mobile and web runs together.' : ''}`, ...r.highlights],
+    spec: { ...r.spec, meta: [...(r.spec.meta ?? []), { label: 'Only runs where', value: text }],
+      source: `${r.spec.source ?? ''} Only runs where ${text} are counted; ${exactCase ? 'the value is matched exactly as the platform stores it.' : 'the value is matched whatever its letter case.'}${web}`.trim() } };
+}
 
 async function runRecipe(recipe: Recipe, o: RecipeOpts, ctx: RunCtx = {}): Promise<RecipeResult> {
+  if (o.where && Object.keys(o.where).length && !WHERE_RECIPES.includes(recipe)) throw new Error(`where is for ${WHERE_RECIPES.join(', ')}; ${recipe} does not take it.`);
+  return scoped(await runRecipeUnscoped(recipe, o, ctx), o.where, o.exactCase, o.keysAsWritten);
+}
+
+async function runRecipeUnscoped(recipe: Recipe, o: RecipeOpts, ctx: RunCtx = {}): Promise<RecipeResult> {
   const now = Date.now();
+  const where = whereFilter(o.where, o.keysAsWritten);
   const maxRecords = o.maxRecords ?? 10_000;
   const days = o.days ?? defaultDays(recipe);
   const from = addDays(now, -(days - 1)); // whole local days; today is the last, still running
@@ -472,6 +616,109 @@ async function runRecipe(recipe: Recipe, o: RecipeOpts, ctx: RunCtx = {}): Promi
     case 'failure-analysis': {
       const [all, fails] = await Promise.all([scanRuns(from, maxRecords, o.projectName, scanOpts), scanFailures(from, maxRecords, o.projectName, ctx.signal)]);
       return buildFailureAnalysis({ failures: fails.runs, totalRuns: all.capped ? null : all.runs.length, from, to: now, days, projectName: o.projectName, capped: fails.capped });
+    }
+    case 'test-breakdown': {
+      const keys = (o.groupBy ?? []).map((k) => keyOf(k, o.keysAsWritten)).filter(Boolean);
+      if (!keys.length) throw new Error(`test-breakdown needs groupBy. ${BREAKDOWN_KEYS_HELP}`);
+      const start = o.allDates ? null : dayStart(addDays(now, -(days - 1)));
+      ctx.progress?.('finding the first run of the range');
+      const minId = start == null ? null : await firstTestIdSince(start, o.projectName);
+      ctx.progress?.('counting');
+      const rows = start != null && minId == null ? [] : await breakdownCounts(keys, minId, o.projectName, undefined, where, o.exactCase);
+      return buildTestBreakdown({ rows, keys, from: start, to: now, days: o.allDates ? null : days, projectName: o.projectName, passRateGoal: o.passRateGoal });
+    }
+    case 'test-trend': {
+      // The reporter's date key is a UTC day (verified live 2026-11-24), so the range is cut on UTC days and says so.
+      const start = dayStart(addDays(now, -(days - 1), true), true);
+      ctx.progress?.('finding the first run of the range');
+      const minId = await firstTestIdSince(start, o.projectName);
+      ctx.progress?.('counting per day');
+      const [daysRows, platforms, classes] = minId == null ? [[], null, null] : await Promise.all([
+        breakdownCounts(['date'], minId, o.projectName, undefined, where, o.exactCase),
+        breakdownCounts(['device.os'], minId, o.projectName, undefined, where, o.exactCase).catch(() => null),
+        breakdownCounts(['errorCategory'], minId, o.projectName, undefined, where, o.exactCase).catch(() => null),
+      ]);
+      return buildTestTrend({ daysRows, platforms, classes, from: start, to: now, days, projectName: o.projectName, passRateGoal: o.passRateGoal });
+    }
+    case 'test-reliability': {
+      if (days > RELIABILITY_MAX_DAYS) throw new Error(`test-reliability compares a period of up to ${RELIABILITY_MAX_DAYS} days with the one before it. For a longer range use test-trend (pass rate over time) or test-breakdown with groupBy ["test"].`);
+      const start = dayStart(addDays(now, -(days - 1)));
+      const compare = o.compare ?? true;
+      ctx.progress?.('finding the first run of each period');
+      const [minId, prevId, own] = await Promise.all([firstTestIdSince(start, o.projectName), compare ? firstTestIdSince(addDays(start, -days), o.projectName) : Promise.resolve(null),
+        o.projectName ? Promise.resolve(undefined) : ownProjectName()]);
+      if (ctx.signal?.aborted) throw new Error('cancelled');
+      ctx.progress?.('counting by test');
+      const [current, previous] = await Promise.all([
+        minId == null ? Promise.resolve([]) : breakdownCounts(['name'], minId, o.projectName, undefined, where, o.exactCase),
+        prevId == null || (minId != null && prevId >= minId) ? Promise.resolve(null) : breakdownCounts(['name'], prevId, o.projectName, minId ?? undefined, where, o.exactCase).catch(() => null),
+      ]);
+      return buildTestReliability({ current, previous, from: start, to: now, days, projectName: o.projectName ?? own });
+    }
+    case 'release-readiness': {
+      if (days > RELIABILITY_MAX_DAYS) throw new Error(`release-readiness looks at a period of up to ${RELIABILITY_MAX_DAYS} days and the one before it. Scope it to a build with where instead of a longer range.`);
+      const start = dayStart(addDays(now, -(days - 1)));
+      ctx.progress?.('finding the first run of each period');
+      const [minId, prevId, own] = await Promise.all([firstTestIdSince(start, o.projectName), firstTestIdSince(addDays(start, -days), o.projectName),
+        o.projectName ? Promise.resolve(undefined) : ownProjectName()]);
+      if (ctx.signal?.aborted) throw new Error('cancelled');
+      ctx.progress?.('counting by test, platform and classification');
+      // The period before is counted WITHOUT the scope: a build that is new has no earlier runs of its own, and "passed before" means the tests' earlier runs.
+      const [current, previous, platforms, classes] = await Promise.all([
+        minId == null ? Promise.resolve([]) : breakdownCounts(['name'], minId, o.projectName, undefined, where, o.exactCase),
+        prevId == null || (minId != null && prevId >= minId) ? Promise.resolve(null) : breakdownCounts(['name'], prevId, o.projectName, minId ?? undefined).catch(() => null),
+        minId == null ? Promise.resolve(null) : breakdownCounts(['device.os'], minId, o.projectName, undefined, where, o.exactCase).catch(() => null),
+        minId == null ? Promise.resolve(null) : breakdownCounts(['errorCategory'], minId, o.projectName, undefined, where, o.exactCase).catch(() => null),
+      ]);
+      return buildReleaseReadiness({ current, previous, platforms, classes, from: start, to: now, days, projectName: o.projectName ?? own, passRateGoal: o.passRateGoal });
+    }
+    case 'device-coverage': {
+      const start = dayStart(addDays(now, -(days - 1)));
+      ctx.progress?.('reading the device list and finding the first run of the range');
+      const [devices, minId, own] = await Promise.all([deviceRows(), firstTestIdSince(start, o.projectName), o.projectName ? Promise.resolve(undefined) : ownProjectName()]);
+      if (ctx.signal?.aborted) throw new Error('cancelled');
+      ctx.progress?.('counting by device and OS version');
+      const [byDevice, byVersion] = minId == null ? [[], []] : await Promise.all([
+        groupedCounts('device.serialNumber', minId, o.projectName), breakdownCounts(['device.os', 'device.version'], minId, o.projectName)]);
+      return buildDeviceCoverage({ devices, byDevice, byVersion, from: start, to: now, days, projectName: o.projectName ?? own });
+    }
+    case 'license-usage': {
+      if (days > LICENSE_MAX_DAYS) throw new Error(`license-usage reads every session of the range (about 6,000 a day on a busy instance) and takes up to ${LICENSE_MAX_DAYS} days. For a longer range use usage-summary (hours), or run it month by month.`);
+      if (o.projectName) throw new Error('license-usage covers every project: licenses are shared by the whole instance. Leave projectName out; the report has a table by project.');
+      const endDay = isoDay(now), startDay = isoDay(addDays(now, -(days - 1)));
+      ctx.progress?.('reading the license usage report');
+      const [{ sessions }, limits] = await Promise.all([
+        licenseSessions(startDay, endDay, { signal: ctx.signal, timeoutMs: ctx.timeoutMs,
+          onProgress: (read, total) => ctx.progress?.(`downloaded ${(read / 1_048_576).toFixed(1)}${total ? ` of ${(total / 1_048_576).toFixed(1)}` : ''} MB of the license usage report`) }),
+        licenseLimits()]);
+      if (ctx.signal?.aborted) throw new Error('cancelled');
+      return buildLicenseUsage({ sessions, limits, from: Date.parse(`${startDay}T00:00:00Z`), to: Date.parse(`${endDay}T23:59:59Z`), days });
+    }
+    case 'device-utilization': {
+      // The usage report is cut at UTC midnight, like usage-summary. Every project unless one is named.
+      const endDay = isoDay(now), startDay = isoDay(addDays(now, -(days - 1)));
+      const project = o.projectName ? await cloudProjectId(o.projectName) : null;
+      ctx.progress?.('reading the device usage report and the device list');
+      const [usage, devices] = await Promise.all([
+        deviceUsageRows(project?.id ?? 0, startDay, endDay, { signal: ctx.signal, timeoutMs: ctx.timeoutMs ?? OVERVIEW_TIMEOUT_MS }), deviceRows()]);
+      if (ctx.signal?.aborted) throw new Error('cancelled');
+      return buildDeviceUtilization({ usage, devices, from: Date.parse(`${startDay}T00:00:00Z`), to: Date.parse(`${endDay}T23:59:59Z`), days, projectName: project?.name });
+    }
+    case 'performance-overview': {
+      // The list is one call for everything the key sees (no server-side filter exists); the range is cut here.
+      ctx.progress?.('reading the performance transactions');
+      const all = (await listTransactions()).filter((t) => !o.projectName || (t.projectName ?? '').toLowerCase() === o.projectName.toLowerCase());
+      const start = o.allDates ? null : dayStart(addDays(now, -(days - 1)));
+      const times = all.map((t) => Date.parse(t.startTime)).filter(Number.isFinite);
+      return buildPerformanceOverview({ transactions: start == null ? all : all.filter((t) => Date.parse(t.startTime) >= start), total: all.length,
+        // A loop, not Math.max(...times): the list is every transaction the key sees, and a spread of that many arguments overflows the stack.
+        newest: times.length ? times.reduce((m, t) => (t > m ? t : m), -Infinity) : null, from: start, to: now, days: o.allDates ? null : days, projectName: o.projectName });
+    }
+    case 'test-inventory': {
+      ctx.progress?.('counting the reports of every project');
+      const data = await inventoryData({ projectName: o.projectName, signal: ctx.signal, onProgress: (done, total) => ctx.progress?.(`counted ${done} of ${total} projects`) });
+      if (ctx.signal?.aborted) throw new Error('cancelled');
+      return buildTestInventory({ ...data, now });
     }
     case 'device-health': {
       const [devices, all, fails] = await Promise.all([
@@ -520,6 +767,19 @@ async function estimateRecipe(recipe: Recipe, o: RecipeOpts): Promise<WorkEstima
   const now = Date.now();
   const days = o.days ?? defaultDays(recipe);
   const windowMs = now - addDays(now, -(days - 1));
+  // Counts for every reporter project: 85 projects in 12.3 s live (2026-11-24); one project is a single call.
+  if (recipe === 'test-inventory') return { ms: o.projectName ? 8_000 : INVENTORY_ESTIMATE_MS, basis: 'the platform\'s own counts, project by project' };
+  // Counts for a window: about 1 s to find its first run, then one grouped call (7 s for 230,000 runs live, 2026-11-24).
+  if (recipe === 'test-breakdown') return { ms: 12_000, basis: 'the platform\'s own counts for the range' };
+  if (recipe === 'test-trend') return { ms: 25_000, basis: 'the platform\'s own counts per day' };
+  // Two id searches (3-4 s each, in parallel) and two counts by test name (2-4 s each for 7 to 30 days; live 2026-11-24).
+  if (recipe === 'test-reliability') return { ms: 12_000 + Math.min(days, RELIABILITY_MAX_DAYS) * 300, basis: 'the platform\'s own counts per test for two periods' };
+  if (recipe === 'performance-overview') return { ms: 5_000, basis: 'one list of the performance transactions' };
+  if (recipe === 'release-readiness') return { ms: 14_000 + Math.min(days, RELIABILITY_MAX_DAYS) * 300, basis: 'the platform\'s own counts per test, platform and classification' };
+  if (recipe === 'license-usage') return { ms: 7_000 + Math.min(days, LICENSE_MAX_DAYS) * 600, basis: 'a session-by-session usage report of about 2 MB a day' };
+  if (recipe === 'device-coverage') return { ms: 15_000, basis: 'the platform\'s own counts per device and the device list' };
+  // Devices Usage, every project: 30 days 11 s, 180 days 18 s (live 2026-11-24).
+  if (recipe === 'device-utilization') return { ms: 14_000 + days * 30, basis: 'the aggregated device usage report' };
   if (recipe === 'usage-summary') {
     // Every project: small aggregated reports, 11-18 s each (live 2026-11-24).
     if (!o.projectName) return { ms: OVERVIEW_ESTIMATE_MS, basis: 'the aggregated usage reports of every project' };
@@ -532,6 +792,7 @@ async function estimateRecipe(recipe: Recipe, o: RecipeOpts): Promise<WorkEstima
   });
 }
 
+const INVENTORY_ESTIMATE_MS = 20_000;
 const OVERVIEW_ESTIMATE_MS = 30_000;
 const OVERVIEW_TIMEOUT_MS = 50_000;
 const OVERVIEW_USERS_MAX_DAYS = 31;
@@ -565,19 +826,23 @@ export function fittingDaysBy(days: number, msFor: (days: number) => number, lim
 }
 
 const CREATE_DESCRIPTION =
-  'Report generator: test summary report (test execution summary, pass rate report), failure analysis report, device health ' +
-  'report, usage summary / usage report. ' +
-  'Build a finished Digital.ai-branded HTML report from live data in ONE call: the server fetches the data, lays it out and ' +
-  'writes a first "What it means" for every section. Prefer this over gathering data with other tools and calling render_report. ' +
-  'Recipes:\n' +
-  '• test-summary — runs, pass rate (vs the previous period), runs per day/week, pass rate over time, results by platform, most ' +
-  'frequent failures, failure classification. days (default 7), passRateGoal, projectName.\n' +
-  '• failure-analysis — failures by classification and device, a device × day heatmap, most common causes with an example test. days (default 7).\n' +
-  '• device-health — pool status, devices by OS, status tiles (worst first), devices offline for more than a day, and devices that ' +
-  'fail far more often than the pool. days (default 7) and projectName scope the test results only; the pool is every device this key sees.\n' +
-  '• usage-summary — with projectName: reserved device hours, active users, weekly hours with the recent window shaded, top users, ' +
-  'top devices. Without projectName: an overview of EVERY project in about 30 s (hours by project, device and platform; users up to 31 days; no weekly trend). ' +
-  'Cloud Admin; days (default 90), recentDays (default 30).\n' +
+  'Report generator: build a finished Digital.ai-branded HTML report from live data in ONE call. The server fetches the data, lays it ' +
+  'out and writes a first "What it means" for every section. Prefer this (or the create_*_report tool of the same recipe) over ' +
+  'gathering data with other tools and calling render_report. Recipes (default days):\n' +
+  '• test-summary (7): runs, pass rate vs the previous period, per day, by platform, most frequent failures. Reads at most 25,000 runs.\n' +
+  '• test-trend (90, up to 365): runs and pass rate per day, week or month; EXACT counts for any range. Use for "last 90 days", "this quarter".\n' +
+  '• test-breakdown (30, or allDates): results by one or two keys (groupBy): platform, device, model, OS version, framework, browser, user, test, classification, pool, any report column.\n' +
+  '• test-reliability (7, up to 31): every test against the period before: passes every time, fails every time, mixed results, newly failing, recovered, no longer run.\n' +
+  '• release-readiness (7, up to 31): go/no-go verdict from stated checks (passRateGoal, default 95), the tests in the way; where scopes it to one build.\n' +
+  '• failure-analysis (7): failures by classification and device, device × day heatmap, most common causes.\n' +
+  '• test-inventory (all dates): EVERY test report by project, user and status, storage per project. Use for "how many reports", "all-time" questions.\n' +
+  '• device-health (7): pool status, offline and degraded devices, devices failing far more than the pool, offline devices by region and agent.\n' +
+  '• device-coverage (30): devices, models and OS versions the tests ran on against the pool; OS versions with no run.\n' +
+  '• device-utilization (30; Cloud Admin): reserved hours per device against the pool\'s hours, never-reserved devices, demand by model.\n' +
+  '• license-usage (7, up to 31; Cloud Admin): peak concurrent sessions per license type against the licensed number, session types, busiest hours.\n' +
+  '• usage-summary (90; Cloud Admin): reserved hours, users and devices of projectName (weekly), or without it an overview of EVERY project.\n' +
+  '• performance-overview (90, or allDates): performance transactions: median Speed Index, duration, CPU, memory per transaction, by network profile and app version.\n' +
+  'The counts recipes (trend, breakdown, reliability, readiness) take where: only runs whose report column equals a value, e.g. {"digitalai:build": "412"}; letter case is ignored unless exactCase.\n' +
   'Every call first MEASURES how long the report will take. If that is longer than a tool call can wait, nothing runs: the answer ' +
   'gives the estimate, a smaller window that fits, and the option to run the full report in the background; ask the user which. ' +
   'background: true starts a job and answers at once with its jobId; the job runs on the server under its own deadline and the ' +
@@ -591,11 +856,19 @@ const CREATE_DESCRIPTION =
 
 const createShape = {
     recipe: z.enum(RECIPES).optional().describe('Which report to build. Omit with runId or jobId.'),
-    days: z.number().int().min(1).max(365).optional().describe('Length of the window in days (default 7; usage-summary 90).'),
+    days: z.number().int().min(1).max(365).optional().describe('Length of the window in days (default 7; usage-summary, test-trend and performance-overview 90; test-breakdown, device-coverage and device-utilization 30; test-reliability, release-readiness and license-usage at most 31).'),
     recentDays: z.number().int().min(1).max(180).optional().describe('usage-summary: the recent window compared with the whole range (default 30).'),
     projectName: z.string().optional().describe("Scope to this project (reporter project name; for usage-summary the cloud project name). Default: the access key's own scope."),
-    passRateGoal: z.number().min(0).max(100).optional().describe('test-summary: draw a goal line at this pass rate (percent).'),
-    compare: z.boolean().optional().describe('test-summary: compare with the previous period of the same length (default true; doubles the scan).'),
+    passRateGoal: z.number().min(0).max(100).optional().describe('test-summary, test-trend, test-breakdown, release-readiness: a pass-rate goal (percent), drawn as a line or counted against (release-readiness: default 95).'),
+    groupBy: z.array(z.string().min(1)).min(1).max(2).optional().describe(`test-breakdown: what to break the results down by. ${BREAKDOWN_KEYS_HELP} Two keys add a failure-rate grid of one against the other.`),
+    where: z.record(z.string(), z.string()).optional().describe('test-breakdown, test-trend, test-reliability, release-readiness: count only runs whose report column equals a value, ' +
+      'for example {"platform": "iOS"}, {"framework": "Appium Server"} or a custom column such as {"digitalai:build": "412"}. Keys as for groupBy; the value is the whole ' +
+      'stored value, in any letter case ("ios" counts IOS and iOS). Reports show tidied values (test names without run ids, ' +
+      'classification labels), so take the value from a report record or get_distinct_test_key_values, not from a report.'),
+    keysAsWritten: z.boolean().optional().describe('With groupBy or where: send every key exactly as written, for a custom column whose name is one of the plain words (a column named "category" or "platform"). Default false.'),
+    exactCase: z.boolean().optional().describe('With where: count only the exact spelling written ("Chrome" without "chrome"). Default false: letter case is ignored. Groups in a report are always shown with spellings merged; for counts per stored spelling use get_grouped_test_reports with exactCase.'),
+    allDates: z.boolean().optional().describe('test-breakdown, performance-overview: everything on record, whatever its date, instead of the last days.'),
+    compare: z.boolean().optional().describe('test-summary, test-reliability: compare with the previous period of the same length (default true; for test-summary it doubles the scan).'),
     maxRecords: z.number().int().min(500).max(25_000).optional().describe('Upper bound on reporter runs read (default 10 000). The report says when the window was cut short.'),
     background: z.boolean().optional().describe('Run as a background job (after the user agreed to a long report). Answers at once with a jobId.'),
     jobId: z.string().optional().describe('Status of a background job — a finished one returns its report; with cancel: true, stop it. Omit everything else.'),
@@ -612,7 +885,7 @@ const createShape = {
   };
 type CreateArgs = { [K in keyof typeof createShape]?: z.infer<(typeof createShape)[K]> };
 
-async function createHandler({ recipe, days, recentDays, projectName, passRateGoal, compare, maxRecords, background, jobId, cancel, runId, whatItMeans, title, outputPath, fileName, attach }: CreateArgs) {
+async function createHandler({ recipe, days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten, background, jobId, cancel, runId, whatItMeans, title, outputPath, fileName, attach }: CreateArgs) {
     const text = (t: string, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text' as const, text: t }] });
     try {
       // Save an already delivered report into a folder the user shared (no rendering, no fetching).
@@ -659,11 +932,13 @@ async function createHandler({ recipe, days, recentDays, projectName, passRateGo
       // Before the estimate and the fetch: a bad path used to surface only after the whole recipe (or background job) had run.
       const pathErr = outputPath ? outputPathError(outputPath) : null;
       if (pathErr) return text(pathErr, true);
-      const opts: RecipeOpts = { days, recentDays, projectName, passRateGoal, compare, maxRecords };
+      if (recipe === 'test-breakdown' && !groupBy?.length) return text(`test-breakdown needs groupBy. ${BREAKDOWN_KEYS_HELP}`, true);
+      const opts: RecipeOpts = { days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten };
       const d = days ?? defaultDays(recipe);
       const est = await estimateRecipe(recipe, opts);
       const limit = syncLimitMs();
-      const label = `${recipe} (${d} day${d === 1 ? '' : 's'}${projectName ? `, ${projectName}` : ''})`;
+      const label = recipe === 'test-inventory' ? `${recipe} (all dates, ${projectName ?? 'every project'})`
+        : `${recipe} (${d} day${d === 1 ? '' : 's'}${projectName ? `, ${projectName}` : ''})`;
       const range = est.rangeMs && est.rangeMs[1] - est.rangeMs[0] > 10_000 ? `, likely between ${fmtDuration(est.rangeMs[0])} and ${fmtDuration(est.rangeMs[1])}` : '';
 
       const produce = async (ctx: RunCtx): Promise<JobResult & { spec: ReportSpec; unknown: string[] }> => {
@@ -738,21 +1013,59 @@ async function createHandler({ recipe, days, recentDays, projectName, passRateGo
 // it chose get_daily_execution_trend + summarize_test_failures over create_report twice (2026-11-23).
 const RECIPE_TOOLS: Array<{ name: string; recipe: Recipe; description: string; keys: Array<keyof typeof createShape> }> = [
   { name: 'create_test_summary_report', recipe: 'test-summary', keys: ['days', 'projectName', 'passRateGoal', 'compare', 'maxRecords', 'background', 'title', 'outputPath'],
-    description: 'Test summary report (test execution summary, pass rate report) as a finished Digital.ai-branded HTML file in one call: ' +
-      'runs, pass rate vs the previous period, runs per day, pass rate over time, results by platform, most frequent failures, failure ' +
-      'classification, each with a "What it means". Use this for any "test summary" / "test report" request instead of assembling ' +
-      'one from other tools. Same as create_report recipe "test-summary"; create_report also checks background jobs (jobId) and re-renders (runId).' },
+    description: 'Test summary report (test execution summary, pass rate report, test report) as a finished Digital.ai-branded HTML report in one call: ' +
+      'runs, pass rate vs the previous period, runs per day, results by platform, most frequent failures, failure classification, each with a ' +
+      '"What it means". Use it instead of assembling one from other tools. days default 7; reads at most 25,000 runs (longer ranges: create_test_trend_report).' },
   { name: 'create_failure_analysis_report', recipe: 'failure-analysis', keys: ['days', 'projectName', 'maxRecords', 'background', 'title', 'outputPath'],
-    description: 'Failure analysis report (why tests fail) as a finished Digital.ai-branded HTML file in one call: failures by ' +
-      'classification and device, a device-by-day heatmap, the most common causes with an example. Same as create_report recipe "failure-analysis".' },
+    description: 'Failure analysis report (why tests fail) as a finished Digital.ai-branded HTML report in one call: failures by ' +
+      'classification and device, a device-by-day heatmap, the most common causes with an example. days default 7.' },
   { name: 'create_device_health_report', recipe: 'device-health', keys: ['days', 'projectName', 'maxRecords', 'background', 'title', 'outputPath'],
-    description: 'Device health report (which devices need attention) as a finished Digital.ai-branded HTML file in one call: pool ' +
-      'status, offline and degraded devices, devices failing far more than the pool. Same as create_report recipe "device-health".' },
+    description: 'Device health report (which devices need attention, lab health) as a finished Digital.ai-branded HTML report in one call: pool ' +
+      'status, offline and degraded devices, devices failing far more than the pool, offline devices by region and agent. days default 7.' },
   { name: 'create_usage_summary_report', recipe: 'usage-summary', keys: ['projectName', 'days', 'recentDays', 'background', 'title', 'outputPath'],
-    description: 'Usage summary report (device reservation hours, users, devices) as a finished Digital.ai-branded HTML file. ' +
+    description: 'Usage summary report (device reservation hours, users, devices) as a finished Digital.ai-branded HTML report. ' +
       'With projectName: that project, with weekly hours. Without it: an overview of ALL projects (hours by project, device, platform ' +
-      'and user) — do not build that by hand from summarize_usage_report. Cloud Admin. A long range of one project is offered as a ' +
-      'background job. Same as create_report recipe "usage-summary".' },
+      'and user); do not build that by hand from summarize_usage_report. Cloud Admin. days default 90; a long range of one project is offered as a background job.' },
+  { name: 'create_test_inventory_report', recipe: 'test-inventory', keys: ['projectName', 'title', 'outputPath'],
+    description: 'Test report inventory (all-time report counts, how many test reports exist, reports by project or by user, report storage) as a ' +
+      'finished Digital.ai-branded HTML report in ONE call of about 20 seconds: every test report on the instance, all dates, by project, user ' +
+      'and status, with storage per project. The platform\'s own counts: millions of reports, nothing sampled. Use it instead of paging ' +
+      'list_test_reports or calling get_grouped_test_reports per project.' },
+  { name: 'create_test_breakdown_report', recipe: 'test-breakdown', keys: ['groupBy', 'days', 'allDates', 'projectName', 'passRateGoal', 'where', 'exactCase', 'keysAsWritten', 'title', 'outputPath'],
+    description: 'Test results broken down by one or two keys (results by platform, Android vs iOS, pass rate per device, model, OS version, ' +
+      'framework, browser, user, test, failure classification, device pool, any custom report column) as a finished Digital.ai-branded HTML ' +
+      'report in one call: runs, pass rate and failures per group; two keys add a failure-rate grid. Exact counts. groupBy is required; days default 30, or allDates.' },
+  { name: 'create_test_trend_report', recipe: 'test-trend', keys: ['days', 'projectName', 'passRateGoal', 'where', 'exactCase', 'keysAsWritten', 'title', 'outputPath'],
+    description: 'Test execution trend (runs and pass rate over time, 90-day or quarterly test report, pass rate trend) as a finished Digital.ai-branded ' +
+      'HTML report in one call: runs and pass rate per day, week or month over up to 365 days, by platform and failure classification. ' +
+      'EXACT for any range: prefer it to a test summary for ranges holding more than 25,000 runs. days default 90.' },
+  { name: 'create_test_reliability_report', recipe: 'test-reliability', keys: ['days', 'projectName', 'compare', 'where', 'exactCase', 'keysAsWritten', 'title', 'outputPath'],
+    description: 'Test reliability report (unreliable or flaky tests, tests that always fail, newly failing or broken tests, tests that stopped ' +
+      'running) as a finished Digital.ai-branded HTML report in one call: every test of the period sorted into passes every time, fails every ' +
+      'time, mixed results and newly failing, against the period before. Every run is counted. days default 7, up to 31.' },
+  { name: 'create_release_readiness_report', recipe: 'release-readiness', keys: ['days', 'projectName', 'passRateGoal', 'where', 'exactCase', 'keysAsWritten', 'title', 'outputPath'],
+    description: 'Release readiness report (go/no-go, are we ready to release, quality gate, build report, sign-off summary) as a finished ' +
+      'Digital.ai-branded HTML report in one call: a verdict (Ready, Ready with risks, Not ready) from checks stated in the report: pass rate ' +
+      'against passRateGoal (default 95), newly failing tests, tests failing every run, every platform at the goal, mixed results; then the ' +
+      'tests in the way. days default 7, up to 31; where scopes it to one build, e.g. {"digitalai:build": "412"}.' },
+  { name: 'create_device_coverage_report', recipe: 'device-coverage', keys: ['days', 'projectName', 'title', 'outputPath'],
+    description: 'Device coverage report (which devices, models and OS versions the tests ran on; untested devices; coverage gaps before a release) ' +
+      'as a finished Digital.ai-branded HTML report in one call: devices with and without a run against the pool, runs and pass rate by OS ' +
+      'version and model, OS versions in the pool with no run. days default 30.' },
+  { name: 'create_device_utilization_report', recipe: 'device-utilization', keys: ['days', 'projectName', 'title', 'outputPath'],
+    description: 'Device utilization report (how much of the device lab is used, idle or never reserved devices, demand by model, which devices to ' +
+      'add or retire) as a finished Digital.ai-branded HTML report in one call: reserved hours per device against the hours the pool had, ' +
+      'demand by model, OS version and region. Every project unless projectName is given. Cloud Admin. days default 30.' },
+  { name: 'create_license_usage_report', recipe: 'license-usage', keys: ['days', 'title', 'outputPath'],
+    description: 'License usage report (license utilization, peak concurrency, concurrent sessions, are we near our license limit, do we need more ' +
+      'licenses, automated versus manual use) as a finished Digital.ai-branded HTML report: the peak number of sessions open at once per license ' +
+      'type against the licensed number, peaks per day, session types, busiest hours, use by project. Exact peaks. Every project. Cloud Admin. ' +
+      'days default 7, up to 31 (about 10 s for 7 days, 25 s for 30).' },
+  { name: 'create_performance_overview_report', recipe: 'performance-overview', keys: ['days', 'allDates', 'projectName', 'title', 'outputPath'],
+    description: 'Performance overview report (performance transactions, Speed Index, app performance summary, slowest transactions, performance ' +
+      'by app version or network profile) as a finished Digital.ai-branded HTML report in one call: median Speed Index, duration, CPU and ' +
+      'memory per transaction, by network profile, platform and app version, and what the data can support. days default 90, or allDates. ' +
+      'For a like-for-like A/B comparison use compare_performance_transactions.' },
 ];
 
 export function registerReportTools(server: McpServer): void {
@@ -768,14 +1081,42 @@ export function registerReportTools(server: McpServer): void {
   const shape = { ...createShape, outputPath };
   server.tool('create_report', CREATE_DESCRIPTION, shape, (args) => createHandler(args));
   // Literal names, so a grep (and the REGISTERED_TOOLS sync test) finds every registration.
+  // The per-recipe tools carry short parameter texts; the full ones are on create_report. Fourteen copies of the long
+  // texts were a tenth of every tool list, a trimmed MCP_TOOLSETS list included (report tools are always loaded).
+  const slim: Partial<Record<keyof typeof createShape, string>> = {
+    days: 'Length of the range in days.',
+    recentDays: 'Recent window compared with the whole range (default 30).',
+    projectName: 'Limit to this project.',
+    passRateGoal: 'Pass-rate goal in percent.',
+    groupBy: BREAKDOWN_KEYS_HELP.replace(/^groupBy takes one/, 'One'),
+    where: 'Count only runs whose report column equals a value, e.g. {"platform": "iOS"} or {"digitalai:build": "412"} (keys as for groupBy; the whole stored value, any letter case).',
+    exactCase: 'With where: count only the exact spelling written. Default: letter case is ignored.',
+    keysAsWritten: 'Send keys exactly as written, for a custom column named like a plain word ("category", "platform").',
+    allDates: 'Everything on record instead of the last days.',
+    compare: 'Compare with the previous period (default true).',
+    maxRecords: 'Upper bound on runs read (default 10,000).',
+    background: 'Run as a background job, after the user agreed; check it with create_report jobId.',
+    title: 'Report title.',
+    outputPath: getDeploymentMode() === 'local' ? 'Only when the user names a place: an absolute .html path on this machine.'
+      : 'Only when the user names a place: an absolute .html path on the MCP server\'s own filesystem, not the user\'s machine.',
+  };
   const recipeTool = (name: string) => {
     const t = RECIPE_TOOLS.find((x) => x.name === name)!;
-    return [t.description, Object.fromEntries(t.keys.map((k) => [k, shape[k]])), (args: CreateArgs) => createHandler({ ...args, recipe: t.recipe })] as const;
+    return [t.description, Object.fromEntries(t.keys.map((k) => [k, slim[k] ? shape[k].describe(slim[k]) : shape[k]])), (args: CreateArgs) => createHandler({ ...args, recipe: t.recipe })] as const;
   };
   server.tool('create_test_summary_report', ...recipeTool('create_test_summary_report'));
   server.tool('create_failure_analysis_report', ...recipeTool('create_failure_analysis_report'));
   server.tool('create_device_health_report', ...recipeTool('create_device_health_report'));
   server.tool('create_usage_summary_report', ...recipeTool('create_usage_summary_report'));
+  server.tool('create_test_inventory_report', ...recipeTool('create_test_inventory_report'));
+  server.tool('create_test_breakdown_report', ...recipeTool('create_test_breakdown_report'));
+  server.tool('create_test_trend_report', ...recipeTool('create_test_trend_report'));
+  server.tool('create_test_reliability_report', ...recipeTool('create_test_reliability_report'));
+  server.tool('create_release_readiness_report', ...recipeTool('create_release_readiness_report'));
+  server.tool('create_device_coverage_report', ...recipeTool('create_device_coverage_report'));
+  server.tool('create_device_utilization_report', ...recipeTool('create_device_utilization_report'));
+  server.tool('create_license_usage_report', ...recipeTool('create_license_usage_report'));
+  server.tool('create_performance_overview_report', ...recipeTool('create_performance_overview_report'));
 
   server.tool(
     'render_report',
@@ -786,14 +1127,15 @@ export function registerReportTools(server: McpServer): void {
     },
     async ({ spec, outputPath }) => {
       try {
-        const parsed = reportSpecSchema.safeParse(spec);
-        if (!parsed.success) {
-          return { isError: true, content: [{ type: 'text' as const, text: `The report spec is not valid:\n- ${specErrors(parsed.error).join('\n- ')}\nFix those fields and call render_report again.` }] };
+        const read = readSpec(spec);
+        if (!read.ok) {
+          return { isError: true, content: [{ type: 'text' as const, text: `The report spec is not valid:\n- ${read.errors.join('\n- ')}\nFix those fields and call render_report again.` }] };
         }
-        const s = parsed.data as ReportSpec;
+        const s = read.spec;
         const f = buildFile(s, outputPath);
         if ('error' in f) return { isError: true, content: [{ type: 'text' as const, text: f.error }] };
-        const warnings = specWarnings(s);
+        // What was read differently from how it was written comes first: the report is drawn, and the agent knows what is not in it.
+        const warnings = [...read.notes, ...specWarnings(s)];
         const blocks = (s.tabs ? s.tabs.flatMap((t) => t.sections) : s.sections ?? []).reduce((n, x) => n + x.blocks.length, 0);
         return await deliver(f, [`${s.tabs ? `${s.tabs.length} tabs · ` : ''}${blocks} blocks.`, ...(warnings.length ? ['', 'Check:', ...warnings.map((w) => `- ${w}`)] : [])]);
       } catch (e) {

@@ -33,7 +33,7 @@ import { registerPerformanceTools } from './tools/performance-tools.js';
 import { registerUsageReportTools } from './tools/usage-report-tools.js';
 import { registerTestRunTools } from './tools/test-run-tools.js';
 import { registerRemediationTools } from './tools/remediation-tools.js';
-import { registerReportTools, setReportRootsProvider } from './tools/report-tools.js';
+import { registerReportTools, setReportRootsProvider, setLocalClientProvider } from './tools/report-tools.js';
 import { declaresUi, setUiCapabilityProvider } from './utils/report-view.js';
 import { isDebugMode, startRemediationSession, getRemediationSession, onDebugModeChange, instrumentHandler, debugInstructions, remediationDir, canWriteLocally } from './utils/remediation.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
@@ -45,6 +45,8 @@ import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
 import { isUpdateCheckEnabled, updateSteps, withUpdateNotice } from './utils/update-check.js';
 import { withReportNotice } from './utils/report-jobs.js';
+import { withReportPointer } from './utils/report-pointer.js';
+import { applyStoredOptions } from './utils/server-options.js';
 import { runUpdateCheck } from './api/update-check.js';
 import { installShutdownHandlers } from './api/shutdown.js';
 import { describeStartingProfile, listProfiles, startupCredentialProblem } from './utils/profile-loader.js';
@@ -61,6 +63,9 @@ if (process.argv[2] === 'setup') {
 }
 
 dotenv.config({ quiet: true });
+// Options saved with `setup options` (a smaller tool list, the report pointer, debug mode, …): set here, before anything
+// reads them, and only where the variable is not set already. A value in the client's configuration or .env wins.
+const storedOptions = applyStoredOptions();
 
 const name = process.env.MCP_SERVER_NAME ?? 'digital-ai-testing-mcp';
 const version = getServerVersion();
@@ -71,6 +76,10 @@ console.error(
   `[${name}] Target: ${starting ? `${starting.url} (profile "${starting.name}" from ${starting.source === 'store' ? 'the credential store' : 'environment variables'})` : '(not set)'}`
 );
 console.error(`[${name}] Deployment mode: ${getDeploymentMode()}`);
+if (Object.keys(storedOptions.applied).length) {
+  console.error(`[${name}] Options from setup: ${Object.entries(storedOptions.applied).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+}
+for (const problem of storedOptions.problems) console.error(`[${name}] ⚠️  ${problem}`);
 
 // Missing credentials no longer stop the process (the client showed only "-32000 Failed to reconnect"). The server
 // starts in setup mode: the instructions open with SETUP REQUIRED and every tool returns setup instructions for this
@@ -178,6 +187,9 @@ async function clientRoots(): Promise<string[]> {
 }
 // Finished reports go to a folder the client shares with the conversation when there is one (see report-tools.ts).
 setReportRootsProvider(clientRoots);
+// A client on this machine (it shares workspace folders, or is a coding agent) gets report answers without the steps
+// meant for an agent in a sandbox.
+setLocalClientProvider(() => !!server.server.getClientCapabilities()?.roots || /claude-code|cursor|windsurf|codex|gemini|opencode|vscode|copilot/i.test(server.server.getClientVersion()?.name ?? ''));
 // Whether the client renders MCP Apps views: a finished report is then shown inline (utils/report-view.ts).
 setUiCapabilityProvider(() => declaresUi(server.server.getClientCapabilities()));
 function startDebugSession(): void {
@@ -216,7 +228,9 @@ const controller = registerWithToolsets(
         const handler = instrumentHandler(tool, callback, { placeholder });
         if (placeholder) return handler;
         // A finished background report is announced first in the next result of ANY tool (the server cannot start a turn).
-        const withJobs = withReportNotice(handler);
+        // A data tool's result says how to present it (render_report, or the report tool that covers that data): the only
+        // prompt that reaches every client at the moment of use. Outside the instrumentation, like the other notices.
+        const withJobs = withReportPointer(tool, withReportNotice(handler));
         return updateCheck ? withUpdateNotice(withJobs) : withJobs;
       }
 );

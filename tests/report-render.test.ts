@@ -8,8 +8,9 @@ import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync, mkdirSync, 
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { renderReport, usedCss, chooseOrientation, fmt, noEmDash, statusTone, type ReportSpec } from '../src/utils/report-render.js';
-import { registerReportTools, setReportRootsProvider, sandboxCopyCommand } from '../src/tools/report-tools.js';
+import { renderReport, usedCss, chooseOrientation, fmt, dataDecimals, noEmDash, statusTone, type ReportSpec } from '../src/utils/report-render.js';
+import { registerReportTools, setReportRootsProvider, setLocalClientProvider, sandboxCopyCommand, readSpec, BLOCK_FIELDS } from '../src/tools/report-tools.js';
+import { reportFolderStatusLine } from '../src/utils/report-folder.js';
 import { setUiCapabilityProvider, noteViewRead, resetReportViewForTests, REPORT_META_KEY } from '../src/utils/report-view.js';
 import { connectTools } from './helpers/offline.js';
 
@@ -94,6 +95,19 @@ describe('report renderer', () => {
     assert.equal(chooseOrientation({ categories: ['Samsung Galaxy S24 Plus'], orientation: 'vertical' }), 'vertical', 'explicit wins');
   });
 
+  it('bar labels carry the precision and the unit of the data', () => {
+    const bar = (values: number[], extra: Record<string, unknown> = {}) => renderReport({ title: 't', sections: [{ title: 's', blocks: [
+      { type: 'bar', orientation: 'vertical', categories: ['Android', 'iOS'], series: [{ name: 'Pass rate', values }], ...extra }], whatItMeans: 'x' }] });
+    const labels = (html: string) => [...html.matchAll(/class="val">([^<]*)</g)].map((m) => m[1]);
+    // 91.5 and 84.2 with unit % were printed "92" and "84" beside a text that said "7.3 points".
+    assert.deepEqual(labels(bar([91.5, 84.2], { unit: '%' })), ['91.5%', '84.2%']);
+    assert.deepEqual(labels(bar([3, 12])), ['3', '12'], 'a whole count is not printed 3.0');
+    assert.deepEqual(labels(bar([4.25, 10], { unit: 'hrs' })), ['4.25 hrs', '10.00 hrs']);
+    assert.deepEqual(labels(bar([91.5, 84.2], { unit: '%', decimals: 0 })), ['92%', '84%'], 'an explicit decimals still wins');
+    assert.equal(dataDecimals([1, 2.5, null, 3.125]), 2);
+    assert.equal(dataDecimals([1, 2]), 0);
+  });
+
   it('keeps the precision a number arrives with', () => {
     assert.equal(fmt(723.6, { unit: 'hrs' }), '723.6 hrs');
     assert.equal(fmt(1284), '1,284');
@@ -163,7 +177,86 @@ describe('CSS trimming', () => {
   });
 });
 
+describe('reading a report spec: a near miss costs a note, not a second call', () => {
+  const kpi = [{ value: 408, label: 'Apps' }, { value: 100, label: 'Recent' }];
+  const wrap = (b: unknown) => ({ title: 'T', tabs: [{ label: 'Overview', sections: [{ title: 'At a Glance', blocks: [b] }] }] });
+  const read = (b: unknown) => readSpec(wrap(b));
+  const at = 'tabs.0.sections.0.blocks.0';
+
+  it('a valid block with one key the spec does not know is drawn, and the key is named (seen in Claude Desktop 2026-11-25)', () => {
+    const r = read({ type: 'kpis', items: kpi, kpis: 4 });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.notes, [`${at}: left out "kpis" (not a field here; it is not in the report). A kpis block takes: items.`]);
+    assert.deepEqual((r.spec.tabs![0].sections[0].blocks[0] as { items: unknown }).items, kpi);
+    assert.match(renderReport(r.spec), />408</);
+    const input = wrap({ type: 'kpis', items: kpi, kpis: 4 });
+    readSpec(input);
+    assert.equal((input.tabs[0].sections[0].blocks[0] as { kpis?: number }).kpis, 4, 'the caller\'s object is not changed');
+  });
+
+  it('a habitual field name is read as the field the block takes, and said so', () => {
+    const cases: Array<[unknown, string[]]> = [
+      [{ type: 'kpis', kpis: kpi }, [`${at}: read "kpis" as "items".`]],
+      [{ type: 'tiles', tiles: [{ name: 'a', status: 'Available' }] }, [`${at}: read "tiles" as "items".`]],
+      [{ type: 'share', segments: [{ label: 'a', value: 1 }] }, [`${at}: read "segments" as "parts".`]],
+      [{ type: 'table', columns: [{ key: 'a', label: 'A' }], data: [{ a: 1 }] }, [`${at}: read "data" as "rows".`]],
+      [{ type: 'bar', labels: ['a'], series: [{ name: 's', data: [1] }] }, [`${at}: read "labels" as "categories".`, `${at}.series.0: read "data" as "values".`]],
+      [{ type: 'callout', body: 'x' }, [`${at}: read "body" as "text".`]],
+    ];
+    for (const [block, notes] of cases) {
+      const r = read(block);
+      assert.equal(r.ok, true, JSON.stringify(block));
+      if (r.ok) { assert.deepEqual(r.notes, notes); assert.match(renderReport(r.spec), /<h1>T<\/h1>/); }
+    }
+    const both = read({ type: 'kpis', items: kpi, cards: [{ value: 1, label: 'other' }] });
+    assert.ok(both.ok && /left out "cards"/.test(both.notes[0]), 'the field is there already: the other name is not read over it');
+    const wrongKind = read({ type: 'callout', body: 42 });
+    assert.equal(wrongKind.ok, false, 'a number is not a text');
+  });
+
+  it('unknown keys anywhere are left out and named; an exact spec has no note', () => {
+    const r = readSpec({ title: 'T', theme: 'dark', sections: [{ title: 'S', layout: 'grid', blocks: [{ type: 'kpis', items: [{ value: 1, label: 'a', icon: 'star' }] }] }] });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.notes.sort(), ['(spec): left out "theme" (not a field here; it is not in the report).', 'sections.0.blocks.0.items.0: left out "icon" (not a field here; it is not in the report).',
+      'sections.0: left out "layout" (not a field here; it is not in the report).'].sort());
+    const exact = read({ type: 'kpis', items: kpi });
+    assert.ok(exact.ok && exact.notes.length === 0);
+  });
+
+  it('what leaves nothing to draw is still an error, with the fields the block takes', () => {
+    const missing = read({ type: 'bar', series: [{ name: 's', values: [1] }] });
+    assert.equal(missing.ok, false);
+    if (!missing.ok) {
+      assert.match(missing.errors[0], /blocks\.0\.categories: Invalid input: expected array/);
+      assert.match(missing.errors.at(-1)!, /^A bar block takes: title, categories, series, /);
+    }
+    const noType = read({ kpis: kpi });
+    assert.ok(!noType.ok && /blocks\.0\.type: Invalid discriminator value/.test(noType.errors[0]));
+    const mixed = read({ type: 'bar', series: [{ name: 's', values: [1] }], colour: 'red' });
+    assert.ok(!mixed.ok && mixed.errors.some((e) => /Unrecognized key: "colour"/.test(e)), 'with a real error, every problem is listed together');
+    assert.deepEqual(Object.keys(BLOCK_FIELDS).sort(), ['bar', 'calendar', 'callout', 'compare', 'findings', 'heatmap', 'kpis', 'line', 'meter', 'share', 'table', 'text', 'tiles', 'timeline']);
+    assert.deepEqual(BLOCK_FIELDS.kpis, ['items']);
+  });
+});
+
 describe('render_report tool', () => {
+  it('draws a near-miss spec in ONE call and lists what it read differently under "Check"', async () => {
+    const tools = await connectTools(registerReportTools);
+    const out = join(mkdtempSync(join(tmpdir(), 'dai-report-near-')), 'near.html');
+    const spec = { title: 'Apps by Platform', sections: [{ title: 'At a Glance', blocks: [{ type: 'kpis', items: [{ value: 408, label: 'Apps' }], kpis: 4 }] },
+      { title: 'By Platform', whatItMeans: 'Android leads.', blocks: [{ type: 'bar', labels: ['Android', 'iOS'], series: [{ name: 'Apps', data: [250, 158] }] }] }] };
+    const r = await tools.call('render_report', { spec, outputPath: out });
+    assert.notEqual(r.res.isError, true, r.text);
+    assert.match(readFileSync(out, 'utf8'), /<h1>Apps by Platform<\/h1>/);
+    assert.match(r.text, /\nCheck:\n- /);
+    assert.match(r.text, /- sections\.0\.blocks\.0: left out "kpis" \(not a field here; it is not in the report\)\. A kpis block takes: items\./);
+    assert.match(r.text, /- sections\.1\.blocks\.0: read "labels" as "categories"\./);
+    assert.match(r.text, /- sections\.1\.blocks\.0\.series\.0: read "data" as "values"\./);
+    rmSync(dirname(out), { recursive: true, force: true });
+    await tools.close();
+  });
+
   const dir = mkdtempSync(join(tmpdir(), 'dai-report-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -183,9 +276,10 @@ describe('render_report tool', () => {
 
   it('names the exact field of an invalid spec, and refuses a relative or non-HTML path', async () => {
     const tools = await connectTools(registerReportTools);
-    let r = await tools.call('render_report', { spec: { title: 'x', sections: [{ title: 'y', blocks: [{ type: 'bar', categories: ['a'], series: [{ name: 's', value: [1] }] }] }] }, outputPath: join(dir, 'bad.html') });
+    let r = await tools.call('render_report', { spec: { title: 'x', sections: [{ title: 'y', blocks: [{ type: 'bar', categories: ['a'], series: [{ name: 's', values: 'one' }] }] }] }, outputPath: join(dir, 'bad.html') });
     assert.equal(r.res.isError, true);
-    assert.match(r.text, /sections\.0\.blocks\.0\.series\.0: Unrecognized key: "value"/);
+    assert.match(r.text, /sections\.0\.blocks\.0\.series\.0\.values: Invalid input: expected array/);
+    assert.match(r.text, /A bar block takes: title, categories, series, /, 'the error says what the block takes');
     r = await tools.call('render_report', { spec: { title: 'x', sections: [{ title: 'y', blocks: [{ type: 'pie' }] }] }, outputPath: join(dir, 'bad.html') });
     assert.equal(r.res.isError, true);
     assert.match(r.text, /sections\.0\.blocks\.0\.type/);
@@ -302,12 +396,29 @@ describe('render_report tool', () => {
       assert.equal(r.attachment, undefined);
     });
 
+    it('a client on this machine gets the path and nothing about a sandbox; get_server_info names the folder', async () => {
+      const target = join(dir, 'configured-local');
+      setEnv({ MCP_REPORT_DIR: target });
+      assert.equal(reportFolderStatusLine(), `Report folder: ${target} (MCP_REPORT_DIR)`);
+      setLocalClientProvider(() => true);
+      try {
+        const r = await call();
+        assert.match(r.text, /Report saved: .*configured-local.* in the folder set for reports \(MCP_REPORT_DIR\)\.\nIt is already saved: do not re-create or paste it\. Tell the user the full path/);
+        assert.ok(!/find \/|outputs folder|sandbox|Claude Desktop/.test(r.text), r.text);
+      } finally {
+        setLocalClientProvider(null);
+      }
+      setEnv({ MCP_REPORT_DIR: undefined });
+      assert.match(reportFolderStatusLine(), /^Report folder: not set \(reports go to the folder the client shares, else a temporary file/);
+    });
+
     it('a folder the client shares (roots): saved in its digital-ai-reports folder, no attachment', async () => {
       const ws = join(dir, 'workspace');
       mkdirSync(ws, { recursive: true });
       setReportRootsProvider(async () => [pathToFileURL(ws).href]);
       const r = await call();
       assert.match(r.text, /in the folder shared with this conversation/);
+      assert.ok(!/outputs folder|Claude Desktop/.test(r.text), 'a client that shares its workspace is on this machine');
       const saved = readdirSync(join(ws, 'digital-ai-reports'));
       assert.equal(saved.filter((n) => n.endsWith('.html')).length, 1);
       assert.ok(saved.includes('.gitignore'), 'a report folder inside the project is never committed');

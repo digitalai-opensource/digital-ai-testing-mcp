@@ -1,9 +1,9 @@
-import { writeFile } from 'fs/promises';
 import AdmZip from 'adm-zip';
+import { writeDownloadFile } from '../utils/write-download.js';
 import { apiGet, apiPost, apiDownload, apiDownloadRange, getActiveUrl } from './client.js';
 import type { ReportRef } from '../utils/report-ref.js';
 import { serverSortAvailable, markActiveServerSortRefused } from './access-level.js';
-import { resolveReporterProjectName } from './reporter-projects.js';
+import { resolveReporterProjectName, getReporterProjects, explainUnknownReporterProject } from './reporter-projects.js';
 import type {
   TestReport,
   TestListRequest,
@@ -312,7 +312,7 @@ function sanitizeReporterFilter(filter: TestFilterField[]): TestFilterField[] {
       `Filter properties [${blocked.join(', ')}] are not supported via API key authentication — ` +
       `the Digital.ai reporter API routes these through CSRF-protected middleware. ` +
       `Supported filter properties: status, name, user, has_attachment, success, test_id, project_id, device.os, duration, attachment_count, attachments_size, status_code. ` +
-      `For date filtering, use the startDate/endDate parameters instead.`
+      `For a time range use the tool's own parameters instead: startDate / endDate (list_test_reports, get_grouped_test_reports) or days (get_grouped_test_reports).`
     );
   }
   return filter.map((f) =>
@@ -391,6 +391,8 @@ export async function listTests(
     }
   } catch (e) {
     const message = (e as Error).message;
+    const unknownProject = explainUnknownReporterProject(message, projectName);
+    if (unknownProject) throw new Error(unknownProject);
     throw new Error(`listTests failed: ${message}${reporterFilter400Hint(message, request.filter)}`);
   }
 }
@@ -590,8 +592,44 @@ export async function getGroupedTests(
     if (projectName) params['projectName'] = projectName;
     return await apiPost<unknown>('/reporter/api/tests/grouped', finalRequest, params);
   } catch (e) {
-    throw new Error(`getGroupedTests failed: ${(e as Error).message}`);
+    const unknown = explainUnknownReporterProject((e as Error).message, projectName);
+    throw new Error(unknown ?? `getGroupedTests failed: ${(e as Error).message}`);
   }
+}
+
+/**
+ * The same grouped query for EVERY reporter project this credential can see, four at a time, each row tagged with its
+ * project. A grouped query without a project answers for the key's own project only (verified live 2026-11-24: one row,
+ * 829,454 of 4.0 million records), so an instance-wide count has to ask project by project. Measured live: 85 projects
+ * by user and status in 12.3 s; the two largest took 12.3 s and 7.3 s, every other one under 0.3 s.
+ * A Project User key cannot list reporter projects (the list comes back empty): that is an error here, not "no data".
+ */
+export async function getGroupedTestsAllProjects(
+  request: TestGroupRequest,
+  opts: { signal?: AbortSignal; onProgress?: (done: number, total: number) => void } = {}
+): Promise<{ projects: string[]; rows: Array<Record<string, unknown>>; failed: Array<{ project: string; error: string }> }> {
+  const projects = (await getReporterProjects()).map((p) => String(p.name)).filter(Boolean);
+  if (!projects.length) {
+    throw new Error('This access key cannot list the reporter\'s projects (a Project User key gets an empty list), so it cannot ask for all of them. ' +
+      'It is scoped to its own project: run the query without allProjects.');
+  }
+  const rows: Array<Record<string, unknown>> = [];
+  const failed: Array<{ project: string; error: string }> = [];
+  const queue = [...projects];
+  let done = 0;
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    for (let name = queue.shift(); name !== undefined; name = queue.shift()) {
+      if (opts.signal?.aborted) return;
+      try {
+        const res = (await getGroupedTests(request, undefined, name)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+        for (const r of Array.isArray(res) ? res : res.data ?? []) rows.push({ project: name, ...r });
+      } catch (e) {
+        failed.push({ project: name, error: (e as Error).message.slice(0, 200) });
+      }
+      opts.onProgress?.(++done, projects.length);
+    }
+  }));
+  return { projects, rows, failed };
 }
 
 // The /reporter/api/tests/distinct endpoint returns distinct value combinations
@@ -629,7 +667,7 @@ export async function getDistinctKeyValues(
       throw new Error(
         'PLATFORM_LIMITATION: The distinct-key-values endpoint requires browser session authentication ' +
         'on this platform. It is not accessible via API key on your deployment. ' +
-        'Use get_grouped_test_reports with a keys array as an alternative.'
+        'Use get_grouped_test_reports with the same keys as groupBy as an alternative.'
       );
     }
     throw new Error(`getDistinctKeyValues failed: ${msg}`);
@@ -750,7 +788,7 @@ export async function downloadTestVideo(ref: ReportRef, localPath: string, range
     if (res.contentType && !/^video\//i.test(res.contentType)) {
       throw new Error(`expected a video but got ${res.contentType} — this report may have no recording`);
     }
-    await writeFile(localPath, res.data);
+    await writeDownloadFile(localPath, res.data);
     const total = res.contentRange?.match(/\/(\d+)\s*$/)?.[1];
     return {
       bytesWritten: res.data.length,
@@ -767,7 +805,7 @@ export async function downloadTestVideo(ref: ReportRef, localPath: string, range
 export async function downloadTestAttachments(uuid: string, localPath: string): Promise<void> {
   try {
     const data = await apiDownload(`/reporter/api/reports/${uuid}/attachments`);
-    await writeFile(localPath, data);
+    await writeDownloadFile(localPath, data);
   } catch (e) {
     throw new Error(`downloadTestAttachments failed: ${(e as Error).message}`);
   }

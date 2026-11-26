@@ -5,6 +5,8 @@ import { resetClient, getActiveProfileName, getActiveUrl } from '../api/client.j
 import { getToolCatalog } from '../utils/tool-catalog.js';
 import { debugStatusLine } from '../utils/remediation.js';
 import { reportViewStatusLine } from '../utils/report-view.js';
+import { reportFolderStatusLine } from '../utils/report-folder.js';
+import { serverOptionsStatusLine } from '../utils/server-options.js';
 import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
 import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
@@ -130,7 +132,8 @@ export const REGISTERED_TOOLS = [
   // Debug mode — both always listed; record_remediation_note records only while debug mode is on
   'set_debug_mode', 'record_remediation_note',
   // Reports — branded self-contained HTML from a compact spec (core)
-  'render_report', 'create_report', 'create_test_summary_report', 'create_failure_analysis_report', 'create_device_health_report', 'create_usage_summary_report',
+  'render_report', 'create_report', 'create_test_summary_report', 'create_failure_analysis_report', 'create_device_health_report', 'create_usage_summary_report', 'create_test_inventory_report', 'create_test_breakdown_report', 'create_test_trend_report',
+  'create_test_reliability_report', 'create_device_coverage_report', 'create_device_utilization_report', 'create_performance_overview_report', 'create_release_readiness_report', 'create_license_usage_report',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;
@@ -194,7 +197,9 @@ export function capabilityLines(): string[] {
  */
 let examplesShown = false;
 export function connectivityExamples(role: string | undefined): string[] {
-  if (examplesShown) return [];
+  // Later calls say so in one line: an agent looking for the list spent three calls finding out it is shown once
+  // (UAT 2026-11-24).
+  if (examplesShown) return ['', 'Example prompts were shown on the first check_connectivity of this server run; get_server_info lists what the server can do.'];
   examplesShown = true;
   return [
     '',
@@ -247,7 +252,7 @@ export function registerMetaTools(server: McpServer): void {
 
       const lines = [
         `Server:           ${name} v${version}`,
-        ...[updateStatusLine(), debugStatusLine(), reportViewStatusLine()].filter((l): l is string => l !== null),
+        ...[updateStatusLine(), debugStatusLine(), reportViewStatusLine(), reportFolderStatusLine(), serverOptionsStatusLine()].filter((l): l is string => l !== null),
         `Target API:       ${activeUrl}`,
         envLine,
         projectLine,

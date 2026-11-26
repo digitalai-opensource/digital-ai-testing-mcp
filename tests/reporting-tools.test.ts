@@ -10,13 +10,14 @@
  *  - list_test_reports never sends always-returned columns in keys (searchValue + keys:[start_time] → platform 400)
  *    and explains the opaque 400 a comparison filter on a text key produces
  */
-import { describe, it, beforeAll, afterAll } from 'vitest';
+import { describe, it, beforeAll, afterAll, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 import AdmZip from 'adm-zip';
 import { registerReportingTools, mergeReportLists, webUserTwin } from '../src/tools/reporting-tools.js';
 import type { TestReport } from '../src/types/digital-ai.js';
 import { clearReporterProjectNameCacheForTests } from '../src/api/reporter-projects.js';
-import { startStubApi, connectTools, accountInfo, reply, type StubApi, type ToolClient } from './helpers/offline.js';
+import { formatGroupedTestReports } from '../src/utils/response-formatter.js';
+import { startStubApi, connectTools, accountInfo, reply, groupedAnswer, type GroupedBody, type StubApi, type ToolClient } from './helpers/offline.js';
 
 const HOUR = 3_600_000;
 const NOW = Date.now();
@@ -69,8 +70,19 @@ beforeAll(async () => {
       const groupBy: string[] = req.json.groupBy ?? [];
       // As on the platform: web reports have no "user" value; a digitalai:user filter finds them (live 2026-11-22).
       const userKey = (req.json.filter ?? []).find((f: { property: string }) => f.property === 'user' || f.property === 'digitalai:user')?.property;
-      if (groupBy.includes('user') && userKey) {
-        return userKey === 'user' ? { count: 1, data: [{ user: 'me@x.io', _count_: 5, failedCount: 1 }] } : { count: 1, data: [{ user: null, _count_: 3, failedCount: 2 }] };
+      const project = req.query.get('projectName');
+      // The reporter's answer for a project it does not have (verified live 2026-11-24).
+      if (project === 'NoSuch') return reply(500, { message: 'Cannot invoke "com.experitest.manager.entities.server.Project.getName()" because "project" is null' });
+      // Mobile reports carry "user", web reports "digitalai:user"; both keys group (verified live 2026-11-24).
+      if (groupBy.includes('user') && groupBy.includes('digitalai:user') && !userKey) {
+        return { count: 3, data: [{ user: 'ana', 'digitalai:user': null, _count_: 5, passedCount: 5, failedCount: 0 }, { user: null, 'digitalai:user': 'ana', _count_: 2, passedCount: 1, failedCount: 1 }, { user: null, 'digitalai:user': null, _count_: 1, passedCount: 0, failedCount: 0 }] };
+      }
+      if (project === 'DigitalSSO' && !groupBy.includes('device.os')) return { count: 1, data: [{ status: 'Passed', _count_: 7 }] };
+      if (userKey) {
+        // A row carries every key that was grouped: the mobile runs have the user in "user", the web runs in "digitalai:user".
+        const who = { ...(groupBy.includes('user') && { user: userKey === 'user' ? 'me@x.io' : null }), ...(groupBy.includes('digitalai:user') && { 'digitalai:user': userKey === 'digitalai:user' ? 'me@x.io' : null }) };
+        if (groupBy.includes('status')) return { count: 2, data: [{ status: 'Passed', ...who, _count_: 90 }, { status: 'Failed', ...who, _count_: 10 }] };
+        return userKey === 'user' ? { count: 1, data: [{ ...who, _count_: 5, failedCount: 1 }] } : { count: 1, data: [{ ...who, _count_: 3, failedCount: 2 }] };
       }
       return groupBy.includes('device.os')
         ? { count: GROUPED_BY_OS_STATUS.length, data: GROUPED_BY_OS_STATUS }
@@ -214,6 +226,13 @@ describe('web reports keep the user in digitalai:user (bug report 2026-11-21)', 
     assert.deepEqual(byStatus.data, [{ status: 'Passed', _count_: 180 }, { status: 'Failed', _count_: 20 }]);
   });
 
+  it('a user written in another letter case: web rows are filed under the stored spelling, not the written one', async () => {
+    const j = await tools.callJson('get_grouped_test_reports', { groupBy: ['user'], filter: [{ property: 'user', operator: '=', value: 'ME@X.IO' }], returnTotalCount: true });
+    assert.deepEqual(j.data, [{ user: 'me@x.io', _count_: 8, failedCount: 3 }]);
+    assert.equal(j.spellingsMerged, undefined, 'the spelling the caller wrote is not one the platform stores');
+    assert.deepEqual(j.filterMatched, { user: ['me@x.io'], 'digitalai:user': ['me@x.io'] });
+  });
+
   it('asking for the user key fills it from digitalai:user on web records', async () => {
     api.requests.length = 0;
     const j = await tools.callJson('list_test_reports', { filter: [{ property: 'digitalai:user', operator: '=', value: 'me@x.io' }], keys: ['user'] });
@@ -222,11 +241,55 @@ describe('web reports keep the user in digitalai:user (bug report 2026-11-21)', 
     assert.equal((j.reports as Array<Record<string, unknown>>)[0].user, 'me@x.io');
   });
 
-  it('grouping by user notes that web reports fall in the null row', async () => {
-    const j = await tools.callJson('get_grouped_test_reports', { groupBy: ['user'] });
-    assert.match(String(j.note), /null user row/);
+  it('grouping by user counts web reports under their own user (both keys are grouped and merged)', async () => {
+    const j = await tools.callJson('get_grouped_test_reports', { groupBy: ['user'], pivotBy: ['status'] });
+    const sent = api.requests.filter((r) => r.path === '/reporter/api/tests/grouped').at(-1)!;
+    assert.deepEqual((sent.json as { groupBy: string[] }).groupBy, ['user', 'digitalai:user']);
+    const rows = j.data as Array<Record<string, unknown>>;
+    assert.deepEqual(rows.map((r) => [r.user, r._count_, r.passedCount, r.failedCount]), [['ana', 7, 6, 1], [null, 1, 0, 0]], 'the web row joined its user; only a report with no user at all stays in the null row');
+    assert.ok(rows.every((r) => !('digitalai:user' in r)), 'the second key is not shown');
+    assert.equal(j.count, 2);
+    assert.match(String(j.note), /Web \(Selenium\) reports are counted under their user/);
     const t = await tools.call('get_grouped_test_reports', { groupBy: ['status'] });
     assert.doesNotMatch(t.text, /digitalai:user/);
+  });
+
+  it('says which projects the numbers cover: with no project, the key\'s own project only', async () => {
+    const own = await tools.callJson('get_grouped_test_reports', { groupBy: ['status'] });
+    assert.match(String(own.scope), /the access key's own project ONLY, not the whole instance \(allProjects: true/);
+    assert.equal((await tools.callJson('get_grouped_test_reports', { groupBy: ['status'], projectName: 'Default' })).scope, 'project Default');
+    assert.match((await tools.call('get_grouped_test_reports', { groupBy: ['status'], outputFormat: 'human' })).text, /^Scope: the access key's own project ONLY/);
+  });
+
+  it('allProjects asks every reporter project and tags each row with its project', async () => {
+    const j = await tools.callJson('get_grouped_test_reports', { groupBy: ['status'], allProjects: true, returnTotalCount: true });
+    assert.equal(j.scope, 'all 2 reporter projects this access key can see');
+    assert.equal(j.projectsQueried, 2);
+    const rows = (j.data as Array<Record<string, unknown>>).map((r) => `${r.project}/${r.status}/${r._count_}`).sort();
+    assert.deepEqual(rows, ['Default/Failed/10', 'Default/Passed/90', 'DigitalSSO/Passed/7']);
+    assert.equal(j.totalRecords, 107);
+    const both = await tools.call('get_grouped_test_reports', { groupBy: ['status'], allProjects: true, projectName: 'Default' });
+    assert.equal(both.res.isError, true);
+    assert.match(both.text, /leave out projectId and projectName/);
+    // A key that cannot list reporter projects (Project User) is told why, not handed an empty result.
+    const before = reporterProjectsFixture;
+    reporterProjectsFixture = [];
+    try {
+      const none = await tools.call('get_grouped_test_reports', { groupBy: ['status'], allProjects: true });
+      assert.equal(none.res.isError, true);
+      assert.match(none.text, /cannot list the reporter's projects .* run the query without allProjects/);
+    } finally {
+      reporterProjectsFixture = before;
+    }
+  });
+
+  it('a project the reporter does not have is named as such, after ONE request (not a Java error after three)', async () => {
+    const from = api.requests.length;
+    const r = await tools.call('get_grouped_test_reports', { groupBy: ['status'], projectName: 'NoSuch' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /The reporter has no project named "NoSuch"\. .*get_reporter_project_storage lists the reporter's projects/);
+    assert.ok(!/getName|null/.test(r.text), r.text);
+    assert.equal(api.requests.slice(from).filter((q) => q.path === '/reporter/api/tests/grouped').length, 1, 'the same answer every time: not retried');
   });
 });
 
@@ -477,6 +540,27 @@ describe('list_active_test_executions — platform live list', () => {
     }
   });
 
+  it('marks a request that has been "Running" for longer than the test timeout as probably stuck', async () => {
+    runningFixture = { totalRunningTestRequest: 2, runningTestRequests: [
+      { id: 1, name: 'health_check', status: 'Running', projectName: 'Default', projectId: 2, startedAt: NOW - 48 * 3_600_000 },
+      { id: 2, name: 'login', status: 'Running', projectName: 'Default', projectId: 2, startedAt: NOW - 120_000 },
+    ] };
+    try {
+      const j = await tools.callJson('list_active_test_executions', {});
+      const [old, fresh] = j.executions as Array<Record<string, unknown>>;
+      assert.equal(old.possiblyStale, true);
+      assert.ok((old.runningMinutes as number) >= 2879, String(old.runningMinutes));
+      assert.equal(fresh.possiblyStale, undefined);
+      assert.ok((fresh.runningMinutes as number) <= 3);
+      assert.equal(j.staleCount, 1);
+      assert.match(String(j.note), /1 of these has been "Running" for more than 4 hours .* probably stuck/);
+      const human = await tools.call('list_active_test_executions', { outputFormat: 'human' });
+      assert.match(human.text, /probably stuck \(over 4 h\)/);
+    } finally {
+      runningFixture = undefined;
+    }
+  });
+
   it('projectName / projectId scope the list', async () => {
     runningFixture = RUNNING;
     try {
@@ -588,5 +672,374 @@ describe('delete_test_reports_by_name preview (intake 2026-10-19)', () => {
     assert.equal(dates.length, 3);
     assert.deepEqual(dates, [...dates].sort().reverse());
     assert.ok(!api.requests.some((r) => r.path === '/reporter/api/tests/delete'), 'preview must not delete');
+  });
+});
+
+// Last in this file on purpose: it points the API client at a stub of its own.
+describe('get_grouped_test_reports for a time range (the reporter cannot filter on start time)', () => {
+  // 1,000 runs, one every 3 hours, ids 1..1000 with the newest last: the first run of a range is found by its id.
+  const startOf = (id: number) => new Date(NOW - (1000 - id) * 3 * HOUR).toISOString();
+  type Filter = Array<{ property: string; operator: string; value: unknown }>;
+  let stub: StubApi;
+  let t: ToolClient;
+  const grouped = () => stub.requests.filter((r) => r.path === '/reporter/api/tests/grouped').map((r) => r.json as { groupBy?: string[]; filter?: Filter });
+
+  beforeAll(async () => {
+    stub = await startStubApi((req) => {
+      if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
+      if (req.path === '/reporter/api/projects') return [{ id: 1, name: 'Default' }, { id: 2, name: 'Other' }];
+      if (req.path === '/reporter/api/tests/list') {
+        const f = ((req.json.filter ?? []) as Filter).find((x) => x.property === 'test_id');
+        if (!f) return { count: 1, data: [{ test_id: 1000, start_time: startOf(1000) }] };
+        const id = Math.max(1, Number(f.value));
+        return id > 1000 ? { count: 0, data: [] } : { count: 1, data: [{ test_id: id, start_time: startOf(id) }] };
+      }
+      if (req.path === '/reporter/api/tests/grouped') {
+        // As on the platform: a key no run has comes back as one group with nothing in it.
+        if (((req.json.groupBy ?? []) as string[]).includes('automation_type')) return { count: 1, data: [{ automation_type: null, _count_: 40 }] };
+        return groupedAnswer([{ 'device.os': 'Android', 'test.framework': 'Appium Server', status: 'Failed', n: 30 }, { 'device.os': 'iOS', 'test.framework': 'Appium Server', status: 'Failed', n: 10 }], req.json as GroupedBody);
+      }
+      if (req.path === '/reporter/api/tests/distinct') {
+        return { count: 4, data: [{ 'device.os': 'Android', 'test.framework': 'Appium Server' }, { 'device.os': 'iOS', 'test.framework': 'Selenium' }, { 'device.os': null, 'test.framework': 'Selenium' }] };
+      }
+      return undefined;
+    });
+    t = await connectTools(registerReportingTools);
+  });
+  afterAll(async () => { await t.close(); await stub.close(); });
+
+  it('days: counts from the first run of the range, bounded by its id as a NUMBER, and says which range it counted', async () => {
+    const r = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], days: 5, filter: [{ property: 'test.framework', operator: '=', value: 'Appium Server' }], returnTotalCount: true, outputFormat: 'json' });
+    assert.notEqual(r.res.isError, true, r.text);
+    const out = JSON.parse(r.text);
+    assert.match(out.range, /^runs started from \d{4}-\d\d-\d\dT[\d:]+Z \(the last 5 days, in the server's time zone\)$/);
+    assert.equal(out.totalRecords, 40);
+    const sent = grouped().at(-1)!.filter!;
+    assert.deepEqual(sent.map((f) => [f.property, f.operator]), [['test.framework', 'contains'], ['test_id', '>=']], 'the caller\'s filter is kept (matched whatever its case)');
+    const bound = sent[1].value as number;
+    assert.equal(typeof bound, 'number', 'a text bound is refused by the platform');
+    const cut = new Date(NOW); cut.setHours(0, 0, 0, 0); cut.setDate(cut.getDate() - 4);
+    assert.ok(Date.parse(startOf(bound)) >= cut.getTime() && Date.parse(startOf(bound - 1)) < cut.getTime(), 'the bound is the first run of the range');
+    const probes = stub.requests.filter((q) => q.path === '/reporter/api/tests/list').length;
+    assert.ok(probes <= 14, `a binary search, not a scan: ${probes} lookups for 1,000 ids`);
+    const human = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], days: 1, outputFormat: 'human' });
+    assert.match(human.text, /Range: runs started from .* \(the last 1 day, in the server's time zone\)\./);
+  });
+
+  it('startDate and endDate: a lower and an upper id bound; no upper bound when nothing started after endDate', async () => {
+    const from = new Date(NOW - 10 * 24 * HOUR).toISOString(), to = new Date(NOW - 2 * 24 * HOUR).toISOString();
+    const r = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], startDate: from, endDate: to, outputFormat: 'json' });
+    assert.notEqual(r.res.isError, true, r.text);
+    const sent = grouped().at(-1)!.filter!;
+    assert.deepEqual(sent.map((f) => f.operator), ['>=', '<']);
+    const [lo, hi] = sent.map((f) => f.value as number);
+    assert.ok(Date.parse(startOf(lo)) >= Date.parse(from) && Date.parse(startOf(lo - 1)) < Date.parse(from));
+    assert.ok(Date.parse(startOf(hi)) >= Date.parse(to) && Date.parse(startOf(hi - 1)) < Date.parse(to), 'the first run at or after endDate is left out');
+    assert.match(JSON.parse(r.text).range, /^runs started from .* before .*Z$/);
+    await t.call('get_grouped_test_reports', { groupBy: ['device.os'], startDate: from, endDate: new Date(NOW + 24 * HOUR).toISOString() });
+    assert.deepEqual(grouped().at(-1)!.filter!.map((f) => f.operator), ['>=']);
+  });
+
+  it('a range with no run answers with zero and asks the platform for no counts; the other calls are refused with the reason', async () => {
+    const before = grouped().length;
+    const none = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], startDate: new Date(NOW + 48 * HOUR).toISOString(), outputFormat: 'json' });
+    assert.notEqual(none.res.isError, true, none.text);
+    assert.deepEqual([JSON.parse(none.text).count, JSON.parse(none.text).totalRecords], [0, 0]);
+    assert.equal(grouped().length, before);
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ days: 7, allProjects: true }, /a time range needs one project \(test ids are counted per project\)/],
+      [{ days: 7, startDate: '2026-11-01' }, /give days or startDate, not both/],
+      [{ startDate: 'last week' }, /startDate and endDate take ISO 8601/],
+      [{ startDate: '2026-11-10', endDate: '2026-11-01' }, /endDate must be after startDate/],
+      [{ groupBy: ['device.os'], filter: [{ property: 'start_time', operator: '>=', value: '2026-11-18' }] }, /For a time range use the tool's own parameters instead: startDate \/ endDate .* or days/],
+    ];
+    for (const [args, re] of cases) {
+      const r = await t.call('get_grouped_test_reports', args);
+      assert.equal(r.res.isError, true, JSON.stringify(args));
+      assert.match(r.text, re);
+    }
+    assert.equal(grouped().length, before, 'nothing was asked of the platform for a refused call');
+    // Without a range nothing changes: no lookup, no id bound.
+    const lookups = stub.requests.filter((q) => q.path === '/reporter/api/tests/list').length;
+    await t.call('get_grouped_test_reports', { groupBy: ['device.os'] });
+    assert.equal(grouped().at(-1)!.filter, undefined);
+    assert.equal(stub.requests.filter((q) => q.path === '/reporter/api/tests/list').length, lookups);
+  });
+
+  it('the plain words for a key are read as the platform\'s keys, in the grouping and in the filter, and the answer says so', async () => {
+    const r = await t.call('get_grouped_test_reports', { groupBy: ['Platform'], filter: [{ property: 'framework', operator: '=', value: 'Appium Server' }, { property: 'status', operator: '=', value: 'Failed' }], outputFormat: 'json' });
+    assert.notEqual(r.res.isError, true, r.text);
+    const sent = grouped().at(-1)!;
+    assert.deepEqual(sent.groupBy, ['device.os', 'test.framework', 'status'], 'the filtered keys are grouped as well, to read their stored spelling');
+    assert.deepEqual(sent.filter!.map((f) => f.property), ['test.framework', 'status']);
+    assert.deepEqual((JSON.parse(r.text).data as Array<Record<string, unknown>>).map((x) => [x['device.os'], x._count_]), [['Android', 30], ['iOS', 10]], 'and taken out of the answer again');
+    assert.deepEqual(JSON.parse(r.text).keysReadAs, { Platform: 'device.os', framework: 'test.framework' });
+    const exact = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], filter: [{ property: 'test.framework', operator: '=', value: 'Appium Server' }], outputFormat: 'json' });
+    assert.equal(JSON.parse(exact.text).keysReadAs, undefined, 'nothing to say when the real keys were used');
+    assert.deepEqual(grouped().at(-1)!.groupBy, ['device.os', 'test.framework']);
+  });
+
+  it('grouping by a key no run has a value for says so and lists the keys; the tool texts list them too', async () => {
+    const r = await t.call('get_grouped_test_reports', { groupBy: ['automation_type'], outputFormat: 'json' });
+    assert.notEqual(r.res.isError, true, r.text);
+    assert.match(JSON.parse(r.text).note, /^No run has a value for "automation_type"\. Keys the platform groups by: device\.os \("platform"\), test\.framework \("framework": Appium Server, Selenium, Playwright …\)/);
+    const known = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], outputFormat: 'json' });
+    assert.equal(JSON.parse(known.text).note, undefined);
+    const tools = (await t.client.listTools()).tools;
+    const props = (name: string) => tools.find((x) => x.name === name)!.inputSchema.properties as Record<string, { description?: string }>;
+    assert.match(props('get_grouped_test_reports').groupBy.description!, /Keys: device\.os \("platform"\), test\.framework \("framework"/);
+    assert.match(props('get_grouped_test_reports').filter.description!, /"property": "test\.framework", "operator": "=", "value": "Appium Server"/);
+    assert.match(props('get_distinct_test_key_values').keys.description!, /Omit for the main ones .* Keys: device\.os \("platform"\)/);
+  });
+
+  it('get_distinct_test_key_values: no keys answers with the main ones; plain words are read; a key holding nothing is named with the keys that exist', async () => {
+    const distinct = () => stub.requests.filter((q) => q.path === '/reporter/api/tests/distinct').at(-1)!.json as { keys: string[] };
+    const main = await t.call('get_distinct_test_key_values', { outputFormat: 'json' });
+    assert.notEqual(main.res.isError, true, main.text);
+    assert.deepEqual(distinct().keys, ['device.os', 'test.framework', 'browserName', 'device.pool.actual']);
+    assert.deepEqual(JSON.parse(main.text)['test.framework'], ['Appium Server', 'Selenium']);
+    const guessed = await t.call('get_distinct_test_key_values', { keys: ['framework', 'testFramework', 'test.framework'], outputFormat: 'json' });
+    assert.deepEqual(distinct().keys, ['test.framework', 'testFramework'], 'a plain word and its key are one key');
+    const out = JSON.parse(guessed.text);
+    assert.deepEqual(out['test.framework'], ['Appium Server', 'Selenium']);
+    assert.match(out.note, /^No value is recorded for "testFramework"\. Keys the platform keeps: device\.os \("platform"\)/);
+    const human = await t.call('get_distinct_test_key_values', { keys: ['testFramework'], outputFormat: 'human' });
+    assert.match(human.text, /testFramework:\n {2}\(no values recorded\)\n\nNo value is recorded for "testFramework"/);
+    const fine = await t.call('get_distinct_test_key_values', { keys: ['framework'], outputFormat: 'json' });
+    assert.equal(JSON.parse(fine.text).note, undefined);
+  });
+});
+describe('letter case is ignored in filters and groups unless exactCase (user decision 2026-11-25)', () => {
+  // As a tenant stores them (live 2026-11-25): browsers and platforms in the spelling each client sent.
+  const RUNS = [
+    { browserName: 'chrome', 'test.framework': 'Selenium', 'device.os': null, status: 'Passed', n: 12 },
+    { browserName: 'Chrome', 'test.framework': 'Playwright', 'device.os': null, status: 'Passed', n: 8 },
+    { browserName: 'Chrome', 'test.framework': 'Playwright', 'device.os': null, status: 'Failed', n: 1 },
+    { browserName: 'Chrome Beta', 'test.framework': 'Selenium', 'device.os': null, status: 'Passed', n: 5 },
+    { browserName: 'firefox', 'test.framework': 'Selenium', 'device.os': null, status: 'Failed', n: 3 },
+    { browserName: null, 'test.framework': 'Appium Server', 'device.os': 'ANDROID', status: 'Passed', n: 40 },
+    { browserName: null, 'test.framework': 'Appium Server', 'device.os': 'Android', status: 'Failed', n: 10 },
+    { browserName: null, 'test.framework': 'Appium Server', 'device.os': 'iOS', status: 'Passed', n: 20 },
+  ];
+  let stub: StubApi;
+  let t: ToolClient;
+  const sent = () => stub.requests.filter((r) => r.path === '/reporter/api/tests/grouped').at(-1)!.json as GroupedBody;
+
+  beforeAll(async () => {
+    stub = await startStubApi((req) => {
+      if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
+      if (req.path === '/reporter/api/tests/grouped') return groupedAnswer(RUNS, req.json as GroupedBody);
+      if (req.path === '/reporter/api/tests/distinct') {
+        return { count: 5, data: [{ browserName: 'Chrome', 'device.os': 'ANDROID' }, { browserName: 'chrome', 'device.os': 'Android' }, { browserName: 'Chrome Beta', 'device.os': 'iOS' }, { browserName: 'firefox', 'device.os': null }] };
+      }
+      return undefined;
+    });
+    t = await connectTools(registerReportingTools);
+  });
+  afterAll(async () => { await t.close(); await stub.close(); });
+
+  it('an "=" filter counts every stored spelling of the value, not what merely contains it, and says what it matched', async () => {
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['test.framework'], filter: [{ property: 'browserName', operator: '=', value: 'CHROME' }], returnTotalCount: true });
+    assert.equal(j.totalRecords, 21, '12 as "chrome" and 9 as "Chrome"; the 5 runs on "Chrome Beta" are another browser');
+    assert.deepEqual((j.data as Array<Record<string, unknown>>).map((r) => [r['test.framework'], r._count_]).sort(), [['Playwright', 9], ['Selenium', 12]]);
+    assert.ok((j.data as Array<Record<string, unknown>>).every((r) => !('browserName' in r)), 'the answer has the columns that were asked for');
+    assert.deepEqual(j.filterMatched, { browserName: ['Chrome', 'chrome'] });
+    assert.match(String(j.caseNote), /Letter case was ignored \(exactCase: true counts each stored spelling on its own\)\./);
+    assert.deepEqual([sent().groupBy, sent().filter], [['test.framework', 'browserName'], [{ property: 'browserName', operator: 'contains', value: 'chrome' }]]);
+    const human = await t.call('get_grouped_test_reports', { groupBy: ['test.framework'], filter: [{ property: 'browserName', operator: '=', value: 'CHROME' }], outputFormat: 'human' });
+    assert.match(human.text, /Letter case was ignored \(exactCase: true counts each stored spelling on its own\)\. browserName matched "Chrome", "chrome"\./);
+  });
+
+  it('a value written as stored, in its only spelling, adds nothing to the answer', async () => {
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['status'], filter: [{ property: 'test.framework', operator: '=', value: 'Selenium' }], returnTotalCount: true });
+    assert.equal(j.totalRecords, 20);
+    assert.deepEqual([j.filterMatched, j.spellingsMerged, j.caseNote], [undefined, undefined, undefined]);
+    const lower = await t.callJson('get_grouped_test_reports', { groupBy: ['status'], filter: [{ property: 'test.framework', operator: '=', value: 'selenium' }], returnTotalCount: true });
+    assert.equal(lower.totalRecords, 20);
+    assert.deepEqual(lower.filterMatched, { 'test.framework': ['Selenium'] }, 'the stored spelling is named when it is not the one written');
+  });
+
+  it('with no grouping the answer is one total, also when nothing matched', async () => {
+    const one = await t.callJson('get_grouped_test_reports', { filter: [{ property: 'device.os', operator: '=', value: 'android' }], pivotBy: ['status'], returnTotalCount: true });
+    assert.deepEqual(one.data, [{ _count_: 50, passedCount: 40, failedCount: 10 }]);
+    assert.deepEqual([one.count, one.totalRecords], [1, 50]);
+    const none = await t.callJson('get_grouped_test_reports', { filter: [{ property: 'device.os', operator: '=', value: 'Windows' }], returnTotalCount: true });
+    assert.deepEqual([none.data, none.totalRecords], [[{ _count_: 0 }], 0]);
+  });
+
+  it('group values that differ only in case are one row, in the spelling most runs have, and the answer names them', async () => {
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['browserName'], pivotBy: ['status'] });
+    assert.deepEqual((j.data as Array<Record<string, unknown>>).map((r) => [r.browserName, r._count_, r.passedCount ?? 0, r.failedCount ?? 0]),
+      [['chrome', 21, 20, 1], ['Chrome Beta', 5, 5, 0], ['firefox', 3, 0, 3], [null, 70, 60, 10]]);
+    assert.equal(j.count, 4);
+    assert.deepEqual(j.spellingsMerged, { browserName: [['Chrome', 'chrome']] });
+    const os = await t.callJson('get_grouped_test_reports', { groupBy: ['device.os'] });
+    assert.deepEqual((os.data as Array<Record<string, unknown>>).map((r) => [r['device.os'], r._count_]), [[null, 29], ['Android', 50], ['iOS', 20]], 'the platform is Android / iOS whichever spelling has more runs');
+  });
+
+  it('exactCase: the filter is sent as written and every stored spelling keeps its own row', async () => {
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['test.framework'], filter: [{ property: 'browserName', operator: '=', value: 'Chrome' }], exactCase: true, returnTotalCount: true });
+    assert.equal(j.totalRecords, 9);
+    assert.deepEqual([sent().groupBy, sent().filter], [['test.framework'], [{ property: 'browserName', operator: '=', value: 'Chrome' }]]);
+    assert.deepEqual([j.filterMatched, j.caseNote], [undefined, undefined]);
+    const groups = await t.callJson('get_grouped_test_reports', { groupBy: ['device.os'], exactCase: true });
+    assert.deepEqual((groups.data as Array<Record<string, unknown>>).map((r) => [r['device.os'], r._count_]), [[null, 29], ['ANDROID', 40], ['Android', 10], ['iOS', 20]]);
+    assert.equal(groups.spellingsMerged, undefined);
+  });
+
+  it('a value with no letters, and the id bounds of a time range, are sent as written', async () => {
+    await t.callJson('get_grouped_test_reports', { groupBy: ['status'], filter: [{ property: 'digitalai:build', operator: '=', value: '412' }, { property: 'test_id', operator: '>=', value: 100 }] });
+    assert.deepEqual([sent().groupBy, sent().filter], [['status'], [{ property: 'digitalai:build', operator: '=', value: '412' }, { property: 'test_id', operator: '>=', value: 100 }]]);
+  });
+
+  it('get_distinct_test_key_values lists a value once and keeps the stored spellings', async () => {
+    const j = await t.callJson('get_distinct_test_key_values', { keys: ['browser', 'platform'] });
+    assert.deepEqual(j.browserName, ['Chrome', 'Chrome Beta', 'firefox']);
+    assert.deepEqual(j['device.os'], ['Android', 'iOS']);
+    const raw = j.rawValues as Record<string, unknown[]>;
+    assert.ok(raw.browserName.includes('chrome') && raw.browserName.includes('Chrome'));
+    assert.ok(raw['device.os'].includes('ANDROID') && raw['device.os'].includes('Android'));
+  });
+
+  it('the tool texts say that case is ignored and how to turn that off', async () => {
+    const tool = (await t.client.listTools()).tools.find((x) => x.name === 'get_grouped_test_reports')!;
+    assert.match(tool.description!, /LETTER CASE is ignored by default: .* exactCase: true turns both off\./);
+    assert.match((tool.inputSchema.properties as Record<string, { description?: string }>).exactCase.description!, /Default false: letter case is ignored\./);
+  });
+});
+describe('get_grouped_test_reports returns the largest groups when there are too many (live 2026-11-25: 60,208 rows for 30 days by test name)', () => {
+  // 700 test names, one run id each: name n has n runs, so the busiest are the last ones the platform lists.
+  // Only the three smallest carry the custom build column: the rows returned after a cut have none.
+  const RUNS: Array<Record<string, unknown>> = Array.from({ length: 700 }, (_, k) => ({ name: `Checkout run ${String(k + 1).padStart(4, '0')}`, status: k % 7 === 0 ? 'Failed' : 'Passed',
+    'digitalai:build': k < 3 ? '412' : null, n: k + 1 }));
+  const ALL = (700 * 701) / 2;
+  let answerFrom = RUNS;
+  let stub: StubApi;
+  let t: ToolClient;
+
+  beforeAll(async () => {
+    stub = await startStubApi((req) => {
+      if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
+      if (req.path === '/reporter/api/tests/grouped') return groupedAnswer(answerFrom, req.json as GroupedBody);
+      return undefined;
+    });
+    t = await connectTools(registerReportingTools);
+  });
+  afterEach(() => { answerFrom = RUNS; });
+  afterAll(async () => { await t.close(); await stub.close(); });
+
+  it('500 rows by default, the ones with the most runs; the totals cover every group and the answer says what was left out', async () => {
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['name'], pivotBy: ['status'], returnTotalCount: true });
+    const rows = j.data as Array<{ name: string; _count_: number }>;
+    assert.equal(rows.length, 500);
+    assert.deepEqual([rows[0]._count_, rows[499]._count_], [700, 201], 'largest first');
+    assert.deepEqual([j.count, j.totalRecords, j.groupsReturned], [700, ALL, 500], 'count and totalRecords are those of every group');
+    const shown = rows.reduce((a, r) => a + r._count_, 0);
+    assert.equal(j.groupsCut, `700 groups: the 500 with the most runs are returned (${shown.toLocaleString('en-US')} of ${ALL.toLocaleString('en-US')} runs). ` +
+      'To see the rest, narrow the question (days, a filter) or raise maxGroups (up to 5,000). ' +
+      'Test names often differ only in run ids or dates: create_test_breakdown_report with groupBy ["test"] counts those as one test.');
+    const human = await t.call('get_grouped_test_reports', { groupBy: ['name'], outputFormat: 'human' });
+    assert.match(human.text, /700 groups: the 500 with the most runs are returned/);
+  });
+
+  it('maxGroups sets the number; an answer that fits is returned whole, in the platform\'s order', async () => {
+    const few = await t.callJson('get_grouped_test_reports', { groupBy: ['name'], maxGroups: 3, returnTotalCount: true });
+    assert.deepEqual((few.data as Array<{ _count_: number }>).map((r) => r._count_), [700, 699, 698]);
+    assert.equal(few.totalRecords, ALL);
+    const whole = await t.callJson('get_grouped_test_reports', { groupBy: ['name'], maxGroups: 5000 });
+    assert.equal((whole.data as unknown[]).length, 700);
+    assert.equal((whole.data as Array<{ _count_: number }>)[0]._count_, 1, 'not re-sorted');
+    assert.deepEqual([whole.groupsReturned, whole.groupsCut], [undefined, undefined]);
+    const status = await t.callJson('get_grouped_test_reports', { groupBy: ['status'] });
+    assert.deepEqual([(status.data as unknown[]).length, status.groupsCut], [2, undefined]);
+    const refused = await t.call('get_grouped_test_reports', { groupBy: ['name'], maxGroups: 6000 });
+    assert.equal(refused.res.isError, true);
+  });
+
+  it('a key is judged empty from every group, not from the rows returned (review 2026-11-25)', async () => {
+    // The 5 largest groups have no build; three smaller ones do. Cut to 5 rows the answer said "No run has a value".
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['name', 'digitalai:build'], maxGroups: 5 });
+    const rows = j.data as Array<Record<string, unknown>>;
+    assert.deepEqual([rows.length, rows.every((r) => r['digitalai:build'] == null)], [5, true]);
+    assert.equal(j.note, undefined, 'runs outside the rows returned carry a build');
+    const none = await t.callJson('get_grouped_test_reports', { groupBy: ['name', 'digitalai:nothing'], maxGroups: 5 });
+    assert.match(String(none.note), /^No run has a value for "digitalai:nothing"\./);
+  });
+
+  it('the note about left-out groups offers maxGroups only below its limit, and reads right for one row', async () => {
+    const one = await t.callJson('get_grouped_test_reports', { groupBy: ['status'], maxGroups: 1 });
+    assert.match(String(one.groupsCut), /^2 groups: the one with the most runs is returned \(.* runs\)\. To see the rest, narrow the question \(days, a filter\) or raise maxGroups \(up to 5,000\)\.$/);
+    answerFrom = Array.from({ length: 5001 }, (_, k) => ({ name: `Run ${k}`, status: 'Passed', n: 1 }));
+    const most = await t.callJson('get_grouped_test_reports', { groupBy: ['name'], maxGroups: 5000 });
+    assert.equal((most.data as unknown[]).length, 5000);
+    assert.match(String(most.groupsCut), /^5,001 groups: the 5,000 with the most runs are returned \(5,000 of 5,001 runs\)\. To see the rest, narrow the question \(days, a filter\)\. Test names/);
+    assert.doesNotMatch(String(most.groupsCut), /raise maxGroups/, 'it is already at its limit');
+  });
+
+  it('spellingsMerged names only spellings of the rows returned', async () => {
+    answerFrom = [{ name: 'Alpha', n: 10 }, { name: 'ALPHA', n: 2 }, { name: 'Beta', n: 9 }, { name: 'gamma', n: 1 }, { name: 'Gamma', n: 1 }];
+    const cut = await t.callJson('get_grouped_test_reports', { groupBy: ['name'], maxGroups: 2 });
+    assert.deepEqual(cut.data, [{ name: 'Alpha', _count_: 12 }, { name: 'Beta', _count_: 9 }]);
+    assert.deepEqual([cut.count, cut.spellingsMerged], [3, { name: [['ALPHA', 'Alpha']] }], 'the Gamma group was left out');
+    const whole = await t.callJson('get_grouped_test_reports', { groupBy: ['name'], maxGroups: 3 });
+    assert.deepEqual(whole.spellingsMerged, { name: [['ALPHA', 'Alpha'], ['Gamma', 'gamma']] });
+  });
+
+  it('the text table is built for any number of rows', () => {
+    // Math.max(...rows) over this many rows was "Maximum call stack size exceeded".
+    const rows = Array.from({ length: 200_000 }, (_, k) => ({ name: `Test ${k}`, _count_: 1 }));
+    const text = formatGroupedTestReports({ count: rows.length, data: rows });
+    assert.ok(text.split('\n').length > 200_000);
+  });
+
+  it('the text table has every column any row has, not only those of the first row', () => {
+    // A pivot row carries a status column only when the group has runs of that status.
+    const text = formatGroupedTestReports({ data: [{ name: 'A', _count_: 3, passedCount: 3 }, { name: 'B', _count_: 2, passedCount: 1, failedCount: 1 }] });
+    const [header, , a, b] = text.split('\n');
+    assert.deepEqual(header.split('│').map((h) => h.trim()), ['name', '_count_', 'passedCount', 'failedCount']);
+    assert.deepEqual([a.split('│').map((c) => c.trim()), b.split('│').map((c) => c.trim())], [['A', '3', '3', ''], ['B', '2', '1', '1']]);
+  });
+});
+describe('keysAsWritten: a custom column named like one of the plain words (review 2026-11-25)', () => {
+  // A tenant whose tests add their own "category" and "platform" columns, next to the built-in ones.
+  const RUNS = [
+    { category: 'smoke', errorCategory: 'device', platform: 'tablet', 'device.os': 'Android', status: 'Passed', n: 4 },
+    { category: 'full', errorCategory: null, platform: 'phone', 'device.os': 'iOS', status: 'Failed', n: 6 },
+  ];
+  let stub: StubApi;
+  let t: ToolClient;
+  const sent = () => stub.requests.filter((r) => r.path === '/reporter/api/tests/grouped').at(-1)!.json as GroupedBody;
+  const distinctKeys = () => (stub.requests.filter((r) => r.path === '/reporter/api/tests/distinct').at(-1)!.json as { keys: string[] }).keys;
+
+  beforeAll(async () => {
+    stub = await startStubApi((req) => {
+      if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
+      if (req.path === '/reporter/api/tests/grouped') return groupedAnswer(RUNS, req.json as GroupedBody);
+      if (req.path === '/reporter/api/tests/distinct') return { count: RUNS.length, data: RUNS.map((r) => Object.fromEntries((req.json.keys as string[]).map((k) => [k, (r as Record<string, unknown>)[k] ?? null]))) };
+      return undefined;
+    });
+    t = await connectTools(registerReportingTools);
+  });
+  afterAll(async () => { await t.close(); await stub.close(); });
+
+  it('by default the plain word is the built-in key, and the answer names the way to the custom column', async () => {
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['category'] });
+    assert.deepEqual(sent().groupBy, ['errorCategory']);
+    assert.deepEqual(j.keysReadAs, { category: 'errorCategory' });
+    assert.equal(j.keysReadAsNote, 'Plain words were read as the built-in keys. For a custom column with one of these names, add keysAsWritten: true.');
+    const d = await t.callJson('get_distinct_test_key_values', { keys: ['category', 'platform'] });
+    assert.deepEqual(distinctKeys(), ['errorCategory', 'device.os']);
+    assert.deepEqual(d['device.os'], ['Android', 'iOS']);
+  });
+
+  it('keysAsWritten sends every key as written: in the grouping, in a filter and in the list of values', async () => {
+    const j = await t.callJson('get_grouped_test_reports', { groupBy: ['category'], filter: [{ property: 'platform', operator: '=', value: 'TABLET' }], keysAsWritten: true, returnTotalCount: true });
+    assert.deepEqual([sent().groupBy, sent().filter], [['category', 'platform'], [{ property: 'platform', operator: 'contains', value: 'tablet' }]]);
+    assert.deepEqual(j.data, [{ category: 'smoke', _count_: 4 }]);
+    assert.deepEqual([j.totalRecords, j.keysReadAs, j.keysReadAsNote], [4, undefined, undefined]);
+    assert.deepEqual(j.filterMatched, { platform: ['tablet'] }, 'the case is still ignored');
+    const d = await t.callJson('get_distinct_test_key_values', { keys: ['category', 'platform'], keysAsWritten: true });
+    assert.deepEqual(distinctKeys(), ['category', 'platform']);
+    assert.deepEqual([d.category, d.platform], [['full', 'smoke'], ['phone', 'tablet']]);
   });
 });

@@ -108,3 +108,47 @@ export function parseCsvSections(text: string): ParsedCsv[] {
   flush();
   return sections;
 }
+
+/** One CSV line into its fields: quoted fields may hold commas and doubled quotes. */
+export function splitCsvLine(line: string): string[] {
+  if (line.indexOf('"') === -1) return line.split(',');
+  const fields: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch !== '"') field += ch;
+      else if (line[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ',') { fields.push(field); field = ''; } else field += ch;
+  }
+  fields.push(field);
+  return fields;
+}
+
+/**
+ * Walk a large CSV row by row without building it in memory: `onRow` gets one row's fields at a time and keeps what it
+ * needs. A blank line arrives as `['']`. Quoted fields may hold commas, doubled quotes and line breaks.
+ * For the session-by-session License Usage report: 30 days was 48 MB and 172,916 rows of 25 columns (live 2026-11-25);
+ * parseCsv would build over four million strings from it.
+ */
+export function scanCsvRows(data: Buffer, onRow: (fields: string[]) => void): void {
+  const quotes = (s: string) => { let n = 0; for (let i = s.indexOf('"'); i !== -1; i = s.indexOf('"', i + 1)) n++; return n; };
+  const len = data.length;
+  let pos = 0;
+  while (pos < len) {
+    let end = data.indexOf(10, pos);
+    if (end === -1) end = len;
+    let line = data.toString('utf8', pos, end);
+    // An odd number of quotes: the line break was inside a quoted field, so the row goes on.
+    while (end < len && line.indexOf('"') !== -1 && quotes(line) % 2 === 1) {
+      const next = data.indexOf(10, end + 1);
+      const stop = next === -1 ? len : next;
+      line += `\n${data.toString('utf8', end + 1, stop)}`;
+      end = stop;
+    }
+    pos = end + 1;
+    onRow(splitCsvLine(line.endsWith('\r') ? line.slice(0, -1) : line));
+  }
+}

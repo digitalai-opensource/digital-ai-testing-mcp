@@ -1,7 +1,8 @@
 import { describe, it, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { resolveAgentSource, loadAgentBytes, sha256Hex } from '../../src/api/test-orchestrator.js';
-import { getGroupedTests, getTestByUuid, getRootCauseAnalysis, getScopedTest } from '../../src/api/reporting.js';
+import { getGroupedTests, getTestByUuid, getRootCauseAnalysis, getScopedTest, listTests as listReporterTests } from '../../src/api/reporting.js';
+import { firstTestIdSince, breakdownCounts } from '../../src/api/report-recipes.js';
 import { getReporterProjects, resolveReporterProjectName } from '../../src/api/reporter-projects.js';
 import { getTestRunStatus } from '../../src/api/test-runs.js';
 import { getAllTestViews, getTestViewSummary } from '../../src/api/test-views.js';
@@ -100,6 +101,58 @@ describe.skipIf(!HAS_CREDS)('Live API behavior probes', () => {
       .reduce((n, k) => n + Number(row![k]), 0);
     assert.equal(known, Number(row!['_count_']), 'a status column exists that test-status.ts does not know');
   });
+
+  // 2026-11-24: the reporter cannot filter on start_time, so the count recipes (test-trend, test-breakdown,
+  // test-reliability, release-readiness, device-coverage) and get_grouped_test_reports days / startDate / endDate bound a
+  // time window by test id. They rely on three things: a list sorted by test_id ascending with a NUMERIC "test_id >="
+  // filter (firstTestIdSince), grouped counts under that numeric bound, and the "date" group key (a UTC day,
+  // "2026-11-24"). If one stops holding, every report that says its counts are exact is wrong: revisit firstTestIdSince.
+  it('a time window is bounded by test id: its first id starts inside it, and counts by date and by platform agree', async (ctx) => {
+    const since = Date.now() - 7 * 86_400_000;
+    const firstId = await firstTestIdSince(since);
+    if (firstId == null) return ctx.skip(); // no run in the last 7 days on this tenant
+    const first = await listReporterTests({ limit: 1, page: 1, returnTotalCount: false, sort: [{ property: 'test_id', descending: false }],
+      filter: [{ property: 'test_id', operator: '>=', value: firstId as unknown as string }] });
+    assert.notEqual(first.sortApplied, false, 'the reporter refused the test_id sort');
+    const record = first.data[0] as unknown as { test_id: number; start_time: string } | undefined;
+    assert.ok(record, 'no record at or after the first id of the window');
+    assert.ok(Date.parse(record!.start_time) >= since, `the first record of the window (${record!.test_id}) started before it: ids no longer grow with time`);
+    const [byDate, byOs] = await Promise.all([breakdownCounts(['date'], firstId), breakdownCounts(['device.os'], firstId)]);
+    assert.ok(byDate.length > 0, 'grouping by date returned no row');
+    for (const r of byDate) assert.match(String(r.values[0]), /^(\d{4}-\d{2}-\d{2}|null)$/, 'the date key is no longer a day');
+    const total = (rows: typeof byDate) => rows.reduce((n, r) => n + r.counts.total, 0);
+    // Runs keep arriving between the two calls: allow a small difference.
+    assert.ok(Math.abs(total(byDate) - total(byOs)) <= Math.max(10, total(byDate) * 0.01), `counts by date (${total(byDate)}) and by platform (${total(byOs)}) differ`);
+  }, 60_000);
+
+  // 2026-11-25: letter case. get_grouped_test_reports and the count reports (where) match an "=" filter whatever its
+  // case: the filter is sent as "contains" with the key grouped as well, and only the groups whose value equals the
+  // wanted one are kept (src/utils/report-case.ts). That rests on the platform's "contains" ignoring case while its "="
+  // matches one stored spelling. If "contains" stops ignoring case, a value written in another case counts nothing and
+  // says nothing: revisit loosePlan. If "=" starts ignoring case, the widening is no longer needed.
+  it('a filter value in another letter case counts every stored spelling: "contains" ignores case, "=" does not', async (ctx) => {
+    const firstId = await firstTestIdSince(Date.now() - 7 * 86_400_000);
+    if (firstId == null) return ctx.skip(); // no run in the last 7 days on this tenant
+    // An upper id bound as well, so runs that arrive between the calls do not change the counts.
+    const newest = await listReporterTests({ limit: 1, page: 1, returnTotalCount: false, sort: [{ property: 'test_id', descending: true }] });
+    const lastId = (newest.data[0] as unknown as { test_id: number } | undefined)?.test_id;
+    if (newest.sortApplied === false || lastId == null || lastId <= firstId) return ctx.skip();
+    const total = (rows: Array<{ counts: { total: number } }>) => rows.reduce((n, r) => n + r.counts.total, 0);
+    const res = await getGroupedTests({ groupBy: ['device.os'], filter: [
+      { property: 'test_id', operator: '>=', value: firstId }, { property: 'test_id', operator: '<', value: lastId }] }) as { data?: Array<Record<string, unknown>> };
+    const stored = (res.data ?? []).map((r) => r['device.os']).filter((v): v is string => typeof v === 'string' && v.toLowerCase() !== v.toUpperCase());
+    if (!stored.length) return ctx.skip(); // only web runs in the window: no platform value to match
+    const spellings = stored.filter((v) => v.toLowerCase() === stored[0].toLowerCase());
+    // A spelling no run has: every letter in the other case.
+    const written = [...stored[0]].map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase())).join('');
+    const exact = (value: string) => breakdownCounts(['device.os'], firstId, undefined, lastId, { 'device.os': value }, true).then(total);
+    const perSpelling = await Promise.all(spellings.map(exact));
+    const expected = perSpelling.reduce((a, b) => a + b, 0);
+    assert.ok(expected > 0, `"=" with a stored spelling (${spellings.join(', ')}) counted nothing`);
+    const loose = total(await breakdownCounts(['device.os'], firstId, undefined, lastId, { 'device.os': written }));
+    assert.equal(loose, expected, `"${written}" matched whatever its case counted ${loose}; the stored spellings ${spellings.join(', ')} hold ${expected}: "contains" no longer ignores case, or no longer combines with the id bounds`);
+    if (!spellings.includes(written)) assert.equal(await exact(written), 0, `"=" matched "${written}", a spelling no run has: the platform's "=" now ignores case`);
+  }, 60_000);
 
   // FINDING 8 (2026-10-09): the test-view summary path is /{id}/summary. `{id}:summary` is parsed as the id → 400.
   it('test view summary is served at /testView/{id}/summary', async () => {

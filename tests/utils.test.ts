@@ -4,6 +4,10 @@ import assert from 'node:assert/strict';
 import { applyMaxResults, appendTruncationNotice, withPaging, DEFAULT_MAX_RESULTS, ABSOLUTE_MAX_RESULTS } from '../src/utils/pagination.js';
 import { checkDestructiveGuard } from '../src/utils/destructive-guard.js';
 import { validateOutputPath } from '../src/utils/path-guard.js';
+import { writeDownloadFile } from '../src/utils/write-download.js';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { formatDeviceTimestamp } from '../src/utils/timestamp.js';
 import { getStatusEmoji, formatProvisioningProfileList, formatTestReport } from '../src/utils/response-formatter.js';
 import type { ProvisioningProfile, TestReport } from '../src/types/digital-ai.js';
@@ -224,6 +228,19 @@ describe('validateOutputPath', () => {
 });
 
 // ─── formatDeviceTimestamp ───────────────────────────────────────────────────
+
+describe('writeDownloadFile', () => {
+  it('creates the folder it is asked to write into (a new folder used to give a raw ENOENT)', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dl-'));
+    try {
+      const target = join(base, 'new', 'deeper', 'file.log');
+      await writeDownloadFile(target, Buffer.from('hello'));
+      assert.equal(readFileSync(target, 'utf8'), 'hello');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('formatDeviceTimestamp', () => {
   it('formats a UTC date correctly', () => {

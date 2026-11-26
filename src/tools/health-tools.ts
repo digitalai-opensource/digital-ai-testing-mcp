@@ -401,7 +401,15 @@ export function registerHealthTools(server: McpServer): void {
         // Device utilization
         const inUse     = devices.filter(d => d.displayStatus.toLowerCase() === 'in use' || d.displayStatus.toLowerCase() === 'reserved').length;
         const available = devices.filter(d => d.displayStatus.toLowerCase() === 'available').length;
-        const offline   = devices.filter(d => d.displayStatus.toLowerCase() === 'offline' || d.displayStatus.toLowerCase() === 'error').length;
+        // Offline only, as in get_device_health_summary: this bucket used to hold Error devices too (31 against 26 in the
+        // same minute) and left an Unauthorized device in no bucket, so the three did not add up to the total (UAT 2026-11-24).
+        const offline   = devices.filter(d => d.displayStatus.toLowerCase() === 'offline').length;
+        const byOtherStatus: Record<string, number> = {};
+        for (const d of devices) {
+          const st = d.displayStatus.toLowerCase();
+          if (st !== 'in use' && st !== 'reserved' && st !== 'available' && st !== 'offline') byOtherStatus[d.displayStatus] = (byOtherStatus[d.displayStatus] ?? 0) + 1;
+        }
+        const other = Object.values(byOtherStatus).reduce((n, v) => n + v, 0);
         const totalDevices = devices.length;
 
         // Browser sessions
@@ -415,6 +423,8 @@ export function registerHealthTools(server: McpServer): void {
             inUse,
             available,
             offline,
+            other,
+            ...(other ? { otherByStatus: byOtherStatus } : {}),
             total: totalDevices,
             dedicatedLimit: info.dedicatedDevices,
             sharedLimit: info.sharedDevices,
@@ -440,7 +450,9 @@ export function registerHealthTools(server: McpServer): void {
           `  Devices`,
           `    In Use / Reserved: ${inUse}`,
           `    Available:         ${available}`,
-          `    Offline / Error:   ${offline}`,
+          // The same four buckets as the structured result, so the lines add up to the total.
+          `    Offline:           ${offline}`,
+          ...(other ? [`    Other:             ${other} (${Object.entries(byOtherStatus).map(([status, count]) => `${status} ${count}`).join(', ')})`] : []),
           `    Total in farm:     ${totalDevices}`,
           `    Farm utilization:  ${pct(inUse, totalDevices)} (${inUse} of ${totalDevices} in active use)`,
           `    Dedicated limit:   ${info.dedicatedDevices}`,
