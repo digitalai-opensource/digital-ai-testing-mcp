@@ -13,13 +13,14 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  buildTestSummary, buildTestTrend, buildTestBreakdown, buildTestReliability, buildReleaseReadiness, buildFailureAnalysis,
+  buildTestSummary, buildTestTrend, trendPeriods, buildTestBreakdown, buildTestReliability, buildReleaseReadiness, buildFailureAnalysis,
   buildTestInventory, buildDeviceHealth, buildDeviceCoverage, buildDeviceUtilization, buildLicenseUsage, buildUsageSummary,
   buildUsageOverview, dayStart, addDays, isoDate,
   type TestRun, type GroupCounts, type BreakdownRow, type InventoryRow, type PoolDevice, type DeviceUsageRow, type UserUsageRow,
   type ReservationRow, type LicenseSession, type RecipeResult,
 } from '../src/utils/report-recipes.js';
-import { buildPerformanceOverview } from '../src/utils/report-performance.js';
+import { buildPerformanceOverview, buildPerformanceComparison } from '../src/utils/report-performance.js';
+import { toSelector } from '../src/utils/performance-comparison.js';
 import { renderReport, type ReportSpec } from '../src/utils/report-render.js';
 import { emptyStatusCounts, type StatusCounts } from '../src/utils/test-status.js';
 import type { Transaction } from '../src/types/digital-ai.js';
@@ -188,9 +189,13 @@ const reports: Record<string, RecipeResult | { spec: ReportSpec }> = {};
   reports['test-summary'] = buildTestSummary({ runs: cur, previous: prev, failures: cur.filter(isFail), platforms: grouped(cur, (r) => r.deviceOs),
     devicesUsed: new Set(cur.map((r) => r.serial).filter(Boolean)).size, from, to: NOW, days: 7, projectName: 'Mobile Banking', passRateGoal: 90 });
 }
-{ // Test trend: 90 days, counted per UTC day.
+{ // Test trend: 90 days, counted per local week (the script runs in UTC, see the header).
   const from = rangeStart(90), runs = since(from);
-  reports['test-trend'] = buildTestTrend({ daysRows: breakdown(runs, (r) => isoDate(Date.parse(r.start_time), true)), platforms: breakdown(runs, (r) => r.deviceOs),
+  const starts = trendPeriods(from, NOW, 90);
+  const periodOf = (t: number) => { let k = 0; while (k + 1 < starts.length && starts[k + 1] <= t) k++; return String(k); };
+  const per = new Map(breakdown(runs, (r) => periodOf(Date.parse(r.start_time))).map((row) => [Number(row.values[0]), row.counts]));
+  reports['test-trend'] = buildTestTrend({ periods: starts.map((t, k) => ({ start: t, counts: per.get(k) ?? emptyStatusCounts() })),
+    platforms: breakdown(runs, (r) => r.deviceOs),
     classes: breakdown(runs, (r) => r.errorCategory), from, to: NOW, days: 90, projectName: 'Mobile Banking', passRateGoal: 90 });
 }
 { // Test breakdown: 30 days by test and platform.
@@ -327,6 +332,27 @@ reports['device-utilization'] = buildDeviceUtilization({ usage: deviceUsage(30),
   const from = rangeStart(30);
   reports['performance-overview'] = buildPerformanceOverview({ transactions: tx, total: tx.length + 64, newest: Math.max(...tx.map((x) => Date.parse(x.startTime))), from, to: NOW,
     days: 30, projectName: 'Mobile Banking' });
+
+  // Performance comparison: "Transfer money", 4.2.0 against 4.3.0, the way the comparison should be run: one device, one
+  // network profile, 8 runs a side. One 4.3.0 run is far off (a cold start) and is left out.
+  const pixel = perfDevices.find((d) => d.model === 'Pixel 8') ?? perfDevices[0];
+  const series: Transaction[] = [];
+  for (const [appVersion, si, ms] of [['4.2.0', 2600, 5200], ['4.3.0', 3450, 6100]] as const) {
+    for (let k = 0; k < 8; k++) {
+      const t = NOW - (appVersion === '4.2.0' ? 9 : 2) * DAY + k * 7 * 60_000;
+      const off = appVersion === '4.3.0' && k === 5 ? 2.2 : 1;
+      series.push({
+        id: id++, name: 'Transfer money', appName: 'com.example.mobilebank', appVersion, startTime: new Date(t).toISOString(), date: isoDate(t, true), deviceUid: pixel.serial,
+        deviceName: pixel.name, deviceModel: pixel.model, deviceOs: pixel.os, deviceManufacturer: pixel.manufacturer ?? '', deviceVersion: pixel.osVersion ?? '', deviceScreen: '1080 x 2400',
+        deviceType: 'PHONE', networkProfile: 'Monitor', cpuAvg: Math.round(between(18, 24) * (appVersion === '4.3.0' ? 1.3 : 1) * 10) / 10, cpuMax: Math.round(between(50, 80)), cpuCoreCount: 8,
+        memAvg: Math.round(between(300, 330)), memMax: Math.round(between(420, 480)), memTotalInBytes: null, batteryAvg: null, batteryMax: null, totalUploadedBytes: int(20_000, 60_000),
+        totalDownloadedBytes: int(900_000, 1_100_000), duration: Math.round(ms * off * between(0.95, 1.05)), speedIndex: Math.round(si * off * between(0.95, 1.05)), videoStart: null,
+        videoEnd: null, userName: USERS[0], testId: null, attachmentId: null, attachmentPath: null, projectId: 1, projectName: 'Mobile Banking', attachmentList: null,
+      } as Transaction);
+    }
+  }
+  reports['performance-comparison'] = buildPerformanceComparison({ pool: series,
+    sideA: toSelector({ label: '4.2.0', transactionName: 'Transfer money', appVersion: '4.2.0' }, 'A'), sideB: toSelector({ label: '4.3.0', transactionName: 'Transfer money', appVersion: '4.3.0' }, 'B') });
 }
 { // A report of any data: what render_report draws from an agent's own outline (here: the app repository).
   const spec: ReportSpec = {

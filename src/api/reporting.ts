@@ -606,29 +606,44 @@ export async function getGroupedTests(
  * by user and status in 12.3 s; the two largest took 12.3 s and 7.3 s, every other one under 0.3 s.
  * A Project User key cannot list reporter projects (the list comes back empty): that is an error here, not "no data".
  */
-export async function getGroupedTestsAllProjects(
-  request: TestGroupRequest,
-  opts: { signal?: AbortSignal; onProgress?: (done: number, total: number) => void } = {}
-): Promise<{ projects: string[]; rows: Array<Record<string, unknown>>; failed: Array<{ project: string; error: string }> }> {
+export async function reporterProjectNames(): Promise<string[]> {
   const projects = (await getReporterProjects()).map((p) => String(p.name)).filter(Boolean);
   if (!projects.length) {
     throw new Error('This access key cannot list the reporter\'s projects (a Project User key gets an empty list), so it cannot ask for all of them. ' +
       'It is scoped to its own project: run the query without allProjects.');
   }
+  return projects;
+}
+
+/**
+ * `only` limits the query to these projects (`projects` in the answer is still every project); `filterFor` adds filters
+ * for one project, such as the test_id bounds of a time range (ids are counted per project).
+ */
+export async function getGroupedTestsAllProjects(
+  request: TestGroupRequest,
+  opts: {
+    signal?: AbortSignal; onProgress?: (done: number, total: number) => void;
+    only?: string[]; filterFor?: (project: string) => TestGroupRequest['filter'];
+  } = {}
+): Promise<{ projects: string[]; rows: Array<Record<string, unknown>>; failed: Array<{ project: string; error: string }> }> {
+  const projects = await reporterProjectNames();
   const rows: Array<Record<string, unknown>> = [];
   const failed: Array<{ project: string; error: string }> = [];
-  const queue = [...projects];
+  const queue = opts.only ? projects.filter((p) => opts.only!.includes(p)) : [...projects];
+  const total = queue.length;
   let done = 0;
   await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
     for (let name = queue.shift(); name !== undefined; name = queue.shift()) {
       if (opts.signal?.aborted) return;
       try {
-        const res = (await getGroupedTests(request, undefined, name)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+        const extra = opts.filterFor?.(name) ?? [];
+        const sent = extra.length ? { ...request, filter: [...(request.filter ?? []), ...extra] } : request;
+        const res = (await getGroupedTests(sent, undefined, name)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
         for (const r of Array.isArray(res) ? res : res.data ?? []) rows.push({ project: name, ...r });
       } catch (e) {
         failed.push({ project: name, error: (e as Error).message.slice(0, 200) });
       }
-      opts.onProgress?.(++done, projects.length);
+      opts.onProgress?.(++done, total);
     }
   }));
   return { projects, rows, failed };

@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **229 tools**, **2 resources** and **7 prompts** across 28 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **230 tools**, **2 resources** and **7 prompts** across 28 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -636,11 +636,11 @@ Every tool definition the server lists is read by the AI before it does anything
 | *(unset: everything in full)* | about 390,000 characters (roughly 100K tokens) | 100% |
 | `reporting` or `inspection` | about 180,000 characters (roughly 45K tokens) | 46% |
 | `authoring` | about 170,000 characters | 44% |
-| `admin`, `devices`, `apps` or `performance` | 150,000 to 165,000 characters | 39–42% |
+| `admin`, `devices`, `apps` or `performance` | 155,000 to 166,000 characters | 40–42% |
 | `inspection,authoring` | about 220,000 characters (roughly 55K tokens) | 56% |
-| `core` | about 128,000 characters (roughly 32K tokens) | 33% |
+| `core` | about 130,000 characters (roughly 32K tokens) | 33% |
 
-Measured on 2.5.1 with all 229 tools. Tokens are estimated at about four characters each; the exact count depends on the AI model. The server's instructions add about 7,500 characters whatever the setting.
+Measured with all 230 tools. Tokens are estimated at about four characters each; the exact count depends on the AI model. The server's instructions add about 7,500 characters whatever the setting.
 
 Nothing becomes unavailable. Tools outside the chosen toolsets are still listed, with a one-line description. When the AI calls one, the server loads that whole toolset and replies with the tool's full description and parameter guidance, then the AI calls it again — so it always sees the detailed usage guidance before the tool runs. That first call executes nothing (it is marked read-only for clients that honour tool annotations). The report tools named after one report are the exception: their first call builds the report when its arguments are valid, so a report is one call under any setting. The AI can also load toolsets up front with `enable_toolset`, whose reply lists a typed signature for every tool it loaded — so even a client that never refreshes its tool list has the exact parameter names and types. Leave `MCP_TOOLSETS` unset (the default) to load everything in full.
 
@@ -649,7 +649,7 @@ Nothing becomes unavailable. Tools outside the chosen toolsets are still listed,
 | `devices` | Devices, device groups, reservations, health, agents, regions, the device health and device coverage reports |
 | `apps` | Application repository, file repository, provisioning profiles |
 | `reporting` | Test reports, analytics, root-cause analysis, test views, coverage, the test report tools (summary, trend, breakdown, reliability, release readiness, failure analysis, inventory) |
-| `performance` | Performance transactions and comparisons, NV servers, the performance overview report |
+| `performance` | Performance transactions and comparisons, NV servers, the performance overview and comparison reports |
 | `inspection` | Live device and browser inspection, Android Auto / CarPlay, remote debug |
 | `authoring` | Test boilerplate, Espresso / XCUITest / Maestro / Playwright test runs |
 | `browsers` | Browser listing and Selenium sessions |
@@ -717,7 +717,7 @@ The server follows the work as it happens: find a device, **explore** an app or 
 
 ### All capability areas
 
-229 tools across 28 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+230 tools across 28 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -748,7 +748,7 @@ The server follows the work as it happens: find a device, **explore** an app or 
 | [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 9 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
 | [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation |
 | [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with User Tag, Device Tag and Device Group columns (tag/group lists are split when grouping), 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
-| [Reports](docs/reports.md) | 15 | Finished, branded HTML reports in one call: 13 ready-made reports (test summary, trend, breakdown, reliability, release readiness, failure analysis, inventory, device health, coverage and utilization, license usage, usage summary, performance overview) and a report of any data |
+| [Reports](docs/reports.md) | 16 | Finished, branded HTML reports in one call: 14 ready-made reports (test summary, trend, breakdown, reliability, release readiness, failure analysis, inventory, device health, coverage and utilization, license usage, usage summary, performance overview and comparison) and a report of any data |
 | [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 7 guided prompts |
 
 [↑ Back to top](#table-of-contents)
@@ -972,6 +972,7 @@ Ask for a report and the server builds it: it fetches the data, draws the charts
 | [*"Are we near our license limit?"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/license-usage.html) *(Cloud Admin)* | The most sessions open at once per license type against the licensed number, with the day and hour of each peak |
 | [*"Create a usage summary for project Payments"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-summary.html) / [*"...for all projects"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-overview.html) *(Cloud Admin)* | Reserved hours, users and devices for one project, or an overview of every project |
 | [*"Create a performance overview report"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-overview.html) | Median Speed Index, duration, CPU and memory per transaction, by network profile and app version |
+| [*"Compare Transfer money performance in 4.2.0 and 4.3.0"*](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-comparison.html) | Two sets of runs side by side: Speed Index and the other metrics as three numbers each, the change, a verdict, and whether the comparison is like for like |
 
 Add a project, a number of days or a pass-rate goal to any of them. Several can be limited to one build or platform (*"...for build 412"*).
 
@@ -1046,7 +1047,7 @@ Tests missing from the results? See [Troubleshooting](#common-symptoms): a proje
 
 ### Performance comparison
 
-*As a report:* the comparison tools return numbers and a verdict, not a report. Ask for the result *"as a report"* and the AI lays it out with `render_report` in the same branded design; for a summary of every transaction, ask for the [performance overview report](#ready-made-reports).
+*As a report:* ask for a [performance comparison report](docs/reports.md#performance-comparison) (*"compare Transfer money in 4.2.0 and 4.3.0"*): one call lays out both sides, the change, a verdict and the like-for-like check. The tools below return the same numbers for an agent to work with; for a summary of every transaction, ask for the [performance overview report](#ready-made-reports).
 
 Compare performance (Speed Index, CPU, memory, battery, duration) between two sets of conditions — app v1 vs v2, device A vs device B, OS version X vs Y, region to region, two network profiles, or two automation scripts. Works with all access levels — Cloud Admin sees all projects; project-level keys (Project Admin and Project User) see only their own project's transactions.
 
@@ -1274,7 +1275,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 229) and active profile
+1. get_server_info           — confirm tool count (expect 230) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -1284,7 +1285,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 229,
+  "registeredToolCount": 230,
   "workflows": {
     "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] },
     "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] }

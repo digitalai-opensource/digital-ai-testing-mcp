@@ -62,9 +62,47 @@ export function resolveSide(allTxns: Transaction[], sel: SideSelector): Transact
     if (!sub(t.projectName, f.projectName)) return false;
     if (f.testId !== undefined && t.testId !== f.testId) return false;
     if (f.startDate && new Date(t.startTime).getTime() < new Date(f.startDate).getTime()) return false;
-    if (f.endDate && new Date(t.startTime).getTime() > new Date(f.endDate + 'T23:59:59Z').getTime()) return false;
+    // A bare day ends at its last second; a full timestamp is taken as written (appending to it gave an invalid date,
+    // and every comparison with NaN is false, so the end date filtered nothing).
+    if (f.endDate && new Date(t.startTime).getTime() > new Date(/T/.test(f.endDate) ? f.endDate : f.endDate + 'T23:59:59Z').getTime()) return false;
     return true;
   });
+}
+
+/** A side as the report tools take it: a label, explicit ids, or any of the filter fields, in one object. */
+export type PerformanceSideSpec = { label?: string; transactionIds?: number[] } & TransactionFilter;
+
+export const FILTER_KEYS: Array<keyof TransactionFilter> = ['appName', 'appVersion', 'transactionName', 'deviceOs', 'deviceName', 'deviceModel',
+  'deviceVersion', 'networkProfile', 'projectName', 'testId', 'startDate', 'endDate'];
+
+/** The comparison dimension a filter field selects on (dates and the app name have none). */
+const FILTER_DIMENSION: Partial<Record<keyof TransactionFilter, ComparisonDimension>> = {
+  appVersion: 'appVersion', transactionName: 'name', deviceOs: 'deviceOs', deviceName: 'deviceName', deviceModel: 'deviceModel',
+  deviceVersion: 'deviceVersion', networkProfile: 'networkProfile', projectName: 'projectName', testId: 'testId',
+};
+
+/** A report-tool side as a selector. A platform is written the way transactions store it (iOS, Android). */
+export function toSelector(spec: PerformanceSideSpec, fallbackLabel: string): SideSelector {
+  const filter: TransactionFilter = {};
+  for (const k of FILTER_KEYS) if (spec[k] !== undefined) (filter as Record<string, unknown>)[k] = spec[k];
+  if (typeof filter.deviceOs === 'string') filter.deviceOs = /^ios$/i.test(filter.deviceOs.trim()) ? 'iOS' : /^android$/i.test(filter.deviceOs.trim()) ? 'Android' : filter.deviceOs;
+  const ids = spec.transactionIds?.length ? spec.transactionIds : undefined;
+  return { label: spec.label?.trim() || fallbackLabel, transactionIds: ids, filter: Object.keys(filter).length ? filter : undefined };
+}
+
+/** True when the side selects something narrower than every transaction. */
+export const selectsSomething = (s: SideSelector) => !!(s.transactionIds?.length || (s.filter && Object.keys(s.filter).length));
+
+/** The dimensions whose filter values differ between the two sides: what the caller set out to compare. */
+export function axisFromFilters(a: SideSelector, b: SideSelector): ComparisonDimension[] {
+  if (a.transactionIds?.length || b.transactionIds?.length) return [];
+  const out: ComparisonDimension[] = [];
+  for (const [key, dim] of Object.entries(FILTER_DIMENSION) as Array<[keyof TransactionFilter, ComparisonDimension]>) {
+    const va = a.filter?.[key], vb = b.filter?.[key];
+    if (va === undefined && vb === undefined) continue;
+    if (String(va ?? '').toLowerCase() !== String(vb ?? '').toLowerCase()) out.push(dim);
+  }
+  return out;
 }
 
 // ─── Metric extraction ───────────────────────────────────────────────────────
@@ -88,8 +126,13 @@ const METRIC_UNITS: Record<PerfMetric, string> = {
   totalUploadedBytes: 'bytes',
 };
 
-function metricValue(t: Transaction, metric: PerfMetric): number | null {
+export function metricValue(t: Transaction, metric: PerfMetric): number | null {
   const v = t[metric];
+  // A Speed Index of 0 or less was not captured (no video; the API maps the platform's -1 to null, 0 arrives as is).
+  // Counted as a value, one such run pulled a side's mean and median down; the overview report already left them out.
+  if (metric === 'speedIndex') return typeof v === 'number' && v > 0 ? v : null;
+  // CPU and memory both 0 = no telemetry from the device (the confound check says so); their zeros are not measurements.
+  if ((metric === 'cpuAvg' || metric === 'memAvg') && !hasTelemetry(t)) return null;
   return typeof v === 'number' ? v : null;
 }
 

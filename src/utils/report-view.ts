@@ -28,7 +28,7 @@ export const REPORT_META_KEY = 'digital-ai-testing/report';
 export const REPORT_VIEW_TOOLS = ['render_report', 'create_report', 'create_test_summary_report', 'create_failure_analysis_report',
   'create_device_health_report', 'create_usage_summary_report', 'create_test_inventory_report',
   'create_test_breakdown_report', 'create_test_trend_report', 'create_test_reliability_report', 'create_device_coverage_report',
-  'create_device_utilization_report', 'create_performance_overview_report',
+  'create_device_utilization_report', 'create_performance_overview_report', 'create_performance_comparison_report',
   'create_release_readiness_report', 'create_license_usage_report'];
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the view runs in the client's frame: its App class and DOM are not typed here */

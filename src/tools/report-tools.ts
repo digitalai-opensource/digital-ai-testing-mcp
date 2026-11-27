@@ -9,11 +9,13 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { renderReport, type ReportSpec } from '../utils/report-render.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { REPORT_META_KEY, REPORT_VIEW_URI, VIEW_MIME_TYPE, clientDeclaresUi, noteViewRead, reportViewHtml, viewActive } from '../utils/report-view.js';
-import { buildTestSummary, buildFailureAnalysis, buildDeviceHealth, buildUsageSummary, buildUsageOverview, buildTestInventory, buildTestBreakdown, buildTestTrend, buildTestReliability, buildReleaseReadiness, buildDeviceCoverage, buildDeviceUtilization, buildLicenseUsage, reportKey, reportKeyLabel, addDays, dayStart, isoDate, type RecipeResult, type ReservationRow } from '../utils/report-recipes.js';
-import { buildPerformanceOverview } from '../utils/report-performance.js';
-import { listTransactions } from '../api/transactions.js';
+import { buildTestSummary, buildFailureAnalysis, buildDeviceHealth, buildUsageSummary, buildUsageOverview, buildTestInventory, buildTestBreakdown, buildTestTrend, trendPeriods, trendBy, addCounts, emptyCounts, type BreakdownRow, buildTestReliability, buildReleaseReadiness, buildDeviceCoverage, buildDeviceUtilization, buildLicenseUsage, reportKey, reportKeyLabel, addDays, dayStart, isoDate, type RecipeResult, type ReservationRow } from '../utils/report-recipes.js';
+import { buildPerformanceOverview, buildPerformanceComparison } from '../utils/report-performance.js';
+import { toSelector, selectsSomething, type PerformanceSideSpec, type PerfMetric } from '../utils/performance-comparison.js';
+import type { ComparisonDimension } from '../types/digital-ai.js';
+import { listTransactions, transactionPool } from '../api/transactions.js';
 import { startJob, getJob, cancelJob, listJobs, describeJob, jobDeadlineMs, fmtDuration, markJobNotified, markJobCollected, type JobResult } from '../utils/report-jobs.js';
-import { scanRuns, scanFailures, groupedCounts, deviceRows, cloudProjectId, reservationRows, deviceUsageRows, userUsageRows, inventoryData, licenseSessions, licenseLimits, firstTestIdSince, breakdownCounts, ownProjectName, estimateReporterRecipe, estimateUsageRecipe, type WorkEstimate } from '../api/report-recipes.js';
+import { scanRuns, scanFailures, groupedCounts, deviceRows, cloudProjectId, reservationRows, deviceUsageRows, userUsageRows, inventoryData, licenseSessions, licenseLimits, firstTestIdSince, firstTestIdsSince, breakdownCounts, ownProjectName, estimateReporterRecipe, estimateUsageRecipe, type WorkEstimate } from '../api/report-recipes.js';
 
 // ── Full spec validation (server side) ─────────────────────────────────────────────────────────────────────────────
 // The PUBLISHED schema stays small (it is paid for in every conversation); the detailed check runs here and names the
@@ -507,7 +509,7 @@ const DESCRIPTION =
 
 // ── Recipes ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const RECIPES = ['test-summary', 'failure-analysis', 'device-health', 'usage-summary', 'test-inventory', 'test-breakdown', 'test-trend', 'test-reliability', 'device-coverage', 'device-utilization', 'performance-overview', 'release-readiness', 'license-usage'] as const;
+const RECIPES = ['test-summary', 'failure-analysis', 'device-health', 'usage-summary', 'test-inventory', 'test-breakdown', 'test-trend', 'test-reliability', 'device-coverage', 'device-utilization', 'performance-overview', 'performance-comparison', 'release-readiness', 'license-usage'] as const;
 type Recipe = (typeof RECIPES)[number];
 
 /** Rendered recipe specs kept for an hour, so the agent can swap in its own interpretation without refetching. */
@@ -541,7 +543,17 @@ const sectionTitles = (spec: ReportSpec) => (spec.tabs ? spec.tabs.flatMap((t) =
 const isoDay = (t: number) => isoDate(t);
 const minTestId = (runs: Array<{ test_id: number }>) => runs.length ? runs.reduce((m, r) => (r.test_id && r.test_id < m ? r.test_id : m), Number.MAX_SAFE_INTEGER) : null;
 
-interface RecipeOpts { days?: number; recentDays?: number; projectName?: string; passRateGoal?: number; compare?: boolean; maxRecords?: number; groupBy?: string[]; allDates?: boolean; where?: Record<string, string>; exactCase?: boolean; keysAsWritten?: boolean }
+interface RecipeOpts { days?: number; recentDays?: number; projectName?: string; passRateGoal?: number; compare?: boolean; maxRecords?: number; groupBy?: string[]; allDates?: boolean; where?: Record<string, string>; exactCase?: boolean; keysAsWritten?: boolean;
+  sides?: PerformanceSideSpec[]; comparisonAxis?: ComparisonDimension[]; metrics?: PerfMetric[] }
+
+/** performance-comparison: two sides, each narrower than "every transaction", or why not. */
+function comparisonSidesError(sides?: PerformanceSideSpec[]): string | null {
+  if (sides?.length !== 2) return `performance-comparison needs sides: two sides, the baseline first${sides ? ` (${sides.length} given)` : ''}, each a label plus transactionIds or ` +
+    'filter fields, e.g. [{"label": "1.0", "transactionName": "Login", "appVersion": "1.0"}, {"label": "2.0", "transactionName": "Login", "appVersion": "2.0"}]. ' +
+    'create_performance_comparison_report takes them (and comparisonAxis, metrics).';
+  const blank = sides.map((s, k) => (selectsSomething(toSelector(s, '')) ? null : `side ${k + 1}${s.label ? ` ("${s.label}")` : ''}`)).filter((x): x is string => x != null);
+  return blank.length ? `${blank.join(' and ')} select${blank.length === 1 ? 's' : ''} every transaction: give transactionIds or at least one filter field.` : null;
+}
 interface RunCtx { signal?: AbortSignal; progress?: (text: string) => void; timeoutMs?: number; prefetched?: ReservationRow[] }
 
 const defaultDays = (r: Recipe) => (r === 'usage-summary' || r === 'test-trend' || r === 'performance-overview' ? 90 : r === 'test-breakdown' || r === 'device-coverage' || r === 'device-utilization' ? 30 : 7);
@@ -561,19 +573,33 @@ const WHERE_RECIPES: Recipe[] = ['test-breakdown', 'test-trend', 'test-reliabili
 const keyOf = (k: string, asWritten?: boolean) => (asWritten ? k.trim() : reportKey(k));
 const whereFilter = (where?: Record<string, string>, asWritten?: boolean) => (where && Object.keys(where).length ? Object.fromEntries(Object.entries(where).map(([k, v]) => [keyOf(k, asWritten), v])) : undefined);
 
+/** Runs `fn` over `items`, at most `limit` at a time, keeping their order. The reporter barely overlaps parallel requests. */
+async function inWaves<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>, signal?: AbortSignal): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      if (signal?.aborted) throw new Error('cancelled');
+      const k = next++;
+      out[k] = await fn(items[k]);
+    }
+  }));
+  return out;
+}
+
 /** Say on the report itself that it counts only part of the runs. */
 function scoped(r: RecipeResult, where?: Record<string, string>, exactCase = false, asWritten = false): RecipeResult {
   if (!where || !Object.keys(where).length) return r;
   const text = Object.entries(where).map(([k, v]) => `${reportKeyLabel(keyOf(k, asWritten)).toLowerCase().replace(/\bos\b/g, 'OS')} = ${v}`).join(' and ');
-  // Web (Selenium) reports keep their user in digitalai:user, so a scope on "user" counts the mobile runs only. Say so:
-  // the scope line read as all of that user's runs (a user with 364 mobile and 110 web runs showed 364).
+  // Web (Selenium) reports keep their user in digitalai:user; breakdownCounts counts that key too. Said once in the
+  // source line, since the counts would otherwise not match a list filtered on "user" alone.
   const byUser = Object.keys(where).some((k) => keyOf(k, asWritten) === 'user');
-  const web = byUser ? ' Web (Selenium) runs are not included: the platform records their user in a separate column.' : '';
+  const web = byUser ? ' Mobile and web (Selenium) runs are both counted; web runs keep their user in digitalai:user.' : '';
   // Values are stored in more than one spelling (ANDROID / Android, Chrome / chrome). By default every spelling counts.
   // With exactCase only the one written does, while the report still shows spellings merged: say so, or a scoped
   // report reads as all runs of that value.
   const how = exactCase ? ' Only the exact spelling is counted: runs stored in another spelling (upper or lower case) are left out.' : '';
-  return { highlights: [`Scope: only runs where ${text}.${how}${web}${byUser ? ' get_grouped_test_reports with a user filter counts mobile and web runs together.' : ''}`, ...r.highlights],
+  return { highlights: [`Scope: only runs where ${text}.${how}`, ...r.highlights],
     spec: { ...r.spec, meta: [...(r.spec.meta ?? []), { label: 'Only runs where', value: text }],
       source: `${r.spec.source ?? ''} Only runs where ${text} are counted; ${exactCase ? 'the value is matched exactly as the platform stores it.' : 'the value is matched whatever its letter case.'}${web}`.trim() } };
 }
@@ -628,17 +654,27 @@ async function runRecipeUnscoped(recipe: Recipe, o: RecipeOpts, ctx: RunCtx = {}
       return buildTestBreakdown({ rows, keys, from: start, to: now, days: o.allDates ? null : days, projectName: o.projectName, passRateGoal: o.passRateGoal });
     }
     case 'test-trend': {
-      // The reporter's date key is a UTC day (verified live 2026-11-24), so the range is cut on UTC days and says so.
-      const start = dayStart(addDays(now, -(days - 1), true), true);
-      ctx.progress?.('finding the first run of the range');
-      const minId = await firstTestIdSince(start, o.projectName);
-      ctx.progress?.('counting per day');
-      const [daysRows, platforms, classes] = minId == null ? [[], null, null] : await Promise.all([
-        breakdownCounts(['date'], minId, o.projectName, undefined, where, o.exactCase),
-        breakdownCounts(['device.os'], minId, o.projectName, undefined, where, o.exactCase).catch(() => null),
-        breakdownCounts(['errorCategory'], minId, o.projectName, undefined, where, o.exactCase).catch(() => null),
+      // Local days, weeks or months: the first run of each period is found by its id (the reporter's own date key is a
+      // UTC day), and each period is counted between its first run and the next period's. At most about 32 periods.
+      const start = dayStart(addDays(now, -(days - 1)));
+      const starts = trendPeriods(start, now, days);
+      const bounds = [start, ...starts.slice(1)];
+      ctx.progress?.(`finding the first run of each ${trendBy(days)}`);
+      const ids = await firstTestIdsSince(bounds, o.projectName);
+      if (ctx.signal?.aborted) throw new Error('cancelled');
+      ctx.progress?.(`counting per ${trendBy(days)}`);
+      const total = (rows: BreakdownRow[]) => rows.reduce((c, r) => addCounts(c, r.counts), emptyCounts());
+      const [periodCounts, platforms, classes] = ids[0] == null ? [bounds.map(() => emptyCounts()), null, null] : await Promise.all([
+        inWaves(bounds.map((_, k) => k), 4, async (k) => {
+          const lo = ids[k], hi = ids.slice(k + 1).find((x) => x != null) ?? undefined;
+          if (lo == null || (hi != null && hi <= lo)) return emptyCounts();
+          return total(await breakdownCounts(['date'], lo, o.projectName, hi, where, o.exactCase));
+        }, ctx.signal),
+        breakdownCounts(['device.os'], ids[0], o.projectName, undefined, where, o.exactCase).catch(() => null),
+        breakdownCounts(['errorCategory'], ids[0], o.projectName, undefined, where, o.exactCase).catch(() => null),
       ]);
-      return buildTestTrend({ daysRows, platforms, classes, from: start, to: now, days, projectName: o.projectName, passRateGoal: o.passRateGoal });
+      return buildTestTrend({ periods: starts.map((t, k) => ({ start: t, counts: periodCounts[k] })), platforms, classes, from: start, to: now, days,
+        projectName: o.projectName, passRateGoal: o.passRateGoal });
     }
     case 'test-reliability': {
       if (days > RELIABILITY_MAX_DAYS) throw new Error(`test-reliability compares a period of up to ${RELIABILITY_MAX_DAYS} days with the one before it. For a longer range use test-trend (pass rate over time) or test-breakdown with groupBy ["test"].`);
@@ -714,6 +750,14 @@ async function runRecipeUnscoped(recipe: Recipe, o: RecipeOpts, ctx: RunCtx = {}
         // A loop, not Math.max(...times): the list is every transaction the key sees, and a spread of that many arguments overflows the stack.
         newest: times.length ? times.reduce((m, t) => (t > m ? t : m), -Infinity) : null, from: start, to: now, days: o.allDates ? null : days, projectName: o.projectName });
     }
+    case 'performance-comparison': {
+      const err = comparisonSidesError(o.sides);
+      if (err) throw new Error(err);
+      const sideA = toSelector(o.sides![0], 'A'), sideB = toSelector(o.sides![1], 'B');
+      ctx.progress?.('reading the performance transactions');
+      const pool = await transactionPool([sideA, sideB]);
+      return buildPerformanceComparison({ pool, sideA, sideB, axis: o.comparisonAxis, metrics: o.metrics });
+    }
     case 'test-inventory': {
       ctx.progress?.('counting the reports of every project');
       const data = await inventoryData({ projectName: o.projectName, signal: ctx.signal, onProgress: (done, total) => ctx.progress?.(`counted ${done} of ${total} projects`) });
@@ -771,10 +815,12 @@ async function estimateRecipe(recipe: Recipe, o: RecipeOpts): Promise<WorkEstima
   if (recipe === 'test-inventory') return { ms: o.projectName ? 8_000 : INVENTORY_ESTIMATE_MS, basis: 'the platform\'s own counts, project by project' };
   // Counts for a window: about 1 s to find its first run, then one grouped call (7 s for 230,000 runs live, 2026-11-24).
   if (recipe === 'test-breakdown') return { ms: 12_000, basis: 'the platform\'s own counts for the range' };
-  if (recipe === 'test-trend') return { ms: 25_000, basis: 'the platform\'s own counts per day' };
+  // Local periods: one shared id search for up to ~32 boundaries, then one count each (live 2026-11-26: 7 days 6.6 s,
+  // 30 days 11.4 s, 365 days 11.5 s).
+  if (recipe === 'test-trend') return { ms: 15_000, basis: 'the platform\'s own counts per local day, week or month' };
   // Two id searches (3-4 s each, in parallel) and two counts by test name (2-4 s each for 7 to 30 days; live 2026-11-24).
   if (recipe === 'test-reliability') return { ms: 12_000 + Math.min(days, RELIABILITY_MAX_DAYS) * 300, basis: 'the platform\'s own counts per test for two periods' };
-  if (recipe === 'performance-overview') return { ms: 5_000, basis: 'one list of the performance transactions' };
+  if (recipe === 'performance-overview' || recipe === 'performance-comparison') return { ms: 5_000, basis: 'one list of the performance transactions' };
   if (recipe === 'release-readiness') return { ms: 14_000 + Math.min(days, RELIABILITY_MAX_DAYS) * 300, basis: 'the platform\'s own counts per test, platform and classification' };
   if (recipe === 'license-usage') return { ms: 7_000 + Math.min(days, LICENSE_MAX_DAYS) * 600, basis: 'a session-by-session usage report of about 2 MB a day' };
   if (recipe === 'device-coverage') return { ms: 15_000, basis: 'the platform\'s own counts per device and the device list' };
@@ -842,6 +888,7 @@ const CREATE_DESCRIPTION =
   '• license-usage (7, up to 31; Cloud Admin): peak concurrent sessions per license type against the licensed number, session types, busiest hours.\n' +
   '• usage-summary (90; Cloud Admin): reserved hours, users and devices of projectName (weekly), or without it an overview of EVERY project.\n' +
   '• performance-overview (90, or allDates): performance transactions: median Speed Index, duration, CPU, memory per transaction, by network profile and app version.\n' +
+  '• performance-comparison: NOT through create_report (it cannot take the sides): call create_performance_comparison_report with sides [{label, transactionName, deviceName | appVersion | deviceOs …}, {…}], baseline first.\n' +
   'The counts recipes (trend, breakdown, reliability, readiness) take where: only runs whose report column equals a value, e.g. {"digitalai:build": "412"}; letter case is ignored unless exactCase.\n' +
   'Every call first MEASURES how long the report will take. If that is longer than a tool call can wait, nothing runs: the answer ' +
   'gives the estimate, a smaller window that fits, and the option to run the full report in the background; ask the user which. ' +
@@ -853,6 +900,23 @@ const CREATE_DESCRIPTION =
   'with one command, with the HTML attached only for agents that cannot reach that path; never retype it. ' +
   'The answer also lists the highlights and a runId; runId + whatItMeans {"<section title>": "<1-3 sentences>"} replaces an ' +
   'interpretation without refetching.';
+
+/** One side of a performance comparison. Strict: a misspelt filter field must be refused, not dropped (it would select everything). */
+const perfSide = z.strictObject({
+  label: z.string().optional(), transactionIds: z.array(z.number()).optional(),
+  appName: z.string().optional(), appVersion: z.string().optional(), transactionName: z.string().optional(), deviceOs: z.string().optional(),
+  deviceName: z.string().optional(), deviceModel: z.string().optional(), deviceVersion: z.string().optional(), networkProfile: z.string().optional(),
+  projectName: z.string().optional(), testId: z.number().optional(), startDate: z.string().optional(), endDate: z.string().optional(),
+});
+const SIDE_FIELDS = Object.keys(perfSide.shape).filter((k) => k !== 'label' && k !== 'transactionIds').join(', ');
+
+/** The sides as published loosely on create_report, checked here; the error names the field and lists what a side takes. */
+function readSides(sides: unknown): { sides?: PerformanceSideSpec[]; error?: string } {
+  if (sides === undefined) return {};
+  const p = z.array(perfSide).safeParse(sides);
+  if (p.success) return { sides: p.data };
+  return { error: `${p.error.issues.map((x) => `${['sides', ...x.path].join('.')}: ${x.message}`).join('; ')}. A side takes: label, transactionIds, ${SIDE_FIELDS}.` };
+}
 
 const createShape = {
     recipe: z.enum(RECIPES).optional().describe('Which report to build. Omit with runId or jobId.'),
@@ -868,6 +932,14 @@ const createShape = {
     keysAsWritten: z.boolean().optional().describe('With groupBy or where: send every key exactly as written, for a custom column whose name is one of the plain words (a column named "category" or "platform"). Default false.'),
     exactCase: z.boolean().optional().describe('With where: count only the exact spelling written ("Chrome" without "chrome"). Default false: letter case is ignored. Groups in a report are always shown with spellings merged; for counts per stored spelling use get_grouped_test_reports with exactCase.'),
     allDates: z.boolean().optional().describe('test-breakdown, performance-overview: everything on record, whatever its date, instead of the last days.'),
+    // Published loose here and checked in the handler (like render_report's spec): the full side schema twice over was a
+    // sixth of create_report. create_performance_comparison_report publishes it in full.
+    sides: z.array(z.record(z.string(), z.unknown())).optional().describe(`performance-comparison: two sides, baseline first: {label, transactionIds} or ` +
+      `{label, filters: ${SIDE_FIELDS}}. The differing filters are what is compared.`),
+    comparisonAxis: z.array(z.enum(['appVersion', 'deviceModel', 'deviceOs', 'deviceVersion', 'networkProfile', 'deviceName', 'projectName', 'name', 'region', 'testId'])).optional()
+      .describe('performance-comparison: what should differ (default: the differing filters).'),
+    metrics: z.array(z.enum(['duration', 'cpuAvg', 'memAvg', 'batteryAvg', 'totalDownloadedBytes', 'totalUploadedBytes', 'speedIndex'])).optional()
+      .describe('performance-comparison: after Speed Index (default duration, cpuAvg, memAvg).'),
     compare: z.boolean().optional().describe('test-summary, test-reliability: compare with the previous period of the same length (default true; for test-summary it doubles the scan).'),
     maxRecords: z.number().int().min(500).max(25_000).optional().describe('Upper bound on reporter runs read (default 10 000). The report says when the window was cut short.'),
     background: z.boolean().optional().describe('Run as a background job (after the user agreed to a long report). Answers at once with a jobId.'),
@@ -885,7 +957,7 @@ const createShape = {
   };
 type CreateArgs = { [K in keyof typeof createShape]?: z.infer<(typeof createShape)[K]> };
 
-async function createHandler({ recipe, days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten, background, jobId, cancel, runId, whatItMeans, title, outputPath, fileName, attach }: CreateArgs,
+async function createHandler({ recipe, days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten, sides, comparisonAxis, metrics, background, jobId, cancel, runId, whatItMeans, title, outputPath, fileName, attach }: CreateArgs,
   /** The tool that was called, for the error text: a per-recipe tool's refusal said "create_report failed". */ tool = 'create_report') {
     const text = (t: string, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text' as const, text: t }] });
     try {
@@ -934,12 +1006,21 @@ async function createHandler({ recipe, days, recentDays, projectName, passRateGo
       const pathErr = outputPath ? outputPathError(outputPath) : null;
       if (pathErr) return text(pathErr, true);
       if (recipe === 'test-breakdown' && !groupBy?.length) return text(`test-breakdown needs groupBy. ${BREAKDOWN_KEYS_HELP}`, true);
-      const opts: RecipeOpts = { days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten };
+      const read = readSides(sides);
+      if (recipe === 'performance-comparison') {
+        const err = read.error ?? comparisonSidesError(read.sides);
+        if (err) return text(err, true);
+      } else if (sides || comparisonAxis || metrics) {
+        return text(`sides, comparisonAxis and metrics are for performance-comparison; ${recipe} does not take them.`, true);
+      }
+      const opts: RecipeOpts = { days, recentDays, projectName, passRateGoal, compare, maxRecords, groupBy, allDates, where, exactCase, keysAsWritten,
+        sides: read.sides, comparisonAxis, metrics: metrics as PerfMetric[] | undefined };
       const d = days ?? defaultDays(recipe);
       const est = await estimateRecipe(recipe, opts);
       const limit = syncLimitMs();
       const label = recipe === 'test-inventory' ? `${recipe} (all dates, ${projectName ?? 'every project'})`
-        : `${recipe} (${d} day${d === 1 ? '' : 's'}${projectName ? `, ${projectName}` : ''})`;
+        : recipe === 'performance-comparison' ? `${recipe} ("${read.sides?.[0]?.label || 'A'}" against "${read.sides?.[1]?.label || 'B'}")`
+          : `${recipe} (${d} day${d === 1 ? '' : 's'}${projectName ? `, ${projectName}` : ''})`;
       const range = est.rangeMs && est.rangeMs[1] - est.rangeMs[0] > 10_000 ? `, likely between ${fmtDuration(est.rangeMs[0])} and ${fmtDuration(est.rangeMs[1])}` : '';
 
       const produce = async (ctx: RunCtx): Promise<JobResult & { spec: ReportSpec; unknown: string[] }> => {
@@ -1066,7 +1147,11 @@ const RECIPE_TOOLS: Array<{ name: string; recipe: Recipe; description: string; k
     description: 'Performance overview report (performance transactions, Speed Index, app performance summary, slowest transactions, performance ' +
       'by app version or network profile) as a finished Digital.ai-branded HTML report in one call: median Speed Index, duration, CPU and ' +
       'memory per transaction, by network profile, platform and app version, and what the data can support. days default 90, or allDates. ' +
-      'For a like-for-like A/B comparison use compare_performance_transactions.' },
+      'For a like-for-like A/B comparison use create_performance_comparison_report.' },
+  { name: 'create_performance_comparison_report', recipe: 'performance-comparison', keys: ['sides', 'comparisonAxis', 'metrics', 'title', 'outputPath'],
+    description: 'Performance comparison report (A/B, version against version, device against device, before and after, did it get slower) as a ' +
+      'finished Digital.ai-branded HTML report in one call: Speed Index, duration, CPU and memory of two sets of performance transactions, the ' +
+      'change, a verdict, a like-for-like check, outliers left out.' },
 ];
 
 export function registerReportTools(server: McpServer): void {
@@ -1080,7 +1165,12 @@ export function registerReportTools(server: McpServer): void {
   }
   const outputPath = z.string().optional().describe(outputPathDesc());
   const shape = { ...createShape, outputPath };
-  server.tool('create_report', CREATE_DESCRIPTION, shape, (args) => createHandler(args));
+  // The comparison's sides, axis and metrics are published on create_performance_comparison_report only: create_report is
+  // in every tool list, and the three took it from about 8,700 characters to 10,500. That tool runs on its first call
+  // under any MCP_TOOLSETS; create_report with recipe performance-comparison answers with its name.
+  const { sides: _sides, comparisonAxis: _axis, metrics: _metrics, ...createPublished } = shape;
+  void _sides; void _axis; void _metrics;
+  server.tool('create_report', CREATE_DESCRIPTION, createPublished, (args) => createHandler(args));
   // Literal names, so a grep (and the REGISTERED_TOOLS sync test) finds every registration.
   // The per-recipe tools carry short parameter texts; the full ones are on create_report. Fourteen copies of the long
   // texts were a tenth of every tool list, a trimmed MCP_TOOLSETS list included (report tools are always loaded).
@@ -1097,13 +1187,19 @@ export function registerReportTools(server: McpServer): void {
     compare: 'Compare with the previous period (default true).',
     maxRecords: 'Upper bound on runs read (default 10,000).',
     background: 'Run as a background job, after the user agreed; check it with create_report jobId.',
+    sides: 'Two sides, baseline first: a label plus transactionIds or filters (part of the value, any case), e.g. [{"label": "1.0", "transactionName": ' +
+      '"Login", "appVersion": "1.0"}, {"label": "2.0", "transactionName": "Login", "appVersion": "2.0"}]. The differing filters are what is compared.',
+    comparisonAxis: 'What should differ. Default: the differing filters.',
+    metrics: 'After Speed Index. Default duration, cpuAvg, memAvg.',
     title: 'Report title.',
     outputPath: getDeploymentMode() === 'local' ? 'Only when the user names a place: an absolute .html path on this machine.'
       : 'Only when the user names a place: an absolute .html path on the MCP server\'s own filesystem, not the user\'s machine.',
   };
   const recipeTool = (name: string) => {
     const t = RECIPE_TOOLS.find((x) => x.name === name)!;
-    return [t.description, Object.fromEntries(t.keys.map((k) => [k, slim[k] ? shape[k].describe(slim[k]) : shape[k]])), (args: CreateArgs) => createHandler({ ...args, recipe: t.recipe }, t.name)] as const;
+    // The comparison tool publishes the side schema in full: its field names are the whole of what an agent needs to write a side.
+    const field = (k: keyof typeof createShape) => (k === 'sides' ? z.array(perfSide).optional() : shape[k]);
+    return [t.description, Object.fromEntries(t.keys.map((k) => [k, slim[k] ? field(k).describe(slim[k]) : field(k)])), (args: CreateArgs) => createHandler({ ...args, recipe: t.recipe }, t.name)] as const;
   };
   server.tool('create_test_summary_report', ...recipeTool('create_test_summary_report'));
   server.tool('create_failure_analysis_report', ...recipeTool('create_failure_analysis_report'));
@@ -1118,6 +1214,7 @@ export function registerReportTools(server: McpServer): void {
   server.tool('create_device_utilization_report', ...recipeTool('create_device_utilization_report'));
   server.tool('create_license_usage_report', ...recipeTool('create_license_usage_report'));
   server.tool('create_performance_overview_report', ...recipeTool('create_performance_overview_report'));
+  server.tool('create_performance_comparison_report', ...recipeTool('create_performance_comparison_report'));
 
   server.tool(
     'render_report',

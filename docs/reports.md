@@ -46,6 +46,7 @@ Asking for a report instead of having the AI assemble one also costs far fewer t
 | [License usage](#license-usage) | *"are we near our license limit?"* | 7 days, up to 31 | Cloud Admin | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/license-usage.html) |
 | [Usage summary](#usage-summary) | *"a usage summary"* | 90 days | Cloud Admin | [One project](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-summary.html) · [Every project](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-overview.html) |
 | [Performance overview](#performance-overview) | *"a performance overview report"* | 90 days, or all dates | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-overview.html) |
+| [Performance comparison](#performance-comparison) | *"compare Login performance in 4.2.0 and 4.3.0"* | The runs you name | Any | [Open](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-comparison.html) |
 
 A project key sees its own project. A Cloud Admin key sees its own project by default and any project you name.
 
@@ -274,9 +275,37 @@ Performance transactions recorded by your tests.
 
 Speed Index is a score, lower is better. The report never turns a difference in Speed Index into milliseconds.
 
-For a like-for-like comparison of two versions, devices or networks, ask the AI to compare them; see [Performance Comparison Reports](../README.md#performance-comparison).
+For a like-for-like comparison of two versions, devices or networks, ask for a [performance comparison](#performance-comparison).
 
 Options: days or all dates, project.
+
+#### Performance comparison
+
+<a href="https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-comparison.html"><img src="examples/reports/performance-comparison.png" alt="Performance comparison example" width="420"></a>
+
+*"Compare Login performance in app version 4.2.0 and 4.3.0"* · *"Is the Galaxy S24 slower than the Pixel 8 on Transfer money?"* · *"Compare these runs before and after the fix"*
+
+Two sets of performance transactions side by side. Name each side by its runs (transaction ids) or by what it has in
+common: transaction, app version, device, model, OS version, platform, network profile, test, dates.
+
+- A verdict on Speed Index: lower, higher, about the same (under 5%), no clear difference (inside the run-to-run
+  spread), too few runs, or not like for like
+- Speed Index as three numbers per side (trimmed mean, median, mean), with the lowest, highest and spread
+- Duration, CPU and memory the same way, with the change (battery and network traffic on request)
+- **Like for like:** what is compared and everything else that differs between the sides. A factor other than the one
+  compared that differs entirely (another device model, OS version, network profile or app version) makes the result
+  "not like for like", whatever the numbers say
+- Every run, with the ones left out as outliers (far from their side's median, on a side with 4 or more runs)
+
+What is compared is the filter that differs between the sides. With sides named by run, it is the one factor that
+differs in the data; if several differ, say which one you mean. Comparing platforms also compares models and OS
+versions; comparing devices also compares models.
+
+For a sound result, run each side 5 or more times (10 for short transactions) on the same device and network profile.
+The [performance comparison prompt](../README.md#performance-comparison) guides an agent through planning and running
+such a series.
+
+Options: what is compared, extra metrics.
 
 ---
 
@@ -362,7 +391,7 @@ Any column on your test reports can be used, including custom ones your tests ad
 
 - **Letter case does not matter.** The platform keeps each value in the spelling the test client sent, so one browser can be stored as "Chrome" and as "chrome"; a scope of "chrome" counts both. Ask for the exact spelling only and the report counts that one and says the other spellings are left out.
 - **A custom column named like a plain word.** Plain words such as platform, device, model, framework, browser, user, test or category stand for the platform's own columns. If your tests add a column with one of those names, ask for the column name as written and the report uses your column.
-- **A user.** A report scoped to a user counts that user's mobile runs only, and says that web (Selenium) runs are not included: the platform records their user in a separate column. Asking for the user's test counts directly, without a report, counts both.
+- **A user.** A report scoped to a user counts that user's mobile and web (Selenium) runs together, although the platform records the user of a web run in a separate column.
 
 ### Your own interpretation
 
@@ -432,7 +461,7 @@ The ready-made reports follow the same rules, so a number means the same thing i
 **Names and days**
 
 - Test names that differ only in run ids, dates or run numbers count as one test.
-- Test reports use days in the server's time zone. Usage, license and trend reports use UTC days, as the platform does, and say so.
+- Test reports, the trend included, use days in the server's time zone (yours with the npm install). Usage and license reports use UTC days, as the platform's usage files do, and say so.
 
 ---
 
@@ -470,6 +499,7 @@ You do not need tool names to ask for a report. They matter when you write instr
 | `license-usage` | `create_license_usage_report` | `days` (no `projectName`) |
 | `usage-summary` | `create_usage_summary_report` | `days`, `recentDays`, `background` |
 | `performance-overview` | `create_performance_overview_report` | `days`, `allDates` |
+| `performance-comparison` | `create_performance_comparison_report` | `sides` (required: two, baseline first), `comparisonAxis`, `metrics` (no `projectName`; only its own tool takes these) |
 
 Examples:
 
@@ -485,13 +515,23 @@ Examples:
 { "recipe": "release-readiness", "where": { "digitalai:build": "412" }, "passRateGoal": 98 }
 ```
 
+`create_performance_comparison_report`, one transaction in two app versions:
+
+```json
+{ "sides": [
+    { "label": "4.2.0", "transactionName": "Transfer money", "appVersion": "4.2.0", "deviceModel": "Pixel 8" },
+    { "label": "4.3.0", "transactionName": "Transfer money", "appVersion": "4.3.0", "deviceModel": "Pixel 8" } ] }
+```
+
+A side takes a `label` and either `transactionIds` or filters: `appName`, `appVersion`, `transactionName`, `deviceOs`, `deviceName`, `deviceModel`, `deviceVersion`, `networkProfile` (`""` for none), `projectName`, `testId`, `startDate`, `endDate`. A filter matches part of the value, in any letter case. A misspelt filter name is refused, never ignored.
+
 `groupBy` takes one or two of: `platform`, `device`, `model`, `os version`, `manufacturer`, `framework`, `browser`, `browser version`, `user`, `test`, `classification` (or `category`), `pool`, `day`, or a report column as written, such as `digitalai:build`.
 
 `where` takes the same names, each with the value to match. The value is the whole stored value, in any letter case: the platform keeps each value in the spelling the test client sent, so one browser can be stored as "Chrome" and as "chrome", and `{ "browser": "chrome" }` counts both. Add `"exactCase": true` to count only the spelling you wrote; the report then says that other spellings are left out. Groups in a report are always shown with such spellings merged.
 
 If your tests add a column of their own whose name is one of those plain words (a column called `category` or `platform`, for example), add `"keysAsWritten": true`: the names in `groupBy` and `where` are then sent to the platform exactly as written and your column is used.
 
-A report scoped to a `user` counts that user's mobile runs only and says that web (Selenium) runs are not included; web runs record their user in a separate column. `get_grouped_test_reports` with a user filter counts both.
+A report scoped to a `user` counts that user's mobile and web (Selenium) runs; web runs record their user in `digitalai:user`, and both are counted, as `get_grouped_test_reports` does.
 
 `create_report` also handles what the per-report tools do not:
 

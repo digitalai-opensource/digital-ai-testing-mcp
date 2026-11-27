@@ -6,16 +6,17 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import {
-  buildTestSummary, buildFailureAnalysis, buildDeviceHealth, buildUsageSummary, buildUsageOverview, buildTestInventory, buildTestBreakdown, buildTestTrend, buildTestReliability, buildReleaseReadiness, buildDeviceCoverage, buildDeviceUtilization, buildLicenseUsage, peakConcurrency, foldBreakdownRows, reportKey, testFamily, classificationMeans, causeQuote, deviceStats, isFlagged,
+  buildTestSummary, buildFailureAnalysis, buildDeviceHealth, buildUsageSummary, buildUsageOverview, buildTestInventory, buildTestBreakdown, buildTestTrend, trendPeriods, buildTestReliability, buildReleaseReadiness, buildDeviceCoverage, buildDeviceUtilization, buildLicenseUsage, peakConcurrency, foldBreakdownRows, reportKey, testFamily, classificationMeans, causeQuote, deviceStats, isFlagged,
   bucketStart, buckets, dayStart, addDays, isoDate, type TestRun, type DeviceRow, type PoolDevice, type LicenseSession, type GroupCounts,
 } from '../src/utils/report-recipes.js';
-import { durationHours, deviceRows } from '../src/api/report-recipes.js';
-import { buildPerformanceOverview } from '../src/utils/report-performance.js';
+import { durationHours, deviceRows, breakdownCounts } from '../src/api/report-recipes.js';
+import { buildPerformanceOverview, buildPerformanceComparison } from '../src/utils/report-performance.js';
+import { toSelector } from '../src/utils/performance-comparison.js';
 import type { Transaction } from '../src/types/digital-ai.js';
 import { applyInterpretations, registerReportTools } from '../src/tools/report-tools.js';
 import { renderReport, type ReportSpec, type Section } from '../src/utils/report-render.js';
 import { emptyStatusCounts } from '../src/utils/test-status.js';
-import { connectTools, startStubApi, reply, accountInfo } from './helpers/offline.js';
+import { connectTools, startStubApi, reply, accountInfo, groupedAnswer } from './helpers/offline.js';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -438,7 +439,7 @@ describe('create_report tool (offline paths)', () => {
     const tools = await connectTools(registerReportTools);
     let r = await tools.call('create_report', {});
     assert.equal(r.res.isError, true);
-    assert.match(r.text, /Give a recipe \(test-summary, failure-analysis, device-health, usage-summary, test-inventory, test-breakdown, test-trend, test-reliability, device-coverage, device-utilization, performance-overview, release-readiness, license-usage\)/);
+    assert.match(r.text, /Give a recipe \(test-summary, failure-analysis, device-health, usage-summary, test-inventory, test-breakdown, test-trend, test-reliability, device-coverage, device-utilization, performance-overview, performance-comparison, release-readiness, license-usage\)/);
     r = await tools.call('create_report', { runId: 'test-summary-zzz', whatItMeans: { a: 'b' } });
     assert.match(r.text, /No report "test-summary-zzz" in this server run/);
     await tools.close();
@@ -455,7 +456,8 @@ describe('create_report tool (offline paths)', () => {
     // the per-recipe tools carry short parameter texts, the full ones are on create_report.
     const listed = (await tools.client.listTools()).tools;
     for (const t of listed.filter((x) => /^create_.+_report$/.test(x.name))) assert.ok(JSON.stringify(t).length < 2200, `${t.name}: ${JSON.stringify(t).length} chars`);
-    assert.ok(JSON.stringify(listed.find((x) => x.name === 'create_report')).length < 9000, 'create_report lists one line per recipe');
+    const create = JSON.stringify(listed.find((x) => x.name === 'create_report')).length;
+    assert.ok(create < 9000, `create_report lists one line per recipe: ${create} chars`);
     assert.equal((usage.inputSchema.properties as Record<string, { description: string }>).days.description, 'Length of the range in days.');
     await tools.close();
   });
@@ -674,28 +676,45 @@ describe('test breakdown and trend (counts from the platform, never cut short)',
     assert.match(r.highlights[0], /^90 runs in 2 test groups/);
   });
 
-  it('trend: weeks for 90 days, exact totals, the lowest week named with its verdicts, UTC days', () => {
+  it('trend: weeks for 90 days, exact totals, the lowest week named with its verdicts', () => {
     const from = Date.parse('2026-08-28T00:00:00Z'), to = Date.parse('2026-11-25T02:00:00Z');
-    const daysRows = [
-      { values: ['2026-08-20'], counts: c(999) }, // before the range: the bound is a run id, so an earlier day can slip in
-      { values: ['2026-09-01'], counts: c(900, 100) }, { values: ['2026-09-02'], counts: c(800, 200) },
-      { values: ['2026-11-03'], counts: c(500, 500) }, { values: ['2026-11-24'], counts: c(10, 0, 0, 2) },
-    ];
-    const r = buildTestTrend({ daysRows, platforms: [{ values: ['IOS'], counts: c(1000, 600) }, { values: ['iOS'], counts: c(200, 100) }, { values: [null], counts: c(1010, 100) }],
-      classes: [{ values: ['assertion'], counts: c(0, 300) }, { values: [null], counts: c(0, 500) }], from, to, days: 90, projectName: 'Demo', passRateGoal: 85 });
+    const starts = trendPeriods(from, to, 90);
+    assert.equal(starts.length, 14);
+    assert.equal(new Date(starts[0]).getUTCDay(), 1, 'weeks start on Monday');
+    const at = (iso: string) => starts.findIndex((s, k) => s <= Date.parse(iso) && (k === starts.length - 1 || Date.parse(iso) < starts[k + 1]));
+    const per = new Map([[at('2026-09-01T00:00:00Z'), c(1700, 300)], [at('2026-11-03T00:00:00Z'), c(500, 500)], [at('2026-11-24T00:00:00Z'), c(10, 0, 0, 2)]]);
+    const periods = starts.map((t, k) => ({ start: t, counts: per.get(k) ?? c(0) }));
+    const r = buildTestTrend({ periods, platforms: [{ values: ['IOS'], counts: c(1000, 600) }, { values: ['iOS'], counts: c(200, 100) }, { values: [null], counts: c(1010, 100) }],
+      classes: [{ values: ['assertion'], counts: c(0, 300) }, { values: [null], counts: c(0, 500) }], from, to, days: 90, projectName: 'Demo', passRateGoal: 85, timeZone: 'UTC' });
     assert.match(r.highlights[0], /^3,012 runs over 90 days; pass rate 73\.4%\./);
     assert.ok(r.highlights.some((h) => /Lowest week: 11\/2 at 50\.0% over 1,000 verdicts/.test(h)), r.highlights.join(' | '));
     assert.equal(r.spec.subtitle, 'Runs and pass rate per week, last 90 days');
     const bars = section(r.spec, /Runs per Week/).blocks[0] as Extract<Section['blocks'][number], { type: 'bar' }>;
     assert.equal(bars.categories.length, 14);
-    assert.equal(bars.series[0].values.reduce((t: number, v) => t + (v ?? 0), 0), 2210, 'the day before the range is left out');
+    assert.deepEqual(bars.partial, [bars.categories[0], bars.categories[13]], 'the week holding the start and the current week are partial');
     const plat = section(r.spec, /Results by Platform/).blocks[0] as Extract<Section['blocks'][number], { type: 'bar' }>;
     assert.deepEqual(plat.categories, ['iOS', 'Web or no device'], 'case variants merged');
     assert.match(String(section(r.spec, /Failures by Classification/).whatItMeans), /left 63% of them unclassified, so this chart cannot say where the problem is/);
-    assert.match(String(r.spec.source), /counts per day and status, Aug\. 28, 2026 to Nov\. 25, 2026 \(the reporter's days/);
-    assert.equal(buildTestTrend({ daysRows, platforms: null, classes: null, from: Date.parse('2026-11-12T00:00:00Z'), to, days: 14 }).spec.subtitle, 'Runs and pass rate per day, last 14 days');
-    assert.equal(buildTestTrend({ daysRows, platforms: null, classes: null, from: Date.parse('2025-11-26T00:00:00Z'), to, days: 365 }).spec.subtitle, 'Runs and pass rate per month, last 365 days');
-    assert.match(buildTestTrend({ daysRows: [], platforms: null, classes: null, from, to, days: 90 }).highlights[0], /^0 runs over 90 days/);
+    assert.match(String(r.spec.source), /counts per week and status, Aug\. 28, 2026 to Nov\. 25, 2026, in local time \(UTC\)/);
+    const days14 = trendPeriods(Date.parse('2026-11-12T00:00:00Z'), to, 14);
+    assert.equal(buildTestTrend({ periods: days14.map((t) => ({ start: t, counts: c(1) })), platforms: null, classes: null, from: days14[0], to, days: 14 }).spec.subtitle, 'Runs and pass rate per day, last 14 days');
+    assert.equal(trendPeriods(Date.parse('2025-11-26T00:00:00Z'), to, 365).length, 13, 'months for a year');
+    assert.match(buildTestTrend({ periods: starts.map((t) => ({ start: t, counts: c(0) })), platforms: null, classes: null, from, to, days: 90 }).highlights[0], /^0 runs over 90 days/);
+  });
+
+  it('trend periods are local: days start at local midnight, not UTC midnight', () => {
+    const saved = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      const now = Date.parse('2026-11-25T01:05:00Z'); // 20:05 on Nov. 24 in New York
+      const from = dayStart(addDays(now, -2));
+      const starts = trendPeriods(from, now, 3);
+      assert.deepEqual(starts.map((t) => new Date(t).toISOString()), ['2026-11-22T05:00:00.000Z', '2026-11-23T05:00:00.000Z', '2026-11-24T05:00:00.000Z'],
+        'the run at 20:05 on the 24th falls on the 24th, the last day');
+      const r = buildTestTrend({ periods: starts.map((t) => ({ start: t, counts: c(1) })), platforms: null, classes: null, from, to: now, days: 3 });
+      assert.deepEqual((section(r.spec, /Runs per Day/).blocks[0] as Extract<Section['blocks'][number], { type: 'bar' }>).categories, ['11/22', '11/23', '11/24']);
+      assert.match(String(r.spec.source), /in local time \(America\/New_York\)/);
+    } finally { if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved; }
   });
 
   it('the tools find the first run of the range by its id and count from there, in one call each', async () => {
@@ -715,7 +734,14 @@ describe('test breakdown and trend (counts from the platform, never cut short)',
       if (req.path === '/reporter/api/tests/grouped') {
         const bound = (req.json.filter ?? []).find((x: { property: string }) => x.property === 'test_id')?.value;
         const key = (req.json.groupBy as string[])[0];
-        if (key === 'date') return { count: 1, data: [{ date: new Date(now).toISOString().slice(0, 10), _count_: 40, passedCount: 30, failedCount: 10 }] };
+        if (key === 'date') {
+          // Like the platform: only the runs between the bounds (ids >= lo and < hi); every fourth run failed.
+          const f = req.json.filter as Array<{ property: string; operator: string; value: number }>;
+          const lo = f.find((x) => x.operator === '>=')?.value ?? 1, hi = f.find((x) => x.operator === '<')?.value ?? 1001;
+          const ids = Array.from({ length: Math.max(0, Math.min(hi, 1001) - lo) }, (_, k) => lo + k);
+          const failed = ids.filter((id) => id % 4 === 0).length;
+          return { count: 1, data: [{ date: '2026-11-24', _count_: ids.length, passedCount: ids.length - failed, failedCount: failed }] };
+        }
         if (key === 'errorCategory') return { count: 1, data: [{ errorCategory: 'device', _count_: 10, failedCount: 10 }] };
         return { count: 2, data: [{ 'device.os': 'Android', _count_: 30, passedCount: 27, failedCount: 3, bound }, { 'device.os': 'iOS', _count_: 10, passedCount: 3, failedCount: 7 }] };
       }
@@ -743,10 +769,16 @@ describe('test breakdown and trend (counts from the platform, never cut short)',
       const none = await tools.call('create_test_breakdown_report', {});
       assert.equal(none.res.isError, true);
       assert.match(none.text, /needs groupBy\. groupBy takes one or two of: platform, device/);
+      api.requests.length = 0;
       const t = await tools.call('create_test_trend_report', { days: 14 });
       assert.notEqual(t.res.isError, true, t.text);
       assert.match(t.text, /Report ready: test-execution-trend-\d{8}-\d{4}/);
-      assert.match(t.text, /40 runs over 14 days; pass rate 75\.0%/);
+      // One count per local day, each between that day's first run and the next day's: together exactly the range's runs.
+      const dayCalls = api.requests.filter((q) => q.path === '/reporter/api/tests/grouped' && (q.json as { groupBy: string[] }).groupBy[0] === 'date');
+      assert.equal(dayCalls.length, 14);
+      const cut14 = new Date(now); cut14.setHours(0, 0, 0, 0); cut14.setDate(cut14.getDate() - 13);
+      const inRange = Array.from({ length: 1000 }, (_, k) => k + 1).filter((id) => day(startOf(id)) >= cut14.getTime());
+      assert.match(t.text, new RegExp(`${inRange.length} runs over 14 days`));
     } finally {
       await tools.close();
       await api.close();
@@ -1025,6 +1057,160 @@ describe('performance overview', () => {
   });
 });
 
+describe('a scope on the user counts mobile and web runs', () => {
+  it('adds the runs that keep the user in digitalai:user (web) to those that keep it in user (mobile), letter case aside', async () => {
+    const runs = [
+      { user: 'me@x.io', 'device.os': 'Android', status: 'Passed', n: 3 },
+      { user: 'ME@x.io', 'device.os': 'IOS', status: 'Failed', n: 1 },
+      { 'digitalai:user': 'me@x.io', browserName: 'chrome', status: 'Passed', n: 2 },
+      { 'digitalai:user': 'me@x.io', browserName: 'chrome', status: 'Failed', n: 1 },
+      { user: 'other@x.io', 'device.os': 'Android', status: 'Passed', n: 50 },
+      { 'digitalai:user': 'other@x.io', browserName: 'chrome', status: 'Passed', n: 40 },
+    ];
+    const api = await startStubApi((req) => (req.path === '/reporter/api/tests/grouped' ? groupedAnswer(runs, req.json as Parameters<typeof groupedAnswer>[1]) : undefined));
+    try {
+      const byOs = await breakdownCounts(['device.os'], 1, undefined, undefined, { user: 'me@x.io' });
+      const n = (v: string | null) => byOs.find((r) => r.values[0] === v)?.counts;
+      assert.equal(n('Android')?.passed, 3);
+      assert.equal(n('IOS')?.failed, 1, 'a mobile run stored in another spelling of the user');
+      assert.deepEqual([n(null)?.passed, n(null)?.failed], [2, 1], 'the web runs (no device) are counted, not left out');
+      assert.equal(byOs.reduce((a, r) => a + r.counts.total, 0), 7);
+      // Grouped by user: one row for the user, mobile and web together.
+      const byUser = await breakdownCounts(['user'], 1, undefined, undefined, { user: 'me@x.io' });
+      assert.deepEqual(byUser.map((r) => [r.values[0], r.counts.total]), [['me@x.io', 7]]);
+      // Scoped on digitalai:user itself: no twin query.
+      api.requests.length = 0;
+      await breakdownCounts(['device.os'], 1, undefined, undefined, { 'digitalai:user': 'me@x.io' });
+      assert.equal(api.requests.filter((q) => q.path === '/reporter/api/tests/grouped').length, 1);
+    } finally { await api.close(); }
+  });
+});
+
+describe('performance comparison (two sides, a verdict, like for like)', () => {
+  let id = 500;
+  const tx = (appVersion: string, speedIndex: number | null, o: Partial<Transaction> = {}): Transaction => ({
+    id: id++, name: 'Login', appName: 'com.demo.bank', appVersion, startTime: new Date(T0 - 2 * DAY + id * 60_000).toISOString(), date: '', deviceUid: 'd1', deviceName: 'Pixel 8 US-1',
+    deviceModel: 'Pixel 8', deviceOs: 'Android', deviceManufacturer: 'Google', deviceVersion: '14', deviceScreen: '', deviceType: 'PHONE', networkProfile: 'Monitor',
+    cpuAvg: 20, cpuMax: 30, cpuCoreCount: 8, memAvg: 300, memMax: 320, memTotalInBytes: null, batteryAvg: 1, batteryMax: 2, totalUploadedBytes: 0, totalDownloadedBytes: 0,
+    duration: 4000, speedIndex, videoStart: null, videoEnd: null, userName: 'u', testId: null, attachmentId: null, attachmentPath: null, projectId: 1, projectName: 'Demo', attachmentList: null, ...o,
+  } as Transaction);
+  const side = (label: string, appVersion: string) => toSelector({ label, transactionName: 'Login', appVersion }, label);
+  const callout = (s: ReportSpec) => section(s, /At a Glance/).blocks[1] as Extract<Section['blocks'][number], { type: 'callout' }>;
+  const findings = (s: ReportSpec) => (section(s, /Like for Like/).blocks[0] as Extract<Section['blocks'][number], { type: 'findings' }>).items.map((x) => (typeof x === 'string' ? x : x.text));
+
+  it('a clear slowdown: the three numbers, the change, the outlier left out, compared on what the filters set apart', () => {
+    const outlier = tx('2.0', 9000);
+    const pool = [...[1000, 1020, 1010, 990, 1005].map((v) => tx('1.0', v)), ...[1300, 1320, 1310, 1290].map((v) => tx('2.0', v)), outlier, tx('3.0', 50)];
+    const r = buildPerformanceComparison({ pool, sideA: side('1.0', '1.0'), sideB: side('2.0', '2.0') });
+    assert.equal(callout(r.spec).title, 'Speed Index 30% Higher on "2.0"');
+    assert.equal(callout(r.spec).tone, 'risk');
+    assert.match(callout(r.spec).text, /^"2\.0" scores a 30% higher Speed Index than "1\.0" \(1,005 SI on "1\.0", 1,305 SI on "2\.0", trimmed means\)\. Higher is worse/);
+    assert.deepEqual(r.spec.headline, { value: '+30%', label: 'Speed Index on "2.0" against "1.0" (lower is better)' });
+    assert.deepEqual(r.highlights.slice(1), ['Like for like: Yes (compared: app version, from the filters).', `1 run left out as an outlier: ${outlier.id}.`]);
+    assert.deepEqual(findings(r.spec), ['Compared: app version, the filter that differs between the sides.',
+      'Nothing else that is recorded differs: app version, device, OS version, network profile and transaction match.']);
+    const runs = (section(r.spec, /^Runs$/).blocks[0] as Extract<Section['blocks'][number], { type: 'table' }>).rows;
+    assert.equal(runs.length, 10, 'the 3.0 run is on neither side');
+    assert.equal(runs.find((x) => x.id === String(outlier.id))?.used, 'Left out: outlier');
+    const bar = section(r.spec, /^Speed Index$/).blocks[0] as Extract<Section['blocks'][number], { type: 'bar' }>;
+    assert.deepEqual(bar.series.map((s) => s.values), [[1005, 1005, 1005], [1305, 1305, 1305]]);
+    const html = renderReport(r.spec);
+    assert.match(html, /<h1>Performance Comparison<\/h1>/);
+    assert.doesNotMatch(html, /ms faster|milliseconds faster|SI ms/, 'Speed Index is never turned into a duration');
+  });
+
+  it('within 5% is about the same; a bigger gap inside the run-to-run spread is no clear difference; under 3 runs no verdict', () => {
+    const a = [1000, 1200, 800, 1100, 900];
+    const same = buildPerformanceComparison({ pool: [...a.map((v) => tx('1.0', v)), ...a.map((v) => tx('2.0', v + 20))], sideA: side('1.0', '1.0'), sideB: side('2.0', '2.0') });
+    assert.equal(callout(same.spec).title, 'About the Same');
+    assert.match(callout(same.spec).text, /differs by 2% between the sides .* under 5%/);
+    const noise = buildPerformanceComparison({ pool: [...a.map((v) => tx('1.0', v)), ...a.map((v) => tx('2.0', v + 60))], sideA: side('1.0', '1.0'), sideB: side('2.0', '2.0') });
+    assert.equal(callout(noise.spec).title, 'No Clear Difference');
+    assert.match(callout(noise.spec).text, /differ by 6% .* the gap between the medians \(60 SI\) is within the run-to-run spread of the sides \(about 148 SI\)/);
+    const few = buildPerformanceComparison({ pool: [tx('1.0', 1000), tx('1.0', 1010), tx('2.0', 2000), tx('2.0', 2010), tx('2.0', null)], sideA: side('1.0', '1.0'), sideB: side('2.0', '2.0') });
+    assert.equal(callout(few.spec).title, 'Too Few Runs for a Verdict');
+    assert.match(callout(few.spec).text, /"1\.0" has 2 runs with a Speed Index and "2\.0" 2 runs/);
+  });
+
+  it('a factor other than the compared one differs entirely: not like for like, whatever the numbers say', () => {
+    const pool = [...[1000, 1010, 1020].map((v) => tx('1.0', v)), ...[700, 710, 720].map((v) => tx('2.0', v, { deviceModel: 'SM-S901U', deviceName: 'Galaxy S22 US-2', deviceVersion: '13' }))];
+    const ids = (v: string) => pool.filter((t) => t.appVersion === v).map((t) => t.id);
+    const r = buildPerformanceComparison({ pool, sideA: toSelector({ label: '1.0', transactionIds: ids('1.0') }, 'A'), sideB: toSelector({ label: '2.0', transactionIds: ids('2.0') }, 'B'), axis: ['appVersion'] });
+    assert.equal(callout(r.spec).title, 'Not a Like-for-Like Comparison');
+    assert.match(callout(r.spec).text, /^Besides the app version, the sides differ in device model and OS version, so the 30% lower Speed Index on "2\.0" cannot be put down to the app version alone\./);
+    assert.ok(findings(r.spec).includes('Device model differs between the sides: "1.0" Pixel 8; "2.0" SM-S901U.'));
+    assert.match(r.highlights[1], /^Like for like: No \(compared: app version\)\.$/);
+  });
+
+  it('no axis named: the single factor that differs is the one compared, with what it implies', () => {
+    const pool = [...[1000, 1010, 1020, 1030].map((v) => tx('1.0', v)),
+      ...[1500, 1510, 1520, 1530].map((v) => tx('1.0', v, { deviceOs: 'iOS', deviceModel: 'iPhone 15', deviceName: 'iPhone 15 US-3', deviceVersion: '17.5' }))];
+    const r = buildPerformanceComparison({ pool, sideA: toSelector({ label: 'Android', transactionIds: pool.slice(0, 4).map((t) => t.id) }, 'A'),
+      sideB: toSelector({ label: 'iOS', transactionIds: pool.slice(4).map((t) => t.id) }, 'B') });
+    assert.equal(callout(r.spec).title, 'Speed Index 49% Higher on "iOS"');
+    assert.deepEqual(findings(r.spec).slice(0, 2), ['Compared: platform, the only factor that differs between the sides.',
+      'Comparing the platform also compares the device model, device and OS version.']);
+    assert.match(r.highlights[1], /Like for like: Yes \(compared: platform, the only factor that differs\)/);
+  });
+
+  it('device against device implies model against model, never OS version against OS version', () => {
+    const iphone = (v: number, name: string, model: string, os: string) => tx('1.0', v, { deviceName: name, deviceModel: model, deviceVersion: os, deviceOs: 'iOS' });
+    const pool = [...[900, 910, 920].map((v) => iphone(v, 'iPhone 13 US-1', 'iPhone 13', '17.5')), ...[700, 710, 720].map((v) => iphone(v, 'iPhone 11 US-2', 'iPhone 11', '17.5'))];
+    const r = buildPerformanceComparison({ pool, sideA: toSelector({ label: '13', deviceName: 'iPhone 13' }, 'A'), sideB: toSelector({ label: '11', deviceName: 'iPhone 11' }, 'B') });
+    assert.equal(callout(r.spec).title, 'Speed Index 22% Lower on "11"');
+    assert.ok(findings(r.spec).includes('Comparing the device also compares the device model.'));
+    const os = buildPerformanceComparison({ pool: pool.map((t, k) => (k >= 3 ? { ...t, deviceVersion: '16.2' } : t)), sideA: toSelector({ label: '13', deviceName: 'iPhone 13' }, 'A'),
+      sideB: toSelector({ label: '11', deviceName: 'iPhone 11' }, 'B') });
+    assert.match(callout(os.spec).text, /^Besides the device, the sides differ in OS version,/);
+  });
+
+  it('a side that matches nothing is refused, naming its selection', () => {
+    assert.throws(() => buildPerformanceComparison({ pool: [tx('1.0', 1000)], sideA: side('1.0', '1.0'), sideB: side('9.9', '9.9') }),
+      /No performance transaction matched side "9\.9" \(app version 9\.9, transaction Login\)/);
+  });
+
+  it('the tool: filters read the list once, ids are fetched by id, and wrong sides are refused before anything is read', async () => {
+    const list = [...[1000, 1020, 1010, 990].map((v) => tx('1.0', v)), ...[1300, 1320, 1310, 1290].map((v) => tx('2.0', v))];
+    const other = tx('2.0', 1250, { projectName: 'Other' });
+    const byPath = new Map([...list, other].map((t) => [`/reporter/api/transactions/${t.id}`, t]));
+    const api = await startStubApi((req) => (req.path === '/reporter/api/transactions/list' ? { count: null, data: list } : byPath.get(req.path)));
+    const saved = { dir: process.env.MCP_REPORT_DIR, mode: process.env.MCP_DEPLOYMENT_MODE };
+    process.env.MCP_DEPLOYMENT_MODE = 'docker';
+    delete process.env.MCP_REPORT_DIR;
+    const tools = await connectTools(registerReportTools);
+    try {
+      const r = await tools.call('create_performance_comparison_report', { sides: [{ label: '1.0', transactionName: 'login', appVersion: '1.0' }, { label: '2.0', transactionName: 'Login', appVersion: '2.0' }] });
+      assert.notEqual(r.res.isError, true, r.text);
+      assert.match(r.text, /Report ready: performance-comparison-\d{8}-\d{4}/);
+      assert.match(r.text, /Speed Index 30% Higher on "2\.0"/);
+      const byId = await tools.call('create_performance_comparison_report', { sides: [{ label: '1.0', transactionIds: list.slice(0, 4).map((t) => t.id) },
+        { label: 'other project', transactionIds: [other.id, 999_999] }], comparisonAxis: ['projectName'] });
+      assert.notEqual(byId.res.isError, true, byId.text);
+      assert.match(byId.text, /Not a Like-for-Like Comparison\. Besides the project, the sides differ in app version/, 'the other project\'s run is also another app version');
+      assert.match(byId.text, /Not found: transaction 999999\./);
+      assert.equal(api.requests.filter((q) => q.path === '/reporter/api/transactions/list').length, 1, 'filters read the list once; sides chosen by id never read it');
+      assert.equal(api.requests.filter((q) => /^\/reporter\/api\/transactions\/\d+$/.test(q.path)).length, 6, 'each id fetched once, the unknown one included');
+      const before = api.requests.length;
+      const missing = await tools.call('create_performance_comparison_report', { sides: [{ label: 'x', appVersion: '1.0' }] });
+      assert.equal(missing.res.isError, true);
+      assert.match(missing.text, /performance-comparison needs sides: two sides, the baseline first \(1 given\).*create_performance_comparison_report takes them/s);
+      const none = await tools.call('create_report', { recipe: 'performance-comparison' });
+      assert.match(none.text, /needs sides.*create_performance_comparison_report takes them/s, 'create_report does not publish sides, so its refusal names the tool that does');
+      const blank = await tools.call('create_performance_comparison_report', { sides: [{ label: 'x' }, { appVersion: '2.0' }] });
+      assert.match(blank.text, /side 1 \("x"\) selects every transaction: give transactionIds or at least one filter field/);
+      const typo = await tools.call('create_performance_comparison_report', { sides: [{ label: 'x', version: '1.0' }, { appVersion: '2.0' }] });
+      assert.equal(typo.res.isError, true, 'a misspelt filter is refused, never dropped (dropped, the side would be every transaction)');
+      assert.match(typo.text, /Unrecognized key.*"version"/s);
+      assert.equal(api.requests.length, before, 'nothing read for a refused call');
+    } finally {
+      await tools.close();
+      await api.close();
+      if (saved.dir === undefined) delete process.env.MCP_REPORT_DIR; else process.env.MCP_REPORT_DIR = saved.dir;
+      if (saved.mode === undefined) delete process.env.MCP_DEPLOYMENT_MODE; else process.env.MCP_DEPLOYMENT_MODE = saved.mode;
+    }
+  });
+});
+
 describe('release readiness (a period or one build against stated checks)', () => {
   const c = (passed: number, failed = 0, error = 0, incomplete = 0) => ({ passed, failed, error, incomplete, skipped: 0, healed: 0, total: passed + failed + error + incomplete });
   const current = [{ values: ['Login'], counts: c(60) }, { values: ['Pay'], counts: c(0, 6) }, { values: ['Search'], counts: c(2, 6) }, { values: ['Cart'], counts: c(15, 5) }];
@@ -1129,12 +1315,17 @@ describe('release readiness (a period or one build against stated checks)', () =
       assert.ok(customCalls.some((g) => g.groupBy[0] === 'category' && g.filter.some((f) => f.property === 'platform' && f.value === 'tablet')));
       assert.ok(!customCalls.some((g) => g.groupBy.includes('errorCategory') || g.filter.some((f) => f.property === 'device.os')));
       assert.match(custom.text, /Scope: only runs where platform = tablet\./);
-      // A scope on the user counts mobile runs only (web runs keep the user in another column): the report says so.
+      // A scope on the user counts mobile AND web runs: web runs keep the user in digitalai:user, asked for as a twin query.
+      api.requests.length = 0;
       const mine = await tools.call('create_test_breakdown_report', { groupBy: ['platform'], where: { user: 'me@x.io' } });
       assert.notEqual(mine.res.isError, true, mine.text);
-      assert.match(mine.text, /Scope: only runs where user = me@x\.io\. Web \(Selenium\) runs are not included: the platform records their user in a separate column\. get_grouped_test_reports with a user filter counts mobile and web runs together\./);
+      assert.match(mine.text, /Scope: only runs where user = me@x\.io\./);
+      assert.doesNotMatch(mine.text, /not included/);
+      const userCalls = api.requests.filter((q) => q.path === '/reporter/api/tests/grouped').map((q) => (q.json as { filter: Filter }).filter);
+      assert.ok(userCalls.some((f) => f.some((x) => x.property === 'user' && x.value === 'me@x.io')), 'the mobile runs');
+      assert.ok(userCalls.some((f) => f.some((x) => x.property === 'digitalai:user' && x.value === 'me@x.io')), 'and the web runs');
       const mineHtml = String((mine.res.content as unknown as Array<{ type: string; resource?: { text: string } }>).find((x) => x.type === 'resource')?.resource?.text);
-      assert.match(mineHtml, /the value is matched whatever its letter case\. Web \(Selenium\) runs are not included: the platform records their user in a separate column\./);
+      assert.match(mineHtml, /the value is matched whatever its letter case\. Mobile and web \(Selenium\) runs are both counted; web runs keep their user in digitalai:user\./);
       assert.doesNotMatch(mineHtml, /get_grouped_test_reports/, 'a tool name is for the AI, not for the report');
       const refused = await tools.call('create_report', { recipe: 'device-health', where: { platform: 'iOS' } });
       assert.equal(refused.res.isError, true);

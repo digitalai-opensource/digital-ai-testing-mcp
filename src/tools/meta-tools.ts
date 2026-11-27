@@ -134,6 +134,7 @@ export const REGISTERED_TOOLS = [
   // Reports — branded self-contained HTML from a compact spec (core)
   'render_report', 'create_report', 'create_test_summary_report', 'create_failure_analysis_report', 'create_device_health_report', 'create_usage_summary_report', 'create_test_inventory_report', 'create_test_breakdown_report', 'create_test_trend_report',
   'create_test_reliability_report', 'create_device_coverage_report', 'create_device_utilization_report', 'create_performance_overview_report', 'create_release_readiness_report', 'create_license_usage_report',
+  'create_performance_comparison_report',
 ] as const;
 
 export const TOOL_COUNT = REGISTERED_TOOLS.length;

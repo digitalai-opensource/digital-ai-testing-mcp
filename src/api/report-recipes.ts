@@ -281,21 +281,56 @@ export async function inventoryData(o: { projectName?: string; signal?: AbortSig
  * endpoint (230,158 runs of 90 days in 7 s) where reading the runs stops at 25,000.
  */
 export async function firstTestIdSince(t: number, projectName?: string): Promise<number | null> {
+  return (await firstTestIdsSince([t], projectName))[0];
+}
+
+/**
+ * The cut point for each time: the run id from which every run started at or after it (null: no run since). One search
+ * for all of them: ids grow with time, so each probe is guessed by interpolating between the closest ids already seen
+ * (every second step halves the interval instead, so bursty hours cannot slow it down), and every probe's answer is
+ * shared by all the searches. Measured live 2026-11-26 for the 30 local days of a trend: 30 independent bisections were
+ * about 630 probes and 37.6 s.
+ */
+export async function firstTestIdsSince(times: number[], projectName?: string, concurrency = 4): Promise<Array<number | null>> {
   const one = async (request: Parameters<typeof listTests>[0]) => {
     const page = await listTests({ limit: 1, page: 1, returnTotalCount: false, ...request }, undefined, projectName);
     if (request.sort && !page.sortApplied) throw new Error('The reporter refused a sorted list for this access key, so a time window cannot be bounded: ask for all dates.');
-    return (page.data ?? [])[0] as { test_id?: number; start_time?: string } | undefined;
+    const rec = (page.data ?? [])[0] as { test_id?: number; start_time?: string } | undefined;
+    return rec ? { id: Number(rec.test_id), t: Date.parse(String(rec.start_time)) } : null;
   };
-  const newest = await one({ sort: [{ property: 'start_time', descending: true }] });
-  if (!newest || Date.parse(String(newest.start_time)) < t) return null;
-  let lo = 1, hi = Number(newest.test_id);
-  for (let step = 0; lo < hi && step < 40; step++) {
-    const mid = Math.floor((lo + hi) / 2);
-    const rec = await one({ filter: [{ property: 'test_id', operator: '>=', value: mid as unknown as string }], sort: [{ property: 'test_id', descending: false }] });
-    if (!rec || Date.parse(String(rec.start_time)) >= t) hi = mid;
-    else lo = Number(rec.test_id) + 1;
-  }
-  return lo;
+  const atOrAfter = (id: number) => one({ filter: [{ property: 'test_id', operator: '>=', value: id as unknown as string }], sort: [{ property: 'test_id', descending: false }] });
+  const [newest, oldest] = await Promise.all([one({ sort: [{ property: 'start_time', descending: true }] }), atOrAfter(1)]);
+  if (!newest || !oldest) return times.map(() => null);
+  // Ids seen, with their start times; read by every search.
+  const known: Array<{ id: number; t: number }> = [oldest, newest];
+  const search = async (target: number): Promise<number | null> => {
+    if (newest.t < target) return null;
+    if (oldest.t >= target) return 1;
+    // The cut lies in [lo, hi]: runs below lo started before the target, runs from hi on at or after it.
+    let below = known.filter((p) => p.t < target).reduce((m, p) => (p.id > m.id ? p : m));
+    let above = known.filter((p) => p.t >= target).reduce((m, p) => (p.id < m.id ? p : m));
+    let lo = below.id + 1, hi = above.id;
+    for (let step = 0; lo < hi && step < 60; step++) {
+      const width = hi - lo;
+      const guess = step % 2 === 0 && above.t > below.t
+        ? below.id + Math.round(((target - below.t) / (above.t - below.t)) * (above.id - below.id))
+        : Math.floor((lo + hi) / 2);
+      const mid = Math.min(hi - 1, Math.max(lo, guess));
+      const rec = await atOrAfter(mid);
+      if (rec) known.push(rec);
+      if (!rec || rec.t >= target) { hi = mid; if (rec && rec.id <= above.id) above = rec; }
+      else { lo = rec.id + 1; below = rec; }
+      if (hi - lo >= width) break; // cannot happen; a guard against a reporter answering out of order
+    }
+    return lo;
+  };
+  const out: Array<number | null> = new Array(times.length);
+  const order = times.map((t, k) => [t, k] as const).sort((x, y) => x[0] - y[0]);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, order.length) }, async () => {
+    while (next < order.length) { const [t, k] = order[next++]; out[k] = await search(t); }
+  }));
+  return out;
 }
 
 /**
@@ -310,22 +345,30 @@ export async function breakdownCounts(keys: string[], minTestId: number | null, 
   /** Only runs whose column equals the value. Verified live 2026-11-24: equality filters combine with the id bound. */ where?: Record<string, string>,
   /** Match `where` by the exact spelling the platform stores. */ exactCase = false): Promise<BreakdownRow[]> {
   const groupBy = keys.includes('user') && !keys.includes('digitalai:user') ? [...keys, 'digitalai:user'] : keys;
-  // Both bounds are NUMBERS; a range (>= and <) adds up exactly (verified live 2026-11-24).
-  const filter: TestFilterField[] = [
-    ...(minTestId != null ? [{ property: 'test_id', operator: '>=', value: minTestId }] : []),
-    ...(belowTestId != null ? [{ property: 'test_id', operator: '<', value: belowTestId }] : []),
-    ...Object.entries(where ?? {}).map(([property, value]) => ({ property, operator: '=', value })),
-  ];
-  // Sent as "contains" with the key grouped as well; only the groups whose value equals the wanted one are kept (report-case.ts).
-  const plan = exactCase ? null : loosePlan(groupBy, filter);
-  const sent = plan?.filter ?? filter;
-  const res = (await getGroupedTests({
-    groupBy: plan?.groupBy ?? groupBy, pivotBy: ['status'],
-    ...(sent.length ? { filter: sent } : {}),
-  }, undefined, projectName)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
-  const raw = Array.isArray(res) ? res : res.data ?? [];
-  const rows = plan ? plan.apply(raw).rows : raw;
-  return foldBreakdownRows(rows.map((r) => ({
+  const count = async (scope?: Record<string, string>): Promise<Array<Record<string, unknown>>> => {
+    // Both bounds are NUMBERS; a range (>= and <) adds up exactly (verified live 2026-11-24).
+    const filter: TestFilterField[] = [
+      ...(minTestId != null ? [{ property: 'test_id', operator: '>=', value: minTestId }] : []),
+      ...(belowTestId != null ? [{ property: 'test_id', operator: '<', value: belowTestId }] : []),
+      ...Object.entries(scope ?? {}).map(([property, value]) => ({ property, operator: '=', value })),
+    ];
+    // Sent as "contains" with the key grouped as well; only the groups whose value equals the wanted one are kept (report-case.ts).
+    const plan = exactCase ? null : loosePlan(groupBy, filter);
+    const sent = plan?.filter ?? filter;
+    const res = (await getGroupedTests({
+      groupBy: plan?.groupBy ?? groupBy, pivotBy: ['status'],
+      ...(sent.length ? { filter: sent } : {}),
+    }, undefined, projectName)) as { data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+    const raw = Array.isArray(res) ? res : res.data ?? [];
+    return plan ? plan.apply(raw).rows : raw;
+  };
+  // Web (Selenium) reports keep their user in digitalai:user, so a scope on user also counts that key and the rows are
+  // added up (the two sets are disjoint: a report has its user in one key or the other). Before, a report scoped to a
+  // user counted the mobile runs only (a user with 364 mobile and 110 web runs showed 364).
+  const webTwin = where && 'user' in where && !('digitalai:user' in where)
+    ? Object.fromEntries(Object.entries(where).map(([k, v]) => [k === 'user' ? 'digitalai:user' : k, v])) : null;
+  const [mobile, web] = await Promise.all([count(where), webTwin ? count(webTwin) : Promise.resolve([])]);
+  return foldBreakdownRows([...mobile, ...web].map((r) => ({
     values: keys.map((k) => {
       const v = k === 'user' ? r['user'] ?? r['digitalai:user'] : r[k];
       return v == null || v === '' ? null : String(v);

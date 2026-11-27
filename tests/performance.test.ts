@@ -4,7 +4,7 @@ import {
   mean, median, stddev, trimmedMean, mad, madRaw, detectOutliersMAD, summarizeMetric,
 } from '../src/utils/performance-stats.js';
 import {
-  resolveSide, buildComparison, buildConfoundAssessment, buildOutlierReport,
+  resolveSide, buildComparison, buildConfoundAssessment, buildOutlierReport, toSelector, selectsSomething, axisFromFilters,
 } from '../src/utils/performance-comparison.js';
 import type { Transaction } from '../src/types/digital-ai.js';
 
@@ -154,6 +154,41 @@ describe('buildComparison', () => {
     );
     assert.deepEqual(cmp.sideA.excludedIds, [24]);
     assert.equal(cmp.sideA.n, 4);
+  });
+
+  it('a Speed Index of 0 and CPU + memory of 0 are "not recorded", never values', () => {
+    const all = [
+      ...[1000, 1010, 1020].map((si, k) => tx({ id: 30 + k, appVersion: '1.0', speedIndex: si, cpuAvg: 20, memAvg: 300 })),
+      tx({ id: 33, appVersion: '1.0', speedIndex: 0, cpuAvg: 0, memAvg: 0 }),
+    ];
+    const cmp = buildComparison(all, { label: 'A', filter: { appVersion: '1.0' } }, { label: 'B', transactionIds: [30] }, { metrics: ['speedIndex', 'cpuAvg'], excludeOutliers: true });
+    assert.equal(cmp.metrics[0].sideA.n, 3, 'the 0 is not a fourth Speed Index');
+    assert.equal(cmp.metrics[0].sideA.median, 1010);
+    assert.deepEqual(cmp.sideA.excludedIds, [], 'nor is it flagged as the outlier');
+    assert.equal(cmp.metrics[1].sideA.n, 3, 'CPU leaves out the run with no telemetry');
+    assert.equal(cmp.metrics[1].sideA.mean, 20);
+  });
+});
+
+describe('report-tool sides', () => {
+  it('toSelector keeps ids or filters and writes the platform the way transactions store it', () => {
+    assert.deepEqual(toSelector({ label: ' v2 ', transactionIds: [1, 2] }, 'A'), { label: 'v2', transactionIds: [1, 2], filter: undefined });
+    assert.deepEqual(toSelector({ deviceOs: 'IOS', transactionName: 'Login' }, 'B'), { label: 'B', transactionIds: undefined, filter: { transactionName: 'Login', deviceOs: 'iOS' } });
+    assert.equal(selectsSomething(toSelector({ label: 'x' }, 'A')), false);
+  });
+
+  it('the axis is the filters that differ, letter case aside; none for sides chosen by id', () => {
+    const a = toSelector({ transactionName: 'Login', appVersion: '1.0', deviceModel: 'pixel 8' }, 'A');
+    const b = toSelector({ transactionName: 'login', appVersion: '2.0', deviceModel: 'Pixel 8' }, 'B');
+    assert.deepEqual(axisFromFilters(a, b), ['appVersion']);
+    assert.deepEqual(axisFromFilters(toSelector({ networkProfile: 'Monitor' }, 'A'), toSelector({}, 'B')), ['networkProfile']);
+    assert.deepEqual(axisFromFilters(toSelector({ transactionIds: [1] }, 'A'), b), []);
+  });
+
+  it('an end date with a time is taken as written (it used to filter nothing)', () => {
+    const all = [tx({ id: 40, startTime: '2026-06-11T05:00:00Z' }), tx({ id: 41, startTime: '2026-06-11T18:00:00Z' })];
+    assert.deepEqual(resolveSide(all, { label: 'A', filter: { endDate: '2026-06-11T12:00:00Z' } }).map((t) => t.id), [40]);
+    assert.deepEqual(resolveSide(all, { label: 'A', filter: { endDate: '2026-06-11' } }).map((t) => t.id), [40, 41]);
   });
 });
 

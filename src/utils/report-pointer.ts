@@ -67,8 +67,8 @@ export const REPORT_POINTER_TOOLS: Record<string, string | null> = {
   list_transactions: 'create_performance_overview_report',
   get_transaction_performance_summary: 'create_performance_overview_report',
   get_performance_trend: 'create_performance_overview_report',
-  compare_performance_transactions: null,
-  detect_performance_outliers: null,
+  compare_performance_transactions: 'create_performance_comparison_report',
+  detect_performance_outliers: 'create_performance_comparison_report',
   list_nv_servers: null,
 };
 
