@@ -747,7 +747,6 @@ describe('get_grouped_test_reports for a time range (the reporter cannot filter 
     assert.deepEqual([JSON.parse(none.text).count, JSON.parse(none.text).totalRecords], [0, 0]);
     assert.equal(grouped().length, before);
     const cases: Array<[Record<string, unknown>, RegExp]> = [
-      [{ days: 7, allProjects: true }, /a time range needs one project \(test ids are counted per project\)/],
       [{ days: 7, startDate: '2026-11-01' }, /give days or startDate, not both/],
       [{ startDate: 'last week' }, /startDate and endDate take ISO 8601/],
       [{ startDate: '2026-11-10', endDate: '2026-11-01' }, /endDate must be after startDate/],
@@ -809,6 +808,99 @@ describe('get_grouped_test_reports for a time range (the reporter cannot filter 
     assert.equal(JSON.parse(fine.text).note, undefined);
   });
 });
+describe('get_grouped_test_reports: a time range across every project (Desktop tests 2026-11-26 and 2026-11-27)', () => {
+  // Three projects with ids of their own: Default ids 1..100 one run an hour, Other ids 1..50 one run every 6 hours,
+  // Idle's newest run 60 days ago. The range is found per project by run id; Idle is never asked for counts.
+  const startIn: Record<string, (id: number) => number> = {
+    Default: (id) => NOW - (100 - id) * HOUR,
+    Other: (id) => NOW - (50 - id) * 6 * HOUR,
+    Idle: (id) => NOW - (60 * 24 + 10 - id) * HOUR,
+  };
+  const size: Record<string, number> = { Default: 100, Other: 50, Idle: 10 };
+  const runs: Record<string, Array<Record<string, unknown>>> = {
+    Default: Array.from({ length: 100 }, (_, i) => ({ test_id: i + 1, 'device.os': 'Android', user: 'ann' })),
+    Other: Array.from({ length: 50 }, (_, i) => (i % 2 ? { test_id: i + 1, 'device.os': 'iOS', user: 'ann' } : { test_id: i + 1, 'device.os': null, 'digitalai:user': 'ann' })),
+    Idle: Array.from({ length: 10 }, (_, i) => ({ test_id: i + 1, 'device.os': 'iOS', user: 'ann' })),
+  };
+  type Filter = Array<{ property: string; operator: string; value: unknown }>;
+  let stub: StubApi;
+  let t: ToolClient;
+  let failWebOf: string | undefined;
+  const grouped = () => stub.requests.filter((q) => q.path === '/reporter/api/tests/grouped');
+  const sentFilter = (q: { json: unknown }) => ((q.json as GroupedBody).filter ?? []) as Filter;
+  beforeAll(async () => {
+    stub = await startStubApi((req) => {
+      const project = req.query.get('projectName') ?? 'Default';
+      if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Default');
+      if (req.path === '/reporter/api/projects') return [{ id: 1, name: 'Default' }, { id: 2, name: 'Other' }, { id: 3, name: 'Idle' }];
+      if (req.path === '/reporter/api/tests/list') {
+        const at = (id: number) => ({ count: 1, data: [{ test_id: id, start_time: new Date(startIn[project](id)).toISOString() }] });
+        const f = ((req.json.filter ?? []) as Filter).find((x) => x.property === 'test_id');
+        if (!f) return at(size[project]);
+        const id = Math.max(1, Number(f.value));
+        return id > size[project] ? { count: 0, data: [] } : at(id);
+      }
+      if (req.path === '/reporter/api/tests/grouped') {
+        const body = req.json as GroupedBody;
+        if (failWebOf === project && (body.filter ?? []).some((x) => x.property === 'digitalai:user')) return reply(400, { message: 'timeout of 30000ms exceeded' });
+        return groupedAnswer(runs[project], body, []);
+      }
+      return undefined;
+    });
+    t = await connectTools(registerReportingTools);
+  });
+  afterAll(async () => { await t.close(); await stub.close(); });
+
+  it('days with allProjects bounds each project by its own run ids, skips a project with no run in the range, and counts web runs of a user', async () => {
+    const before = grouped().length;
+    const r = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], allProjects: true, days: 3, filter: [{ property: 'user', operator: '=', value: 'ann' }], returnTotalCount: true, outputFormat: 'json' });
+    assert.notEqual(r.res.isError, true, r.text);
+    const out = JSON.parse(r.text);
+    assert.match(out.range, /^runs started from .*Z \(the last 3 days, in the server's time zone\)$/);
+    assert.deepEqual([out.projectsQueried, out.projectsWithRunsInRange], [3, 2]);
+    const asked = grouped().slice(before);
+    assert.ok(asked.length > 0 && asked.every((q) => q.query.get('projectName') !== 'Idle'), 'a project with no run in the range is not asked for counts');
+    const cut = new Date(NOW); cut.setHours(0, 0, 0, 0); cut.setDate(cut.getDate() - 2);
+    for (const q of asked) {
+      const p = q.query.get('projectName')!;
+      const lo = sentFilter(q).find((f) => f.property === 'test_id' && f.operator === '>=')!.value as number;
+      assert.equal(typeof lo, 'number');
+      assert.ok(startIn[p](lo) >= cut.getTime() && startIn[p](lo - 1) < cut.getTime(), `${p}: the bound is its own first run of the range`);
+    }
+    const expect = (p: string, pred: (x: Record<string, unknown>) => boolean) => runs[p].filter((x) => startIn[p](x.test_id as number) >= cut.getTime() && pred(x)).length;
+    const rows = (out.data as Array<Record<string, unknown>>).map((x) => [x.project, x['device.os'], x._count_]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    assert.deepEqual(rows, [
+      ['Default', 'Android', expect('Default', () => true)],
+      ['Other', 'iOS', expect('Other', (x) => x['device.os'] === 'iOS')],
+      ['Other', null, expect('Other', (x) => x['device.os'] === null)],
+    ]);
+    assert.ok(!asked.some((q) => ((q.json as GroupedBody).groupBy ?? []).includes('date')), 'no grouping by day');
+  });
+
+  it('startDate / endDate with allProjects: a lower and an upper bound per project; a range with no run anywhere asks for no counts', async () => {
+    const before = grouped().length;
+    const from = new Date(NOW - 50 * HOUR).toISOString(), to = new Date(NOW - 20 * HOUR).toISOString();
+    const r = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], allProjects: true, startDate: from, endDate: to, exactCase: true, returnTotalCount: true, outputFormat: 'json' });
+    assert.notEqual(r.res.isError, true, r.text);
+    const d = grouped().slice(before).find((q) => q.query.get('projectName') === 'Default')!;
+    assert.deepEqual(sentFilter(d).map((f) => [f.operator, f.value]), [['>=', 50], ['<', 80]]);
+    const none = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], allProjects: true, startDate: new Date(NOW + 48 * HOUR).toISOString(), outputFormat: 'json' });
+    assert.deepEqual([JSON.parse(none.text).totalRecords, JSON.parse(none.text).projectsQueried], [0, 3]);
+    assert.equal(grouped().length, before + 2, 'only the two projects of the first call were asked');
+  });
+
+  it('a project whose web query fails is named with that half only, and the answer says how to fill the gap', async () => {
+    failWebOf = 'Other';
+    try {
+      const r = await t.call('get_grouped_test_reports', { groupBy: ['device.os'], allProjects: true, days: 3, filter: [{ property: 'user', operator: '=', value: 'ann' }], outputFormat: 'json' });
+      const out = JSON.parse(r.text);
+      assert.deepEqual(out.projectsFailed.map((f: { project: string; part: string }) => [f.project, f.part]), [['Other', 'web (Selenium) runs']]);
+      assert.match(out.projectsFailedNote, /^Other \(its web \(Selenium\) runs\) did not answer and is not counted; everything else is\. Ask again for just that project \(projectName\)/);
+      assert.ok((out.data as Array<Record<string, unknown>>).some((x) => x.project === 'Other' && x['device.os'] === 'iOS'), 'its mobile runs are counted');
+    } finally { failWebOf = undefined; }
+  });
+});
+
 describe('letter case is ignored in filters and groups unless exactCase (user decision 2026-11-25)', () => {
   // As a tenant stores them (live 2026-11-25): browsers and platforms in the spelling each client sent.
   const RUNS = [

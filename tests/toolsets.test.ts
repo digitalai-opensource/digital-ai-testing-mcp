@@ -340,8 +340,10 @@ describe('report tools: create_report and render_report in the core, the per-rec
     assert.match(byName.get('create_test_breakdown_report')!.description ?? '', /Takes: groupBy: string\[\], days: number, allDates: boolean, .*where: object/);
     assert.match(byName.get('create_license_usage_report')!.description ?? '', /License usage report \(license utilization, peak concurrency/);
     assert.match(byName.get('list_devices')!.description ?? '', PLACEHOLDER, 'every other placeholder still runs nothing on its first call');
-    const weight = Object.keys(TOOL_TOOLSETS).reduce((n, name) => n + JSON.stringify(byName.get(name)).length, 0);
-    assert.ok(weight < 9500, `13 recipe tools as placeholders: ${weight} chars (they were 18,000 in full)`);
+    // Per tool, so a new report tool does not need a new number: 13 placeholders were under 9,500 (about 700 each; 1,400 in full).
+    const names = Object.keys(TOOL_TOOLSETS);
+    const weight = names.reduce((n, name) => n + JSON.stringify(byName.get(name)).length, 0);
+    assert.ok(weight < 750 * names.length, `${names.length} recipe tools as placeholders: ${weight} chars, ${Math.round(weight / names.length)} each (about 1,400 each in full)`);
   });
 
   it('a recipe tool RUNS on its first call when the arguments are valid, also when a number arrives as text (Claude Desktop 2026-11-25)', async () => {

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { osTypeTitle } from '../utils/schema.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { listTransactions, getTransaction } from '../api/transactions.js';
+import { transactionPool } from '../api/transactions.js';
 import { performanceTransaction } from '../api/webdriver.js';
 import type { Transaction } from '../types/digital-ai.js';
 import { SPEED_INDEX_SEMANTICS, SPEED_INDEX_SEMANTICS_SHORT } from '../utils/metric-semantics.js';
@@ -67,26 +67,8 @@ function buildSide(
   return { label, transactionIds: ids, filter };
 }
 
-// Build the transaction pool the compute layer will resolve sides against.
-//
-// listTransactions() is PROJECT-SCOPED to the active credential's reporter context, so
-// transactions created under a different project's reporter instance are absent
-// from it. getTransaction(id) is a direct GET that works across scopes. So:
-//   - explicit IDs are always resolved directly (cross-scope, and bounded by the
-//     number of IDs given — no full-list fetch when both sides are explicit);
-//   - the bulk list is fetched ONLY when a side uses a filter (which needs it).
-async function gatherPool(sides: SideSelector[]): Promise<Transaction[]> {
-  const pool = new Map<number, Transaction>();
-  const needList = sides.some((s) => !s.transactionIds || s.transactionIds.length === 0);
-  if (needList) {
-    for (const t of await listTransactions()) pool.set(t.id, t);
-  }
-  const explicitIds = [...new Set(sides.flatMap((s) => s.transactionIds ?? []))];
-  const missing = explicitIds.filter((id) => !pool.has(id));
-  const fetched = await Promise.all(missing.map((id) => getTransaction(id).catch(() => null)));
-  for (const t of fetched) if (t) pool.set(t.id, t);
-  return [...pool.values()];
-}
+// The transaction pool the compute layer resolves sides against (cross-scope ids, the list only for filters).
+const gatherPool = (sides: SideSelector[]): Promise<Transaction[]> => transactionPool(sides);
 
 function num(n: number | null | undefined, digits = 1): string {
   return n == null ? 'n/a' : n.toFixed(digits);
@@ -146,8 +128,8 @@ export function registerPerformanceTools(server: McpServer): void {
     'compare_performance_transactions',
     'Compare performance (Speed Index and optionally CPU/memory/battery/duration) between TWO sets of ' +
     'transactions, reporting trimmed mean, median, AND raw mean for each side plus the delta and % change. ' +
-    'This is the analytical core of a performance comparison report — for the full guided sequence use the ' +
-    'performance_comparison_report prompt. ' +
+    'This is the analytical core of a performance comparison — for a finished report of the same two sides use ' +
+    'create_performance_comparison_report; for the full guided sequence use the performance_comparison_report prompt. ' +
     'PREREQUISITE WORKFLOW — before trusting any delta this tool produces, you should already have: ' +
     '(a) confirmed via list_nv_servers that an NV server in the device region was ONLINE during the runs — ' +
     'Speed Index collected without active NV instrumentation is unreliable; ' +

@@ -13,6 +13,7 @@ import {
   listTestsSortedDesc,
   getGroupedTests,
   getGroupedTestsAllProjects,
+  reporterProjectNames,
   getDistinctKeyValues,
   deleteTests,
   downloadTestAttachments,
@@ -23,7 +24,7 @@ import {
 } from '../api/reporting.js';
 import { normaliseDeviceOs } from '../api/transactions.js';
 import { REPORTER_PROJECT_ID_DESC, resolveReporterProjectName } from '../api/reporter-projects.js';
-import { firstTestIdSince } from '../api/report-recipes.js';
+import { firstTestIdsSince } from '../api/report-recipes.js';
 import { loosePlan, mergeGroupRows } from '../utils/report-case.js';
 import { addDays, dayStart, reportKey, KNOWN_REPORT_KEYS, REPORT_KEYS_HELP } from '../utils/report-recipes.js';
 import { serverFsDownloadNotice, serverFsOutputParam, commandGeneratorNotice, localPlatformParamNotice } from '../utils/locality.js';
@@ -700,7 +701,7 @@ export function registerReportingTools(server: McpServer): void {
     'Note: null OS values represent browser/Selenium sessions. ' +
     'LETTER CASE is ignored by default: an "=" filter on text counts every stored spelling ("chrome" finds Chrome and chrome), and group values ' +
     'that differ only in case are one row (the platform always as Android / iOS, so at most 3 rows: Android, iOS, null). exactCase: true turns both off. ' +
-    'TIME RANGE: days (the last N days) or startDate / endDate limit the counts to runs of that range, exactly; a filter on start_time is not possible. ' +
+    'TIME RANGE: days (the last N days) or startDate / endDate limit the counts to runs of that range, exactly, also with allProjects (each project is bounded by its own run ids, and projects with no run in the range are skipped); a filter on start_time is not possible. ' +
     'For a finished report of the same counts use create_test_breakdown_report.',
     {
       groupBy: z
@@ -732,11 +733,11 @@ export function registerReportingTools(server: McpServer): void {
       exactCase: z.boolean().optional()
         .describe('true: match "=" filters and group values by the exact spelling the platform stores ("Chrome" and "chrome" stay apart). Default false: letter case is ignored.'),
       days: z.number().int().min(1).max(365).optional()
-        .describe('Only runs of the last N days (whole days, today included). The server finds the first run of the range and counts from it, so the counts are exact. Not with startDate or allProjects.'),
+        .describe('Only runs of the last N days (whole days, today included). The server finds the first run of the range and counts from it, so the counts are exact. Not with startDate.'),
       startDate: z.string().optional()
-        .describe('Only runs started at or after this time, ISO 8601 ("2026-11-18" or "2026-11-18T00:00:00Z"). Not with days or allProjects.'),
+        .describe('Only runs started at or after this time, ISO 8601 ("2026-11-18" or "2026-11-18T00:00:00Z"). Not with days.'),
       endDate: z.string().optional()
-        .describe('Only runs started before this time, ISO 8601. Usually with startDate. Not with allProjects.'),
+        .describe('Only runs started before this time, ISO 8601. Usually with startDate.'),
       returnTotalCount: z
         .boolean()
         .optional()
@@ -759,40 +760,70 @@ export function registerReportingTools(server: McpServer): void {
           return { content: [{ type: 'text', text: 'Error: allProjects covers every project; leave out projectId and projectName, or leave out allProjects.' }], isError: true };
         }
         // A time range. The reporter cannot filter on start_time, but test ids grow with time: the first run of the range
-        // is found by its id and the counts are bounded by ids, so they are exact (see firstTestIdSince). An agent asked for
+        // is found by its id and the counts are bounded by ids, so they are exact (see firstTestIdsSince). An agent asked for
         // "the last 7 days" tried days, fromDate, startDate, since, lastDays … on this tool, eight refused calls (2026-11-25).
         let filter = askedFilter;
         let range: string | undefined;
+        // Across every project the bounds are found per project (ids are counted per project), and a project with no run
+        // in the range is not asked at all. Measured live 2026-11-27: 85 projects' bounds for 30 days in 6.3 s, 5 of them
+        // with runs; the largest project's web query 5-6 s bounded against 14-17 s unbounded, which with eight such
+        // queries at once ran past the 30 s request timeout in Desktop (an earlier version grouped by UTC day instead).
+        let boundsByProject: Map<string, { minId?: number | null; maxId?: number | null }> | undefined;
+        let projectBounds: ((project: string) => Array<{ property: string; operator: string; value: number }>) | undefined;
         if (days !== undefined || startDate || endDate) {
           const fail = (text: string) => ({ content: [{ type: 'text' as const, text: `Error: ${text}` }], isError: true });
-          if (allProjects) return fail('a time range needs one project (test ids are counted per project): leave out allProjects, or leave out days / startDate / endDate.');
           if (days !== undefined && startDate) return fail('give days or startDate, not both.');
           const now = Date.now();
           const from = days !== undefined ? dayStart(addDays(now, -(days - 1))) : startDate ? Date.parse(startDate) : undefined;
           const to = endDate ? Date.parse(endDate) : undefined;
           if (Number.isNaN(from) || Number.isNaN(to)) return fail('startDate and endDate take ISO 8601, for example "2026-11-18" or "2026-11-18T00:00:00Z".');
           if (from !== undefined && to !== undefined && to <= from) return fail('endDate must be after startDate.');
-          const inProject = projectName ?? (projectId !== undefined ? await resolveReporterProjectName(projectId, undefined) : undefined);
-          const [minId, maxId] = await Promise.all([
-            from !== undefined ? firstTestIdSince(from, inProject) : Promise.resolve(undefined),
-            to !== undefined ? firstTestIdSince(to, inProject) : Promise.resolve(undefined)]);
           const iso = (t: number) => new Date(t).toISOString().replace('.000Z', 'Z');
           range = `runs started ${from !== undefined ? `from ${iso(from)}` : ''}${from !== undefined && to !== undefined ? ' ' : ''}${to !== undefined ? `before ${iso(to)}` : ''}` +
             `${days !== undefined ? ` (the last ${days} day${days === 1 ? '' : 's'}, in the server's time zone)` : ''}`;
-          if (from !== undefined && minId === null) {
-            // No run started at or after the range's first moment.
-            const empty = { scope: projectName ? `project ${projectName}` : projectId !== undefined ? `reporter project ${projectId}` : 'the access key\'s own project', range, count: 0, data: [], totalRecords: 0 };
-            return respond(outputFormat, empty, `No test run in this range (${range}).`);
-          }
+          const times = [from, to].filter((x): x is number => x !== undefined);
+          const boundsIn = async (project?: string) => {
+            const ids = await firstTestIdsSince(times, project);
+            return { minId: from !== undefined ? ids[0] : undefined, maxId: to !== undefined ? ids[times.length - 1] : undefined };
+          };
           // A null upper id means no run started at or after endDate: nothing to cut off.
-          filter = [...(askedFilter ?? []),
-            ...(minId != null ? [{ property: 'test_id', operator: '>=', value: minId }] : []),
-            ...(maxId != null ? [{ property: 'test_id', operator: '<', value: maxId }] : [])];
+          const boundFilter = (b: { minId?: number | null; maxId?: number | null }) => [
+            ...(b.minId != null ? [{ property: 'test_id', operator: '>=', value: b.minId }] : []),
+            ...(b.maxId != null ? [{ property: 'test_id', operator: '<', value: b.maxId }] : [])];
+          if (allProjects) {
+            const names = await reporterProjectNames();
+            boundsByProject = new Map();
+            const queue = [...names];
+            await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+              for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
+                const b = await boundsIn(n);
+                // No run started at or after the range's first moment: nothing to count there.
+                if (!(from !== undefined && b.minId === null)) boundsByProject!.set(n, b);
+              }
+            }));
+            if (!boundsByProject.size) {
+              const empty = { scope: `all ${names.length} reporter projects this access key can see`, range, projectsQueried: names.length, count: 0, data: [], totalRecords: 0 };
+              return respond(outputFormat, empty, `No test run in this range (${range}) in any of the ${names.length} projects.`);
+            }
+          } else {
+            const inProject = projectName ?? (projectId !== undefined ? await resolveReporterProjectName(projectId, undefined) : undefined);
+            const b = await boundsIn(inProject);
+            if (from !== undefined && b.minId === null) {
+              const empty = { scope: projectName ? `project ${projectName}` : projectId !== undefined ? `reporter project ${projectId}` : 'the access key\'s own project', range, count: 0, data: [], totalRecords: 0 };
+              return respond(outputFormat, empty, `No test run in this range (${range}).`);
+            }
+            filter = [...(askedFilter ?? []), ...boundFilter(b)];
+          }
+          if (boundsByProject) {
+            const byProject = boundsByProject;
+            projectBounds = (p: string) => boundFilter(byProject.get(p) ?? {});
+          }
         }
         // Web (Selenium) reports keep the user in digitalai:user: a grouping by user asks for both keys and files each row
         // under whichever it has, so web reports are counted under their user and not in one null row.
         const bothUserKeys = !!askedGroupBy?.includes('user') && !askedGroupBy.includes('digitalai:user') && !webUserTwin(filter);
-        const groupBy = bothUserKeys ? [...askedGroupBy!, 'digitalai:user'] : askedGroupBy;
+        const withUser = bothUserKeys ? [...askedGroupBy!, 'digitalai:user'] : askedGroupBy;
+        const groupBy = withUser;
         const request = {
           ...(groupBy && { groupBy }),
           ...(pivotBy && { pivotBy }),
@@ -802,33 +833,37 @@ export function registerReportingTools(server: McpServer): void {
         type Grouped = { count?: number | null; data?: Array<Record<string, unknown>> };
         // A user filter also runs as digitalai:user (web reports keep the user there) and the rows are summed per group.
         const twin = webUserTwin(filter);
-        let across: { projects: string[]; failed: Array<{ project: string; error: string }> } | undefined;
+        let across: { projects: string[]; failed: Array<{ project: string; part?: string; error: string }> } | undefined;
         // The platform's "=" matches one spelling only (browserName = "chrome" 1,243 runs, = "Chrome" 809, live 2026-11-25).
         // By default the filter is sent as "contains" (which ignores case), the key is grouped as well, and only the groups
         // whose value equals the wanted one, case aside, are kept (see report-case.ts).
         const matchedSpellings: Record<string, string[]> = {};
-        const run = async (req: typeof request): Promise<Grouped> => {
+        // `part` names which half of a user query a failed project is missing (its web runs or the rest), so the answer
+        // does not call a project "not counted" when only its web runs are missing (Desktop 2026-11-27).
+        const run = async (req: typeof request, part?: string): Promise<Grouped> => {
           const plan = exactCase ? null : loosePlan(req.groupBy, req.filter);
           const sent = plan ? { ...req, groupBy: plan.groupBy, filter: plan.filter } : req;
           let res: Grouped;
           if (!allProjects) res = await getGroupedTests(sent, projectId, projectName) as Grouped;
           else {
-            const r = await getGroupedTestsAllProjects(sent);
-            across = { projects: r.projects, failed: [...(across?.failed ?? []), ...r.failed] };
+            const r = await getGroupedTestsAllProjects(sent, boundsByProject ? { only: [...boundsByProject.keys()], filterFor: projectBounds } : {});
+            across = { projects: r.projects, failed: [...(across?.failed ?? []), ...r.failed.map((f) => ({ ...f, ...(part ? { part } : {}) }))] };
             res = { count: r.rows.length, data: r.rows };
           }
-          if (!plan) return res;
-          const kept = plan.apply(res.data ?? []);
-          for (const [k, v] of Object.entries(kept.matched)) matchedSpellings[k] = [...new Set([...(matchedSpellings[k] ?? []), ...v])].sort();
-          return { ...res, data: kept.rows };
+          if (plan) {
+            const kept = plan.apply(res.data ?? []);
+            for (const [k, v] of Object.entries(kept.matched)) matchedSpellings[k] = [...new Set([...(matchedSpellings[k] ?? []), ...v])].sort();
+            res = { ...res, data: kept.rows };
+          }
+          return res;
         };
         // With the case ignored, the web query also groups by digitalai:user in a grouping by user, so each web row is
         // filed under the spelling the platform STORES and not under the one the caller wrote (which then showed up as
         // a merged "spelling" no run has). The loosened filter groups that key anyway, so the request is the same.
         const groupsUser = !!groupBy?.includes('user');
         const keepWebUser = groupsUser && !exactCase && !groupBy!.includes('digitalai:user');
-        const [own, web] = await Promise.all([run(request),
-          twin ? run({ ...request, filter: twin, ...(keepWebUser && { groupBy: [...groupBy!, 'digitalai:user'] }) }) : undefined]);
+        const [own, web] = await Promise.all([run(request, twin ? 'mobile and other runs' : undefined),
+          twin ? run({ ...request, filter: twin, ...(keepWebUser && { groupBy: [...groupBy!, 'digitalai:user'] }) }, 'web (Selenium) runs') : undefined]);
         let result: Grouped = own;
         let userNote: string | undefined;
         if (web) {
@@ -926,10 +961,15 @@ export function registerReportingTools(server: McpServer): void {
         const scope = across ? `all ${across.projects.length} reporter projects this access key can see`
           : projectName ? `project ${projectName}` : projectId !== undefined ? `reporter project ${projectId}`
             : 'the access key\'s own project ONLY, not the whole instance (allProjects: true covers every project; create_test_inventory_report builds the all-time report)';
-        payload = { scope, ...(range ? { range } : {}), ...(across ? { projectsQueried: across.projects.length, ...(across.failed.length ? { projectsFailed: across.failed } : {}) } : {}), ...payload };
+        const withRuns = boundsByProject ? { projectsWithRunsInRange: boundsByProject.size } : {};
+        const failedText = across?.failed.length
+          ? `${across.failed.map((f) => (f.part ? `${f.project} (its ${f.part})` : f.project)).join(', ')} did not answer and ${across.failed.length === 1 ? 'is' : 'are'} not counted; ` +
+            'everything else is. Ask again for just that project (projectName) rather than repeating every project.'
+          : undefined;
+        payload = { scope, ...(range ? { range } : {}), ...(across ? { projectsQueried: across.projects.length, ...withRuns, ...(across.failed.length ? { projectsFailed: across.failed, projectsFailedNote: failedText } : {}) } : {}), ...payload };
 
-        return respond(outputFormat, payload, `Scope: ${scope}.${range ? `\nRange: ${range}.` : ''}\n\n` + formatGroupedTestReports(result) + (userNote ? `\n\n${userNote}` : '') + (caseNote ? `\n\n${caseNote}${Object.entries(filterMatched).map(([k, v]) => ` ${k} matched ${v.map((y) => `"${y}"`).join(', ')}.`).join('')}` : '') + (cutNote ? `\n\n${cutNote}` : '') +
-          (across?.failed.length ? `\n\n⚠️ ${across.failed.length} project(s) did not answer and are not counted: ${across.failed.map((f) => f.project).join(', ')}.` : ''));
+        return respond(outputFormat, payload, `Scope: ${scope}.${range ? `\nRange: ${range}.` : ''}${boundsByProject ? `\nProjects with runs in the range: ${boundsByProject.size} (the others were not asked).` : ''}\n\n` + formatGroupedTestReports(result) + (userNote ? `\n\n${userNote}` : '') + (caseNote ? `\n\n${caseNote}${Object.entries(filterMatched).map(([k, v]) => ` ${k} matched ${v.map((y) => `"${y}"`).join(', ')}.`).join('')}` : '') + (cutNote ? `\n\n${cutNote}` : '') +
+          (failedText ? `\n\n⚠️ ${failedText}` : ''));
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

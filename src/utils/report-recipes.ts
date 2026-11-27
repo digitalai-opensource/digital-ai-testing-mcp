@@ -326,8 +326,8 @@ export function buildTestSummary(i: TestSummaryInput): RecipeResult {
 
 export interface InventoryRow { project: string; user: string | null; counts: StatusCounts }
 
-const emptyCounts = (): StatusCounts => ({ passed: 0, failed: 0, error: 0, incomplete: 0, skipped: 0, healed: 0, total: 0 });
-function addCounts(a: StatusCounts, b: StatusCounts): StatusCounts {
+export const emptyCounts = (): StatusCounts => ({ passed: 0, failed: 0, error: 0, incomplete: 0, skipped: 0, healed: 0, total: 0 });
+export function addCounts(a: StatusCounts, b: StatusCounts): StatusCounts {
   return { passed: a.passed + b.passed, failed: a.failed + b.failed, error: a.error + b.error, incomplete: a.incomplete + b.incomplete,
     skipped: a.skipped + b.skipped, healed: a.healed + b.healed, total: a.total + b.total };
 }
@@ -642,27 +642,39 @@ export function buildTestBreakdown(i: { rows: BreakdownRow[]; keys: string[]; fr
  * 25,000 (a "last 90 days" summary of a busy project held nine days). `daysRows` are counts by the reporter's own date
  * key; `platforms` and `classes` are counts for the whole range.
  */
-export function buildTestTrend(i: { daysRows: BreakdownRow[]; platforms: BreakdownRow[] | null; classes: BreakdownRow[] | null; from: number; to: number; days: number;
-  projectName?: string; passRateGoal?: number }): RecipeResult {
+export type TrendBy = 'day' | 'week' | 'month';
+export const trendBy = (days: number): TrendBy => (days <= 31 ? 'day' : days <= 182 ? 'week' : 'month');
+
+/**
+ * Starts of the trend's periods in LOCAL time, oldest first: the day, week (Monday) or month that holds `from`, then each
+ * following one up to `to`. At most about 32 (31 days, 26 weeks, 13 months), which bounds the id lookups behind them.
+ */
+export function trendPeriods(from: number, to: number, days: number): number[] {
+  const by = trendBy(days);
+  const startOf = (t: number) => { if (by !== 'month') return bucketStart(t, by); const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); };
+  const next = (t: number) => { if (by !== 'month') return addDays(t, by === 'day' ? 1 : 7); const d = new Date(t); return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(); };
+  const out: number[] = [];
+  for (let t = startOf(from); t <= to; t = next(t)) out.push(t);
+  return out;
+}
+
+/**
+ * Runs and pass rate per local day, week or month. `periods` are the starts from trendPeriods with the platform's own
+ * counts for each (the runs between the first run of the period and the first run of the next, found by run id); the
+ * first period is counted from `from` only. Local days: the reporter's own `date` key is a UTC day, which put a run at
+ * 20:05 in New York on the next day (the user chose local days, 2026-11-26).
+ */
+export function buildTestTrend(i: { periods: Array<{ start: number; counts: StatusCounts }>; platforms: BreakdownRow[] | null; classes: BreakdownRow[] | null; from: number; to: number; days: number;
+  projectName?: string; passRateGoal?: number; timeZone?: string }): RecipeResult {
   const n = (x: number) => x.toLocaleString('en-US');
-  const by: 'day' | 'week' | 'month' = i.days <= 31 ? 'day' : i.days <= 182 ? 'week' : 'month';
-  const startOf = (t: number) => {
-    if (by === 'month') { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); }
-    return bucketStart(t, by === 'day' ? 'day' : 'week', true);
-  };
-  const fromDay = dayStart(i.from, true);
-  const m = new Map<number, StatusCounts>();
-  for (const r of i.daysRows) {
-    const t = Date.parse(`${r.values[0]}T00:00:00Z`);
-    if (!Number.isFinite(t) || t < fromDay) continue;
-    m.set(startOf(t), addCounts(m.get(startOf(t)) ?? emptyCounts(), r.counts));
-  }
-  const keys: number[] = [];
-  for (let t = startOf(fromDay); t <= i.to; t = by === 'month' ? Date.UTC(new Date(t).getUTCFullYear(), new Date(t).getUTCMonth() + 1, 1) : t + (by === 'day' ? DAY : 7 * DAY)) keys.push(t);
-  const counts = keys.map((k) => m.get(k) ?? emptyCounts());
+  const by = trendBy(i.days);
+  const fromDay = dayStart(i.from);
+  const keys = i.periods.map((p) => p.start);
+  const counts = i.periods.map((p) => p.counts);
+  const zone = i.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const all = counts.reduce((c, x) => addCounts(c, x), emptyCounts());
   const rate = passRate(all);
-  const label = (k: number) => (by === 'month' ? `${MONTH[new Date(k).getUTCMonth()]} ${new Date(k).getUTCFullYear()}` : shortDay(k, true));
+  const label = (k: number) => (by === 'month' ? `${MONTH[new Date(k).getMonth()]} ${new Date(k).getFullYear()}` : shortDay(k));
   const cats = keys.map(label);
   const rates = counts.map((c) => (verdicts(c) > 0 ? passRate(c) : null));
   const totals = counts.map((c) => c.total);
@@ -674,7 +686,7 @@ export function buildTestTrend(i: { daysRows: BreakdownRow[]; platforms: Breakdo
   const firstHalf = half ? sumRate(counts.slice(0, half)) : null, secondHalf = half ? sumRate(counts.slice(keys.length - half)) : null;
   const drift = firstHalf != null && secondHalf != null ? secondHalf - firstHalf : null;
   const idle = totals.filter((v) => v === 0).length;
-  const partial = [...(keys[0] < fromDay ? [cats[0]] : []), cats[cats.length - 1]];
+  const partial = cats.length ? [...(keys[0] < fromDay ? [cats[0]] : []), cats[cats.length - 1]] : [];
   const failedOrError = (c: StatusCounts) => c.failed + c.error;
 
   const highlights = [
@@ -719,10 +731,10 @@ export function buildTestTrend(i: { daysRows: BreakdownRow[]; platforms: Breakdo
     spec: {
       title: 'Test Execution Trend',
       subtitle: `Runs and pass rate per ${by}, last ${plural(i.days, 'day')}`,
-      meta: rangeMeta(i.from, i.to, i.projectName, true),
+      meta: rangeMeta(i.from, i.to, i.projectName),
       headline: rate != null ? { value: pct1(rate), label: `Pass rate, ${i.days} days` } : undefined,
       sections,
-      source: `Source: Digital.ai Testing reporter, the platform's own counts per day and status, ${longDate(i.from, true)} to ${longDate(i.to, true)} (the reporter's days; nothing is sampled or cut off). ` +
+      source: `Source: Digital.ai Testing reporter, the platform's own counts per ${by} and status, ${longDate(i.from)} to ${longDate(i.to)}, in local time (${zone}); nothing is sampled or cut off. ` +
         'Pass rate = (Passed + Healed) / (Passed + Healed + Failed + Error); incomplete and skipped runs are shown and left out of the rate.',
     },
   };

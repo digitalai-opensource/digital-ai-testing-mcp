@@ -364,6 +364,7 @@ Each report and what it contains is listed in [Ready-made reports](reports.md#re
 - "Are we near our license limit? Use the last 30 days." *(Cloud Admin)* → [example](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/license-usage.html)
 - "Create a usage summary for project Payments for the last 90 days", or "...for all projects" *(Cloud Admin)* → examples: [one project](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-summary.html), [every project](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/usage-overview.html)
 - "Create a performance overview report" → [example](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-overview.html)
+- "Compare Transfer money performance in 4.2.0 and 4.3.0 on the Pixel 8" → [example](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-comparison.html)
 - "List the applications in the repository", then "Show that as a report by platform" *(any data can become a report)* → [example](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/any-data.html)
 - "Reword the platform section to say the iOS drop is from the login change"
 
@@ -477,6 +478,7 @@ Each report and what it contains is listed in [Ready-made reports](reports.md#re
 - "Which transactions use the most upload and download bandwidth?"
 - "Our Speed Index target is 2,000. Flag device models where version 10553 is over it on iOS."
 - "Did the latest release bring a CPU regression? Compare 10553 and 10554 on Android." *(the assistant checks for outliers and for differences other than the version before comparing)*
+- "Make that a performance comparison report" *(one call: both sides, the change, a verdict and the like-for-like check)* → [example](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-comparison.html)
 - "Record fresh login samples on a Pixel 8 for both versions, then compare them" *(the `performance_comparison_report` prompt walks through it)*
 
 [↑ Back to top](#example-prompts)

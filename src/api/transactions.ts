@@ -49,6 +49,23 @@ export async function listTransactions(): Promise<Transaction[]> {
   }
 }
 
+/**
+ * The transactions two (or more) comparison sides are resolved against. The list is PROJECT-SCOPED to the active
+ * credential's reporter context, so a transaction of another project's reporter instance is absent from it, while
+ * getTransaction(id) works across scopes. So explicit ids are always fetched directly (bounded by the ids given, no
+ * full-list fetch when every side is explicit) and the list is read only when a side uses a filter.
+ */
+export async function transactionPool(sides: Array<{ transactionIds?: number[] }>): Promise<Transaction[]> {
+  const pool = new Map<number, Transaction>();
+  if (sides.some((s) => !s.transactionIds || s.transactionIds.length === 0)) {
+    for (const t of await listTransactions()) pool.set(t.id, t);
+  }
+  const missing = [...new Set(sides.flatMap((s) => s.transactionIds ?? []))].filter((id) => !pool.has(id));
+  const fetched = await Promise.all(missing.map((id) => getTransaction(id).catch(() => null)));
+  for (const t of fetched) if (t) pool.set(t.id, t);
+  return [...pool.values()];
+}
+
 export async function getTransaction(transactionId: number): Promise<Transaction> {
   try {
     return normalise(await apiGet<Transaction>(`/reporter/api/transactions/${transactionId}`));

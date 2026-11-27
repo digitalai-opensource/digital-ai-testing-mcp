@@ -125,6 +125,7 @@ export const TOOL_TOOLSETS: Record<string, string> = {
   create_device_health_report: 'devices', create_device_coverage_report: 'devices',
   create_usage_summary_report: 'admin', create_device_utilization_report: 'admin', create_license_usage_report: 'admin',
   create_performance_overview_report: 'performance',
+  create_performance_comparison_report: 'performance',
 };
 
 export function toolsetOfModule(module: string): string | null {
