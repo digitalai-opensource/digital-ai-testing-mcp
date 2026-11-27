@@ -528,7 +528,7 @@ The user chooses the test framework once per project (see
 - **Verified on Android (Appium Server) only.** iOS and Appium Grid projects are not yet verified.
 - **Web content is not crawled.** Screens inside a web view are listed as they appear in the native tree; the crawler does not switch contexts.
 - **Nothing is typed.** Forms are opened (when write paths are allowed) but never filled or submitted, so screens behind a filled form are not reached.
-- **Logins come from environment variables** named in the call. Storing test logins in the OS keychain is planned.
+- **Test logins:** save one with `setup app-login <name>` (password in the OS keychain), or name two environment variables set in the server's entry in your AI client's configuration. AI clients usually pass only the variables in that entry, not your whole system environment, so `setx` alone does not reach the server. A login typed into the chat is not used.
 - **Destructive actions are never tapped**, whatever the session setting: they are listed for you to confirm one by one.
 - **An exploration lives in the server process.** Restarting the server or the AI client ends it.
 - **Screens are told apart by structure.** Two visits to one screen in different states (an expanded list, a filled field) can appear as two screens.

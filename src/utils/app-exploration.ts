@@ -146,6 +146,17 @@ const NAV_WORDS = /^(back|close|cancel|done|more|menu|settings|details|home|prof
 const DESTRUCTIVE = /\b(delete|remove|erase|reset|wipe|close account|deactivate|unsubscribe|uninstall|sign ?out|log ?out|logout)\b/i;
 const WRITE = /\b(pay|send|transfer|buy|purchase|order|checkout|save|submit|confirm|post|publish|call|dial|withdraw|deposit|book|subscribe|approve|accept|decline|share|install|update|apply)\b/i;
 
+/**
+ * A screen still loading: a progress bar / activity indicator, or a "Loading…" / "Please wait" text. The crawler keeps
+ * reading until it is gone (or its settle limit passes), so a half-drawn screen is never recorded as a screen of its own.
+ */
+export function isLoading(els: ScreenElement[]): boolean {
+  return els.some((e) => /ProgressBar|ActivityIndicator|CircularProgress/i.test(e.type) ||
+    /^(loading|please wait|signing in|logging in)\b/i.test((e.text ?? e.description ?? '').trim()));
+}
+
+const VIEW_PHRASE = /\b(tap|click|touch|press) (here )?to (view|see|open|show|read)\b|\b(view|see|show) (details|history|all|more|statements?|activity|transactions?)\b/i;
+
 /** Whether the crawler may tap an element by itself, and why. */
 export function classifyTap(e: ScreenElement, allowWritePaths = false): { kind: TapClass; reason: string } {
   const label = (e.text ?? e.description ?? e.innerText ?? '').trim();
@@ -162,6 +173,8 @@ export function classifyTap(e: ScreenElement, allowWritePaths = false): { kind: 
   if (e.inNavigation === 'navbar' && (NAV_WORDS.test(label) || /Back/i.test(e.id ?? ''))) return { kind: 'navigation', reason: 'the navigation bar’s back or close' };
   if (e.inList) return { kind: 'navigation', reason: 'a list or table row' };
   if (label && NAV_WORDS.test(label)) return { kind: 'navigation', reason: `"${label}" is a navigation word` };
+  // A card that says it opens something to look at ("Checking — Tap to view history", DAI Bank 2026-11-27) is navigation.
+  if (label && VIEW_PHRASE.test(label)) return { kind: 'navigation', reason: `"${label}" says it opens something to view` };
   if (!label) return { kind: 'unknown', reason: 'an icon-only button: its effect cannot be known from the screen' };
   return allowWritePaths
     ? { kind: 'navigation', reason: `"${label}": effect not known; tapped because write paths are allowed for this session` }

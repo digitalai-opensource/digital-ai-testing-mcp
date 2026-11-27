@@ -1,5 +1,5 @@
 import { describe, it, assert } from 'vitest';
-import { parseScreen, screenSignature, classifyTap, candidateTaps, locatorFor } from '../src/utils/app-exploration.js';
+import { parseScreen, screenSignature, classifyTap, isLoading, candidateTaps, locatorFor } from '../src/utils/app-exploration.js';
 
 // Page sources shaped like three different customer apps (none is the sample app): rules that fit one app only fail here.
 
@@ -140,7 +140,18 @@ describe('start_app_exploration: the user\u2019s app, its version and its OS fir
     delete process.env.NO_SUCH_USER_VAR;
     const r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', appId: 7, loginUserEnv: 'NO_SUCH_USER_VAR', loginPasswordEnv: 'NO_SUCH_PASS_VAR' });
     assert.equal(r.res.isError, true);
-    assert.match(r.text, /never ask for the password in the chat/);
+    assert.match(r.text, /never ask for the password in the chat/i);
+    assert.match(r.text, /NO_SUCH_USER_VAR, NO_SUCH_PASS_VAR\./, 'names the variables that are missing');
+    assert.match(r.text, /app-login <name>/, 'points to the saved-login route');
+    assert.notMatch(r.text, /setx/);
+  });
+
+  it('testLogin: an unsaved name is refused with the command that saves it; not together with the env names', async () => {
+    let r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', appId: 7, testLogin: 'daibank' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /app-login daibank|credential store is switched off/);
+    r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', appId: 7, testLogin: 'daibank', loginUserEnv: 'A' });
+    assert.match(r.text, /not both/);
   });
 
   it('the start answer never contains the test login’s values, only where they come from', async () => {
@@ -186,5 +197,24 @@ describe('the write-paths setting and destructive actions (owner decisions 2026-
     assert.deepEqual(taps.map((t) => t.element.innerText), ['History', 'Transfer']);
     assert.deepEqual(unvisited.map((u) => [u.element.innerText, u.kind]), [['Close Account', 'destructive'], ['Log Out', 'destructive']]);
     assert.match(unvisited[0].reason, /needs the user.s confirmation each time/);
+  });
+});
+
+describe('read-only navigation by wording, and loaders (DAI Bank live run 2026-11-27)', () => {
+  const screen = (inner: string) => parseScreen(`<hierarchy><android.view.View class="android.view.View" bounds="[0,0][1080,2340]" clickable="false" enabled="true">${inner}</android.view.View></hierarchy>`, 'android');
+  const card = (t: string) => `<android.view.View class="android.view.View" bounds="[40,400][1040,520]" clickable="true" enabled="true"><android.widget.TextView class="android.widget.TextView" text="${t}" bounds="[60,420][400,500]" clickable="false" enabled="true"/></android.view.View>`;
+
+  it('a card that says it opens something to view is navigation even read-only; a write word still wins', () => {
+    assert.equal(classifyTap(screen(card('Checking Tap to view history $1,000.00')).find((e) => e.clickable)!, false).kind, 'navigation');
+    assert.equal(classifyTap(screen(card('View statements')).find((e) => e.clickable)!, false).kind, 'navigation');
+    assert.equal(classifyTap(screen(card('Tap to pay now')).find((e) => e.clickable)!, false).kind, 'action');
+    assert.equal(classifyTap(screen(card('Tap to view and delete')).find((e) => e.clickable)!, true).kind, 'destructive');
+  });
+
+  it('a progress bar or a loading text means the screen has not settled; a drop-down is not a loader', () => {
+    assert.equal(isLoading(screen('<android.widget.ProgressBar class="android.widget.ProgressBar" bounds="[500,1100][580,1180]" clickable="false" enabled="true"/>')), true);
+    assert.equal(isLoading(screen('<android.widget.TextView class="android.widget.TextView" text="Loading accounts…" bounds="[60,420][400,500]" clickable="false" enabled="true"/>')), true);
+    assert.equal(isLoading(screen('<android.widget.Spinner class="android.widget.Spinner" bounds="[60,420][400,500]" clickable="true" enabled="true"/>')), false);
+    assert.equal(isLoading(screen(card('Checking'))), false);
   });
 });

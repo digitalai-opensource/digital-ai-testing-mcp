@@ -9,6 +9,7 @@
  * All terminal I/O goes through SetupIO so tests can drive the command without a terminal.
  */
 import { parseArgs } from 'node:util';
+import { APP_LOGIN_NAME_RE, deleteAllAppLoginSecrets, listAppLogins, removeAppLogin, saveAppLogin } from '../utils/app-logins.js';
 import { SERVER_OPTIONS, findServerOption, readStoredOptions, type ServerOption } from '../utils/server-options.js';
 import { createInterface } from 'node:readline';
 import { verifyCredential, type CredentialCheck } from '../api/access-level.js';
@@ -97,6 +98,7 @@ Commands:
   doctor              A report for support: install, profiles, keychain and AI clients (never a key)
   path                Show where the profiles file is
   reports [folder|off]  Show or set the folder finished reports are saved to (fast, no rewriting by the AI)
+  app-login [name [remove]]  Save a test login for App Exploration (password in the OS keychain), list or remove one
   options [name [value|default]]  Show or set server options (a smaller tool list, the report pointer, debug mode, …)
   repair              Restore the profiles file from its backup
   reset               Delete the profiles file, its backups and the keys it keeps in the OS keychain
@@ -583,6 +585,52 @@ function cmdOptions(io: SetupIO, nameArg: string | undefined, valueArgs: string[
   io.out(RESTART_CLIENTS);
 }
 
+/**
+ * Test logins for App Exploration: the user name in the profiles file, the password in the OS keychain. The agent passes
+ * only the name (start_app_exploration testLogin), so the password never passes through the chat or a client config.
+ */
+async function cmdAppLogin(io: SetupIO, nameArg: string | undefined, rest: string[], flags: Flags) {
+  storeOffNote(io);
+  if (!nameArg) {
+    const { logins, error } = listAppLogins();
+    if (error) throw new SetupError(`The profiles file cannot be read: ${error}.`);
+    if (!logins.length) io.out('No test logins saved.');
+    for (const l of logins) io.out(`${ui.command(l.name)}  user ${l.username}  ${ui.gray('(password in the OS keychain)')}`);
+    io.out('');
+    io.out(`Save one:    ${ui.command(`${setupCommand()} app-login <name>`)}`);
+    io.out(`Remove one:  ${ui.command(`${setupCommand()} app-login <name> remove`)}`);
+    io.out(ui.gray('The AI names the login ("use the test login daibank"); it never sees the password.'));
+    return;
+  }
+  const name = nameArg.trim().toLowerCase();
+  if (!APP_LOGIN_NAME_RE.test(name)) throw new SetupError(`"${nameArg}" cannot be a test-login name: use letters, digits, - and _ (up to 64). Nothing was changed.`, 2);
+  if (rest.length > 1 || (rest.length === 1 && !/^(remove|delete)$/i.test(rest[0]))) throw new SetupError(`Unexpected argument: ${rest[rest.length - 1]}\n\n${USAGE}`, 2);
+  const data = loadForEdit();
+  if (rest.length === 1) {
+    const r = removeAppLogin(data, name);
+    if (r.keychainError) io.err(ui.yellow(`The OS keychain could not be checked (${r.keychainError}); remove "${KEYCHAIN_SERVICE}" / "app-login:${name}" there by hand if it exists.`));
+    io.out(r.existed ? `${ui.green('Removed')} the test login ${name}.` : `There is no test login ${name}. Nothing was changed.`);
+    return;
+  }
+  if (!io.interactive && !flags['key-stdin']) throw new SetupError('Run this in a terminal (it asks for the user name and a hidden password), or pipe the user name and the password on two lines with --key-stdin.', 2);
+  let username: string;
+  let password: string;
+  if (flags['key-stdin']) {
+    const [u, ...pw] = (await io.readStdin()).replace(/\r/g, '').split('\n');
+    username = (u ?? '').trim();
+    password = pw.join('\n').replace(/\n+$/, '');
+  } else {
+    io.out(`Test login "${name}" for App Exploration. Use a TEST account, never a real customer's.`);
+    username = (await io.ask('User name: ')).trim();
+    password = await io.askSecret('Password (hidden): ');
+  }
+  if (!username || !password) throw new SetupError('Both a user name and a password are needed. Nothing was changed.', 2);
+  const saved = saveAppLogin(data, name, username, password);
+  if (!saved.ok) throw new SetupError(`The password could not be saved: ${saved.error}. Nothing was changed. The fallback is two environment variables in the AI client's configuration (loginUserEnv / loginPasswordEnv).`);
+  io.out(`${ui.green('Saved')} the test login ${name} (user ${username}; the password is in the OS keychain).`);
+  io.out(`Ask the AI to explore your app "with the test login ${name}". No restart is needed.`);
+}
+
 function cmdReports(io: SetupIO, arg: string | undefined) {
   storeOffNote(io);
   if (!arg) {
@@ -851,6 +899,8 @@ async function cmdReset(io: SetupIO, flags: Flags) {
     const del = deleteKeyFromKeychain(n);
     if (!del.ok) io.err(`The key of "${n}" could not be removed from the OS keychain: ${del.error}. Remove "${KEYCHAIN_SERVICE}" / "${keychainAccount(n)}" there by hand.`);
   }
+  const appLogins = deleteAllAppLoginSecrets(raw.data);
+  if (appLogins.length) io.out(`Removed the password${appLogins.length === 1 ? '' : 's'} of ${appLogins.length} test login${appLogins.length === 1 ? '' : 's'} from the OS keychain.`);
   const removed = deleteStoreFiles();
   io.out(`Removed ${removed.length} file${removed.length === 1 ? '' : 's'}${keychainNames.length ? ` and ${keychainNames.length} OS keychain entr${keychainNames.length === 1 ? 'y' : 'ies'}` : ''}.`);
   if (!raw.data && raw.exists) io.err('The profiles file could not be read, so keys it kept in the OS keychain (if any) were not removed.');
@@ -1415,6 +1465,10 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
     }
     if (command === 'options' || command === 'option') {
       cmdOptions(io, name, extra);
+      return 0;
+    }
+    if (command === 'app-login' || command === 'app-logins') {
+      await cmdAppLogin(io, name, extra, flags);
       return 0;
     }
     if (extra.length > 0) throw new SetupError(`Unexpected argument: ${extra[0]}\n\n${USAGE}`, 2);

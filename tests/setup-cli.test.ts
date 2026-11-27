@@ -14,6 +14,7 @@ import { verifyCredential, type CredentialCheck } from '../src/api/access-level.
 import { clearAccessInfoCache } from '../src/utils/access-level.js';
 import { keychainAccount, setKeychainForTests, type Keychain } from '../src/utils/credential-store.js';
 import { startStubApi, accountInfo, reply } from './helpers/offline.js';
+import { resolveAppLogin } from '../src/utils/app-logins.js';
 
 const KEY = 'aut_1_setupCliTestKey';
 const KEY2 = 'aut_1_setupCliSecondKey';
@@ -760,4 +761,55 @@ describe('setup through the entry point (child process)', () => {
       await api.close();
     }
   }, 60_000);
+});
+
+describe('setup app-login (test logins for App Exploration)', () => {
+  const NL = String.fromCharCode(10);
+  const PASS = 'appLoginTestPassword9';
+
+  it('saves the user name in the file and the password in the keychain, never prints the password', async () => {
+    const t = scripted({ interactive: true, answers: ['tester'], secrets: [PASS] });
+    expect(await runSetupCli(['app-login', 'DaiBank'], t.io)).toBe(0);
+    expect(readFile().appLogins).toEqual({ daibank: { username: 'tester', keyStore: 'os' } });
+    expect(kc.entries).toEqual({ 'app-login:daibank': PASS });
+    expect(t.all()).not.toContain(PASS);
+    const r = resolveAppLogin('daibank', 'setup');
+    expect(r).toEqual({ username: 'tester', password: PASS });
+  });
+
+  it('--key-stdin reads the user name and the password on two lines; list shows names only; remove deletes both', async () => {
+    const t = scripted({ stdin: ['tester', PASS, ''].join(NL) });
+    expect(await runSetupCli(['app-login', 'shop', '--key-stdin'], t.io)).toBe(0);
+    const l = scripted();
+    expect(await runSetupCli(['app-login'], l.io)).toBe(0);
+    expect(l.all()).toContain('user tester');
+    expect(l.all()).not.toContain(PASS);
+    const rm = scripted();
+    expect(await runSetupCli(['app-login', 'shop', 'remove'], rm.io)).toBe(0);
+    expect(kc.entries).toEqual({});
+    expect(readFile().appLogins).toBeUndefined();
+  });
+
+  it('keeps profiles readable and refuses a bad name or a missing password', async () => {
+    await add(['--url', URL_A, '--key-stdin']);
+    await runSetupCli(['app-login', 'shop', '--key-stdin'], scripted({ stdin: ['tester', PASS].join(NL) }).io);
+    expect(readFile().profiles.admin).toEqual({ url: URL_A, keyStore: 'os' });
+    expect(await runSetupCli(['app-login', 'bad name!'], scripted().io)).toBe(2);
+    expect(await runSetupCli(['app-login', 'x', '--key-stdin'], scripted({ stdin: 'only-a-user' }).io)).toBe(2);
+    expect(await runSetupCli(['app-login', 'x'], scripted({ interactive: false }).io)).toBe(2);
+  });
+
+  it('reset removes the app-login passwords from the keychain too', async () => {
+    await runSetupCli(['app-login', 'shop', '--key-stdin'], scripted({ stdin: ['tester', PASS].join(NL) }).io);
+    expect(await runSetupCli(['reset', '--yes'], scripted().io)).toBe(0);
+    expect(kc.entries).toEqual({});
+  });
+
+  it('the server explains a missing login with the command that fixes it, never a secret', () => {
+    const r = resolveAppLogin('nothere', 'npx -y digital-ai-testing-mcp setup');
+    expect(r.password).toBeUndefined();
+    expect(r.reason).toContain('npx -y digital-ai-testing-mcp setup app-login nothere');
+    kc.entries['app-login:orphan'] = PASS;
+    expect(resolveAppLogin('orphan', 'setup').reason).toContain('no saved test login');
+  });
 });

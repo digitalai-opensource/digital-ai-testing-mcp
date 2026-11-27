@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { getApplicationInfo } from '../api/applications.js';
 import { exploreApp, type Manifest } from '../api/app-crawl.js';
 import { respond, outputFormatParam } from '../utils/output-format.js';
+import { resolveAppLogin } from '../utils/app-logins.js';
+import { setupCommand } from '../cli/clients.js';
 
 /**
  * App exploration, stage 1 (2.6.0): map the USER'S app read-only into a manifest of screens, navigation and verified
@@ -17,6 +19,7 @@ function summary(m: Manifest): string {
   const lines = [
     `App ${m.app.appId}${m.app.version ? ` version ${m.app.version}` : ''} (${m.app.platform}) on ${m.device.name} (${m.device.os} ${m.device.version}).`,
     `${m.screens.length} screen(s), ${m.taps} tap(s). Stopped: ${m.stoppedBecause}.`,
+    ...(m.timing ? [`Render timing: screens settled in ${(m.timing.medianSettleMs / 1000).toFixed(1)} s typically, ${(m.timing.slowestSettleMs / 1000).toFixed(1)} s at the slowest (${m.timing.transitions} transitions${m.timing.unstable ? `; ${m.timing.unstable} never stopped changing` : ''}). Generated tests wait for an element of the next screen (explicit waits, never sleeps), with a timeout well above the slowest.`] : []),
     '',
     ...m.screens.map((s, i) => {
       const route = s.path.length ? ` — reached by: ${s.path.map((p) => p.label).join(' → ')}` : ' — start screen';
@@ -44,8 +47,9 @@ export function registerExplorationTools(server: McpServer): void {
     'tapped. Yes: buttons whose effect is unknown and write paths (pay, transfer, save) may be tapped too — but nothing is ever ' +
     'typed or submitted with data. Destructive actions (delete, remove, reset, sign out) are NEVER tapped by the crawl: each needs ' +
     'the user\'s own confirmation, so they are listed for the user. Switches and text fields are never touched. A login screen stops ' +
-    'it unless the user named a test login (environment variables on the server, given by NAME; never ask the user to type a ' +
-    'password into the chat, and never repeat one).',
+    'it unless the user named a test login: testLogin = the NAME of a login the user saved in a terminal with "setup app-login <name>" ' +
+    '(password in the OS keychain), or loginUserEnv / loginPasswordEnv = names of environment variables set in this server\'s ' +
+    'configuration. Never ask the user to type a password into the chat, and never repeat one.',
     {
       platform: z.enum(['android', 'ios']).describe('The app\'s OS.'),
       appId: z.number().int().optional().describe('The app in the repository (list_applications): its package / bundle id, activity and version come from the record.'),
@@ -59,6 +63,7 @@ export function registerExplorationTools(server: McpServer): void {
       maxMinutes: z.number().int().min(2).max(60).optional().describe('Stop after this many minutes (default 30).'),
       maxDepth: z.number().int().min(1).max(10).optional().describe('How many taps deep from the start screen (default 6).'),
       allowWritePaths: z.boolean().describe('The USER\'s answer, asked once at the start: may the crawl follow paths that could write data? Never covers destructive actions.'),
+      testLogin: z.string().optional().describe('NAME of a test login the user saved with "setup app-login <name>" (e.g. "daibank"). The server reads it; the password is never returned.'),
       loginUserEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional().describe('NAME of the environment variable on the server that holds the test login\'s user name (e.g. "DAIBANK_USER"). With loginPasswordEnv.'),
       loginPasswordEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional().describe('NAME of the environment variable that holds its password. The value is read by the server and never returned.'),
       outputFormat: outputFormatParam,
@@ -78,10 +83,15 @@ export function registerExplorationTools(server: McpServer): void {
         if (!appIdStr) throw new Error('name the app to explore: appId (repository), or packageName / bundleIdentifier with appVersion. Ask the user for their app, its version and its OS.');
         if (a.appId === undefined && !version) throw new Error('appVersion is required with packageName / bundleIdentifier: a manifest describes one version of the app.');
         let login: { username: string; password: string; source: string } | undefined;
-        if (a.loginUserEnv || a.loginPasswordEnv) {
+        if (a.testLogin && (a.loginUserEnv || a.loginPasswordEnv)) throw new Error('give testLogin OR loginUserEnv / loginPasswordEnv, not both.');
+        if (a.testLogin) {
+          const r = resolveAppLogin(a.testLogin, setupCommand());
+          if (!r.username || !r.password) throw new Error(`${r.reason}. Never ask for the password in the chat.`);
+          login = { username: r.username, password: r.password, source: `the saved test login ${a.testLogin.trim().toLowerCase()}` };
+        } else if (a.loginUserEnv || a.loginPasswordEnv) {
           const u = a.loginUserEnv ? process.env[a.loginUserEnv] : undefined;
           const pw = a.loginPasswordEnv ? process.env[a.loginPasswordEnv] : undefined;
-          if (!u || !pw) throw new Error(`the test login needs both environment variables set on the server: ${[a.loginUserEnv, a.loginPasswordEnv].filter(Boolean).join(', ')} (one is missing or empty). Ask the user to set them where this server runs and restart it; never ask for the password in the chat.`);
+          if (!u || !pw) throw new Error(`the test login needs both a user-name and a password variable; not set for this server (or empty): ${[!a.loginUserEnv ? 'loginUserEnv (not given)' : !u ? a.loginUserEnv : '', !a.loginPasswordEnv ? 'loginPasswordEnv (not given)' : !pw ? a.loginPasswordEnv : ''].filter(Boolean).join(', ')}. AI clients usually pass only variables named in the server's own configuration (its env block), not the whole system environment. Simpler: the user saves the login once in a terminal with "${setupCommand()} app-login <name>" and you pass testLogin. Never ask for the password in the chat.`);
           login = { username: u, password: pw, source: `${a.loginUserEnv} / ${a.loginPasswordEnv}` };
         }
         const id = `explore-${Date.now().toString(36)}`;
