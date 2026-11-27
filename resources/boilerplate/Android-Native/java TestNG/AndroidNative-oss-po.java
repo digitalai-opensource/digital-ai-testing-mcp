@@ -18,16 +18,16 @@ public class LocalAndroidTest {
         options.setCapability("digitalai:testName", "[Enter Test Name here]");
         options.setCapability("digitalai:accessKey", "[Enter Your Access key here]");
         options.setCapability("digitalai:deviceQuery", "@os='android' and @category='[Enter PHONE/TABLET here]'");
-        options.setApp("cloud:com.experitest.ExperiBank/.LoginActivity");
-        options.setAppPackage("com.experitest.ExperiBank");
-        options.setAppActivity(".LoginActivity");
+        options.setApp("[APP_CLOUD_REF]");
+        options.setAppPackage("[APP_PACKAGE]");
+        options.setAppActivity("[APP_ACTIVITY]");
         options.setCapability("autoDismissAlerts", true);
         options.setCapability("autoGrantPermissions", true);
         driver = new AndroidDriver(URI.create("[Enter Instance here]/wd/hub").toURL(), options);
     }
 
     @Test
-    public void quickStartAndroidNativeDemo() {
+    public void [TEST_METHOD]() {
         // [BEGIN_DEMO_STEPS]
         new LoginScreen(driver).login("company", "company")
             .makePayment()

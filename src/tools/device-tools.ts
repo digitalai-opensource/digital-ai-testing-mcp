@@ -571,7 +571,7 @@ export function registerDeviceTools(server: McpServer): void {
   server.tool(
     'add_device_tag',
     'Assigns a tag to a device (max 10 total). ' +
-    'Use this to label, mark, or categorize a device — for example, tagging devices with a POC identifier during create_poc (Step 5). ' +
+    'Use this to label, mark, or categorize a device — for example, tagging the devices a team or project uses. ' +
     'Tags may only contain letters, digits, and underscores — no spaces or special characters. Not case-sensitive. ' +
     'Accepts numeric device ID, serial number, UDID, or device name. Available to Cloud Admin and Project Admin.',
     {

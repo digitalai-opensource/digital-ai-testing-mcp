@@ -16,9 +16,9 @@ class LocalAndroidTest(unittest.TestCase):
         options = UiAutomator2Options()
         options.set_capability('digitalai:testName', self.testName)
         options.set_capability('digitalai:accessKey', self.accessKey)
-        options.set_capability('app', 'cloud:com.experitest.ExperiBank/.LoginActivity')
-        options.set_capability('appPackage', 'com.experitest.ExperiBank')
-        options.set_capability('appActivity', '.LoginActivity')
+        options.set_capability('app', '[APP_CLOUD_REF]')
+        options.set_capability('appPackage', '[APP_PACKAGE]')
+        options.set_capability('appActivity', '[APP_ACTIVITY]')
         options.set_capability('platformName', 'android')
         options.set_capability('digitalai:deviceQuery', "@os='android' and @category='[Enter PHONE/TABLET here]'")
         options.set_capability('autoDismissAlerts', True)
@@ -32,7 +32,7 @@ class LocalAndroidTest(unittest.TestCase):
         # mix the two (every miss then waits implicit + explicit, and the real timeout becomes unpredictable).
         return WebDriverWait(self.driver, timeout).until(EC.visibility_of_element_located((by, locator)))
 
-    def testQuickStartAndroidNativeDemo(self):
+    def [TEST_METHOD](self):
         # [BEGIN_DEMO_STEPS]
         self.find(By.ID, "com.experitest.ExperiBank:id/usernameTextField").send_keys('company')
         self.find(By.ID, "com.experitest.ExperiBank:id/passwordTextField").send_keys('company')

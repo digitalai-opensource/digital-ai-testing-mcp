@@ -38,6 +38,7 @@ by area.
 - [17. Test Orchestrator](#17-test-orchestrator-known-issues)
 - [32. Robot Framework templates](#32-robot-framework-templates-scope)
 - [34. Two-phone call and SMS tests](#34-no-generated-template-for-two-phone-call-and-sms-tests)
+- [40. Choosing the framework: where the server can ask and read](#40-choosing-the-test-framework-where-the-server-can-ask-and-read)
 
 **Running tests**
 - [1. Which test suites the server can run](#1-appium-test-execution)
@@ -191,8 +192,9 @@ With a Project Admin or Project User profile active, the device serial lookup ca
 numeric device ID instead of the device's real serial or UDID. The generated `start-rdb` script then passes that ID to
 `rdb start-remote-debug --serial-number`, and rdb rejects it ("validation error / Failed to reserve device").
 
-Run `get_remote_debug_command` with a **Cloud Admin** profile: `switch_environment` to it, generate the script, then
-switch back. The tool warns you before you run the script: its answer carries an auth warning (`authWarning` in JSON
+With a project role, pass the device's real serial (Android) or UDID (iOS) yourself as `serialNumber` (read it from
+Mobile Studio or `list_devices`), or ask your Cloud Admin to generate the script. If you also hold a **Cloud Admin**
+profile, `switch_environment` to it, generate the script, then switch back. The tool warns you before you run the script: its answer carries an auth warning (`authWarning` in JSON
 output) when the active role, as reported by the platform, is below Cloud Admin, or when the resolved serial is a purely
 numeric internal ID.
 
@@ -382,8 +384,7 @@ foldable scenarios.
 
 The platform API cannot disable or lock a user account. Taking away a user's access means removing them from the
 project or deleting the account. That is why the wind-down workflows delete accounts that belong only to the project
-being closed: `close_project_resources` and `teardown_project` for a project, `close_poc` (with a confirmation for each
-user) for a POC.
+being closed: `close_project_resources` (with a confirmation for each user) and `teardown_project`.
 
 ## 28. Performance Transactions: Prerequisites, Delay and Client-Side Filtering
 
@@ -456,7 +457,7 @@ the Reporter UI once the transaction is no longer needed.
 ## 36. HAR Capture Records Nothing Under NV Tunneling
 
 `session_capture` with `kind: "har"` writes a HAR file into the file repository, but the platform records no HTTP
-entries while NV tunneling is on for the device — which is every device on a tenant whose NV servers tunnel. The result
+entries while NV tunneling is on for the device — which on many clouds is every device. The result
 is a ZIP of about 290 bytes holding an empty `har.json`, and the tool says so. For network byte counts, use a performance
 transaction instead.
 
@@ -506,3 +507,16 @@ platform feature:
   Allocating a phone takes about 25–55 seconds. iOS Safari does not honour `acceptInsecureCerts`: a site with a
   self-signed certificate still shows "This Connection Is Not Private" (Android Chrome and the desktop browsers load it).
 - **`acceptInsecureCerts`** is verified on desktop Chrome, Firefox, Edge and Safari, and on Android Chrome; not on Opera.
+
+## 40. Choosing the Test Framework: Where the Server Can Ask and Read
+
+The user chooses the test framework once per project (see
+[Choosing the test framework](../README.md#choosing-the-test-framework)). Two parts of that depend on the AI client:
+
+- **Asking the user directly.** The server puts the question to the user with a choice form only in clients that
+  support MCP elicitation. In other clients the AI is told to ask the user in the conversation; an AI can ignore that
+  instruction and pass a language on its own. If that happens, tell it which framework you want, or set it again.
+- **Reading your project.** The recommendation reflects the build files and test frameworks already in your project only
+  when the server runs on your machine (the npm install) and the client shares its workspace folder with the server
+  (Claude Code, VS Code). Claude Desktop does not share a folder, and a server in Docker cannot read your disk, so there
+  the recommendation comes from the cloud project alone.

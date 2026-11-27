@@ -55,7 +55,7 @@ function testCreationGuidance() {
 export function registerApplicationTools(server: McpServer): void {
   server.tool(
     'list_applications',
-    'Lists and searches the app repository. Use nameContains to find apps by name (e.g. "ExperiBank", "demo") without needing a bundle ID or package name. ' +
+    'Lists and searches the app repository. Use nameContains to find apps by name (e.g. "shop", "checkout") without needing a bundle ID or package name. ' +
     'Returns app IDs needed by install_application, assign_app_to_project, and get_application_info. ' +
     'TEST-CREATION NOTE: if this lookup is the first step of creating a test, decide the MODE before going further — ' +
     'autonomous (get_test_boilerplate: specific intent + selectors from source or a session) vs interactive ' +
@@ -63,15 +63,15 @@ export function registerApplicationTools(server: McpServer): void {
     'Each result lists its project assignments — when several uploads share a name, PREFER the one assigned to your active project ' +
     '(install and inspection sessions run in the active project context and fail for apps assigned only elsewhere). ' +
     'Also filterable by platform (ios/android), package name, bundle identifier, file type (apk/ipa/aab), and simulator flag. ' +
-    'Covers the full app catalog — browse uploaded applications, find a specific version, or search for a demo app.',
+    'Covers the full app catalog — browse uploaded applications, or find a specific version of the user’s app.',
     {
       nameContains: z
         .string()
         .optional()
         .describe(
           'Filter by name — partial, case-insensitive match on the display name, package name, bundle identifier, ' +
-          'unique name or internal name. E.g. "ExperiBank" also finds the Android demo app whose display name is ' +
-          '"SeeTestDemoApp" but whose package is com.experitest.ExperiBank. Combine with osType to narrow to a platform.'
+          'unique name or internal name. E.g. "acme" also finds an app displayed as "Shop" whose package is com.acme.shop. ' +
+          'Combine with osType to narrow to a platform.'
         ),
       osType: osTypeLower().optional().describe("Filter by platform: 'ios' or 'android'."),
       packageName: z.string().optional().describe('Filter by Android package name (exact server-side filter).'),
@@ -731,20 +731,20 @@ export function registerApplicationTools(server: McpServer): void {
   server.tool(
     'find_latest_application',
     'Finds the most recently uploaded version of an app. ' +
-    'Search by appName (partial, case-insensitive — e.g. "ExperiBank") without needing the bundle ID or package name. ' +
+    'Search by appName (partial, case-insensitive — e.g. "checkout") without needing the bundle ID or package name. ' +
     'Or search by bundleIdentifier (iOS) or packageName (Android) for exact matching. ' +
     'osType is optional when searching by appName; omit it to search across all platforms. ' +
     'PROJECT-AWARE: when several uploads match, the newest one assigned to your ACTIVE project is preferred ' +
     '(install/session run in the active project context — an app assigned only to another project will fail there). ' +
     'The response lists each app\'s project assignments; heed the projectWarning if present. ' +
     'Returns the app ID needed by assign_app_to_project. ' +
-    'Used in create_poc Step 10 to locate a demo app before assigning it to the POC project.',
+    'Use it to find the newest build of the user’s app before installing or assigning it.',
     {
       appName: z
         .string()
         .optional()
         .describe(
-          'Find by app name — partial, case-insensitive match. E.g. "ExperiBank" finds the latest upload whose name contains "ExperiBank". ' +
+          'Find by app name — partial, case-insensitive match. E.g. "checkout" finds the latest upload whose name contains "checkout". ' +
           'Use this when you do not know the bundle identifier or package name.'
         ),
       osType: osTypeLower().optional().describe("Platform: 'ios' or 'android'. Optional when searching by appName alone."),

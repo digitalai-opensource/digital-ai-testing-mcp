@@ -40,9 +40,8 @@ export function registerProjectTools(server: McpServer): void {
   server.tool(
     'list_projects',
     'Lists all projects in the Digital.ai environment. ' +
-    'Use this to find a project\'s numeric ID — required by assign_user_to_project, get_project_settings, assign_app_to_project, delete_project, and the create_poc / close_poc / delete_poc workflows. ' +
-    'Filter by name to find a specific project (e.g. "Default", "Acme Corp POC"). ' +
-    'Returns the Default project ID used as the baseline in POC provisioning.',
+    'Use this to find a project\'s numeric ID — required by assign_user_to_project, get_project_settings, assign_app_to_project, delete_project, and the setup_project / teardown_project workflows. ' +
+    'Filter by name to find a specific project (e.g. "Default", "Mobile Team").',
     {
       name: z.string().optional().describe('Filter by project name (partial match, case-insensitive).'),
       sortBy: z
@@ -143,7 +142,7 @@ export function registerProjectTools(server: McpServer): void {
 
   server.tool(
     'delete_project',
-    'Permanently deletes a project. If deleteUsers is true, users belonging only to this project are also deleted. Cloud Admin only. Requires confirmDeletion: true. ⚠️ POC teardown: use delete_poc instead — it handles the full sequence (device cleanup, user access revocation, then deletion).',
+    'Permanently deletes a project. If deleteUsers is true, users belonging only to this project are also deleted. Cloud Admin only. Requires confirmDeletion: true. To wind a project down in order (devices, users, then the project), use teardown_project.',
     {
       projectId: z.number().describe('The numeric project ID.'),
       deleteUsers: z

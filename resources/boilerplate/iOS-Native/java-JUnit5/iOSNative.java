@@ -25,8 +25,8 @@ public class LocaliOSTest {
         dc.setCapability("digitalai:testName", "[Enter Test Name here]");
         dc.setCapability("digitalai:accessKey", accessKey);
         dc.setCapability("digitalai:deviceQuery", "@os='ios' and @category='[Enter PHONE/TABLET here]'");
-        dc.setCapability(MobileCapabilityType.APP, "cloud:com.experitest.ExperiBank");
-        dc.setCapability(IOSMobileCapabilityType.BUNDLE_ID, "com.experitest.ExperiBank");
+        dc.setCapability(MobileCapabilityType.APP, "[APP_CLOUD_REF]");
+        dc.setCapability(IOSMobileCapabilityType.BUNDLE_ID, "[BUNDLE_ID]");
         // "Detected dialect: OSS" at startup is expected — the platform uses the legacy JSON Wire Protocol.
         driver = new IOSDriver<>(new URL("[Enter Instance here]/wd/hub"), dc);
     }
@@ -38,7 +38,7 @@ public class LocaliOSTest {
     }
 
     @Test
-    public void quickStartiOSNativeDemo() {
+    public void [TEST_METHOD]() {
         // [BEGIN_DEMO_STEPS]
         driver.rotate(ScreenOrientation.PORTRAIT);
         find(MobileBy.AccessibilityId("usernameTextField")).sendKeys("company");

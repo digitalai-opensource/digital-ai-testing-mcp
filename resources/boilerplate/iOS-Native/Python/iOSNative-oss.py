@@ -17,8 +17,8 @@ class LocalIosTest(unittest.TestCase):
         options = XCUITestOptions()
         options.set_capability('digitalai:testName', self.testName)
         options.set_capability('digitalai:accessKey', self.accessKey)
-        options.set_capability('app', 'cloud:com.experitest.ExperiBank')
-        options.set_capability('bundleId', 'com.experitest.ExperiBank')
+        options.set_capability('app', '[APP_CLOUD_REF]')
+        options.set_capability('bundleId', '[BUNDLE_ID]')
         options.set_capability('platformName', 'ios')
         options.set_capability('digitalai:deviceQuery', "@os='ios' and @category='[Enter PHONE/TABLET here]'")
         self.driver = webdriver.Remote("[Enter Instance here]/wd/hub", options=options)
@@ -28,7 +28,7 @@ class LocalIosTest(unittest.TestCase):
         # mix the two (every miss then waits implicit + explicit, and the real timeout becomes unpredictable).
         return WebDriverWait(self.driver, timeout).until(EC.visibility_of_element_located((by, locator)))
 
-    def testQuickStartIosNativeDemo(self):
+    def [TEST_METHOD](self):
         # [BEGIN_DEMO_STEPS]
         self.find(AppiumBy.ACCESSIBILITY_ID, 'usernameTextField').send_keys('company')
         self.find(AppiumBy.ACCESSIBILITY_ID, 'passwordTextField').send_keys('company')

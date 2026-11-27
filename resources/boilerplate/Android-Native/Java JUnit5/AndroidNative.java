@@ -24,9 +24,9 @@ public class LocalAndroidTest {
         dc.setCapability("digitalai:testName", "[Enter Test Name here]");
         dc.setCapability("digitalai:accessKey", accessKey);
         dc.setCapability("digitalai:deviceQuery", "@os='android' and @category='[Enter PHONE/TABLET here]'");
-        dc.setCapability(MobileCapabilityType.APP, "cloud:com.experitest.ExperiBank/.LoginActivity");
-        dc.setCapability(AndroidMobileCapabilityType.APP_PACKAGE, "com.experitest.ExperiBank");
-        dc.setCapability(AndroidMobileCapabilityType.APP_ACTIVITY, ".LoginActivity");
+        dc.setCapability(MobileCapabilityType.APP, "[APP_CLOUD_REF]");
+        dc.setCapability(AndroidMobileCapabilityType.APP_PACKAGE, "[APP_PACKAGE]");
+        dc.setCapability(AndroidMobileCapabilityType.APP_ACTIVITY, "[APP_ACTIVITY]");
         dc.setCapability("autoDismissAlerts", true);
         dc.setCapability("autoGrantPermissions", true);
         // System-level overlays (charging dialog, USB prompt) are outside the app hierarchy and are
@@ -46,7 +46,7 @@ public class LocalAndroidTest {
     }
 
     @Test
-    public void quickStartAndroidNativeDemo() {
+    public void [TEST_METHOD]() {
         // [BEGIN_DEMO_STEPS]
         driver.rotate(ScreenOrientation.PORTRAIT);
         find(By.id("com.experitest.ExperiBank:id/usernameTextField")).sendKeys("company");

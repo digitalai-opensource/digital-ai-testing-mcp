@@ -11,7 +11,7 @@ import java.time.Duration;
 /**
  * One class per screen. Every interaction waits explicitly for its element (no implicit wait anywhere), and each
  * locator is chosen per platform at runtime, so one screen class serves the Android and the iOS build of the app.
- * Screens return the next screen, so a test reads as the user flow: new LoginScreen(driver).login(..).makePayment()..
+ * Screens return the next screen, so a test reads as the user flow: new FirstScreen(driver).someAction(..).nextAction()..
  */
 public abstract class BaseScreen {
     protected final AppiumDriver driver;

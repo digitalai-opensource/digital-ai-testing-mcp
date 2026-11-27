@@ -416,7 +416,7 @@ export function registerInspectionTools(server: McpServer): void {
       appPackage: z
         .string()
         .optional()
-        .describe("Android package name, e.g. 'com.experitest.ExperiBank'. Required when app is provided."),
+        .describe("Android package name, e.g. 'com.example.app'. Required when app is provided."),
       appActivity: z
         .string()
         .optional()

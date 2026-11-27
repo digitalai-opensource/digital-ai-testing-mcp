@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **230 tools**, **2 resources** and **7 prompts** across 28 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **227 tools**, **2 resources** and **6 prompts** across 28 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -57,10 +57,10 @@ There is nothing else to install. The first start downloads the server (about 20
 **Use it**
 - [What You Can Do](#what-you-can-do) — [example prompts](#example-prompts) · [tasks at a glance](#tasks-at-a-glance) · [all capability areas](#all-capability-areas)
 - [Explore Apps and Browsers Live](#explore-apps-and-browsers-live) — mobile and browser inspection, remote debug
-- [Creating Tests](#creating-tests) — [mobile](#mobile-app-tests-get_test_boilerplate) · [Test Orchestrator](#test-orchestrator-default-for-java-on-appium-server) · [web](#web-tests-get_web_test_boilerplate) · [validating a test](#check-a-test-before-you-deliver-it-validate_test_script)
+- [Creating Tests](#creating-tests) — [choosing the framework](#choosing-the-test-framework) · [mobile](#mobile-app-tests-get_test_boilerplate) · [Test Orchestrator](#test-orchestrator-default-for-java-on-appium-server) · [web](#web-tests-get_web_test_boilerplate) · [validating a test](#check-a-test-before-you-deliver-it-validate_test_script)
 - [Running Tests](#running-tests) — Espresso, XCUITest, Maestro, Playwright
 - [Results, Reports and Analysis](#results-reports-and-analysis) — [ready-made reports](#ready-made-reports) · [investigating failures](#investigating-failures) · [performance comparison](#performance-comparison) · [usage reports](#usage-reports)
-- [Managing Projects](#managing-projects) — [project lifecycle](#project-lifecycle) · [POC variant](#poc-variant)
+- [Managing Projects](#managing-projects) — [project lifecycle](#project-lifecycle)
 - [Safety Guards](#safety-guards)
 
 **Help and reference**
@@ -653,7 +653,7 @@ Nothing becomes unavailable. Tools outside the chosen toolsets are still listed,
 | `inspection` | Live device and browser inspection, Android Auto / CarPlay, remote debug |
 | `authoring` | Test boilerplate, Espresso / XCUITest / Maestro / Playwright test runs |
 | `browsers` | Browser listing and Selenium sessions |
-| `admin` | Users, projects, backups, usage reports, the usage summary, device utilization and license usage reports, project (and POC) workflows |
+| `admin` | Users, projects, backups, usage reports, the usage summary, device utilization and license usage reports, project workflows |
 
 Set it without editing a configuration file: `setup options toolsets reporting` (see [the setup command](#the-setup-command)).
 
@@ -692,10 +692,11 @@ The server follows the work as it happens: find a device, **explore** an app or 
 - *"Show me the overall health of the device farm: how many devices are available, reserved, and offline?"*
 - *"Find an available Android phone running at least version 13 in the US2 region"*
 - *"Open my app on that phone and show me the login screen's elements"*
-- *"Find an available Android phone, then generate a Java JUnit5 test for the demo app"*
+- *"Inspect our app's login screen on an Android phone and build a test from the elements you find"*
+- *"I'm new: show me a sample test on the ExperiBank demo app"* (the sample app every environment starts with, for trying the platform)
 - *"Did all tests in the QA project pass today? I need a go/no-go for the release."*
 - *"Why are tests failing this week? Make a failure analysis report"*
-- *"Did the latest release introduce a CPU regression? Compare version 10553 vs 10554 on Android."*
+- *"Did the latest release introduce a CPU regression? Compare version 4.2.0 vs 4.3.0 of our app on Android."*
 - *"Set up a project for the Payments team with 6 devices in US2, 3 iOS and 3 Android"*
 
 **[→ docs/examples.md](docs/examples.md)** has 200+ prompts organized by scenario: farm health, device groups, regression sign-off, test analytics, performance, usage reports, interactive inspection, project setup, and more.
@@ -717,7 +718,7 @@ The server follows the work as it happens: find a device, **explore** an app or 
 
 ### All capability areas
 
-230 tools across 28 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+227 tools across 28 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -741,15 +742,15 @@ The server follows the work as it happens: find a device, **explore** an app or 
 | [Regions](docs/tools.md#regions) | 2 | Region status and infrastructure topology *(Cloud Admin)* |
 | [NV Servers](docs/tools.md#nv-servers) | 2 | Network Virtualization servers *(Cloud Admin)* |
 | [Server, Environments & Toolsets](docs/tools.md#server-environments--toolsets) | 8 | Server info, connectivity and workflow readiness checks, named connection profiles and runtime switching, toolset loading, debug mode on/off and remediation notes |
-| [Workflows](docs/tools.md#workflows) | 6 | Project lifecycle orchestration (set up, release, tear down), with a POC variant |
-| [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | Ready-to-run Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python, Robot Framework) that report the real outcome, Test Orchestrator agent install; validate scripts before delivery |
+| [Workflows](docs/tools.md#workflows) | 3 | Project lifecycle orchestration (set up, release, tear down) |
+| [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | The framework structure of Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python, Robot Framework, Playwright) in the framework you choose, reporting the real outcome; your app's steps are written from a live inspection; Test Orchestrator agent install; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud Android or iOS device as if it were attached locally (ADB / usbmuxd) |
 | [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 30 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay projection, audio play/record, mock biometric authentication |
 | [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 9 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
 | [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation |
 | [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with User Tag, Device Tag and Device Group columns (tag/group lists are split when grouping), 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
 | [Reports](docs/reports.md) | 16 | Finished, branded HTML reports in one call: 14 ready-made reports (test summary, trend, breakdown, reliability, release readiness, failure analysis, inventory, device health, coverage and utilization, license usage, usage summary, performance overview and comparison) and a report of any data |
-| [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 7 guided prompts |
+| [Resources & Prompts](docs/tools.md#resources--prompts) | — | 2 ambient resources, 6 guided prompts |
 
 [↑ Back to top](#table-of-contents)
 
@@ -777,37 +778,52 @@ The server supports two ways of creating a test, for both mobile and web, and th
 
 **Autonomous** — `get_test_boilerplate` (mobile) / `get_web_test_boilerplate` (web)
 - **When:** your intent is specific — a standard flow ("create a login test") or step-level detail — AND the selectors are known (app source in the workspace, or a prior inspection session).
-- **Your involvement:** none required — the AI writes the test from the boilerplate, the source and best practices.
+- **Your involvement:** you choose the test framework once per project; after that none is required. The AI fills the boilerplate's structure with steps built from your app's source or from verified selectors, following best practices.
 - **Output:** in an IDE, a local test automation project; in a chat-only client, portable project files shown inline.
 
 **Interactive** — `start_inspection_session` / `start_browser_inspection_session`, or the `collaborative_test_creation` / `collaborative_web_test_creation` prompts
 - **When:** the request is vague ("I want a test for app X"), the AI has no access to the app's source (chat-only, or an IDE without this app's code), or you want to watch or drive on a live device or browser.
-- **Your involvement:** collaborative — the AI builds the test step by step with you (browser sessions relay screenshots; mobile sessions share a live device view URL).
+- **Your involvement:** collaborative — the AI builds the test step by step with you (browser sessions relay screenshots; mobile sessions share a live device view URL). The mobile prompt starts from your app and its version, then asks you for the framework; it works for Android and iOS (the platform comes from the app record), every mobile framework, and a Maestro flow on Android, and never substitutes another app. The web prompt has no default framework either.
 - **Output:** the same, plus selectors verified against the real app or page along the way.
 
 **A mix is often best:** even in autonomous mode, the AI can open a short inspection session — with no involvement from you — to capture or check element IDs or CSS selectors against the real build. The AI is explicitly instructed to **never make up selectors**: when in doubt it checks live, and when the mode itself is unclear it asks.
 
-> **Stronger guarantees:** the server sends this policy to the AI automatically (in its MCP `instructions`), and both boilerplate tools refuse to produce code for a real app or URL without verified selectors. But not every client passes server `instructions` on to the AI, and no MCP server can stop an AI from writing a test file by hand — so you can add a client-side reinforcement for a guarantee that doesn't depend on the client. See **[Recommended agent guardrails](docs/recommended-agent-guardrails.md)**.
+> **Stronger guarantees:** the server sends this policy to the AI automatically (in its MCP `instructions`), both boilerplate tools return your app's steps as marked placeholders, never guessed ones, and `validate_test_script` fails a test until those placeholders are replaced. But not every client passes server `instructions` on to the AI, and no MCP server can stop an AI from writing a test file by hand — so you can add a client-side reinforcement for a guarantee that doesn't depend on the client. See **[Recommended agent guardrails](docs/recommended-agent-guardrails.md)**.
+
+### Choosing the test framework
+
+You choose the framework and language your tests are written in (Java with JUnit 5 or TestNG, Python, JavaScript with WebdriverIO, Robot Framework, or Playwright for web), and you choose it once per project. The AI does not pick one for you.
+
+- **The first time** you ask for a test in a project, the server looks at what the project already holds and recommends a framework, without generating code. When the AI runs in your IDE (Claude Code, VS Code) and the server runs on your machine, it reads the build files and test frameworks in your workspace folder, so the recommendation matches your stack. Otherwise it recommends from the cloud project.
+- **You are asked.** Where the AI client supports it, the server asks you directly with a short choice form; elsewhere the AI asks you in the conversation.
+- **Your answer is remembered** for that project (in the server's settings folder on your machine, `test-frameworks.json` next to the credential store; `MCP_FRAMEWORK_CHOICE_DIR` moves it), so later tests in the same project are not asked again.
+- **One framework per project by default.** If the project already has the framework you chose, only the new test and screen files are returned; the build files come back for reference, to compare dependencies, not to overwrite yours. A second, different framework next to an existing one is added only when you ask for it (`newFramework: true`).
+- **CI and headless runs** with nobody to ask: set `MCP_FRAMEWORK_CHOICE=trust-caller` and the language the caller passes is used without asking.
 
 ### Mobile app tests (`get_test_boilerplate`)
 
-Generates a complete, pre-configured Appium test project. The Digital.ai server URL is filled in from the active connection profile. The generated files contain **no access key**: they read it from the `DIGITAL_AI_ACCESS_KEY` environment variable and stop with a clear message if it is unset (a key-free `.env.example` lists what to set). Use a project-scoped key there rather than your admin key, and store it as a secret in CI.
+Generates the framework structure of an Appium test project for your app: build and dependency files, capabilities and session setup for your project's mode (Appium Server or Appium Grid), explicit-wait helpers, status reporting, parallel-run notes and, if you want them, page objects. Your app's flow is a marked placeholder block with a fail guard, because the steps must come from your real app: the AI writes them from selectors captured in a live inspection. The result says `runnable: false` until then. The Digital.ai server URL is filled in from the active connection profile. The generated files contain **no access key**: they read it from the `DIGITAL_AI_ACCESS_KEY` environment variable and stop with a clear message if it is unset (a key-free `.env.example` lists what to set). Use a project-scoped key there rather than your admin key, and store it as a secret in CI.
 
 **Recommended workflow** for building a new test:
 
+0. Upload your build (`upload_application_file`, or `get_application_upload_command` when the server runs in Docker), or pick it with `list_applications`
 1. `get_application_info` — confirm package name, launch activity, and app ID
-2. `find_available_device` — select a healthy device and read its `region`
-3. `install_application` — install the app on that device before starting a session
-4. `start_inspection_session` — capture real element IDs with `get_element_tree` / `find_elements`
-5. `get_test_boilerplate(appId, region, …)` — generates code while the inspection session is live, or with `confirmSelectorsVerified: true`
-6. [`validate_test_script`](#check-a-test-before-you-deliver-it-validate_test_script) — before saving or presenting the test
-7. Run the test, then `stop_inspection_session` and `release_device` — explicit cleanup
+2. Choose the test framework (you decide; see [Choosing the test framework](#choosing-the-test-framework))
+3. `find_available_device` — select a healthy device and read its `region`
+4. `install_application` — install the app on that device before starting a session
+5. `start_inspection_session` — capture real element IDs with `get_element_tree` / `find_elements`
+6. `get_test_boilerplate(appId, language, confirmedByUser, region, …)`: returns the framework structure with placeholder steps
+7. Replace the placeholder steps with steps built from the selectors captured in the inspection
+8. [`validate_test_script`](#check-a-test-before-you-deliver-it-validate_test_script) — before saving or presenting the test
+9. Run the test, then `stop_inspection_session` and `release_device` — explicit cleanup
 
-> **Inspection gate:** when you target a real app (`appId`/`packageName`/`bundleIdentifier`), this tool returns **no code** — just a structured `{ status: "blocked", reason: "no_verified_selectors" }` error — UNLESS a live inspection session exists in the MCP server, or you set `confirmSelectorsVerified: true` (for selectors already captured another way: rdb/UIAutomator, `open_mobile_studio`, or authoritative source). The built-in ExperiBank demo (no app identifiers) is never gated. This way you can never receive a placeholder scaffold that could be passed off as a finished test.
+> **Your app, never a stand-in:** name your app with `appId`, `packageName` (with `mainActivity`) or `bundleIdentifier`. If the app cannot be found, the call fails; it never falls back to another app. With no app at all, the structure comes with `<your app package …>` placeholders and a note for the AI to ask you which app; a missing main activity becomes a `<your main activity …>` placeholder. The structure is always returned (`confirmSelectorsVerified` is still accepted but no longer changes anything); `validate_test_script` keeps a test from being delivered while its steps are still placeholders.
+>
+> **Demo and training:** `demo: true` (or naming the ExperiBank app itself) returns a complete, runnable test for ExperiBank, the sample app every Digital.ai environment is provisioned with. Use it to try the platform before loading your own app; it is never a starting point for your app's test.
 
 **Finding element locators:** use an inspection session first — `start_inspection_session` → `get_element_tree` / `find_elements` gives the AI the element tree, screenshots and gestures, and is the only way to capture verified selectors inside the MCP. `open_mobile_studio` (the platform's browser-based UI Inspector) is a visual alternative that needs no local tooling. For direct device access (ADB shell commands and file push on Android, Xcode on iOS), use `get_remote_debug_command` to connect the device locally.
 
-> ⚠️ The generated script is a **finished product**, not a discovery tool — don't run it to find out what's on screen. Running it without known element selectors creates Incomplete sessions visible to the whole team. Discover selectors with an inspection session (or `open_mobile_studio`) first.
+> ⚠️ Don't run the generated project to find out what's on screen: its steps are placeholders until they are filled from an inspection, and running it creates Incomplete sessions visible to the whole team. Discover selectors with an inspection session (or `open_mobile_studio`) first, write the steps from them, and run `validate_test_script`, which reports the placeholders until every one is replaced.
 
 <details>
 <summary><strong>Parameters</strong></summary>
@@ -815,7 +831,10 @@ Generates a complete, pre-configured Appium test project. The Digital.ai server 
 | Parameter | Values | Default |
 |---|---|---|
 | `platform` | `android` \| `ios` | _(required)_ |
-| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Appium Server projects only) | _(required)_ |
+| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Appium Server projects only): the framework YOU chose. Leave it out on the first call for a project to get the recommendation | _(the project's saved choice)_ |
+| `confirmedByUser` | `true` when you chose `language`; saves it as the project's framework | _(optional)_ |
+| `newFramework` | `true` to add a second, different framework to a project that already has one | _(optional)_ |
+| `demo` | `true` for the runnable ExperiBank sample-app test (demos and training only) | `false` |
 | `appId` | Numeric app ID from `list_applications` | Recommended |
 | `deviceCategory` | `PHONE` \| `TABLET` \| `FOLDABLE` (platform 26.10+; a foldable is never matched by `PHONE`) | `PHONE` |
 | `testName` | Any string | `"My First Mobile Test"` |
@@ -827,7 +846,7 @@ Generates a complete, pre-configured Appium test project. The Digital.ai server 
 | `projectType` | `standalone-gradle` \| `standalone-maven` \| `android-gradle-submodule` | `standalone-gradle` |
 | `includePerformanceTransactions` | `true` \| `false` | `false` |
 | `includeAxeScan` | `true` \| `false` | `false` |
-| `confirmSelectorsVerified` | `true` \| `false` | _(optional)_ |
+| `confirmSelectorsVerified` | Accepted for older callers; changes nothing | _(optional)_ |
 | `orchestration` | `auto` \| `on` \| `off` | `auto` |
 | `orchestrationMaxRetries` | `0`–`5` | `2` (`0` for placeholder or performance tests) |
 | `automotiveProjection` | Android Auto / CarPlay resolution | _(optional)_ |
@@ -847,12 +866,12 @@ Generates a complete, pre-configured Appium test project. The Digital.ai server 
 
 | Language | Files |
 |---|---|
-| `java-junit5` / `java-testng` | `src/test/java/LocalAndroidTest.java` or `LocaliOSTest.java` + build file(s) per `projectType`; with `structure: "page-objects"` also `src/test/java/screens/BaseScreen.java`, `LoginScreen.java`, `DashboardScreen.java`, `PaymentScreen.java` in a `screens` package (a real app gets `screens/AppScreen.java`, a placeholder); orchestrated projects add `orchestrator/config.template.yml`, `orchestrator/.gitignore` and `lib/.gitignore`. Appium Server projects pin java-client 11 + Selenium 4.51; Grid projects stay on java-client 7 |
-| `nodejs` | `package.json` + `wdio.conf.js` + `test/specs/AndroidNative.js` / `test/specs/iOSNative.js` + `setup-steps.sh` (WebdriverIO 7.40 for Appium Grid projects, WebdriverIO 9 for Appium Server); with `structure: "page-objects"` also `test/screenobjects/AppScreen.js`, `LoginScreen.js`, `DashboardScreen.js`, `PaymentScreen.js` (a real app gets `PlaceholderScreen.js`) |
+| `java-junit5` / `java-testng` | `src/test/java/LocalAndroidTest.java` or `LocaliOSTest.java` + build file(s) per `projectType`; with `structure: "page-objects"` also `src/test/java/screens/BaseScreen.java` (the explicit-wait helpers) and `screens/AppScreen.java`, a placeholder screen for your app (the ExperiBank demo gets `LoginScreen.java`, `DashboardScreen.java` and `PaymentScreen.java` instead); orchestrated projects add `orchestrator/config.template.yml`, `orchestrator/.gitignore` and `lib/.gitignore`. Appium Server projects pin java-client 11 + Selenium 4.51; Grid projects stay on java-client 7 |
+| `nodejs` | `package.json` + `wdio.conf.js` + `test/specs/AndroidNative.js` / `test/specs/iOSNative.js` + `setup-steps.sh` (WebdriverIO 7.40 for Appium Grid projects, WebdriverIO 9 for Appium Server); with `structure: "page-objects"` also `test/screenobjects/AppScreen.js` (the explicit-wait helpers) and `PlaceholderScreen.js`, a placeholder screen for your app (the ExperiBank demo gets `LoginScreen.js`, `DashboardScreen.js` and `PaymentScreen.js` instead) |
 | `python` | `AndroidNative.py` / `iOSNative.py` + `requirements.txt` |
 | `robot` | `tests/AndroidNative.robot` / `tests/iOSNative.robot` + `tests/DigitalAiReport.py` (report keywords) + `requirements.txt` (Robot Framework 7.5, AppiumLibrary 3.2.1). Appium Server projects only; not combinable with `includePerformanceTransactions`, `includeAxeScan` or `automotiveProjection` |
 
-All boilerplate uses the ExperiBank demo app as its starting point. ExperiBank is available on most farm devices, so you can verify connectivity before switching to your own app.
+The boilerplate is the framework structure: for your app, the steps are placeholders that the AI fills from an inspection of your app. When the project already has the chosen framework, only the test and screen files are returned and the build files come back under `referenceFiles`. For a quick start on the platform itself, `demo: true` returns a runnable test for the ExperiBank sample app that every environment is provisioned with (clearly a demo, not your test).
 
 **Locators and waits.** Every generated step goes through an explicit-wait helper (`find()` in Java/Python/Node, `Wait And Click` / `Wait And Input` in Robot) that polls up to 20 seconds for the element; no template sets an implicit wait, and adding one would make every miss wait both timeouts. Locators follow a fixed ladder — Android: resource-id, then accessibility id (`content-desc`), then an attribute XPath; iOS: accessibility id (the element's `name`: identifier, else label — the same match as a name XPath without walking the tree), then `-ios predicate string` (Appium Server only), then an attribute XPath. Never positional XPath (`[1]`, `[2]`) and never fixed sleeps; `validate_test_script` warns on both. The full table is in [docs/tools.md](docs/tools.md#locators-and-waits-in-generated-tests).
 
@@ -878,7 +897,7 @@ The agent JAR is **not** shipped with this server. By default it is downloaded f
 
 ### Web tests (`get_web_test_boilerplate`)
 
-Generates a complete, pre-configured Selenium test project for browser testing. The Digital.ai server URL is filled in from the active connection profile; the access key is read from the `DIGITAL_AI_ACCESS_KEY` environment variable, never written into the files.
+Generates the framework structure of a Selenium (or Playwright) test project for browser testing, in the framework you choose for the project (see [Choosing the test framework](#choosing-the-test-framework)). The page's steps are placeholders that the AI fills from selectors verified in a browser inspection session. The Digital.ai server URL is filled in from the active connection profile; the access key is read from the `DIGITAL_AI_ACCESS_KEY` environment variable, never written into the files.
 
 **Recommended workflow** for building a new web test:
 
@@ -888,9 +907,10 @@ Generates a complete, pre-configured Selenium test project for browser testing. 
 4. `find_web_elements` / `tap_element` / `type_into_element` — interact with elements to verify selectors work
 5. `take_inspection_screenshot` — relay screenshots at each key step for verification
 6. `stop_browser_inspection_session`
-7. `get_web_test_boilerplate(confirmSelectorsVerified: true)` — generate the verified script (once the session is stopped, pass `shadowDomSupport: "always"` if `get_page_dom` reported shadow DOM)
+7. `get_web_test_boilerplate(language, confirmedByUser, url, …)`: returns the framework structure (once the session is stopped, pass `shadowDomSupport: "always"` if `get_page_dom` reported shadow DOM)
+8. Replace the placeholder steps with steps built from the verified selectors, then run [`validate_test_script`](#check-a-test-before-you-deliver-it-validate_test_script)
 
-> **Inspection gate:** when you target a real URL (`url` provided), this tool returns **no code** — just a structured `{ status: "blocked", reason: "no_verified_selectors" }` error — UNLESS a live browser inspection session exists in the MCP server, or you set `confirmSelectorsVerified: true` (for selectors captured in a prior `start_browser_inspection_session` session). This mirrors the mobile gate.
+> The structure is always returned, with or without `url`; `confirmSelectorsVerified` is still accepted but no longer changes anything. There is no default framework: the first call for a project returns a recommendation and you choose.
 
 **Browser-neutral by default:** when `targetBrowser` is omitted, the generated script reads the browser name at runtime from the `BROWSER` environment variable, so the same script runs on Chrome, Firefox, Microsoft Edge, Safari and Opera without changes (Robot Framework: every browser except Opera, which SeleniumLibrary cannot drive) — just change the variable or your CI matrix. Specify `targetBrowser` only when you need browser-specific options (e.g. Safari-only session setup); the script then names that browser and no longer reads `BROWSER`.
 
@@ -903,12 +923,14 @@ Generates a complete, pre-configured Selenium test project for browser testing. 
 
 | Parameter | Values | Default |
 |---|---|---|
-| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Robot Framework + SeleniumLibrary) \| `playwright` (experimental; Chrome / Edge) | _(required)_ |
+| `language` | `java-junit5` \| `java-testng` \| `nodejs` \| `python` \| `robot` (Robot Framework + SeleniumLibrary) \| `playwright` (experimental; Chrome / Edge): the framework YOU chose. Leave it out on the first call for a project to get the recommendation | _(the project's saved choice)_ |
+| `confirmedByUser` | `true` when you chose `language`; saves it as the project's framework | _(optional)_ |
+| `newFramework` | `true` to add a second, different framework to a project that already has one | _(optional)_ |
 | `url` | URL of the page being tested | _(optional)_ |
 | `testName` | Any string | `"WebTest"` |
 | `targetBrowser` | `chrome` \| `firefox` \| `MicrosoftEdge` \| `safari` \| `opera` (names as `list_available_browsers` returns them; `edge` is accepted for `MicrosoftEdge`) | _(optional)_ |
 | `shadowDomSupport` | `auto` \| `always` \| `never` | `auto` |
-| `confirmSelectorsVerified` | `true` \| `false` | _(optional)_ |
+| `confirmSelectorsVerified` | Accepted for older callers; changes nothing | _(optional)_ |
 | `acceptInsecureCerts` | `true` for a site with a self-signed, expired or untrusted-CA certificate | _(optional)_ |
 | `outputFormat` | `json` \| `human` | `json` |
 
@@ -916,7 +938,7 @@ Generates a complete, pre-configured Selenium test project for browser testing. 
 
 ### Check a test before you deliver it (`validate_test_script`)
 
-A final check for the case the boilerplate gate can't catch: a test written by hand with guessed selectors. Pass the full `scriptContent` before presenting or saving any test. It looks for unreplaced `<…>` placeholder selectors, the deliberate scaffold fail-guard, placeholder or made-up credentials, and known fabricated resource IDs. If it finds a serious problem it returns `isError` with a `fail` verdict, so a test that can't work isn't delivered as finished. A `pass` is necessary but not sufficient: it confirms the obvious placeholders are gone, not that the selectors are real — a live inspection is still the authoritative source.
+The final check before a test is delivered: the boilerplate's placeholder steps must have been replaced, and a test written by hand must not rely on guessed selectors. Pass the full `scriptContent` before presenting or saving any test. It looks for unreplaced `<…>` placeholder selectors, the deliberate scaffold fail-guard, placeholder or made-up credentials, known fabricated resource IDs, and code copied from the ExperiBank sample app into a test of another app. Ordinary code in your own tests (a `raise NotImplementedError`, HTML markup inside strings) is not failed; patterns that make a test flaky are warnings. If it finds a serious problem it returns `isError` with a `fail` verdict, so a test that can't work isn't delivered as finished. A `pass` is necessary but not sufficient: it confirms the obvious placeholders are gone, not that the selectors are real — a live inspection is still the authoritative source.
 
 | Parameter | Values | Default |
 |---|---|---|
@@ -1104,7 +1126,7 @@ Full setup steps:
 6. Tag each device with a project-derived tag
 7. Remove devices from other groups — only when `isolateDevices: true`; by default existing group links (including Default) are kept intact
 8. Create users, assign them to the project with the specified roles, remove them from Default, and tag each account
-9. Assign the specified application to the project
+9. Assign your application to the project (the ExperiBank sample app as a placeholder when none was given)
 
 **Required parameters:**
 
@@ -1123,9 +1145,9 @@ Full setup steps:
 | `automationType` | `"appium-server"` | `"appium-server"` or `"appium-grid"` |
 | `isolateDevices` | `false` | Remove devices from all other groups before assignment |
 | `users` | `[]` | Array of `{email, firstName, lastName, role}` |
-| `appName` | `"ExperiBank"` | App to assign to the project |
-| `androidPackageName` | `"com.experitest.ExperiBank"` | Android package used to find the app |
-| `iosBundleId` | `"com.experitest.ExperiBank"` | iOS bundle ID used to find the app |
+| `appName` | ExperiBank sample app (placeholder) | Your team's app to assign to the project. With no app given, the ExperiBank sample app is assigned as a placeholder so the project does not start empty, and the plan says so; assign your own app with `assign_app_to_project` once it is uploaded |
+| `androidPackageName` | ExperiBank sample app | Android package of your app, used to find it in the repository |
+| `iosBundleId` | ExperiBank sample app | iOS bundle ID of your app, used to find it in the repository |
 | `projectMemo` | _(none)_ | Notes to record on the project |
 
 #### `close_project_resources` — Release resources without deleting
@@ -1147,76 +1169,6 @@ Performs all `close_project_resources` steps, then permanently deletes the devic
 The workflow presents a full inventory summary before any irreversible action; user processing is confirmed once for the whole batch via this inventory rather than user by user. Users who belong to other projects are protected in the same way.
 
 **Best practice:** Run `close_project_resources` first, then confirm the project is no longer needed before calling `teardown_project`.
-
-### POC variant
-
-> For proof-of-concept environments. `create_poc`, `close_poc` and `delete_poc` follow the same three steps as the project tools, with names and tags derived from a customer name (`"Acme Corp"` → project `"Acme Corp POC"`, device tag `"acmecorppoc"`), a Salesforce opportunity URL and an end date recorded in the project notes, and the ExperiBank demo app by default. Pass the same `customerName` to all three. Details: [Workflows](docs/tools.md#workflows).
-
-<details>
-<summary>POC workflow steps and parameters</summary>
-
-#### `create_poc` — Onboard a new POC environment
-
-Collects all parameters up front, checks that the app binaries are in the repository, presents a confirmation summary to the operator (Step 0), then runs 10 steps in order:
-
-1. Create (or reuse) a device group named `<Customer> POC`
-2. Locate the Default device group
-3. Select available phones from the Default group — region-matched, conflict-tag-free, phones only (tablets excluded). Presents the selection to the operator for confirmation before proceeding.
-4. Add selected devices to the POC group
-5. Tag each device with the derived POC tag (e.g. `acmecorppoc`)
-6. Create (or reuse) a project; record the Salesforce URL and end date in project notes
-7. Remove devices from the Default group — done only after the project exists, so a project-creation failure never strands devices
-8. Locate the Default project
-9. Create users, assign to the POC project, remove from Default, and tag each account with the POC tag. Cloud Admin access is never granted through this workflow.
-10. Assign ExperiBank (or the app identified by `androidPackageName` / `iosBundleId`) to the POC project — if a binary isn't in the repository, the summary reports it as a manual upload and the workflow continues
-
-If any step fails, the workflow stops, reports which steps completed with all created resource IDs, and offers to resume (call it again — existing resources are detected and reused) or unwind (`delete_poc`). Steps 1 and 6 check for an existing group/project by name before creating, so it is safe to re-run after a partial failure.
-
-**Required parameters:**
-
-| Parameter | Description |
-|---|---|
-| `customerName` | e.g. `"Acme Corp"` → derives project `"Acme Corp POC"` and tag `"acmecorppoc"` |
-| `region` | Testing region, e.g. `"US2"`, `"EU"`, `"SG"` |
-| `salesforceUrl` | Salesforce Opportunity URL — recorded in project notes |
-| `endDate` | Accepts ISO (`"YYYY-MM-DD"`), relative offsets (`"+14d"`, `"+2w"`), or natural language (`"in 2 weeks"`) |
-| `users` | Array of `{email, firstName, lastName, role}` — role must be `"User"` or `"ProjectAdmin"` |
-
-**Optional parameters:**
-
-| Parameter | Default |
-|---|---|
-| `deviceCount` | `6` |
-| `iosCount` | `ceil(deviceCount / 2)` |
-| `androidCount` | `floor(deviceCount / 2)` |
-| `automationType` | `"appium-server"` (alternative: `"appium-grid"`) |
-| `appName` | `"ExperiBank"` |
-| `androidPackageName` | `"com.experitest.ExperiBank"` |
-| `iosBundleId` | `"com.experitest.ExperiBank"` |
-
-#### `close_poc` — Wind down without deleting
-
-Reverses the device and user changes from `create_poc` while leaving the project and device group intact:
-
-1. Locate the POC project and device group by derived name
-2. List devices in the POC group
-3. Remove the POC tag from each device (all other tags are preserved)
-4. Move devices out of the POC group and back into the Default group
-5. Process users by POC tag: **delete accounts that have no other project memberships; revoke POC access only for users who also belong to other projects**
-
-Only `customerName` is required.
-
-> The Digital.ai REST API has no endpoint to lock or disable a user. Deleting the account via `delete_user` is the only way the API offers to remove access for users created only for the POC.
-
-#### `delete_poc` — Full teardown
-
-Performs the same wind-down as `close_poc`, then permanently deletes the device group and the project. Requires `confirmDeletion: true`.
-
-Before any destructive action, the workflow gathers a full inventory (project ID, group ID, device list, user breakdown) and presents it for explicit confirmation. Unlike `close_poc`, user processing is confirmed once for the whole batch via this inventory rather than user by user.
-
-**Best practice:** Run `close_poc` first — it winds down the POC while preserving the project and device group. Note that `close_poc` is not fully reversible: device moves and tag removal can be undone, but it permanently deletes POC-only user accounts (each deletion requires per-user operator confirmation). Use `delete_poc` only once the project data is confirmed no longer needed. Calling `delete_poc` without `confirmDeletion: true` returns a safe explanation and suggests `close_poc` as the alternative.
-
-</details>
 
 [↑ Back to top](#table-of-contents)
 
@@ -1259,7 +1211,7 @@ More checks run before any request leaves the server:
 | `install_application` returns 400 (no rdb involved) | App not assigned to a project containing the target device | Call `assign_app_to_project` first |
 | Repeatable `NoSuchElementException` while sibling tests pass | Device health, not test code — device stuck in a wrong state or offline-but-pooled | Run `get_device_health_summary`; scope the deviceQuery with `@region='<healthy-region>'` |
 | Tests missing from `list_test_reports` results | Project has its own reporter instance — unscoped queries search the default scope | Pass `projectName` (exact name from `list_projects`) |
-| rdb fails: `validation error / Failed to reserve device` | With a project-level role, the serial lookup returned an internal device ID instead of the real serial (the `get_remote_debug_command` response warns about this) | Ask the AI: *"switch to Cloud Admin"* → regenerate the rdb script → switch back. See [limitation 13](docs/limitations.md#13-get_remote_debug_command-requires-cloud-admin-for-reliable-serial-resolution) |
+| rdb fails: `validation error / Failed to reserve device` | With a project-level role, the serial lookup returned an internal device ID instead of the real serial (the `get_remote_debug_command` response warns about this) | Pass the device's real serial (Android) or UDID (iOS) yourself as `serialNumber`, read from Mobile Studio or `list_devices`; or, with a Cloud Admin profile, ask the AI: *"switch to Cloud Admin"* → regenerate the rdb script → switch back; or ask your Cloud Admin to generate the script. See [limitation 13](docs/limitations.md#13-get_remote_debug_command-requires-cloud-admin-for-reliable-serial-resolution) |
 | Device query returns nothing for `@manufacturer` / `@tag` | These fields are silently ignored server-side | Use the `manufacturer`/`tags` parameters on `find_available_device` — they filter client-side |
 | The AI client reports a timeout connecting to the server (for example "connection timed out after 30000ms" in Claude Code), often right after a new release | The first start of a new version downloads it, which can take longer than the client waits. The client stops the start and reports a timeout | Reconnect the server once more (Claude Code: `/mcp` → digital-ai-testing → Reconnect), or restart the client. To download a new version ahead of time, run `npx -y digital-ai-testing-mcp@latest setup clients add` (`npx.cmd` on Windows): it starts the server once and says how long the start took |
 | One project still uses an old setup (for example its own access key, Docker, or a plain `npx` that times out) although `setup clients add` set up Claude Code for all projects | Claude Code prefers a per-project entry (in `~/.claude.json` for that folder, or the projects `.mcp.json`) over the "all your projects" one | Run `npx -y digital-ai-testing-mcp@latest setup clients` (Windows: `npx.cmd`). It lists each project that has its own entry, with the command or file to remove it from. Keep the entry only if that project needs its own key |
@@ -1275,7 +1227,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 230) and active profile
+1. get_server_info           — confirm tool count (expect 227) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -1285,10 +1237,10 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 230,
+  "registeredToolCount": 227,
   "workflows": {
-    "setup_project":         { "ready": true, "missingRead": [], "missingWrite": [] },
-    "create_poc":            { "ready": true, "missingRead": [], "missingWrite": [] }
+    "setup_project":           { "ready": true, "missingRead": [], "missingWrite": [] },
+    "close_project_resources": { "ready": true, "missingRead": [], "missingWrite": [] }
   }
 }
 ```
@@ -1389,7 +1341,7 @@ The ones you're most likely to run into:
 3. **Appium Grid projects support fewer commands than Appium Server** — for example no `-ios predicate string` locator, no Android Auto / CarPlay projection, no pinch/zoom, no webview contexts. See [limitation 18](docs/limitations.md#18-appium-grid-projects-support-fewer-commands-than-appium-server).
 4. **Under Docker, file tools work on the container's filesystem, not yours.** Use the command-generator tools instead — see [Local File Transfer](#local-file-transfer-docker--remote-deployments-only) and [limitation 15](docs/limitations.md#15-local-file-io-runs-on-the-mcp-servers-filesystem-not-yours).
 5. **Usage reports go back 2 years** (platform 25.9+), and large unfiltered exports need your explicit approval. See [limitation 21](docs/limitations.md#21-usage-reports-2-year-retention-large-exports).
-6. **There's no way to disable or lock a user.** Removing access for a user created only for one project means deleting the account, which is why `close_project_resources` (and `close_poc`) asks for confirmation per user.
+6. **There's no way to disable or lock a user.** Removing access for a user created only for one project means deleting the account, which is why `close_project_resources` asks for confirmation per user.
 7. **Deleting test reports with a project-level key depends on a per-project setting** (`allowUsersDeleteTests`). Cloud Admin can always delete. When the setting is off, the tools refuse up front for a Project Admin and explain how to get it enabled; a Project User cannot read the setting, so the platform returns its own 403.
 8. **Playwright needs a Cross Browser license, and its Selenium-agent route is experimental.** An `execute_playwright_run` job without free capacity stays queued with "Waiting for licenses". Projects generated for the Selenium agent run on Chrome and Edge only, and the Digital.ai report shows Passed even when a test failed — read the Playwright report. See [limitation 38](docs/limitations.md#38-playwright-known-issues).
 

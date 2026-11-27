@@ -1,5 +1,5 @@
 describe('LocalAndroidTest', () => {
-    it('quickStartAndroidNativeDemo', myTest)
+    it('[TEST_METHOD]', myTest)
  })
  // Explicit wait: resolve the element and wait until it is displayed (waitforTimeout in wdio.conf.js) before acting.
  async function find(selector) {

@@ -1,7 +1,7 @@
 const LoginScreen = require('../screenobjects/LoginScreen');
 
 describe('LocalAndroidTest', () => {
-    it('quickStartAndroidNativeDemo', myTest)
+    it('[TEST_METHOD]', myTest)
  })
  async function myTest() {
    // [BEGIN_DEMO_STEPS]

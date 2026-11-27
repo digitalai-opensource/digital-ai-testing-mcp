@@ -22,7 +22,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
   server.tool(
     'list_device_groups',
     'Lists all device groups in the system. ' +
-    'Use this to find a group\'s numeric ID — required by get_devices_in_group, add_devices_to_group, remove_devices_from_group, assign_group_to_project, and the create_poc / close_poc / delete_poc workflows. ' +
+    'Use this to find a group\'s numeric ID — required by get_devices_in_group, add_devices_to_group, remove_devices_from_group, assign_group_to_project, and the setup_project / close_project_resources / teardown_project workflows. ' +
     'Returns the Default device group ID (the source pool for POC device selection) and any named groups (e.g. "Acme Corp POC"). ' +
     'Device groups organize devices and control which projects can access which devices. ' +
     'Cloud Admin returns full group data (numberOfDevices, type, acceptNewDevices). Project-level keys (Project Admin and Project User) receive a simplified response via the v1 fallback (id and name only).',
@@ -82,7 +82,7 @@ export function registerDeviceGroupTools(server: McpServer): void {
     'Optional client-side filters: osType (ios/android), status (Available/Offline/In Use/etc.), ' +
     'category (PHONE/TABLET/WATCH/FOLDABLE), excludeTags (exclude devices with any listed tag), ' +
     'requireTags (include only devices with all listed tags). ' +
-    'Used in create_poc Step 3 to select eligible devices from the Default group. Cloud Admin only.',
+    'Cloud Admin only.',
     {
       groupId: z.string().describe('The numeric device group ID. Use list_device_groups to find it.'),
       osType: osTypeLower()

@@ -375,7 +375,7 @@ export function registerTestRunTools(server: McpServer): void {
     'or visible text — never guessed IDs. Without a live Android inspection session the tool returns NO flow unless ' +
     'confirmSelectorsVerified is true. Android only.',
     {
-      appId: z.string().describe('Android package name, e.g. "com.experitest.ExperiBank".'),
+      appId: z.string().describe('Android package name, e.g. "com.example.app".'),
       flowName: z.string().optional().describe('Flow name (also the file name, e.g. "Login smoke" → flows/login_smoke.yaml).'),
       tags: z.array(z.string()).optional().describe('Maestro tags, e.g. ["smoke"].'),
       steps: z

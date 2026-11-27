@@ -800,9 +800,9 @@ export function registerWorkflowTools(server: McpServer): void {
         }))
         .optional()
         .describe('Users to create or add (full path only). Each user is tagged and assigned exclusively to this project.'),
-      appName: z.string().optional().describe('Display name of the app to assign (full path only, default: "ExperiBank").'),
-      androidPackageName: z.string().optional().describe('Android package name for app lookup (default: "com.experitest.ExperiBank").'),
-      iosBundleId: z.string().optional().describe('iOS bundle ID for app lookup (default: "com.experitest.ExperiBank").'),
+      appName: z.string().optional().describe('Display name of the team’s own app to assign (full path only). Without an app, the ExperiBank sample app is assigned so the project does not start empty — say so to the user; it is a training app, not theirs.'),
+      androidPackageName: z.string().optional().describe('Android package name of the team’s app, for the lookup. Default: the ExperiBank sample app (com.experitest.ExperiBank).'),
+      iosBundleId: z.string().optional().describe('iOS bundle ID of the team’s app, for the lookup. Default: the ExperiBank sample app.'),
     },
     ({ projectName, region, deviceCount, iosCount, androidCount, automationType, projectMemo, isolateDevices, users, appName, androidPackageName, iosBundleId }) => {
       const guard = preflightCheck('setup_project');
@@ -859,7 +859,7 @@ export function registerWorkflowTools(server: McpServer): void {
               `    • Device count and iOS/Android split`,
               `    • Device isolation preference (remove from Default only, or from ALL other groups)`,
               `    • User list (email, firstName, lastName, role)`,
-              `    • App name / package name (or use ExperiBank default)`,
+              `    • The team's own app (name / package / bundle id). If they have none in the repository yet, the ExperiBank sample app is assigned as a placeholder so the project is not empty — tell them it is a training app and how to assign their own later (assign_app_to_project).`,
               `  Then re-invoke setup_project with the collected parameters.`,
             ].join('\n'),
         ``,
@@ -908,7 +908,7 @@ export function registerWorkflowTools(server: McpServer): void {
         `  outputFormat: "json"`,
         ``,
         region ? `Apply additional client-side filter: region contains "${region}" (case-insensitive).` : `No region filter specified — select from all available phones.`,
-        `Also exclude devices whose tags contain "${projTag}" (already in this project) or "poc" (in an active POC).`,
+        `Also exclude devices whose tags contain "${projTag}" (already in this project) or a tag ending in "poc" (a device held by an evaluation project).`,
         ``,
         `Target mix: ${total} phones (${ios} iOS + ${android} Android). Prefer recent models.`,
         `Present proposed selection as a table and wait for operator confirmation.`,
@@ -967,7 +967,9 @@ export function registerWorkflowTools(server: McpServer): void {
         `  ✅ Devices         : <count> allocated — isolation: ${isolateDevices ? 'full (removed from all other groups)' : 'none (existing group links preserved)'}`,
         `  ✅ Tag applied     : "${projTag}"`,
         `  ✅ Users           : <count> — list names and tag status`,
-        `  ✅ App             : ${targetAppName} assigned (or ⚠️ not found)`,
+        appName || androidPackageName || iosBundleId
+          ? `  ✅ App             : ${targetAppName} assigned (or ⚠️ not found)`
+          : `  ✅ App             : ExperiBank SAMPLE app assigned as a placeholder (or ⚠️ not found) — not the team's app; assign theirs with assign_app_to_project once it is uploaded`,
         `  ⚠️  Any warnings or failures`,
       ].filter(s => s != null).join('\n');
 

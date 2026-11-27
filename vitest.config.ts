@@ -9,7 +9,7 @@ import { defineConfig } from 'vitest/config';
 // The local credential store (src/utils/credential-store.ts) is off for every test: a developer's own profiles.json
 // must never change what a test sees. Store tests point MCP_CREDENTIAL_STORE_DIR at a temp folder and turn it on.
 // TZ=UTC: report recipes use the machine's local days; tests that need another zone set process.env.TZ themselves.
-const shared = { environment: 'node' as const, testTimeout: 30000, hookTimeout: 30000, env: { MCP_CREDENTIAL_STORE: 'off', TZ: 'UTC' } };
+const shared = { environment: 'node' as const, testTimeout: 30000, hookTimeout: 30000, env: { MCP_CREDENTIAL_STORE: 'off', MCP_FRAMEWORK_CHOICE: 'trust-caller', TZ: 'UTC' } };
 
 export default defineConfig({
   test: {

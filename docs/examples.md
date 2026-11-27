@@ -133,6 +133,8 @@ For a finished, shareable version, ask for a [device health report](#ready-made-
 - "List all our iOS apps in the repository"
 - "Show me every version of the Payments app"
 - "Find the latest Android build of com.example.app"
+- "Upload ./build/app-release.apk to the repository"
+- "I'm on Docker: give me the command to upload my .ipa from my laptop" *(the server returns a curl / PowerShell command to run on your own machine)*
 - "Upload our Android build from https://ci.example.com/builds/latest.apk" *(the URL must be reachable from the Digital.ai server's network)*
 - "Which projects can use app 456? Assign it to the Payments project."
 - "Update the plugin signing profiles for app 123"
@@ -184,7 +186,8 @@ For a finished, shareable version, ask for a [device health report](#ready-made-
 - "Find every button on this screen" *(details come back for the first 20 matches; narrow the selector to see more)*
 
 **Interact**
-- "Open the demo app and log in with username 'company' and password 'company'"
+- "Open our app and log in with the test account I'll give you"
+- "Open the ExperiBank demo app and log in with username 'company' and password 'company'" *(demo / training: the sample app every environment starts with)*
 - "Tap the login button and check that the next screen shows the balance"
 - "Scroll until 'About phone' is visible and give me its element ID"
 - "Swipe left on the first item to reveal the delete button"
@@ -219,7 +222,7 @@ For a finished, shareable version, ask for a [device health report](#ready-made-
 **Turn it into a test**
 - "I want to create a test together. Walk me through it step by step and share the device view" *(the `collaborative_test_creation` prompt)*
 - "Explore the payment flow, note every element ID you used, then generate a Python test that replays it"
-- "Log in, tap Transfer, pick account 43x, enter $50.00, tap Transfer Now. Make that a test." *(step-level detail: the assistant builds it on its own and checks the selectors in a session)*
+- "Log in, open Orders, filter by Last 30 days, open the first order. Make that a test." *(step-level detail: the assistant builds it on its own and checks the selectors in a session)*
 - "I want a test for our app" *(vague: the assistant starts the interactive flow or asks how you want to work)*
 
 **Clean up**
@@ -283,16 +286,22 @@ For a finished, shareable version, ask for a [device health report](#ready-made-
 
 ### Test Boilerplate Generation
 
-*Find a device first so the test targets the right OS version. For your own app, the assistant needs real element IDs, from an inspection session or from app source in your workspace; without one it returns no runnable code. A request without an app gives a working test for the built-in demo app (ExperiBank). Generated tests read the access key from the `DIGITAL_AI_ACCESS_KEY` environment variable and never contain it.*
+*You choose the test framework once per project; the assistant recommends one from your project and asks you. The boilerplate is the framework structure for your app: its steps are placeholders that the assistant fills from element IDs captured in an inspection session (or from app source in your workspace), and `validate_test_script` fails the test until they are filled. A request without an app gets the structure with placeholders for your app, and the assistant asks which app. Generated tests read the access key from the `DIGITAL_AI_ACCESS_KEY` environment variable and never contain it.*
 
-- "Find an available Android phone, then generate a Java JUnit5 test for the demo app"
-- "Find an available iPhone, then generate a Python test for app 123"
+**Choosing the framework**
+- "Set up tests for this project" *(the assistant reads the project, recommends a framework and asks you before generating anything)*
+- "We already use pytest in this repo. Add an Android test for app 456 next to the existing ones" *(only the new test files come back; your build files are not overwritten)*
+- "Add a WebdriverIO suite to this project as well, next to our Java tests" *(a second framework is added only when you ask for it)*
+
+**Building the test**
+- "Find an available iPhone, inspect app 123's login screen, then build a Python test from what you captured"
+- "I'm new: show me a sample test on the ExperiBank demo app" *(demo / training only: a runnable test for the sample app every environment starts with, to try the platform before loading your own app)*
 - "Generate a Node.js WebdriverIO test for com.example.app on Android"
 - "Generate a TestNG test for com.example.android with main activity .MainActivity"
 - "Generate a standalone Maven test for our iOS app, bundle ID com.example.iosapp"
 - "Generate a JUnit5 test as a Gradle submodule so I can add it to our Android Studio project"
 - "Generate an Android and an iOS version of the test, apps 456 and 789, in JUnit5"
-- "Generate the test in all five languages: JUnit5, TestNG, Node.js, Python and Robot Framework" *(Robot Framework needs an Appium Server project)*
+- "Generate the test in all five languages: JUnit5, TestNG, Node.js, Python and Robot Framework" *(you are asking for more than one framework, so say so; Robot Framework needs an Appium Server project)*
 - "Generate the Android test as page objects, one class per screen" *(Java on Appium Server, or Node.js)*
 - "Generate a test that tags each run with our build number, so I can find those runs later" *(custom report columns you can filter and group on)*
 - "Generate a test for an Android emulator from one of our templates"
@@ -307,8 +316,8 @@ For a finished, shareable version, ask for a [device health report](#ready-made-
 
 *With an assistant that can write files and run commands, it can do the whole loop: generate, save, run, then read the result from the Reporter. For your own app it captures selectors first and checks the script before running it.*
 
-- "Find an available Android device, generate a JUnit5 test for app 456, run it and tell me whether it passed"
-- "Generate a Python test for our iOS app, save it to tests/test_login.py, run pytest, then show me the report"
+- "Inspect app 456's login on an Android phone, build a JUnit5 test from the selectors you captured, run it and tell me whether it passed"
+- "Inspect our iOS app's login, write a Python test from it to tests/test_login.py, run pytest, then show me the report"
 - "Run our Node.js regression script against the latest build on an Android 14 device"
 - "Generate a Checkout test from the selectors we captured, run it on an iPhone 15, and tell me why it failed"
 - "The Login test failed last night. Find the device it failed on, run it again there and tell me whether it's fixed"
@@ -323,7 +332,7 @@ For a finished, shareable version, ask for a [device health report](#ready-made-
 
 *The platform runs these suites itself, with no local driver. Results land in the Reporter tagged with the run ID. Playwright runs are below.*
 
-- "Run my Maestro flows from C:/flows/bundle.zip against the demo Android app on one phone" *(the zip must contain a `flows/` folder; Maestro is Android only)*
+- "Run my Maestro flows from C:/flows/bundle.zip against our Android app on one phone" *(the zip must contain a `flows/` folder; Maestro is Android only)*
 - "We just walked through the login in the inspection session. Turn it into a Maestro flow and run it on two Android phones"
 - "Run our Espresso test APK against app 456 on three Android phones in US2 and retry failures once"
 - "Run our Espresso suite that drives the Settings app; it uses UiAutomator"
@@ -373,7 +382,7 @@ Each report and what it contains is listed in [Ready-made reports](reports.md#re
 - "Did all tests in the Payments project pass today? I need a go/no-go."
 - "Show me everything that failed in the last 24 hours"
 - "Our release bar is a 95% pass rate on the latest app version. Are we there?"
-- "Compare pass rates for app versions 10553 and 10554. Did we regress?"
+- "Compare pass rates for app versions 4.2.0 and 4.3.0. Did we regress?"
 - "Is the Checkout test stable enough for the release gate? Show me its last 20 runs."
 - "Take last night's failing tests, find free devices that match where they failed, and generate a test for each"
 - "Run a health check on our test suite: platform-specific failures, volume trend, and tests failing 5+ times in a row"
@@ -467,17 +476,17 @@ Each report and what it contains is listed in [Ready-made reports](reports.md#re
 
 *Works for every access level. A Cloud Admin sees every project's transactions; a Project Admin or Project User sees their own project's. Speed Index is a score where lower is better, not a duration.*
 
-- "Show me all performance transactions for app version 10553 on iOS"
+- "Show me all performance transactions for app version 4.2.0 on iOS"
 - "Which transaction is slowest? Rank them by Speed Index."
 - "Which transactions take more than 5 seconds on average in the latest release?"
 - "How does CPU use compare across app versions?"
-- "Which device models have the worst Speed Index for version 10553?"
+- "Which device models have the worst Speed Index for version 4.2.0?"
 - "How does the network profile affect performance? Compare wifi, 3G and LTE."
 - "Show the CPU and memory samples for transaction 748. Was there a spike?"
 - "How has our Speed Index changed week by week over the last 3 months?"
 - "Which transactions use the most upload and download bandwidth?"
-- "Our Speed Index target is 2,000. Flag device models where version 10553 is over it on iOS."
-- "Did the latest release bring a CPU regression? Compare 10553 and 10554 on Android." *(the assistant checks for outliers and for differences other than the version before comparing)*
+- "Our Speed Index target is 2,000. Flag device models where version 4.2.0 is over it on iOS."
+- "Did the latest release bring a CPU regression? Compare 4.2.0 and 4.3.0 on Android." *(the assistant checks for outliers and for differences other than the version before comparing)*
 - "Make that a performance comparison report" *(one call: both sides, the change, a verdict and the like-for-like check)* → [example](https://digitalai-opensource.github.io/digital-ai-testing-mcp/examples/reports/performance-comparison.html)
 - "Record fresh login samples on a Pixel 8 for both versions, then compare them" *(the `performance_comparison_report` prompt walks through it)*
 
@@ -531,12 +540,6 @@ Each report and what it contains is listed in [Ready-made reports](reports.md#re
 - "Set up a project called 'Regression Suite' with devices that only this project can use"
 - "Wind down the Payments project: return the devices to Default and remove user access, but keep the project"
 - "Fully tear down the Payments project and delete it"
-
-**POC variant.** The same steps exist for a time-limited evaluation project, with the end date and opportunity link kept in the project notes. These are mostly used inside Digital.ai.
-- "Set up a POC for Example Corp: 6 devices in US2, 3 iOS and 3 Android, until August 31. Users alice@example.com (Project Admin) and bob@example.com (Project User)."
-- "Is the Example Corp POC set up correctly?"
-- "Wind down the Example Corp POC but keep the project" *(also deletes the user accounts created for it, confirming each one)*
-- "Fully tear down the Example Corp POC, including the project and device group"
 
 ### Project Settings and Users
 

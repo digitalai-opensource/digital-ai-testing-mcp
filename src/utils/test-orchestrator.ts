@@ -126,11 +126,11 @@ export function buildConfigTemplate(opts: { instanceUrl: string; maxRetryAttempt
     '',
     '  # Run only some tests (empty = all):  ClassName  or  ClassName#methodName',
     '  # testSelection:',
-    '  #   - LocalAndroidTest#quickStartAndroidNativeDemo',
+    '  #   - LocalAndroidTest#loginTest',
     '',
     '  # Fail fast: if a critical test still fails after its retries, remaining queued tests are Skipped.',
     '  # criticalTests:',
-    '  #   - LocalAndroidTest#quickStartAndroidNativeDemo',
+    '  #   - LocalAndroidTest#loginTest',
     '',
   ].join('\n');
 }

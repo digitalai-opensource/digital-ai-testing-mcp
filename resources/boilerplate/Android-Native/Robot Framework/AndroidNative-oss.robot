@@ -16,13 +16,13 @@ ${TEST_NAME}        [Enter Test Name here]
 ...                 digitalai:accessKey=${ACCESS_KEY}
 ...                 digitalai:testName=${TEST_NAME}
 ...                 digitalai:deviceQuery=@os='android' and @category='[Enter PHONE/TABLET here]'
-...                 appium:app=cloud:com.experitest.ExperiBank/.LoginActivity
-...                 appium:appPackage=com.experitest.ExperiBank
-...                 appium:appActivity=.LoginActivity
+...                 appium:app=[APP_CLOUD_REF]
+...                 appium:appPackage=[APP_PACKAGE]
+...                 appium:appActivity=[APP_ACTIVITY]
 ...                 appium:autoGrantPermissions=${True}
 
 *** Test Cases ***
-Quick Start Android Native Demo
+[TEST_METHOD]
     Start Steps Group    Test steps
     # [BEGIN_DEMO_STEPS]
     Wait And Input    id=com.experitest.ExperiBank:id/usernameTextField    company

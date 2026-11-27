@@ -17,9 +17,9 @@ exports.config = {
         'digitalai:accessKey': '[Enter Your Access key here]',
         // Use appium: prefix — wdio v7 client validator requires W3C-format capabilities.
         // The platform accepts them via the desiredCapabilities fallback wdio sends automatically.
-        'appium:app': 'cloud:com.experitest.ExperiBank/.LoginActivity',
-        'appium:appPackage': 'com.experitest.ExperiBank',
-        'appium:appActivity': '.LoginActivity',
+        'appium:app': '[APP_CLOUD_REF]',
+        'appium:appPackage': '[APP_PACKAGE]',
+        'appium:appActivity': '[APP_ACTIVITY]',
         'digitalai:deviceQuery': "@os='android' and @category='[Enter PHONE/TABLET here]'",
         // wdio 7's validator rejects these unprefixed too ("Invalid or unsupported WebDriver capabilities", live 2026-10-17).
         'appium:autoDismissAlerts': true,

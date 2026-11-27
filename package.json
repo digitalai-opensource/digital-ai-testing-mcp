@@ -1,6 +1,6 @@
 {
   "name": "digital-ai-testing-mcp",
-  "version": "2.5.2",
+  "version": "2.6.0",
   "description": "MCP server for Digital.ai Testing — device farm, app lifecycle, test runs, reporting and analytics, performance, live mobile and browser inspection, and test authoring",
   "keywords": [
     "mcp",
@@ -40,6 +40,7 @@
     "lint": "eslint src/**/*.ts tests/**/*.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:framework-choice": "vitest run tests/framework-choice.test.ts",
     "test:offline": "vitest run --project offline",
     "test:api": "vitest run --project api",
     "test:live": "vitest run --config vitest.live.config.ts",

@@ -22,9 +22,9 @@ class LocalAndroidTest(unittest.TestCase):
             'platformName': 'android',
             'digitalai:testName': self.testName,
             'digitalai:accessKey': self.accessKey,
-            'app': 'cloud:com.experitest.ExperiBank/.LoginActivity',
-            'appPackage': 'com.experitest.ExperiBank',
-            'appActivity': '.LoginActivity',
+            'app': '[APP_CLOUD_REF]',
+            'appPackage': '[APP_PACKAGE]',
+            'appActivity': '[APP_ACTIVITY]',
             'digitalai:deviceQuery': "@os='android' and @category='[Enter PHONE/TABLET here]'",
             'autoDismissAlerts': True,
             'autoGrantPermissions': True,
@@ -47,22 +47,22 @@ class LocalAndroidTest(unittest.TestCase):
         return self._elem(WebDriverWait(self.driver, timeout).until(EC.presence_of_element_located((by, locator))))
 
     def _find(self, resource_id):
-        return self._wait(By.ID, f"com.experitest.ExperiBank:id/{resource_id}")
+        return self._wait(By.ID, resource_id)
 
     def _find_xpath(self, xpath):
         return self._wait(By.XPATH, xpath)
 
-    def testQuickStartAndroidNativeDemo(self):
+    def [TEST_METHOD](self):
         # [BEGIN_DEMO_STEPS]
-        self._find("usernameTextField").send_keys('company')
-        self._find("passwordTextField").send_keys('company')
-        self._find("loginButton").click()
-        self._find("makePaymentButton").click()
-        self._find("phoneTextField").send_keys('1234567')
-        self._find("nameTextField").send_keys('Jon Snow')
-        self._find("amountTextField").send_keys('50')
-        self._find("countryTextField").send_keys('Switzerland')
-        self._find("sendPaymentButton").click()
+        self._find("com.experitest.ExperiBank:id/usernameTextField").send_keys('company')
+        self._find("com.experitest.ExperiBank:id/passwordTextField").send_keys('company')
+        self._find("com.experitest.ExperiBank:id/loginButton").click()
+        self._find("com.experitest.ExperiBank:id/makePaymentButton").click()
+        self._find("com.experitest.ExperiBank:id/phoneTextField").send_keys('1234567')
+        self._find("com.experitest.ExperiBank:id/nameTextField").send_keys('Jon Snow')
+        self._find("com.experitest.ExperiBank:id/amountTextField").send_keys('50')
+        self._find("com.experitest.ExperiBank:id/countryTextField").send_keys('Switzerland')
+        self._find("com.experitest.ExperiBank:id/sendPaymentButton").click()
         self._find_xpath("//*[@resource-id='android:id/button1']").click()
         # [END_DEMO_STEPS]
 

@@ -28,10 +28,12 @@ import {
   describeShape,
   TOOLSETS,
   TOOL_TOOLSETS,
+  INTERNAL_TOOLS,
   CORE_MODULES,
   type RegisterFn,
   type ToolsetController,
 } from '../src/utils/toolsets.js';
+import { setLiveServer } from '../src/utils/tool-registry.js';
 import { makeToolsetTools } from '../src/tools/toolset-tools.js';
 import { registerUserTools } from '../src/tools/user-tools.js';
 import { registerDeviceTools } from '../src/tools/device-tools.js';
@@ -85,6 +87,7 @@ function modules(getController: () => ToolsetController | undefined): Array<[str
 async function boot(raw: string | undefined) {
   let controller: ToolsetController | undefined;
   const server = new McpServer({ name: 't', version: '0' });
+  setLiveServer(server); // as index.ts does
   const selection = parseToolsetSelection(raw);
   const c = registerWithToolsets(server, captureRegistrations(modules(() => controller)), selection);
   if (!selection.all) controller = c;
@@ -103,7 +106,9 @@ async function bootDirect() {
   const client = new Client({ name: 'c', version: '0' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(b), client.connect(a)]);
-  return (await client.listTools()).tools as ToolEntry[];
+  // Digital.ai's internal tools (the evaluation-project workflow) are never in a customer's list: the toolsets path
+  // leaves them out unless MCP_TOOLSETS names "internal" (owner decision 2026-11-27).
+  return ((await client.listTools()).tools as ToolEntry[]).filter((t) => !INTERNAL_TOOLS.includes(t.name));
 }
 
 const PLACEHOLDER = /^\[[a-z]+ toolset — loads on first call; that first call runs nothing and returns the full parameters\]/;
@@ -142,7 +147,7 @@ describe('selection parsing and module coverage', () => {
     const tool = cap.tools.find((t) => t.name === 'get_test_boilerplate')!;
     const lines = describeShape(tool.shape);
     assert.ok(lines.some((l) => /^- platform \(required\) <"android"\|"ios">: /.test(l)), lines.slice(0, 3).join('\n'));
-    assert.ok(lines.some((l) => /^- confirmSelectorsVerified <boolean>: .*inspection/i.test(l)), 'the type is part of the guidance');
+    assert.ok(lines.some((l) => /^- confirmedByUser <boolean>: .*USER chose/i.test(l)), 'the type is part of the guidance');
   });
 });
 
@@ -171,6 +176,23 @@ describe('MCP_TOOLSETS unset → identical to direct registration', () => {
 });
 
 describe('MCP_TOOLSETS=reporting → placeholders that load themselves', () => {
+  it('Digital.ai’s internal evaluation-project tools are hidden from every list unless "internal" is named', async () => {
+    for (const raw of [undefined, 'all', 'core', 'admin']) {
+      const names = (await (await boot(raw)).list()).map((t) => t.name);
+      assert.ok(!INTERNAL_TOOLS.some((n) => names.includes(n)), `${raw}: ${INTERNAL_TOOLS.filter((n) => names.includes(n))}`);
+    }
+    const withInternal = (await (await boot('all,internal')).list()).map((t) => t.name);
+    assert.ok(INTERNAL_TOOLS.every((n) => withInternal.includes(n)));
+    assert.deepEqual(parseToolsetSelection('core,internal').unknown, [], '"internal" is a valid toolset name');
+  });
+
+  it('the project workflows find their tools on the real server (2.5.2 refused every one: "16 required tools are not registered")', async () => {
+    const { client } = await boot(undefined);
+    const r = (await client.callTool({ name: 'setup_project', arguments: { projectName: 'Team A' } })) as { isError?: boolean; content: Array<{ text?: string }> };
+    assert.notEqual(r.isError, true, String(r.content[0].text).slice(0, 200));
+    assert.match(r.content[0].text ?? '', /guided project setup workflow/);
+  });
+
   it('every tool name is still registered; only non-selected, non-core tools are placeholders', async () => {
     const all = (await bootDirect()).map((t) => t.name).sort();
     const { list } = await boot('reporting');
@@ -418,7 +440,7 @@ describe('report tools: create_report and render_report in the core, the per-rec
     const sets = JSON.parse(listing.content[0].text!).toolsets as Array<{ toolset: string; tools: number }>;
     // Counted from the registrations themselves: each toolset holds its modules' tools plus the recipe tools assigned to it,
     // and every tool is either in exactly one toolset or in the core.
-    const captured = captureRegistrations(modules(() => undefined)).tools;
+    const captured = captureRegistrations(modules(() => undefined)).tools.filter((t) => !INTERNAL_TOOLS.includes(t.name));
     for (const s of sets) {
       const own = captured.filter((t) => TOOLSETS[s.toolset].modules.includes(t.module)).length;
       const assigned = Object.values(TOOL_TOOLSETS).filter((ts) => ts === s.toolset).length;

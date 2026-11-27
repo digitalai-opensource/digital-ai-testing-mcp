@@ -16,11 +16,11 @@ ${TEST_NAME}        [Enter Test Name here]
 ...                 digitalai:accessKey=${ACCESS_KEY}
 ...                 digitalai:testName=${TEST_NAME}
 ...                 digitalai:deviceQuery=@os='ios' and @category='[Enter PHONE/TABLET here]'
-...                 appium:app=cloud:com.experitest.ExperiBank
-...                 appium:bundleId=com.experitest.ExperiBank
+...                 appium:app=[APP_CLOUD_REF]
+...                 appium:bundleId=[BUNDLE_ID]
 
 *** Test Cases ***
-Quick Start iOS Native Demo
+[TEST_METHOD]
     Start Steps Group    Test steps
     # [BEGIN_DEMO_STEPS]
     Wait And Input    accessibility_id=usernameTextField    company

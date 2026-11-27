@@ -193,36 +193,52 @@ describe('Performance comparison tools work for all access levels (no JWT gate)'
   }
 });
 
-describe('get_test_boilerplate inspection gate (v42) blocks before emitting any code', () => {
+describe('get_test_boilerplate for a customer app: framework structure with placeholder steps, never the demo (2.6.0)', () => {
   beforeAll(() => {
     actAs('cloud-admin');
   });
 
-  // No inspection session exists in the harness, so a real-app target must block.
-  const REAL_APP_CASES: Array<{ name: string; args: Record<string, unknown> }> = [
-    { name: 'by packageName', args: { platform: 'android', language: 'python', packageName: 'com.example.app' } },
-    { name: 'by appId', args: { platform: 'android', language: 'java-junit5', appId: 42 } },
-    { name: 'by bundleIdentifier', args: { platform: 'ios', language: 'java-testng', bundleIdentifier: 'com.example.app' } },
-  ];
-
-  for (const { name, args } of REAL_APP_CASES) {
-    it(`blocks (${name}) with a structured no-code redirect and no file content`, async () => {
+  for (const { name, args } of [
+    { name: 'by packageName', args: { platform: 'android', language: 'python', packageName: 'com.example.app', outputFormat: 'json' } },
+    { name: 'by bundleIdentifier', args: { platform: 'ios', language: 'java-testng', bundleIdentifier: 'com.example.app', outputFormat: 'json' } },
+  ]) {
+    it(`${name}: returns the structure (not an error, not runnable), with the app's identity and no ExperiBank code`, async () => {
       const res = await callTool('get_test_boilerplate', args);
       const text = textOf(res);
-      assert.equal(res.isError, true, `expected blocked isError, got: ${text.slice(0, 200)}`);
-      assert.match(text, /"reason":"no_verified_selectors"|no_verified_selectors/);
-      assert.match(text, /start_inspection_session/);
-      // The block must precede any generated source — no boilerplate body leaks through.
-      assert.doesNotMatch(text, /import |public class |def setUp|RemoteWebDriver/);
+      assert.notEqual(res.isError, true, text.slice(0, 300));
+      const j = JSON.parse(text) as { runnable: boolean; appUnderTest: { kind: string }; files: Array<{ content: string }> };
+      assert.equal(j.runnable, false);
+      assert.equal(j.appUnderTest.kind, 'customer');
+      const all = j.files.map((f) => f.content).join(' ');
+      assert.match(all, /com\.example\.app/);
+      assert.match(all, /PLACEHOLDER TEST BODY/);
+      assert.doesNotMatch(all, /experibank|LoginActivity|usernameTextField/i);
     });
   }
 
-  it('confirmSelectorsVerified:true bypasses the gate (then proceeds to generation)', async () => {
-    const res = await callTool('get_test_boilerplate', {
-      platform: 'android', language: 'python', packageName: 'com.example.app', confirmSelectorsVerified: true,
-    });
-    // Past the gate it reads real boilerplate files from disk and generates — not the block.
-    assert.doesNotMatch(textOf(res), /no_verified_selectors/);
+  it('an app id that cannot be found is an error and nothing is generated: no other app stands in', async () => {
+    const res = await callTool('get_test_boilerplate', { platform: 'android', language: 'java-junit5', appId: 42 });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /application 42 was not found/);
+    assert.doesNotMatch(textOf(res), /experibank|public class/i);
+  });
+
+  it('the ExperiBank demo only when asked for: demo: true, or naming its package', async () => {
+    for (const args of [{ demo: true }, { packageName: 'com.experitest.ExperiBank' }]) {
+      const j = JSON.parse(textOf(await callTool('get_test_boilerplate', { platform: 'android', language: 'python', outputFormat: 'json', ...args }))) as { runnable: boolean; appUnderTest: { kind: string }; files: Array<{ content: string }> };
+      assert.equal(j.appUnderTest.kind, 'demo', JSON.stringify(args));
+      assert.equal(j.runnable, true);
+      assert.match(j.files.map((f) => f.content).join(' '), /usernameTextField/);
+    }
+    const mixed = await callTool('get_test_boilerplate', { platform: 'android', language: 'python', demo: true, packageName: 'com.example.app' });
+    assert.equal(mixed.isError, true);
+  });
+
+  it('no app and no demo: the structure with <your app …> placeholders, and the answer says to ask which app', async () => {
+    const j = JSON.parse(textOf(await callTool('get_test_boilerplate', { platform: 'ios', language: 'nodejs', outputFormat: 'json' }))) as { appUnderTest: { kind: string; note: string }; files: Array<{ content: string }> };
+    assert.equal(j.appUnderTest.kind, 'unspecified');
+    assert.match(j.appUnderTest.note, /ask the user which app/);
+    assert.match(j.files.map((f) => f.content).join(' '), /<your bundle id from get_application_info>/);
   });
 });
 
@@ -244,12 +260,27 @@ describe('validate_test_script (v43) flags fabricated/placeholder tests', () => 
     assert.match(text, /placeholder selectors|scaffold guard/);
   });
 
-  it('fails known fabricated resource IDs from the v43 incident', async () => {
+  it('warns on resource IDs from the v43 incident (a warning: home_container is also an ordinary id)', async () => {
     const res = await callTool('validate_test_script', {
       scriptContent: 'driver.findElement(By.id("nav_catalog")).click();',
     });
-    assert.equal(res.isError, true);
-    assert.match(textOf(res), /nav_catalog|known fabricated/);
+    assert.notEqual(res.isError, true);
+    assert.match(textOf(res), /known fabricated/);
+  });
+
+  it('ExperiBank code in a test of another app is refused; customer idioms are not', async () => {
+    const leftover = await callTool('validate_test_script', { scriptContent: `options.setAppPackage("com.acme.shop");
+find(By.id("com.experitest.ExperiBank:id/usernameTextField")).sendKeys(user);` });
+    assert.equal(leftover.isError, true);
+    assert.match(textOf(leftover), /ExperiBank leftovers/);
+    const idioms = await callTool('validate_test_script', { scriptContent: `class BasePage:
+    def open(self):
+        raise NotImplementedError
+
+def test_markup():
+    html = "<input value='x'>"
+    find(By.ID, "com.acme:id/home_container").click()` });
+    assert.notEqual(idioms.isError, true, textOf(idioms).slice(0, 300));
   });
 
   it('passes a script with no placeholder markers (no isError)', async () => {
@@ -727,34 +758,17 @@ describe('Cloud Admin gating is independent of key format', () => {
   });
 });
 
-describe('get_web_test_boilerplate inspection gate blocks before emitting any code', () => {
+describe('get_web_test_boilerplate: url fills the navigate line, no selector gate (2.6.0)', () => {
   beforeAll(() => {
     actAs('cloud-admin');
   });
 
-  it('blocks when url is provided and no live browser session exists', async () => {
-    const res = await callTool('get_web_test_boilerplate', {
-      language: 'python',
-      url: 'https://our-app.com',
-    });
+  it('with a url and no browser session: the structure with a placeholder body, not an error', async () => {
+    const res = await callTool('get_web_test_boilerplate', { language: 'python', url: 'https://our-app.com' });
     const text = textOf(res);
-    assert.equal(res.isError, true, `expected blocked isError, got: ${text.slice(0, 200)}`);
-    assert.match(text, /no_verified_selectors/);
-    assert.match(text, /start_browser_inspection_session/);
-    // Gate must fire before any code generation
-    assert.doesNotMatch(text, /import selenium|RemoteWebDriver|def setUp|describe\(/);
-  });
-
-  it('confirmSelectorsVerified:true bypasses the gate and generates code', async () => {
-    const res = await callTool('get_web_test_boilerplate', {
-      language: 'python',
-      url: 'https://our-app.com',
-      confirmSelectorsVerified: true,
-    });
-    const text = textOf(res);
-    assert.doesNotMatch(text, /no_verified_selectors/, `gate should not fire: ${text.slice(0, 200)}`);
-    // Past the gate, code is generated
-    assert.match(text, /selenium|RemoteWebDriver|webdriver\.Remote|wdio/i);
+    assert.notEqual(res.isError, true, text.slice(0, 200));
+    assert.match(text, /our-app\.com/);
+    assert.match(text, /webdriver\.Remote|selenium/i);
   });
 
   it('generates code without url (no gate required)', async () => {

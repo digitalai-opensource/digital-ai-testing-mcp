@@ -68,7 +68,12 @@ afterAll(async () => {
 async function call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   return (await client.callTool({ name, arguments: args })) as unknown as ToolResult;
 }
-async function gen(args: Record<string, unknown>): Promise<{ json: Gen; human: string; res: ToolResult }> {
+// Most cases here check the template structure through the ExperiBank demo (its steps are real): the demo has to be
+// asked for since 2.6.0. A call that names an app, or says demo: false, gets the customer form.
+const withDemo = (args: Record<string, unknown>) =>
+  args.demo !== undefined || args.appId !== undefined || args.packageName || args.bundleIdentifier ? args : { ...args, demo: true };
+async function gen(rawArgs: Record<string, unknown>): Promise<{ json: Gen; human: string; res: ToolResult }> {
+  const args = withDemo(rawArgs);
   const res = await call('get_test_boilerplate', { ...args, outputFormat: 'json' });
   const text = res.content.map((c) => c.text ?? '').join('');
   const json = JSON.parse(text) as Gen;
@@ -569,6 +574,43 @@ describe('generated demo tests pass their own validator with no warnings (releas
             assert.equal(j.verdict, 'pass', f.filename);
             const warn = j.issues.filter((i) => i.severity === 'warn');
             assert.equal(warn.length, 0, `${f.filename}: ${warn.map((w) => `${w.label}: ${w.detail}`).join(' | ')}`);
+          }
+        });
+      }
+    }
+  }
+});
+
+describe('no ExperiBank code in any output the user did not ask the demo for (owner decision 2026-11-27)', () => {
+  // ExperiBank is the sample app every environment starts with: its code is delivered ONLY when the user asks to build
+  // against it. Every template, mode, platform, layout and app form is swept here, so a template change that lets a demo
+  // id, activity, credential or test name leak into a customer project fails CI.
+  const DEMO_TEXT = /experibank|LoginActivity|usernameTextField|passwordTextField|makePayment|Switzerland|quickStart\w*Demo|Quick Start \w+ Native Demo|["']company["']/i;
+  const forms = (platform: 'android' | 'ios') => platform === 'android'
+    ? [{}, { packageName: 'com.acme.shop', mainActivity: '.MainActivity' }, { packageName: 'com.acme.shop' }]
+    : [{}, { bundleIdentifier: 'com.acme.shop' }];
+  for (const isAppiumOss of [true, false]) {
+    for (const platform of ['android', 'ios'] as const) {
+      for (const language of ['python', 'java-junit5', 'java-testng', 'nodejs', 'robot'] as const) {
+        if (language === 'robot' && !isAppiumOss) continue;
+        it(`${isAppiumOss ? 'Appium Server' : 'Appium Grid'} ${platform} ${language}`, async () => {
+          account.isAppiumOss = isAppiumOss; account.fail = false;
+          for (const app of forms(platform)) {
+            for (const structure of ['flat', 'page-objects'] as const) {
+              const g = (await gen({ platform, language, structure, orchestration: 'off', demo: false, ...app })).json as Gen & { appUnderTest: { kind: string }; runnable: boolean };
+              assert.equal(g.runnable, false);
+              assert.equal(g.appUnderTest.kind, Object.keys(app).length ? 'customer' : 'unspecified');
+              for (const f of g.files) {
+                const m = f.content.match(DEMO_TEXT);
+                assert.equal(m, null, `${JSON.stringify(app)} ${structure} ${f.filename}: "${m?.[0]}"`);
+              }
+              const all = g.files.map((f) => f.content).join(String.fromCharCode(10));
+              if ('packageName' in app) assert.ok(all.includes('com.acme.shop'), 'the customer package is in the capabilities');
+              if ('bundleIdentifier' in app) assert.ok(all.includes('com.acme.shop'), 'the customer bundle id is in the capabilities');
+              if (Object.keys(app).length === 0) assert.match(all, /<your (app package|bundle id) from get_application_info>/);
+              if ('packageName' in app && !('mainActivity' in app)) assert.match(all, /<your main activity from get_application_info>/);
+              assert.match(all, /PLACEHOLDER TEST BODY/);
+            }
           }
         });
       }

@@ -474,78 +474,79 @@ export function registerPrompts(server: McpServer): void {
 
   server.prompt(
     'collaborative_test_creation',
-    'Build a mobile test script together with the user: live inspection session with a shareable device view, ' +
-    'element discovery, interactive verification of each step, and final script generation with verified selectors.',
+    'Build a mobile test for the user’s own app together with them, on Android or iOS, in the framework THEY choose ' +
+    '(Java JUnit 5 / TestNG, Python, JavaScript WebdriverIO, Robot Framework, or a Maestro flow): live inspection session with ' +
+    'a shareable device view, element discovery, step-by-step verification, then the framework structure filled with the ' +
+    'verified steps.',
     {
-      appName: z.string().optional().describe('App name to search for (e.g. "Sample App"). Used with list_applications.'),
-      language: z.string().optional().describe('Target script language: "java", "python", or "nodejs". Default python.'),
+      appName: z.string().optional().describe('The user’s app to search for in the repository (list_applications).'),
+      platform: z.string().optional().describe('"android" or "ios". Omit to read it from the app record.'),
+      language: z.string().optional().describe('The framework the user chose: "java-junit5", "java-testng", "python", "nodejs", "robot" or "maestro". Omit to have the project analysed and the user asked.'),
     },
-    ({ appName, language }) => ({
+    ({ appName, platform, language }) => ({
       messages: [{
         role: 'user',
         content: {
           type: 'text',
           text: [
-            'I want to create a mobile test script collaboratively. Follow this procedure exactly:',
+            'I want to create a test for my app together with you. Follow this procedure exactly:',
             '',
-            'MODE CHECK — this prompt drives the INTERACTIVE experience (live device, shared view URL, step-by-step ' +
-            'collaboration). If my answers below reveal that my intent is actually fully specified (a standardized flow ' +
-            'or complete step-level detail) AND you can derive verified selectors (app source code or a quick silent ' +
-            'inspection session), offer the faster autonomous path: "I have everything I need — want me to just build ' +
-            'this test for you, or continue interactively?"',
+            'MODE CHECK — this is the INTERACTIVE route (live device, shared view, step by step). If my answers show that my ' +
+            'intent is fully specified AND you can get verified selectors (app source, or a quick silent inspection), offer the ' +
+            'faster autonomous route: "I have everything I need — want me to build this test for you, or continue interactively?"',
             '',
             'FIRST — before any tool calls — explain the plan to me:',
             '  "Here\'s how we\'ll build this together:',
-            '   1. Find (or upload) the app and an available device near the cloud server',
-            '   2. Install the app, then start a live inspection session — I\'ll share a live view URL so you can follow along',
-            '   3. Launch the app and capture element selectors from the real UI',
-            '   4. Interact with the UI to observe real behavior (success and failure states)',
-            '   5. Generate the test script with verified selectors and assertions"',
+            '   1. Find (or upload) your app and agree on the framework your tests will use',
+            '   2. Install the app on an available device and start a live session — I\'ll share a view so you can follow along',
+            '   3. Capture element selectors from the real UI and walk through your flow step by step',
+            '   4. Fill the framework structure with the verified steps and check it"',
             '',
             'Then execute:',
             '',
-            `1. list_applications${appName ? ` with nameContains="${appName}"` : ''} — check what is in the repository.`,
-            '   IF NOT FOUND: ask — "That app isn\'t in the Digital.ai repository yet. Do you have a local',
-            '   binary (APK / IPA / AAB) to upload? If so, share the full path and your OS (Windows, macOS,',
-            '   or Linux)." Call get_application_upload_command(localFilePath, localPlatform, uniqueName),',
-            '   share the command, WAIT for upload confirmation, then re-run list_applications.',
-            '   IF FOUND: surface the version to me — "I found [App Name] build [buildVersion] / release',
-            '   [releaseVersion] in the repository. Is this the version you want to test, or do you have',
-            '   a newer build to upload?" WAIT for my answer. If I want to upload a newer build, ask for',
-            '   the file path and OS, call get_application_upload_command, share the command, WAIT for',
-            '   confirmation, then re-run list_applications to get the updated appId.',
-            '   Do NOT proceed past step 1 until I have confirmed which version to use.',
-            '2. get_application_info(appId) — note packageName AND mainActivity (needed to launch the app).',
-            '3. find_available_device(os="Android") — region preference is automatic; note the device id and region.',
-            '4. install_application(applicationId, deviceId) — install BEFORE starting the session; ' +
-            'installation fails while the device is reserved by a session.',
-            '5. start_inspection_session(device from step 3, region from step 3) — the response includes a viewUrl (published read-only view) and a cloudViewLink (internal Mobile Studio URL). ' +
-            'IMMEDIATELY share the viewUrl with me so I can watch the session live. ' +
-            'Do NOT share the cloudViewLink — a second connection to the same device session will conflict and error.',
-            '6. launch_app(handle, packageName, mainActivity from step 2) — bring the app to the foreground.',
-            '7. take_inspection_screenshot — confirm the expected screen is visible.',
-            '8. get_element_tree — capture locators for the screen under test.',
-            '9. Walk through the test flow with me step by step: type_into_element / tap_element / swipe_screen, ' +
-            'screenshotting after each action and narrating what you observe. Verify both the success path ' +
-            'and at least one failure path (e.g. wrong credentials) so the script has real assertions.',
+            `1. THE APP — list_applications${appName ? ` with nameContains="${appName}"` : ''}. It must be MY app.`,
+            '   IF NOT FOUND: say so and ask whether I have a build (APK / AAB / IPA) to upload — full path and my OS — then call',
+            '   get_application_upload_command (or upload_application_file when the server runs on my machine), WAIT for the upload,',
+            '   and list again. Never use another app (a sample app or one with a similar name) in its place.',
+            '   IF FOUND: tell me the version — "I found [App Name] build [buildVersion] / release [releaseVersion]. Is this the version',
+            '   to test, or do you have a newer build to upload?" WAIT for my answer. Do NOT continue until I confirm the version.',
+            `2. get_application_info(appId) — the PLATFORM ${platform ? `(I said ${platform}; check it matches the record)` : 'comes from the record (osType)'}:`,
+            '   Android → note packageName AND mainActivity; iOS → note bundleIdentifier (there is no activity).',
+            '3. THE FRAMEWORK — I decide, once per project. ' + (language
+              ? `I chose "${language}"${language === 'maestro' ? ' (a Maestro flow: Android, run on the platform with execute_test_run)' : ''}: use it and pass confirmedByUser: true.`
+              : 'Call get_test_boilerplate(platform, appId) WITHOUT language: it analyses the project (build files, test frameworks already in it) and returns a recommendation, or asks me directly. Show me the recommendation and the options (Java JUnit 5, Java TestNG, Python, JavaScript WebdriverIO, Robot Framework; on Android also a Maestro flow) and WAIT for my choice. If this project already has a choice, it is reused — tell me which.'),
+            '   Never pick the framework yourself, and never add a second framework to a project that already has one unless I ask.',
+            '4. find_available_device(os=<the platform from step 2>) — region preference is automatic; note the device id and region.',
+            '5. install_application(applicationId, deviceId) — BEFORE the session; installing fails while a session holds the device.',
+            '6. start_inspection_session(platform, device and region from step 4) — the response includes a viewUrl (read-only live view) and a',
+            '   cloudViewLink (Mobile Studio). IMMEDIATELY share the viewUrl with me. Do NOT share the cloudViewLink: a second connection to',
+            '   the same device session conflicts and errors.',
+            '7. launch_app — Android: packageName + mainActivity; iOS: bundleIdentifier (from step 2).',
+            '8. take_inspection_screenshot — confirm the expected screen; get_element_tree — capture locators for it.',
+            '9. Walk through the flow with me: type_into_element / tap_element / swipe_screen, screenshot after each action, and narrate what you',
+            '   see. Verify the success path and at least one failure path (e.g. wrong credentials) so the test has real assertions.',
+            '   Ask me for any login details — never invent credentials.',
             '',
-            '   STEP CONFIRMATION GATE — mandatory after EVERY completed scenario:',
-            '     a. Show me a running numbered list of all steps captured so far.',
-            '     b. Ask: "I\'ve captured [summary of step just done]. Want to add another step — ',
-            '        for example a success path, a failure path, a different screen, or a different scenario —',
-            '        or are you ready for me to generate the script?"',
-            '     c. WAIT for my explicit answer before calling get_test_boilerplate or stop_inspection_session.',
-            '     d. If my phrasing included "start with", "first", or "begin by" — treat that as a signal',
-            '        more steps are planned: do NOT finalize after only the first step.',
-            '     e. Keep the session alive between steps: call take_inspection_screenshot periodically',
-            '        if I am thinking (resets the idle timeout without moving on).',
-            '     f. Only when I say "that\'s it" / "generate it" / "done" / "looks good" proceed to step 10.',
+            '   STEP CONFIRMATION GATE — after EVERY completed scenario:',
+            '     a. Show me a numbered list of all steps captured so far.',
+            '     b. Ask: "I\'ve captured [summary]. Add another step — a success path, a failure path, another screen or scenario — or',
+            '        are you ready for me to build the test?"',
+            '     c. WAIT for my answer before building the test or stopping the session.',
+            '     d. "start with", "first" or "begin by" in my request means more steps are planned: do not finish after one.',
+            '     e. Keep the session alive while I think: take_inspection_screenshot periodically.',
+            '     f. Only when I say "that\'s it" / "build it" / "done" / "looks good" go to step 10.',
             '',
-            `10. ONLY after I confirm all steps are captured: get_test_boilerplate(appId, platform="android", language="${language ?? 'python'}", region from step 3) — use as the scaffold.`,
-            '11. stop_inspection_session — always, even on error; but only AFTER step 10 completes (or on my explicit stop request).',
-            '12. Present the final test file using the locators and behaviors verified in steps 8-9.',
+            '10. BUILD THE TEST in the framework from step 3:',
+            '    • Code frameworks: get_test_boilerplate(appId, platform, language, confirmedByUser: true, region from step 4) returns the framework',
+            '      STRUCTURE with a placeholder step block. Replace that block with the steps verified in step 9, using exactly the locators captured',
+            '      in step 8 (locator ladder: Android resource-id → accessibility id → @text XPath; iOS accessibility id → predicate (Appium Server)',
+            '      → attribute XPath). If the project already has that framework, add the test file to it; do not overwrite its build files.',
+            '    • Maestro (Android): generate_maestro_flow from the verified steps; offer to run it with execute_test_run.',
+            '11. validate_test_script on every file you wrote — it fails while any placeholder is left. Fix until it passes.',
+            '12. stop_inspection_session — always, even on error; but only AFTER step 10 (or when I ask to stop).',
+            '13. Present the finished test and say what was verified live (which steps, which device) and what was not.',
             '',
-            'Throughout: narrate each step before you take it, and pause to ask me before changing direction.',
+            'Throughout: narrate each step before you take it, and ask me before changing direction.',
           ].join('\n'),
         },
       }],
@@ -561,7 +562,7 @@ export function registerPrompts(server: McpServer): void {
     'browser-neutral script generation with verified CSS selectors.',
     {
       url: z.string().optional().describe('Starting URL, e.g. "https://our-app.com/login". Used in step 1.'),
-      language: z.string().optional().describe('Target script language: "java-junit5", "java-testng", "python", or "nodejs". Default python.'),
+      language: z.string().optional().describe('The framework the user chose: "java-junit5", "java-testng", "python", "nodejs", "robot" or "playwright". Omit to have the project analysed and the user asked.'),
     },
     ({ url, language }) => ({
       messages: [{
@@ -623,7 +624,9 @@ export function registerPrompts(server: McpServer): void {
             '   d. If the user said "start with" or "first" — more steps are planned; do not finalize early.',
             '',
             `6. ONLY after the user confirms all steps are captured:`,
-            `   get_web_test_boilerplate(language="${language ?? 'python'}", confirmSelectorsVerified=true)`,
+            language
+              ? `   get_web_test_boilerplate(language="${language}", confirmedByUser=true) — the framework I chose — returns the structure; replace its placeholder body with the verified steps.`
+              : '   get_web_test_boilerplate WITHOUT language first: it analyses the project and recommends a framework (or asks me). Show me the recommendation and the options, WAIT for my choice, then call it with language and confirmedByUser=true and replace the placeholder body with the verified steps. Never pick the framework yourself.',
             '   Include only selectors that were verified via find_web_elements or get_page_dom in this session.',
             '   NEVER invent or guess a CSS selector — every selector in the final script must have been',
             '   confirmed with find_web_elements returning a non-empty result.',

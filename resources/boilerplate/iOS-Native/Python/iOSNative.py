@@ -23,8 +23,8 @@ class LocalIosTest(unittest.TestCase):
             'platformName': 'ios',
             'digitalai:testName': self.testName,
             'digitalai:accessKey': self.accessKey,
-            'app': 'cloud:com.experitest.ExperiBank',
-            'bundleId': 'com.experitest.ExperiBank',
+            'app': '[APP_CLOUD_REF]',
+            'bundleId': '[BUNDLE_ID]',
             'digitalai:deviceQuery': "@os='ios' and @category='[Enter PHONE/TABLET here]'",
         }
         self.driver = webdriver.Remote("[Enter Instance here]/wd/hub", desired_capabilities=desired_caps)
@@ -49,7 +49,7 @@ class LocalIosTest(unittest.TestCase):
     def _find_xpath(self, xpath):
         return self._wait(By.XPATH, xpath)
 
-    def testQuickStartIosNativeDemo(self):
+    def [TEST_METHOD](self):
         # [BEGIN_DEMO_STEPS]
         self._find("usernameTextField").send_keys('company')
         self._find("passwordTextField").send_keys('company')

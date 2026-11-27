@@ -13,6 +13,7 @@ import { outputFormatParam, respond } from '../utils/output-format.js';
 import { staleBuildRemedy, serverFsInstallNotice, serverFsProjectDirParam } from '../utils/locality.js';
 import { isLocalFilesystem } from '../utils/deployment-mode.js';
 import { validateOutputPath } from '../utils/path-guard.js';
+import { decideFramework, MOBILE_LANGUAGES, WEB_LANGUAGES } from '../utils/framework-choice.js';
 import {
   ACCESS_KEY_ENV,
   JAVA_KEY_EXPR,
@@ -229,6 +230,8 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   const placeholderTokens = (text: string) => (text.match(/<[^>\n]+>/g) || []).filter((m) => {
     const inner = m.slice(1, -1).trim();
     if (!PLACEHOLDER_KEYWORDS.test(inner)) return false;
+    // Markup in a string (an HTML snippet in a web test: <input value='x'>, <option value=1>) is not a placeholder.
+    if (/[="']/.test(inner)) return false;
     // A single token with no whitespace is only a placeholder if it's an exact, lowercase, known
     // placeholder word — otherwise it's a bare identifier (a generic type parameter, a class name, etc.).
     if (!/\s/.test(inner)) return BARE_PLACEHOLDER_WORDS.has(inner);
@@ -238,7 +241,8 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
   if (angle.length) add('high', 'placeholder selectors', `Unreplaced placeholder token(s): ${[...new Set(angle)].slice(0, 4).join(', ')}`);
 
   // 2. The deliberate scaffold fail-guard / "not a real test" markers left in place.
-  const guardPresent = /raise NotImplementedError|PLACEHOLDER TEST BODY|NOT A RUNNABLE TEST|NOT A FINISHED TEST|Replace this placeholder/i.test(content);
+  // The scaffold's own texts only: a bare "raise NotImplementedError" is ordinary in customer base classes and page objects.
+  const guardPresent = /PLACEHOLDER TEST BODY|NOT A RUNNABLE TEST|NOT A FINISHED TEST|Replace this placeholder/i.test(content);
   if (guardPresent) {
     add('high', 'scaffold guard present', 'The deliberate placeholder fail-guard is still in the body — the test was never filled in with real steps.');
   }
@@ -268,7 +272,18 @@ export function detectFabricationIssues(content: string): ScriptIssue[] {
 
   // 4. Known fabricated example IDs from the v43 post-mortem — illustrative, not exhaustive.
   const knownFab = content.match(/\b(nav_catalog|home_container)\b/g);
-  if (knownFab) add('high', 'known fabricated IDs', `Resource IDs from a prior fabrication incident: ${[...new Set(knownFab)].join(', ')}. Confirm these came from a live inspection, not a guess.`);
+  // A warning, not a failure: home_container is also an ordinary id in real apps.
+  if (knownFab) add('warn', 'known fabricated IDs', `Resource IDs from a prior fabrication incident: ${[...new Set(knownFab)].join(', ')}. Confirm these came from a live inspection, not a guess.`);
+
+  // 4b. ExperiBank (the sample app) leftovers. Its code belongs only in a test the user asked to build against ExperiBank;
+  //     in a test of another app it means the demo was edited instead of the app being inspected (owner decision 2026-11-27).
+  const demoMarks = content.match(/com\.experitest\.ExperiBank|\b(?:usernameTextField|passwordTextField|makePaymentButton|sendPaymentButton|countryButton)\b|quickStart(?:Android|iOS|Ios)NativeDemo/g);
+  if (demoMarks) {
+    const otherApp = (content.match(/(?:appPackage|bundleId|setAppPackage|setBundleId|APP_PACKAGE|BUNDLE_ID)\W{1,6}["']?[A-Za-z][\w]*\.[\w.]+/g) ?? [])
+      .some((m) => !/experibank/i.test(m));
+    if (otherApp) add('high', 'ExperiBank leftovers', `This test targets another app but still holds ExperiBank sample-app code (${[...new Set(demoMarks)].slice(0, 3).join(', ')}). Build its steps from an inspection of the app under test; never adapt the ExperiBank demo.`);
+    else add('info', 'ExperiBank sample app', 'This is an ExperiBank (sample app) test: right for training or trying the platform, not as a test of the user’s own app.');
+  }
 
   // 5. Web-specific: placeholder CSS selectors that were never filled in.
   const webPlaceholder = content.match(/#YOUR_SELECTOR|\.your-class|\[data-testid="placeholder"\]|\[data-testid='placeholder'\]|YOUR_ELEMENT_ID|YOUR_CSS_SELECTOR/gi);
@@ -701,6 +716,43 @@ function readBoilerplateFile(platform: Platform, language: Language, diskName: s
   return readFileSync(join(dir, diskName), 'utf-8').replace(/\r\n/g, '\n');
 }
 
+/** The demo's identity: used only when the user asked for the ExperiBank demo. */
+export const DEMO_APP = { packageName: 'com.experitest.ExperiBank', activity: '.LoginActivity', bundleId: 'com.experitest.ExperiBank' };
+
+/** A test method name in the language's own style, from the test name (camelCase, test_snake_case, or as written). */
+export function testMethodName(language: Language, testName: string): string {
+  const words = testName.replace(/\[[^\]]*\]/g, ' ').split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const base = words.length ? words : ['app', 'test'];
+  if (language === 'robot' || language === 'nodejs') return words.length ? testName.replace(/'/g, '') : 'App test';
+  if (language === 'python') return 'test_' + base.map((w) => w.toLowerCase()).join('_');
+  const camel = base.map((w, i) => (i === 0 ? w.charAt(0).toLowerCase() + w.slice(1) : w.charAt(0).toUpperCase() + w.slice(1))).join('');
+  return /^[0-9]/.test(camel) ? `test${camel}` : camel;
+}
+
+/**
+ * What fills the identity tokens. Demo → ExperiBank. Otherwise the customer's package / activity / bundle id, and a
+ * <…> placeholder for anything unknown (an activity missing from the app record used to leave ".LoginActivity" in the
+ * file, so the session failed to start).
+ */
+export function appIdentity(platform: Platform, language: Language, vars: { demo?: boolean; packageName?: string; mainActivity?: string; bundleIdentifier?: string; testName: string }) {
+  if (vars.demo) {
+    const testMethod = platform === 'android'
+      ? ({ python: 'testQuickStartAndroidNativeDemo', robot: 'Quick Start Android Native Demo', nodejs: 'quickStartAndroidNativeDemo' } as Record<string, string>)[language] ?? 'quickStartAndroidNativeDemo'
+      : ({ python: 'testQuickStartIosNativeDemo', robot: 'Quick Start iOS Native Demo', nodejs: 'quickStartiOSNativeDemo' } as Record<string, string>)[language] ?? 'quickStartiOSNativeDemo';
+    return {
+      packageName: DEMO_APP.packageName, activity: DEMO_APP.activity, bundleId: DEMO_APP.bundleId, testMethod,
+      cloudRef: platform === 'android' ? `cloud:${DEMO_APP.packageName}/${DEMO_APP.activity}` : `cloud:${DEMO_APP.bundleId}`,
+    };
+  }
+  const packageName = vars.packageName ?? '<your app package from get_application_info>';
+  const activity = vars.mainActivity ?? '<your main activity from get_application_info>';
+  const bundleId = vars.bundleIdentifier ?? '<your bundle id from get_application_info>';
+  return {
+    packageName, activity, bundleId, testMethod: testMethodName(language, vars.testName),
+    cloudRef: platform === 'android' ? `cloud:${packageName}/${activity}` : `cloud:${bundleId}`,
+  };
+}
+
 function substitute(
   content: string,
   language: Language,
@@ -714,6 +766,8 @@ function substitute(
     mainActivity?: string;
     bundleIdentifier?: string;
     clearTestBody?: boolean;
+    /** The user asked for the ExperiBank demo: the template's demo identity, name and steps are kept. */
+    demo?: boolean;
     region?: string;
     performanceTransactions?: boolean;
     axeScan?: boolean;
@@ -778,15 +832,16 @@ function substitute(
     .replaceAll('[testNameHere]', vars.testName)          // iOS NodeJS variant
     .replaceAll('[Enter PHONE/TABLET here]', vars.deviceCategory);
 
-  if (vars.packageName) {
-    result = result.replaceAll('com.experitest.ExperiBank', vars.packageName);
-  }
-  if (vars.mainActivity) {
-    result = result.replaceAll('.LoginActivity', vars.mainActivity);
-  }
-  if (vars.bundleIdentifier) {
-    result = result.replaceAll('com.experitest.ExperiBank', vars.bundleIdentifier);
-  }
+  // The templates carry neutral tokens for the app's identity and the test method (2026-11-27): ExperiBank values are
+  // filled in ONLY for the demo the user asked for. A customer app gets its own values, or a <…> placeholder that
+  // validate_test_script reports, never the demo's.
+  const ident = appIdentity(platform, language, vars);
+  result = result
+    .replaceAll('[APP_CLOUD_REF]', ident.cloudRef)
+    .replaceAll('[APP_PACKAGE]', ident.packageName)
+    .replaceAll('[APP_ACTIVITY]', ident.activity)
+    .replaceAll('[BUNDLE_ID]', ident.bundleId)
+    .replaceAll('[TEST_METHOD]', ident.testMethod);
 
   if (vars.region) {
     // Append region to the deviceQuery — fires after the PHONE/TABLET substitution has already run.
@@ -861,7 +916,7 @@ function substitute(
     result = removeAppCapability(result);
     // The Java Appium Server iOS templates name the app only through setApp — keep-data needs the bundle id instead.
     if (platform === 'ios' && !/bundleId|BundleId/.test(result)) {
-      extraCaps = { 'appium:bundleId': vars.bundleIdentifier ?? 'com.experitest.ExperiBank', ...(extraCaps ?? {}) };
+      extraCaps = { 'appium:bundleId': appIdentity(platform, language, vars).bundleId, ...(extraCaps ?? {}) };
     }
   }
   if (extraCaps) result = injectCapabilities(result, language, !!vars.isAppiumOss, extraCaps);
@@ -1009,24 +1064,23 @@ function appNote(
   packageName?: string,
   bundleIdentifier?: string,
   mainActivity?: string,
-  resolvedFromAppId?: boolean
+  resolvedFromAppId?: boolean,
+  demo?: boolean
 ): string {
-  const source = resolvedFromAppId ? ' (resolved from app record)' : '';
-  // NOTE: with a custom app the test body is the v38 placeholder (fails by design until
-  // replaced) — phrase these to reinforce that, never as a casual "TODO".
+  if (demo) {
+    return 'DEMO — the ExperiBank sample app that every environment starts with, with verified steps, for learning and trying ' +
+      'the platform. It is not the user’s app: for their app call again with appId / packageName / bundleIdentifier (and no demo) ' +
+      'to get the framework structure with placeholder steps. Never edit this demo into a test of another app.';
+  }
+  const source = resolvedFromAppId ? ' (from the app record)' : '';
+  const steps = 'The steps are a PLACEHOLDER that fails by design: replace it with steps built from selectors captured in a live inspection of this app, then run validate_test_script.';
   if (platform === 'android') {
-    if (packageName && mainActivity) {
-      return `App capabilities pre-filled${source}: package=${packageName}, activity=${mainActivity}. The test body is a PLACEHOLDER that fails by design — replace it with verified selectors from a live inspection before running.`;
-    }
-    if (packageName) {
-      return `App package pre-filled${source}: ${packageName}. Replace .LoginActivity with your main activity. The test body is a PLACEHOLDER that fails by design — replace it with verified selectors from a live inspection.`;
-    }
-    return 'Replace com.experitest.ExperiBank with your app\'s package name and .LoginActivity with your main activity. Replace the test steps with interactions specific to your app.';
+    if (packageName && mainActivity) return `App capabilities filled${source}: package=${packageName}, activity=${mainActivity}. ${steps}`;
+    if (packageName) return `App package filled${source}: ${packageName}. The main activity is unknown: replace <your main activity …> with it (get_application_info shows it). ${steps}`;
+    return `No app was given: replace <your app package …> and <your main activity …> with the user’s app (ask them which one; list_applications / get_application_info). ${steps}`;
   }
-  if (bundleIdentifier) {
-    return `Bundle ID pre-filled${source}: ${bundleIdentifier}. The test body is a PLACEHOLDER that fails by design — replace it with verified selectors from a live inspection before running.`;
-  }
-  return 'Replace com.experitest.ExperiBank with your app\'s bundle ID. Replace the test steps with interactions specific to your app.';
+  if (bundleIdentifier) return `Bundle id filled${source}: ${bundleIdentifier}. ${steps}`;
+  return `No app was given: replace <your bundle id …> with the user’s app (ask them which one; list_applications / get_application_info). ${steps}`;
 }
 
 /**
@@ -1047,50 +1101,38 @@ export function webBrowserGuidance(targetBrowser: string | undefined, language: 
 export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'get_test_boilerplate',
-    'DEMO: called WITHOUT appId / packageName / bundleIdentifier it returns a runnable test for the ExperiBank demo app ' +
-    '(com.experitest.ExperiBank — "SeeTestDemoApp" in the repository) with verified steps — no inspection needed for it. ' +
-    'STOP — when you target a real app (appId, packageName, or bundleIdentifier) this tool returns NO code unless ' +
-    'a live inspection session exists OR you set confirmSelectorsVerified:true. Without a selector source it blocks ' +
-    'with a redirect to start_inspection_session — there is nothing to "fill in later". Do not attempt to work around ' +
-    'the block by writing the test from scratch; capture real selectors first.\n\n' +
-    'AUTONOMOUS TEST CREATION — this tool is the scaffold for writing a complete automated test yourself, ' +
-    'without user collaboration. Use it when BOTH hold: ' +
-    '(a) the intent is SPECIFIC — a standardized flow ("create a login test") or step-level detail ' +
-    '("login, tap Transfer, select account 43x, set $50.00, tap Transfer Now"); ' +
-    '(b) you have a SELECTOR SOURCE — the app source code in the workspace, or element IDs captured from an inspection session. ' +
-    'If the intent is vague ("I want a test for app X") or there is no selector source, prefer the interactive path: ' +
-    'start_inspection_session (or the collaborative_test_creation prompt). ' +
-    'VAGUE-INTENT SIGNALS — treat answers like "let\'s decide as we go", "let\'s see what\'s there", or "not sure yet" ' +
-    '(at ANY point, including replies to your scoping questions) as a redirect to interactive mode: do NOT generate a script from them. ' +
-    'A test-TYPE label alone — "end-to-end", "smoke test", "regression", "login test" picked from a menu — is a CATEGORY, ' +
-    'NOT a specification: it does not name screens, actions, or expected results, so it does NOT meet the specific-intent bar. ' +
-    'Never treat a menu selection as a flow definition. ' +
-    'IF UNSURE WHICH MODE THE USER WANTS, ASK: "Want me to create this test for you based on best practices, ' +
-    'or start an interactive session where we build it together?"\n\n' +
-    'NEVER call this tool as a discovery/inspection step, and NEVER deliver its output as a finished test when the body is a ' +
-    'placeholder — the cleared body ships with a deliberate fail-guard and non-real <…> selectors precisely so a scaffold ' +
-    'cannot masquerade as a runnable test. Replace it with verified selectors first.\n\n' +
-    'SELECTOR POLICY — NEVER fabricate element selectors OR credentials. Ask the user for login details; do not invent ' +
-    'values like "company"/"company" or any default. Source code is authoritative only for classic static IDs ' +
-    '(Android View XML android:id; iOS explicit accessibilityIdentifier). Jetpack Compose, SwiftUI, Flutter, and ' +
-    'React Native apps often expose NO source-derivable IDs — and the build on the farm may be older than the workspace ' +
-    'source (version skew). When source yields clear static IDs, a short inspection-session spot-check of the critical ' +
-    'selectors is recommended; when it does not, a no-user-interaction inspection session IS the selector source — ' +
-    'capture real IDs there, never guess from naming conventions.\n\n' +
+    'Generates the FRAMEWORK STRUCTURE of a mobile test project for the user\'s app: build/dependency files, capabilities and ' +
+    'session setup (Appium Server or Appium Grid, read from the project), explicit-wait helpers, status reporting, credentials ' +
+    'from the environment, parallel notes, page-object scaffolding. The app\'s FLOW is placeholders: a marked step block with a ' +
+    'fail guard and <…> examples, because steps must come from the user\'s real app. Fill it from a live inspection ' +
+    '(start_inspection_session → get_element_tree, or the collaborative_test_creation prompt), then run validate_test_script, ' +
+    'which fails until every placeholder is replaced. Never deliver the structure as a finished test.\n\n' +
+    'FRAMEWORK CHOICE — the USER decides the language/framework, once per project. Do not pick one yourself. The first call ' +
+    'for a project analyses it (build files and test frameworks already in the workspace) and returns a recommendation with ' +
+    'no code, or asks the user directly where the client supports it. Ask the user, then call again with language and ' +
+    'confirmedByUser: true; later calls in that project reuse the choice. A second framework next to an existing one needs ' +
+    'newFramework: true. When the project already has the chosen framework, only test and screen files are returned ' +
+    '(build files come back under referenceFiles, to compare dependencies, not to overwrite).\n\n' +
+    'THE APP: pass appId (from list_applications), or packageName (+ mainActivity) for Android, or bundleIdentifier for ' +
+    'iOS. If the app cannot be found the call fails: it never falls back to another app. With no app the structure comes ' +
+    'with <your app …> placeholders: ask the user which app.\n\n' +
+    'DEMO / TRAINING: demo: true (or naming the ExperiBank sample app) returns a runnable test for ExperiBank, the sample app ' +
+    'every environment starts with, with verified steps. ONLY when the user asks to build against ExperiBank (to learn or try ' +
+    'the platform). Never as a stand-in, example or starting point for the user\'s own app.\n\n' +
+    'SELECTOR POLICY — NEVER fabricate element selectors OR credentials. Ask the user for login details. Source code is ' +
+    'authoritative only for classic static IDs (Android View XML android:id; iOS explicit accessibilityIdentifier); ' +
+    'Jetpack Compose, SwiftUI, Flutter and React Native apps often expose none, and the build on the devices may be older than ' +
+    'the workspace source. A live inspection is the selector source when in doubt.\n\n' +
     'OUTPUT LOCATION — in an IDE/workspace context, write the result as a local test automation project ' +
     '(this tool returns all project files). In a chat-only context (no file tools), present the files inline ' +
     'so the user can port them to an IDE or CI system.\n\n' +
-    'Use this when you already have the app identifiers (packageName/bundleIdentifier, mainActivity) and want a ' +
-    'complete, non-interactive test script ready to trigger against the cloud farm via RemoteWebDriver — ' +
-    'no local debug session required. Typical entry points: "generate a test script I can run later", ' +
-    '"create a reusable automated test", "set up a CI test for this app".\n\n' +
     'RECOMMENDED WORKFLOW — build a new test for an app:\n' +
     '  1. get_application_info — confirm package name, launch activity, and app ID\n' +
     '  2. find_available_device — select a healthy device; note the region from the response\n' +
     '  3. install_application — install the app on the selected device BEFORE starting a session\n' +
     '  4. start_inspection_session(region) — capture REAL element IDs via get_element_tree / find_elements; share the viewUrl with the user\n' +
-    '  5. get_test_boilerplate(region) — generate starter test with capabilities pre-filled (this tool)\n' +
-    '  6. [write / run test]\n' +
+    '  5. get_test_boilerplate(region) — the framework structure with the app\'s capabilities (this tool)\n' +
+    '  6. replace the placeholder step block with steps built from the selectors captured in step 4; validate_test_script; run\n' +
     '  7. stop_inspection_session + release_device — explicit cleanup on completion\n\n' +
     'ELEMENT INSPECTION — preferred path: start_inspection_session → get_element_tree / find_elements. ' +
     'This provides programmatic element-tree access, screenshot relay, and gesture control — the only way to capture verified selectors inside MCP. ' +
@@ -1098,19 +1140,17 @@ export function registerBoilerplateTools(server: McpServer): void {
     'get_automation_properties retrieves Appium endpoint details, not element selectors. ' +
     'rdb / adb is a fallback for scenarios that need direct shell access (file push, side-loaded installs). ' +
     'Do NOT use adb shell uiautomator dump on Android 15+ Samsung devices — it exits silently without output on those devices.\n\n' +
-    'IMPORTANT: The generated script is an end-product artifact — do NOT execute it as a discovery or inspection step. ' +
+    'IMPORTANT: do NOT execute the generated project as a discovery or inspection step. ' +
     'Running it without known element selectors creates Incomplete sessions in the reporter (visible to the whole team) ' +
     'that cannot be retroactively closed. Use start_inspection_session → get_element_tree for any live inspection before this tool.\n\n' +
-    'The Digital.ai access key and server URL are pre-filled from the MCP environment. ' +
+    'The server URL is filled in; the access key is read from DIGITAL_AI_ACCESS_KEY at run time (never written into a file). ' +
     'BEFORE calling this tool: (1) call get_application_info or list_applications to find the appId and confirm package/activity; ' +
     '(2) run release_orphaned_sessions(maxAgeHours=4, dryRun=true) to surface device contention before reserving; ' +
     '(3) call find_available_device for each OS tier you plan to test — read the region from the RESPONSE and pass it ' +
     'as the region parameter so the generated deviceQuery routes only to healthy devices in that region. ' +
     'Also read osVersion from the find_available_device response and use that exact value (e.g. "14.0") in any @version ' +
     'query strings. Do not guess OS versions or use @osVersion/@deviceName (unsupported fields). ' +
-    'Provide appId (from list_applications) to auto-resolve app capabilities from the platform record and generate a ' +
-    'guided test body placeholder — this is the recommended path for real apps. ' +
-    'Alternatively, provide packageName (Android) or bundleIdentifier (iOS) directly. ' +
+    'Provide appId (from list_applications) to fill the app capabilities from the platform record, or packageName (Android) / bundleIdentifier (iOS). ' +
     'Use projectType to control the output structure: standalone-gradle (default), standalone-maven, or android-gradle-submodule. ' +
     'Returns all files needed to run the test (source file + build/dependency file) with dependency management options where applicable. ' +
     'Pass includePerformanceTransactions: true to bracket the test body with startPerformanceTransaction / endPerformanceTransaction calls — ' +
@@ -1132,15 +1172,26 @@ export function registerBoilerplateTools(server: McpServer): void {
         .describe("Target mobile platform: 'android' or 'ios'."),
       language: z
         .enum(['java-junit5', 'java-testng', 'nodejs', 'python', 'robot'])
-        .describe("Test framework and language: 'java-junit5', 'java-testng', 'nodejs' (WebDriverIO), 'python' (Appium), or 'robot' (Robot Framework + AppiumLibrary — Appium Server projects only; not combinable with includePerformanceTransactions, includeAxeScan or automotiveProjection)."),
+        .optional()
+        .describe("The framework THE USER chose: 'java-junit5', 'java-testng', 'nodejs' (WebdriverIO), 'python' (Appium), or 'robot' (Robot Framework + AppiumLibrary — Appium Server projects only; not combinable with includePerformanceTransactions, includeAxeScan or automotiveProjection). Omit on the first call for a project to get the analysis and recommendation; never choose it yourself."),
+      confirmedByUser: z
+        .boolean()
+        .optional()
+        .describe('true only when the USER chose this language (you asked them). Saves it as the project\'s framework; later calls reuse it.'),
+      newFramework: z
+        .boolean()
+        .optional()
+        .describe('true only when the user wants a SECOND test framework in a project that already has one.'),
+      demo: z
+        .boolean()
+        .optional()
+        .describe('true only when the user asks to build against the ExperiBank sample app (training, trying the platform): returns its runnable test with verified steps. Never for the user\'s own app.'),
       appId: z
         .number()
         .optional()
         .describe(
-          'Numeric application ID from list_applications. When provided, the MCP looks up the app record and ' +
-          'auto-fills packageName/mainActivity (Android) or bundleIdentifier (iOS), and replaces the demo test ' +
-          'steps with guided placeholder comments — because element IDs are app-specific and cannot be pre-filled. ' +
-          'Recommended for any real app.'
+          'Numeric application ID from list_applications: fills the app capabilities (package and main activity, or ' +
+          'bundle id) from the app record. The steps stay placeholders. An unknown id is an error.'
         ),
       deviceCategory: z
         .enum(['PHONE', 'TABLET', 'FOLDABLE'])
@@ -1155,7 +1206,7 @@ export function registerBoilerplateTools(server: McpServer): void {
       packageName: z
         .string()
         .optional()
-        .describe('(Android only) App package name, e.g. com.mycompany.app. Pre-fills the appPackage capability. Prefer appId — providing packageName also clears the demo test body and inserts guided placeholders.'),
+        .describe('(Android only) App package name, e.g. com.mycompany.app. Fills the appPackage capability. Prefer appId.'),
       mainActivity: z
         .string()
         .optional()
@@ -1168,7 +1219,7 @@ export function registerBoilerplateTools(server: McpServer): void {
       bundleIdentifier: z
         .string()
         .optional()
-        .describe('(iOS only) App bundle identifier, e.g. com.mycompany.app. Pre-fills the bundleId capability. Prefer appId — providing bundleIdentifier also clears the demo test body and inserts guided placeholders.'),
+        .describe('(iOS only) App bundle identifier, e.g. com.mycompany.app. Fills the bundleId capability. Prefer appId.'),
       structure: z
         .enum(['flat', 'page-objects'])
         .optional()
@@ -1328,13 +1379,8 @@ export function registerBoilerplateTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe(
-          'Escape hatch for the inspection gate. When you target a real app, this tool refuses to emit code unless a ' +
-          'live inspection session exists — UNLESS you set this to true. Set it ONLY if you have ALREADY captured REAL ' +
-          'element IDs for this app from a source other than a still-open session: an rdb/UIAutomator dump, ' +
-          'open_mobile_studio (including selectors recorded with its iOS Test Recorder), get_automation_properties, ' +
-          'or authoritative app source in the workspace. ' +
-          'Setting this WITHOUT real captured selectors produces a placeholder scaffold with invalid <…> selectors that ' +
-          'fails at runtime, and violates the tool contract. When in doubt, do NOT set it — start_inspection_session instead.'
+          'No longer needed: the structure is always returned and the steps are always placeholders until you fill them ' +
+          'from real selectors. Accepted for older callers; it changes nothing.'
         ),
       orchestration: z
         .enum(['auto', 'on', 'off'])
@@ -1360,50 +1406,19 @@ export function registerBoilerplateTools(server: McpServer): void {
         ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, structure, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, appReset, deviceLanguage, autoAcceptAlerts, platformOptions, automotiveProjection, confirmSelectorsVerified, orchestration, orchestrationMaxRetries, outputFormat }) => {
-      // ── Inspection gate (v42) ────────────────────────────────────────────────
-      // Advisory guards (warning text, a requiresVerifiedSelectors flag, an in-code
-      // fail() guard) all lost to task-completion momentum: the agent stripped the
-      // fail() and shipped the placeholder as a finished test. The structural fix is
-      // to return NO code at all when a real app is targeted and there is no selector
-      // source — there is then no scaffold to dress up. A live inspection session in
-      // this process counts as a source; so does an explicit confirmSelectorsVerified
-      // (rdb/Mobile Studio/source). The built-in ExperiBank demo (no app identifiers)
-      // ships real working steps, so it is never gated.
-      const targetsCustomApp = appId !== undefined || Boolean(packageName) || Boolean(bundleIdentifier);
-      if (targetsCustomApp && confirmSelectorsVerified !== true && listActiveSessions().length === 0) {
-        const blocked = {
-          status: 'blocked',
-          reason: 'no_verified_selectors',
-          requiredAction: 'start_inspection_session',
-          message:
-            'Boilerplate generation is blocked: a real app is targeted but there is no selector source. ' +
-            'Element IDs are app-specific and cannot be pre-filled — a scaffold generated now would be a placeholder ' +
-            'with invalid selectors, which must NOT be presented as a finished test.',
-          howToProceed: [
-            'PREFERRED: call start_inspection_session, capture real element IDs (get_element_tree / open_mobile_studio), ' +
-              'then re-call this tool while that session is still open.',
-            'ALTERNATIVE: if you ALREADY captured real selectors elsewhere (rdb/UIAutomator dump, open_mobile_studio, ' +
-              'get_automation_properties, or authoritative workspace source), re-call with confirmSelectorsVerified:true.',
-          ],
-        };
-        const human = [
-          '⛔ BLOCKED — no verified selectors for the targeted app.',
-          '',
-          'A real app is targeted (appId/packageName/bundleIdentifier) but no live inspection session exists, so this',
-          'tool will NOT emit a placeholder scaffold — there would be nothing runnable to deliver, only invalid <…>',
-          'selectors to fill in later.',
-          '',
-          'To proceed:',
-          '  • PREFERRED — start_inspection_session, capture real element IDs (get_element_tree / open_mobile_studio),',
-          '    then re-call get_test_boilerplate while that session is still open.',
-          '  • ALTERNATIVE — if you already captured real selectors another way (rdb/UIAutomator dump, open_mobile_studio,',
-          '    get_automation_properties, or authoritative workspace source), re-call with confirmSelectorsVerified:true.',
-          '',
-          'Do NOT work around this by writing the test from scratch — the selectors still have to be real.',
-        ].join('\n');
-        return { ...respond(outputFormat, blocked, human), isError: true };
-      }
+    async ({ platform, language: requestedLanguage, confirmedByUser, newFramework, demo: demoRequested, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, structure, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, appReset, deviceLanguage, autoAcceptAlerts, platformOptions, automotiveProjection, orchestration, orchestrationMaxRetries, outputFormat }) => {
+      // ── The framework is the USER's choice, once per project (owner decision 2026-11-27) ──
+      const choice = await decideFramework({ kind: 'mobile', options: MOBILE_LANGUAGES, requested: requestedLanguage, confirmedByUser, newFramework, tool: 'get_test_boilerplate' });
+      if (!choice.ok) return respond(outputFormat, choice.answer, choice.text);
+      const language = choice.language as Language;
+
+      // ── Which app ─────────────────────────────────────────────────────────────
+      // The ExperiBank demo ONLY when the user asked for it (demo: true, or they named ExperiBank). A customer app gets
+      // the framework structure with placeholder steps; no app at all gets <your app …> placeholders. (Until 2.6.0 a
+      // call without app parameters returned the ExperiBank test, and a customer app got no code without a live session.)
+      const isDemoId = (v?: string) => !!v && /^com\.experitest\.experibank/i.test(v);
+      const namesDemo = isDemoId(packageName) || isDemoId(bundleIdentifier);
+      const targetsCustomApp = !namesDemo && (appId !== undefined || Boolean(packageName) || Boolean(bundleIdentifier));
 
       // Active-profile accessor (not process.env) — the generated files point at the active profile's cloud. No access
       // key is read here: generated files never carry one (src/utils/credential-env.ts).
@@ -1504,31 +1519,45 @@ export function registerBoilerplateTools(server: McpServer): void {
       let resolvedBundleIdentifier = bundleIdentifier;
       let resolvedFromAppId = false;
 
+      let appIsDemo = false;
       if (appId !== undefined) {
+        let app: Awaited<ReturnType<typeof getApplicationInfo>>;
         try {
-          const app = await getApplicationInfo(appId);
-          if (platform === 'android') {
-            if (app.packageName) resolvedPackageName = app.packageName;
-            if (app.mainActivity) resolvedMainActivity = app.mainActivity;
-          } else {
-            if (app.bundleIdentifier) resolvedBundleIdentifier = app.bundleIdentifier;
-          }
-          resolvedFromAppId = true;
+          app = await getApplicationInfo(appId);
         } catch (e) {
           return {
             content: [{
               type: 'text',
-              text: `Failed to look up application ID ${appId}: ${(e as Error).message}\n\nVerify the app ID with list_applications, or provide packageName/bundleIdentifier directly.`,
+              text: `Error: application ${appId} was not found: ${(e as Error).message}
+
+Verify the app with list_applications, or ask the user which app to use. Nothing was generated; no other app is used in its place.`,
             }],
             isError: true,
           };
         }
+        // The app record must carry the identifier this platform launches by. Until 2.6.0 a missing one (an iOS build
+        // asked for as android, an incomplete record) silently produced the ExperiBank demo under the user's app id.
+        const id = platform === 'android' ? app.packageName : app.bundleIdentifier;
+        if (!id) {
+          const has = app.packageName ? `Android package ${app.packageName}` : app.bundleIdentifier ? `iOS bundle id ${app.bundleIdentifier}` : 'no package or bundle id';
+          return { content: [{ type: 'text', text: `Error: application ${appId} has no ${platform === 'android' ? 'Android package name' : 'iOS bundle id'} (its record has ${has}). Check that platform "${platform}" is right for this app, or pass ${platform === 'android' ? 'packageName' : 'bundleIdentifier'} yourself. Nothing was generated.` }], isError: true };
+        }
+        if (platform === 'android') {
+          resolvedPackageName = app.packageName ?? undefined;
+          if (app.mainActivity) resolvedMainActivity = app.mainActivity;
+        } else {
+          resolvedBundleIdentifier = app.bundleIdentifier ?? undefined;
+        }
+        appIsDemo = isDemoId(id);
+        resolvedFromAppId = true;
       }
 
-      // Clear demo steps whenever a custom (non-ExperiBank) app is specified.
-      const clearTestBody = Boolean(
-        platform === 'android' ? resolvedPackageName : resolvedBundleIdentifier
-      );
+      // The demo only when the user asked for it: demo: true, or they named ExperiBank (its package, bundle id or app id).
+      if (demoRequested && targetsCustomApp && !appIsDemo) {
+        return { content: [{ type: 'text', text: 'Error: demo: true builds the ExperiBank sample app; it cannot be combined with another app. Leave out demo for the user’s own app.' }], isError: true };
+      }
+      const demo = demoRequested === true || namesDemo || appIsDemo;
+      const clearTestBody = !demo;
       const pageObjectsRequested = structure === 'page-objects';
       const pageObjectsApplied = pageObjectsRequested && (language === 'nodejs' || ((language === 'java-junit5' || language === 'java-testng') && isAppiumOss));
       const structureNote = pageObjectsRequested && !pageObjectsApplied
@@ -1546,6 +1575,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         mainActivity: platform === 'android' ? resolvedMainActivity : undefined,
         bundleIdentifier: platform === 'ios' ? resolvedBundleIdentifier : undefined,
         clearTestBody,
+        demo,
         region,
         performanceTransactions: includePerformanceTransactions,
         axeScan: includeAxeScan,
@@ -1667,7 +1697,24 @@ export function registerBoilerplateTools(server: McpServer): void {
           };
         }
 
+        // The project already has this framework: return the test (and screen) files only; build files come back as
+        // references, so a second framework or an overwritten build file never happens by accident.
+        const isProjectFile = (f: { diskName: string; filename: string; isInstructions?: boolean }) =>
+          !!f.isInstructions || /^(gradle|maven|pip|package)/.test(f.diskName) || /wdio(-oss)?\.conf\.js$/.test(f.filename);
+        const reference = choice.addToExisting ? resolved.filter(isProjectFile) : [];
+        if (reference.length) for (const r of reference) resolved.splice(resolved.indexOf(r), 1);
+        const appUnderTest = demo
+          ? { kind: 'demo', name: 'ExperiBank (sample app)', note: 'Training/demo only — not the user’s app.' }
+          : targetsCustomApp
+            ? { kind: 'customer', ...(vars.packageName ? { packageName: vars.packageName } : {}), ...(vars.mainActivity ? { mainActivity: vars.mainActivity } : {}), ...(vars.bundleIdentifier ? { bundleId: vars.bundleIdentifier } : {}), ...(appId !== undefined ? { appId } : {}) }
+            : { kind: 'unspecified', note: 'No app was given: ask the user which app, and fill the <your app …> placeholders.' };
         const structured = {
+          appUnderTest,
+          runnable: demo,
+          framework: {
+            language, choice: choice.note,
+            ...(choice.addToExisting ? { addedToExistingFramework: true, note: 'The project already has this framework: only test/screen files are returned; compare referenceFiles with your build files for missing dependencies.' } : {}),
+          },
           platform,
           language,
           serverMode: isAppiumOss ? 'oss' : 'grid',
@@ -1690,12 +1737,13 @@ export function registerBoilerplateTools(server: McpServer): void {
           projectType: projectType ?? 'standalone-gradle',
           structure: pageObjectsApplied ? 'page-objects' : 'flat',
           ...(structureNote ? { structureNote } : {}),
-          files: [...resolved.map(f => ({ filename: f.filename, content: f.content })), ENV_EXAMPLE_FILE],
+          files: [...resolved.map(f => ({ filename: f.filename, content: f.content })), ...(choice.addToExisting ? [] : [ENV_EXAMPLE_FILE])],
+          ...(reference.length ? { referenceFiles: reference.map((f) => ({ filename: f.filename, content: f.content })) } : {}),
           orchestration: orchestrationInfo,
           ...(automotive ? { automotive } : {}),
           ...(capNotes.length ? { capabilityNotes: capNotes } : {}),
           setupNote: setupNote(language, isAppiumOss, projectType, resolved.filter((f) => !f.isInstructions).map((f) => f.filename)),
-          appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId),
+          appNote: appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId, demo),
           parallelNote: parallelNote(language, isAppiumOss),
           credentialSetup: CREDENTIAL_SETUP,
           // v38: when a custom app is targeted the test body is a placeholder, NOT a finished test.
@@ -1722,10 +1770,11 @@ export function registerBoilerplateTools(server: McpServer): void {
         const serverModeLabel = isAppiumOss ? 'Appium Server (OSS)' : 'Appium Grid';
         const regionLabel = region ? `Region: ${region}` : 'Region: unscoped (all regions)';
         const lines: string[] = [
-          `# ${platformLabel} — ${langLabel[language]} Boilerplate (${serverModeLabel})`,
+          demo ? `# DEMO — ExperiBank sample app: ${platformLabel} — ${langLabel[language]} (${serverModeLabel})` : `# ${platformLabel} — ${langLabel[language]} framework structure (${serverModeLabel})`,
           '',
+          `> **Framework:** ${choice.note}`,
           `> **Setup:** ${setupNote(language, isAppiumOss, projectType, resolved.filter((f) => !f.isInstructions).map((f) => f.filename))}`,
-          `> **App:** ${appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId)}`,
+          `> **App:** ${appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId, demo)}`,
           `> **Device query:** ${regionLabel}${region ? '' : ' — re-call with region=<value> from find_available_device to scope to healthy devices only.'}`,
           `> ${CREDENTIAL_SETUP_TEXT}`,
           '',
@@ -1983,18 +2032,25 @@ export function registerBoilerplateTools(server: McpServer): void {
     'get_web_test_boilerplate',
     'Generate a Selenium WebDriver test script for web browser automation against the Digital.ai Selenium Grid. ' +
     '\n\n' +
-    'GATE: If a target URL is provided (real site), a live browser inspection session must exist ' +
-    '(start_browser_inspection_session → get_page_dom / find_web_elements) OR confirmSelectorsVerified must be true. ' +
-    'This prevents fabricated CSS selectors from being shipped as finished tests.\n\n' +
+    'Returns the FRAMEWORK STRUCTURE (dependencies, session setup, waits, reporting); the page steps are a placeholder with a ' +
+    'fail guard until you fill them with selectors captured in a live browser session (start_browser_inspection_session → ' +
+    'get_page_dom / find_web_elements). url only fills the navigate line.\n\n' +
+    'FRAMEWORK CHOICE — the USER decides the language/framework, once per project; do not pick one yourself. The first call for ' +
+    'a project returns the project analysis and a recommendation with no code (or asks the user directly where the client ' +
+    'supports it); ask the user, then call again with language and confirmedByUser: true. A second framework next to an existing ' +
+    'one needs newFramework: true.\n\n' +
     'By default, the generated test is BROWSER-NEUTRAL — it reads the browser name from an environment variable ' +
     'or config at runtime, so a single script runs on Chrome, Firefox, Edge, or Safari without code changes. ' +
     'Set targetBrowser to generate browser-specific setup code (ChromeOptions, FirefoxOptions, etc.).\n\n' +
     'When shadowDomSupport is enabled, a shadowQuery() helper is included for interacting with elements ' +
     'inside Shadow DOM trees (React, Angular, Web Components).',
     {
+      confirmedByUser: z.boolean().optional().describe('true only when the USER chose this language (you asked them). Saves it as the project’s framework.'),
+      newFramework: z.boolean().optional().describe('true only when the user wants a SECOND test framework in a project that already has one.'),
       language: z
         .enum(['java-junit5', 'java-testng', 'nodejs', 'python', 'robot', 'playwright'])
-        .describe('Target language and test framework. "robot" = Robot Framework + SeleniumLibrary (no shadowQuery helper; Opera unsupported). "playwright" = Playwright Test driving Chrome or Edge on the Digital.ai Selenium agent (EXPERIMENTAL platform feature; verified with @playwright/test 1.65.0 — the cloud report shows Passed even when a test fails, trust the Playwright report). For firefox/webkit or cloud-side runs use execute_playwright_run.'),
+        .optional()
+        .describe('The framework THE USER chose (omit on the first call for a project to get the recommendation; never choose it yourself). "robot" = Robot Framework + SeleniumLibrary (no shadowQuery helper; Opera unsupported). "playwright" = Playwright Test driving Chrome or Edge on the Digital.ai Selenium agent (EXPERIMENTAL platform feature; verified with @playwright/test 1.65.0 — the cloud report shows Passed even when a test fails, trust the Playwright report). For firefox/webkit or cloud-side runs use execute_playwright_run.'),
       testName: z
         .string()
         .optional()
@@ -2024,11 +2080,7 @@ export function registerBoilerplateTools(server: McpServer): void {
       confirmSelectorsVerified: z
         .boolean()
         .optional()
-        .describe(
-          'Set to true when CSS selectors were captured from a live browser inspection session ' +
-          '(get_page_dom / find_web_elements) or authoritative source. Required when url is provided and no ' +
-          'live browser session exists.'
-        ),
+        .describe('No longer needed: the structure is always returned with placeholder steps. Accepted for older callers; it changes nothing.'),
       acceptInsecureCerts: z
         .boolean()
         .optional()
@@ -2040,7 +2092,9 @@ export function registerBoilerplateTools(server: McpServer): void {
       outputFormat: outputFormatParam,
     },
     async (args) => {
-      const language = args.language;
+      const choice = await decideFramework({ kind: 'web', options: WEB_LANGUAGES, requested: args.language, confirmedByUser: args.confirmedByUser, newFramework: args.newFramework, tool: 'get_web_test_boilerplate' });
+      if (!choice.ok) return respond(args.outputFormat, choice.answer, choice.text);
+      const language = choice.language;
       const insecure = args.acceptInsecureCerts === true;
       const testName = args.testName ?? 'WebTest';
       const targetUrl = args.url ?? '';
@@ -2049,34 +2103,7 @@ export function registerBoilerplateTools(server: McpServer): void {
       // list_available_browsers returns; anything else passes through unchanged.
       const targetBrowser = canonicalBrowserName(args.targetBrowser);
       const shadowDomSupport = args.shadowDomSupport ?? 'auto';
-
-      // Gate: if a real URL is specified, require a live browser session or explicit selector confirmation.
-      const targetsRealSite = !!targetUrl;
-      if (targetsRealSite) {
-        const liveBrowserSessions = listActiveSessions().filter((s) => s.platform === 'web');
-        const hasLiveSession = liveBrowserSessions.length > 0;
-        if (!hasLiveSession && !args.confirmSelectorsVerified) {
-          const structured = {
-            status: 'blocked',
-            reason: 'no_verified_selectors',
-            message:
-              'Cannot generate a web test for a real URL without verified selectors. ' +
-              'Start a browser inspection session first (start_browser_inspection_session), navigate to the target URL, ' +
-              'discover element selectors with get_page_dom and find_web_elements, ' +
-              'then call get_web_test_boilerplate again. ' +
-              'Alternatively, pass confirmSelectorsVerified: true if selectors were captured from a prior session or authoritative source.',
-            instructions: [
-              '1. start_browser_inspection_session(inspectionBrowser="chrome")',
-              '2. navigate_to(handle, "' + targetUrl + '")',
-              '3. get_page_dom(handle) — inspect elements; use find_web_elements to verify specific selectors',
-              '4. take_inspection_screenshot(handle) — confirm each step visually',
-              '5. stop_browser_inspection_session(handle)',
-              '6. get_web_test_boilerplate(language="' + language + '", url="' + targetUrl + '", confirmSelectorsVerified=true)',
-            ],
-          };
-          return { ...respond(args.outputFormat, structured, structured.message), isError: true as const };
-        }
-      }
+      // No selector gate (2.6.0): the output is always the structure with a placeholder body; url fills the navigate line.
 
       // No access key in any generated file — every template reads DIGITAL_AI_ACCESS_KEY (src/utils/credential-env.ts).
       const baseUrl = getActiveUrl() || '[Enter Instance here]';
@@ -2358,7 +2385,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `</project>`,
         ].join('\n');
 
-        const structured = {
+        const structured = { framework: { language, choice: choice.note, ...(choice.addToExisting ? { addedToExistingFramework: true, note: "The project already has this framework: add the test file to it; do not overwrite its build files (compare them for missing dependencies)." } : {}) },
           language,
           testName,
           targetBrowser: targetBrowser ?? 'browser-neutral (env var BROWSER)',
@@ -2460,7 +2487,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           `selenium>=4.51.0,<5`,
         ].join('\n');
 
-        const structured = {
+        const structured = { framework: { language, choice: choice.note, ...(choice.addToExisting ? { addedToExistingFramework: true, note: "The project already has this framework: add the test file to it; do not overwrite its build files (compare them for missing dependencies)." } : {}) },
           language,
           testName,
           targetBrowser: targetBrowser ?? 'browser-neutral (env var BROWSER)',
@@ -2544,7 +2571,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         ].join('\n');
         const library = readFileSync(join(BOILERPLATE_DIR, 'Web', 'Robot Framework', 'DigitalAiWebReport.py'), 'utf-8').replace(/\r\n/g, '\n');
         const requirements = 'robotframework==7.5\nrobotframework-seleniumlibrary==6.9.0';
-        const structured = {
+        const structured = { framework: { language, choice: choice.note, ...(choice.addToExisting ? { addedToExistingFramework: true, note: "The project already has this framework: add the test file to it; do not overwrite its build files (compare them for missing dependencies)." } : {}) },
           language,
           testName,
           targetBrowser: targetBrowser ?? 'browser-neutral (env var BROWSER)',
@@ -2652,7 +2679,7 @@ export function registerBoilerplateTools(server: McpServer): void {
           'The same project runs with execute_playwright_run too: inside the Playwright container the config switches to chromium, firefox and webkit and needs no key. Locally, DIGITAL_AI_PLAYWRIGHT_TARGET=local does the same (after npx playwright install).',
           'Replace the placeholder with selectors from get_page_dom / find_web_elements. Playwright CSS locators pierce shadow DOM on their own.',
         ];
-        const structured = {
+        const structured = { framework: { language, choice: choice.note, ...(choice.addToExisting ? { addedToExistingFramework: true, note: "The project already has this framework: add the test file to it; do not overwrite its build files (compare them for missing dependencies)." } : {}) },
           language,
           testName,
           targetBrowser: targetBrowser ?? 'chrome (BROWSER env var: chrome | MicrosoftEdge)',
@@ -2731,7 +2758,7 @@ export function registerBoilerplateTools(server: McpServer): void {
         `});`,
       ].join('\n');
 
-      const structured = {
+      const structured = { framework: { language, choice: choice.note, ...(choice.addToExisting ? { addedToExistingFramework: true, note: "The project already has this framework: add the test file to it; do not overwrite its build files (compare them for missing dependencies)." } : {}) },
         language,
         testName,
         targetBrowser: targetBrowser ?? 'browser-neutral (env var BROWSER)',

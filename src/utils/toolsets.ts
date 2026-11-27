@@ -104,7 +104,7 @@ export const TOOLSETS: Record<string, { modules: string[]; description: string }
   inspection: { modules: ['inspection', 'web-inspection', 'debug'], description: 'live device and browser inspection sessions, Android Auto/CarPlay, remote debug' },
   authoring: { modules: ['boilerplate', 'test-runs'], description: 'test boilerplate, Espresso/XCUITest/Maestro test runs' },
   browsers: { modules: ['browsers'], description: 'browser listing and Selenium sessions' },
-  admin: { modules: ['users', 'projects', 'backup', 'usage-reports', 'workflows'], description: 'users, projects, backups, usage reports, usage, utilization and license reports, POC/project workflows' },
+  admin: { modules: ['users', 'projects', 'backup', 'usage-reports', 'workflows'], description: 'users, projects, backups, usage reports, usage, utilization and license reports, project setup workflows' },
 };
 
 /** Always loaded in full: connection/environment basics, toolset control, and the test-delivery backstop. */
@@ -138,20 +138,30 @@ export function toolsetOfTool(tool: { name: string; module: string }): string | 
   return TOOL_TOOLSETS[tool.name] ?? toolsetOfModule(tool.module);
 }
 
-export interface Selection { all: boolean; toolsets: Set<string>; unknown: string[] }
+export interface Selection { all: boolean; toolsets: Set<string>; unknown: string[]; internal?: boolean }
+
+/**
+ * Digital.ai's own tools: the evaluation (POC) project workflow used by the cloud management team. A customer never
+ * runs them (owner decision 2026-11-27), so they are not listed, not even as placeholders, and "all" does not include
+ * them: they load only when MCP_TOOLSETS names "internal" (e.g. "all,internal").
+ */
+export const INTERNAL_TOOLS = ['create_poc', 'close_poc', 'delete_poc'];
+export const INTERNAL_PROMPTS = ['create_poc'];
 
 export function parseToolsetSelection(raw: string | undefined): Selection {
   const tokens = (raw ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
-  if (tokens.length === 0 || tokens.includes('all')) return { all: true, toolsets: new Set(Object.keys(TOOLSETS)), unknown: [] };
+  const internal = tokens.includes('internal');
+  const rest = tokens.filter((t) => t !== 'internal');
+  if (rest.length === 0 || rest.includes('all')) return { all: true, toolsets: new Set(Object.keys(TOOLSETS)), unknown: [], internal };
   const toolsets = new Set<string>();
   const unknown: string[] = [];
   // "core" = only the always-loaded core in full (every other tool is a placeholder) — the maximum-savings setting.
-  for (const t of tokens) {
+  for (const t of rest) {
     if (t === 'core') continue;
     if (TOOLSETS[t]) toolsets.add(t);
     else unknown.push(t);
   }
-  return { all: false, toolsets, unknown };
+  return { all: false, toolsets, unknown, internal };
 }
 
 /** "name (required): description" lines for a zod raw shape — the parameter guidance a placeholder hands back. */
@@ -299,14 +309,15 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
         toolset,
         description: t.description,
         loaded: loaded.has(toolset),
-        tools: captured.tools.filter((x) => toolsetOfTool(x) === toolset).length,
+        tools: captured.tools.filter((x) => toolsetOfTool(x) === toolset && (selection.internal || !INTERNAL_TOOLS.includes(x.name))).length,
       }));
     },
   };
 
   for (const tool of captured.tools) {
+    if (INTERNAL_TOOLS.includes(tool.name) && !selection.internal) continue;
     const toolset = toolsetOfTool(tool);
-    if (isFull(tool, toolset)) {
+    if (isFull(tool, toolset) || INTERNAL_TOOLS.includes(tool.name)) {
       const callback = wrap ? wrap(tool.name, tool.callback, false) : tool.callback;
       // Strict input: an unknown parameter is an error, never silently dropped. With the SDK's default (strip)
       // behaviour `list_applications({ search: "ExperiBank" })` returned the whole catalogue and the agent spent turns
@@ -352,7 +363,10 @@ export function registerWithToolsets(server: McpServer, captured: Captured, sele
     );
     handles.set(tool.name, { tool, handle, toolset });
   }
-  for (const p of captured.prompts) s.prompt(...p.args);
+  for (const p of captured.prompts) {
+    if (INTERNAL_PROMPTS.includes(String(p.args[0])) && !selection.internal) continue;
+    s.prompt(...p.args);
+  }
   for (const r of captured.resources) s.resource(...r.args);
   return controller;
 }

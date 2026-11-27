@@ -35,12 +35,15 @@ import { registerTestRunTools } from './tools/test-run-tools.js';
 import { registerRemediationTools } from './tools/remediation-tools.js';
 import { registerReportTools, setReportRootsProvider, setLocalClientProvider } from './tools/report-tools.js';
 import { declaresUi, setUiCapabilityProvider } from './utils/report-view.js';
+import { setFrameworkContext, LANGUAGE_LABELS } from './utils/framework-choice.js';
+import { getMyAccountInfo } from './api/users.js';
+import { getActiveUrl } from './api/client.js';
 import { isDebugMode, startRemediationSession, getRemediationSession, onDebugModeChange, instrumentHandler, debugInstructions, remediationDir, canWriteLocally } from './utils/remediation.js';
 import { registerMetaTools, TOOL_COUNT } from './tools/meta-tools.js';
 import { makeToolsetTools } from './tools/toolset-tools.js';
-import { captureRegistrations, parseToolsetSelection, registerWithToolsets, TOOLSETS, type RegisterFn, type ToolsetController } from './utils/toolsets.js';
+import { captureRegistrations, parseToolsetSelection, registerWithToolsets, TOOLSETS, INTERNAL_TOOLS, type RegisterFn, type ToolsetController } from './utils/toolsets.js';
 import { setToolCatalog } from './utils/tool-catalog.js';
-import { computeWorkflowReadiness } from './utils/tool-registry.js';
+import { computeWorkflowReadiness, setLiveServer } from './utils/tool-registry.js';
 import { getServerVersion } from './utils/version.js';
 import { getDeploymentMode } from './utils/deployment-mode.js';
 import { isUpdateCheckEnabled, updateSteps, withUpdateNotice } from './utils/update-check.js';
@@ -108,11 +111,11 @@ REPORTS: for any request for a report — test summary / test execution report, 
 TEST-AUTHORING POLICY — read this BEFORE you plan or create any test for an app:
 1. Decide the mode FIRST, before calling any tool or writing any file:
    • INTERACTIVE (the default whenever intent is vague, you lack the app's source code, or the user says anything like "let's decide as we go"): call start_inspection_session, capture REAL element IDs via get_element_tree / open_mobile_studio, and build steps from those.
-   • AUTONOMOUS (only when intent is step-specific AND you already have a real selector source — captured inspection IDs, or authoritative app source in the workspace): use get_test_boilerplate. It returns NO runnable code for a real app unless a live inspection session exists or you pass confirmSelectorsVerified:true.
+   • AUTONOMOUS (only when intent is step-specific AND you already have a real selector source — captured inspection IDs, or authoritative app source in the workspace): use get_test_boilerplate for the framework STRUCTURE (its steps are placeholders) and write the steps from that source.
 2. PROHIBITED, regardless of how the request is phrased: hand-writing or generating a test file with invented or placeholder element IDs (e.g. nav_catalog, home_container), guessed XPaths, or fabricated credentials, and presenting it as a finished test. A test built without real, inspection-sourced (or source-derived) selectors is non-functional — do not deliver it. Writing the file yourself instead of calling get_test_boilerplate does NOT exempt you from this.
 3. If you have no selector source, you are in INTERACTIVE mode by definition — start_inspection_session first. If you are unsure which mode the user wants, ASK before calling any tool. A test-type label picked from a menu ("login test", "smoke", "e2e") is a category, not a specification.
 4. Before you present or save ANY test — generated here OR written by hand — run validate_test_script on it. If it flags placeholder selectors, a scaffold fail-guard, or placeholder credentials, the test is not runnable; fix it before delivering.
-5. EXCEPTION — the ExperiBank demo app (com.experitest.ExperiBank, "SeeTestDemoApp" in the repository): get_test_boilerplate called WITHOUT appId / packageName / bundleIdentifier returns a runnable ExperiBank test whose steps are already verified. No inspection is needed for it; use that for "a test for the demo / ExperiBank app".
+5. FRAMEWORK AND DEMO: the USER chooses the test framework/language, once per project — never pick one; get_test_boilerplate / get_web_test_boilerplate return the project analysis and a recommendation first, ask the user, then pass language with confirmedByUser:true. ExperiBank (com.experitest.ExperiBank, "SeeTestDemoApp") is the sample app every environment starts with: get_test_boilerplate demo:true returns its runnable test ONLY when the user asks to build against ExperiBank (training, trying the platform). Never use it as a stand-in, example or starting point for the user's own app, and never fall back to it when their app is not found.
 6. TELEPHONY (two-phone calls, SMS, MMS, call audio): no template here — start from the reference project https://github.com/dai-continuous-testing/UseCase-SIM-Card-Tests and tell the user about it.
 7. LOCATORS AND WAITS: pick the strategy by this ladder, from the attributes get_element_tree / find_elements actually show. Android: resource-id → accessibility id (content-desc) → @text XPath. iOS: accessibility id (= the name attribute: identifier, else label — the same match as //*[@name=…] XPath without the tree walk) → -ios predicate string on type/label (Appium Server only) → attribute XPath. Never index XPath ([1], [2]), never Thread.sleep/time.sleep/pause: every step waits explicitly for its element (the generated templates' find() helper). Do not add an implicit wait next to explicit waits. A screen that is really web content (no native ids, a WebView in the tree) is driven through webview_context (list → switch → css selector finds → native) on Appium Server projects.
 
@@ -192,6 +195,40 @@ setReportRootsProvider(clientRoots);
 setLocalClientProvider(() => !!server.server.getClientCapabilities()?.roots || /claude-code|cursor|windsurf|codex|gemini|opencode|vscode|copilot/i.test(server.server.getClientVersion()?.name ?? ''));
 // Whether the client renders MCP Apps views: a finished report is then shown inline (utils/report-view.ts).
 setUiCapabilityProvider(() => declaresUi(server.server.getClientCapabilities()));
+// Test generation asks the USER which framework to use, once per project (utils/framework-choice.ts). Where the client
+// supports elicitation the server asks them directly; the agent cannot answer for them.
+setFrameworkContext({
+  roots: clientRoots,
+  canAsk: () => !!server.server.getClientCapabilities()?.elicitation,
+  ask: async (message, options, recommended) => {
+    try {
+      const r = await server.server.elicitInput({
+        message,
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            language: {
+              type: 'string', title: 'Test framework', enum: options, enumNames: options.map((o) => LANGUAGE_LABELS[o]),
+              ...(recommended ? { default: recommended } : {}),
+            },
+          },
+          required: ['language'],
+        },
+      }, { timeout: 10 * 60_000 });
+      if (r.action !== 'accept') return 'declined';
+      const lang = (r.content as { language?: string } | undefined)?.language;
+      return options.find((o) => o === lang);
+    } catch {
+      return undefined; // the client could not ask: the answer then tells the agent to ask
+    }
+  },
+  cloudProject: async () => {
+    const me = await getMyAccountInfo();
+    let host = getActiveUrl();
+    try { host = new URL(host).host; } catch { /* keep as is */ }
+    return `${host}/${me.project?.name ?? 'unknown'}`;
+  },
+});
 function startDebugSession(): void {
   if (getRemediationSession()) return; // turned off and on again: the same session continues
   const s = startRemediationSession({
@@ -209,8 +246,11 @@ function startDebugSession(): void {
   );
 }
 if (debugMode) startDebugSession();
+// Workflow tools check their dependencies against the real server, not the capture object they registered through.
+setLiveServer(server);
 const captured = captureRegistrations(modules);
-setToolCatalog(captured.tools); // get_server_info reports real per-area counts from this
+// get_server_info reports real per-area counts from this; Digital.ai's internal tools count only when loaded.
+setToolCatalog(captured.tools.filter((t) => toolsetSelection.internal || !INTERNAL_TOOLS.includes(t.name)));
 // Update check (on unless MCP_UPDATE_CHECK=false): the first successful tool result after a newer release was found
 // carries a notice, at most once a day. Placeholders are skipped (their reply is guidance for the next call), and the
 // notice goes OUTSIDE the debug instrumentation so the event log measures the tool's own response.

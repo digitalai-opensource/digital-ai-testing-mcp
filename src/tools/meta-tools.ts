@@ -341,7 +341,7 @@ export function registerMetaTools(server: McpServer): void {
 
   server.tool(
     'check_workflow_readiness',
-    'Returns a structured readiness report for all six workflow tools (create_poc, close_poc, delete_poc, setup_project, close_project_resources, teardown_project). ' +
+    'Returns a structured readiness report for the workflow tools (setup_project, close_project_resources, teardown_project; and Digital.ai’s internal evaluation-project tools when loaded). ' +
     'For each workflow, reports whether the tool itself is registered and whether every tool it depends on ' +
     '(read and write) is available in the current runtime. ' +
     'Call this first when diagnosing workflow execution failures — a stale build is the most common cause of missing tools. ' +

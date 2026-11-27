@@ -122,10 +122,18 @@ export interface WorkflowReadinessResult {
  *  Uses _registeredTools (plain object, keys = tool names) which is populated
  *  synchronously as registerWithToolsets calls registerTool() at startup —
  *  toolset placeholders count, since they are registered under the real name. */
+// The server the client talks to. Tool modules register through captureRegistrations, so the `server` a workflow tool
+// was handed is the capture object, which holds no tools: every workflow preflight then reported all its dependencies
+// as "not registered" and refused to run (found 2026-11-27, present in 2.5.2). index.ts sets the real one here.
+let liveServer: McpServer | undefined;
+export function setLiveServer(server: McpServer | undefined): void { liveServer = server; }
+
 export function getLiveToolNames(server: McpServer): string[] {
-  const rt = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
+  const rt = ((liveServer ?? server) as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
   return rt ? Object.keys(rt) : [];
 }
+
+const INTERNAL_WORKFLOWS = ['create_poc', 'close_poc', 'delete_poc'];
 
 /** Computes readiness for one or all workflow tools against the live server registry. */
 export function computeWorkflowReadiness(
@@ -140,6 +148,8 @@ export function computeWorkflowReadiness(
 
   const result: Record<string, WorkflowReadinessResult> = {};
   for (const [wf, deps] of Object.entries(toCheck)) {
+    // Digital.ai's internal workflows (the evaluation-project tools) are reported only where they are loaded.
+    if (INTERNAL_WORKFLOWS.includes(wf) && !registered.has(wf)) continue;
     const missingRead = deps.read.filter(t => !registered.has(t));
     const missingWrite = deps.write.filter(t => !registered.has(t));
     result[wf] = {

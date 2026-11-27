@@ -18,13 +18,13 @@ public class LocaliOSTest {
         options.setCapability("digitalai:testName", "[Enter Test Name here]");
         options.setCapability("digitalai:accessKey", "[Enter Your Access key here]");
         options.setCapability("digitalai:deviceQuery", "@os='ios' and @category='[Enter PHONE/TABLET here]'");
-        options.setApp("cloud:com.experitest.ExperiBank");
-        options.setBundleId("com.experitest.ExperiBank");
+        options.setApp("[APP_CLOUD_REF]");
+        options.setBundleId("[BUNDLE_ID]");
         driver = new IOSDriver(URI.create("[Enter Instance here]/wd/hub").toURL(), options);
     }
 
     @Test
-    public void quickStartiOSNativeDemo() {
+    public void [TEST_METHOD]() {
         // [BEGIN_DEMO_STEPS]
         new LoginScreen(driver).login("company", "company")
             .makePayment()
