@@ -40,6 +40,7 @@
     "lint": "eslint src/**/*.ts tests/**/*.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:app-exploration": "vitest run tests/app-exploration.test.ts",
     "test:framework-choice": "vitest run tests/framework-choice.test.ts",
     "test:offline": "vitest run --project offline",
     "test:api": "vitest run --project api",

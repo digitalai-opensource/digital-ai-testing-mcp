@@ -8,7 +8,7 @@
 
 Talk to your Digital.ai Testing device farm from your AI assistant. This MCP (Model Context Protocol) server connects AI clients such as Claude, GitHub Copilot and Cursor to Digital.ai Testing, so you can ask in plain language to find devices, install apps, explore an app on a real device, generate tests, run test suites, investigate failures and compare performance.
 
-It provides **227 tools**, **2 resources** and **6 prompts** across 28 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
+It provides **229 tools**, **2 resources** and **6 prompts** across 28 capability areas: device management, test execution (including Espresso, XCUITest, Maestro and Playwright test runs), app lifecycle, reporting and root-cause analysis, analytics, performance, project administration, interactive mobile inspection, interactive browser inspection, and more.
 
 ---
 
@@ -718,7 +718,7 @@ The server follows the work as it happens: find a device, **explore** an app or 
 
 ### All capability areas
 
-227 tools across 28 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
+229 tools across 28 capability areas. The complete per-tool reference — descriptions, filters, access requirements and usage notes — is in **[docs/tools.md](docs/tools.md)**.
 
 | Area | Tools | Highlights |
 |---|---|---|
@@ -745,7 +745,7 @@ The server follows the work as it happens: find a device, **explore** an app or 
 | [Workflows](docs/tools.md#workflows) | 3 | Project lifecycle orchestration (set up, release, tear down) |
 | [Boilerplate Generation](docs/tools.md#boilerplate-generation) | 4 | The framework structure of Appium and Selenium test projects (Java JUnit 5, Java TestNG, Node.js, Python, Robot Framework, Playwright) in the framework you choose, reporting the real outcome; your app's steps are written from a live inspection; Test Orchestrator agent install; validate scripts before delivery |
 | [Remote Debug](docs/tools.md#remote-debug) | 1 | Connect a cloud Android or iOS device as if it were attached locally (ADB / usbmuxd) |
-| [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 30 | AI-driven live device interaction — screenshots, element discovery, full gesture set, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay projection, audio play/record, mock biometric authentication |
+| [Mobile Inspection Sessions](docs/tools.md#mobile-inspection-sessions) | 32 | AI-driven live device interaction and app exploration (map your app’s screens and verified locators in the background, beta) — screenshots, element discovery, full gesture set, keys, app/device control, webview contexts, device log, HAR/log capture, network, camera injection, Android Auto / CarPlay projection, audio play/record, mock biometric authentication |
 | [Web Inspection Sessions](docs/tools.md#web-inspection-sessions) | 9 | AI-driven live browser interaction — navigate, Shadow DOM element discovery, CSS selector verification, browser-neutral Selenium script generation |
 | [Performance Comparison](docs/tools.md#performance-comparison) | 4 | Two-set Speed Index comparison with confound detection, MAD outlier exclusion, and fresh-sample generation |
 | [Usage Reports](docs/tools.md#usage-reports) | 3 | Platform usage-report CSV export and in-memory aggregation — device reservations, users/devices/browser usage, user statistics, license usage; multi-section CSVs with User Tag, Device Tag and Device Group columns (tag/group lists are split when grouping), 2-year retention (platform 25.9+); large unfiltered exports run only after you explicitly agree (`confirmLargeExport`) *(Cloud Admin)* |
@@ -1227,7 +1227,7 @@ On Windows with Docker, this usually means the `--env-file` path was stored with
 Run this sequence:
 
 ```
-1. get_server_info           — confirm tool count (expect 227) and active profile
+1. get_server_info           — confirm tool count (expect 229) and active profile
 2. check_workflow_readiness  — which dependency tools are present or missing
 3. check_connectivity        — confirm the backend API is reachable
 ```
@@ -1237,7 +1237,7 @@ Run this sequence:
 ```json
 {
   "allWorkflowsReady": true,
-  "registeredToolCount": 227,
+  "registeredToolCount": 229,
   "workflows": {
     "setup_project":           { "ready": true, "missingRead": [], "missingWrite": [] },
     "close_project_resources": { "ready": true, "missingRead": [], "missingWrite": [] }

@@ -33,6 +33,7 @@ import {
   type RegisterFn,
   type ToolsetController,
 } from '../src/utils/toolsets.js';
+import { registerExplorationTools } from '../src/tools/exploration-tools.js';
 import { setLiveServer } from '../src/utils/tool-registry.js';
 import { makeToolsetTools } from '../src/tools/toolset-tools.js';
 import { registerUserTools } from '../src/tools/user-tools.js';
@@ -78,7 +79,7 @@ function modules(getController: () => ToolsetController | undefined): Array<[str
     ['test-views', registerTestViewTools], ['resources', registerResources], ['prompts', registerPrompts],
     ['workflows', registerWorkflowTools], ['boilerplate', registerBoilerplateTools], ['agents', registerAgentTools],
     ['regions', registerRegionTools], ['nv-servers', registerNvServerTools], ['transactions', registerTransactionTools],
-    ['coverage', registerCoverageTools], ['debug', registerDebugTools], ['inspection', registerInspectionTools],
+    ['coverage', registerCoverageTools], ['debug', registerDebugTools], ['inspection', registerInspectionTools], ['exploration', registerExplorationTools],
     ['web-inspection', registerWebInspectionTools], ['performance', registerPerformanceTools], ['usage-reports', registerUsageReportTools],
     ['test-runs', registerTestRunTools], ['report', registerReportTools], ['meta', registerMetaTools], ['toolsets', makeToolsetTools(getController)],
   ];

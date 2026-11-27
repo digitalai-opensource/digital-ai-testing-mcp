@@ -224,7 +224,7 @@ let localClient: () => boolean = () => false;
  * in a coding agent every report answer carried about seven lines to read and discard (UAT 2026-11-24).
  */
 export function setLocalClientProvider(fn: (() => boolean) | null): void { localClient = fn ?? (() => false); }
-const isLocalClient = (): boolean => { try { return localClient(); } catch { return false; } };
+export const isLocalClient = (): boolean => { try { return localClient(); } catch { return false; } };
 
 export const SHARED_REPORT_SUBFOLDER = 'digital-ai-reports';
 export const reportTempDir = () => join(tmpdir(), 'digital-ai-testing-reports');

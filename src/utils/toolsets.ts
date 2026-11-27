@@ -101,7 +101,7 @@ export const TOOLSETS: Record<string, { modules: string[]; description: string }
   apps: { modules: ['applications', 'repository', 'provisioning-profiles'], description: 'application repository, file repository, provisioning profiles' },
   reporting: { modules: ['reporting', 'test-views', 'coverage'], description: 'test reports, analytics, root-cause analysis, test views, coverage, the test report recipes' },
   performance: { modules: ['transactions', 'performance', 'nv-servers'], description: 'performance transactions and comparisons, NV servers, performance overview report' },
-  inspection: { modules: ['inspection', 'web-inspection', 'debug'], description: 'live device and browser inspection sessions, Android Auto/CarPlay, remote debug' },
+  inspection: { modules: ['inspection', 'web-inspection', 'debug', 'exploration'], description: 'live device and browser inspection sessions, app exploration, Android Auto/CarPlay, remote debug' },
   authoring: { modules: ['boilerplate', 'test-runs'], description: 'test boilerplate, Espresso/XCUITest/Maestro test runs' },
   browsers: { modules: ['browsers'], description: 'browser listing and Selenium sessions' },
   admin: { modules: ['users', 'projects', 'backup', 'usage-reports', 'workflows'], description: 'users, projects, backups, usage reports, usage, utilization and license reports, project setup workflows' },

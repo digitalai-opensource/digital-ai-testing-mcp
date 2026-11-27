@@ -28,6 +28,7 @@ import { registerTransactionTools } from './tools/transaction-tools.js';
 import { registerCoverageTools } from './tools/coverage-tools.js';
 import { registerDebugTools } from './tools/debug-tools.js';
 import { registerInspectionTools } from './tools/inspection-tools.js';
+import { registerExplorationTools } from './tools/exploration-tools.js';
 import { registerWebInspectionTools } from './tools/web-inspection-tools.js';
 import { registerPerformanceTools } from './tools/performance-tools.js';
 import { registerUsageReportTools } from './tools/usage-report-tools.js';
@@ -112,7 +113,8 @@ TEST-AUTHORING POLICY — read this BEFORE you plan or create any test for an ap
 1. Decide the mode FIRST, before calling any tool or writing any file:
    • INTERACTIVE (the default whenever intent is vague, you lack the app's source code, or the user says anything like "let's decide as we go"): call start_inspection_session, capture REAL element IDs via get_element_tree / open_mobile_studio, and build steps from those.
    • AUTONOMOUS (only when intent is step-specific AND you already have a real selector source — captured inspection IDs, or authoritative app source in the workspace): use get_test_boilerplate for the framework STRUCTURE (its steps are placeholders) and write the steps from that source.
-2. PROHIBITED, regardless of how the request is phrased: hand-writing or generating a test file with invented or placeholder element IDs (e.g. nav_catalog, home_container), guessed XPaths, or fabricated credentials, and presenting it as a finished test. A test built without real, inspection-sourced (or source-derived) selectors is non-functional — do not deliver it. Writing the file yourself instead of calling get_test_boilerplate does NOT exempt you from this.
+2. CREDENTIALS: never repeat a password or PIN the user gave you in answers, summaries or files; generated tests read them from environment variables.
+2b. PROHIBITED, regardless of how the request is phrased: hand-writing or generating a test file with invented or placeholder element IDs (e.g. nav_catalog, home_container), guessed XPaths, or fabricated credentials, and presenting it as a finished test. A test built without real, inspection-sourced (or source-derived) selectors is non-functional — do not deliver it. Writing the file yourself instead of calling get_test_boilerplate does NOT exempt you from this.
 3. If you have no selector source, you are in INTERACTIVE mode by definition — start_inspection_session first. If you are unsure which mode the user wants, ASK before calling any tool. A test-type label picked from a menu ("login test", "smoke", "e2e") is a category, not a specification.
 4. Before you present or save ANY test — generated here OR written by hand — run validate_test_script on it. If it flags placeholder selectors, a scaffold fail-guard, or placeholder credentials, the test is not runnable; fix it before delivering.
 5. FRAMEWORK AND DEMO: the USER chooses the test framework/language, once per project — never pick one; get_test_boilerplate / get_web_test_boilerplate return the project analysis and a recommendation first, ask the user, then pass language with confirmedByUser:true. ExperiBank (com.experitest.ExperiBank, "SeeTestDemoApp") is the sample app every environment starts with: get_test_boilerplate demo:true returns its runnable test ONLY when the user asks to build against ExperiBank (training, trying the platform). Never use it as a stand-in, example or starting point for the user's own app, and never fall back to it when their app is not found.
@@ -166,6 +168,7 @@ const modules: Array<[string, RegisterFn]> = [
   ['coverage', registerCoverageTools],
   ['debug', registerDebugTools],
   ['inspection', registerInspectionTools],
+  ['exploration', registerExplorationTools],
   ['web-inspection', registerWebInspectionTools],
   ['performance', registerPerformanceTools],
   ['usage-reports', registerUsageReportTools],

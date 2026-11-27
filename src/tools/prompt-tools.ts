@@ -525,7 +525,7 @@ export function registerPrompts(server: McpServer): void {
             '8. take_inspection_screenshot — confirm the expected screen; get_element_tree — capture locators for it.',
             '9. Walk through the flow with me: type_into_element / tap_element / swipe_screen, screenshot after each action, and narrate what you',
             '   see. Verify the success path and at least one failure path (e.g. wrong credentials) so the test has real assertions.',
-            '   Ask me for any login details — never invent credentials.',
+            '   Ask me for any login details — never invent credentials, and never repeat a password or PIN I give you in your answers or files (the test reads them from environment variables).',
             '',
             '   STEP CONFIRMATION GATE — after EVERY completed scenario:',
             '     a. Show me a numbered list of all steps captured so far.',

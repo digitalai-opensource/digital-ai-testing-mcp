@@ -14,6 +14,7 @@ import { staleBuildRemedy, serverFsInstallNotice, serverFsProjectDirParam } from
 import { isLocalFilesystem } from '../utils/deployment-mode.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { decideFramework, MOBILE_LANGUAGES, WEB_LANGUAGES } from '../utils/framework-choice.js';
+import { isLocalClient } from './report-tools.js';
 import {
   ACCESS_KEY_ENV,
   JAVA_KEY_EXPR,
@@ -1098,6 +1099,11 @@ export function webBrowserGuidance(targetBrowser: string | undefined, language: 
     : 'Choose the browser at run time with the BROWSER environment variable: chrome | firefox | MicrosoftEdge | safari | opera (default chrome). The same script runs on each.';
 }
 
+/** For a client that cannot run code on the user's machine (a chat client in a cloud sandbox, e.g. Claude Desktop). */
+const RUN_NOTE = 'This client cannot run the test on the user’s machine. Tell the user so, and that running and validating it is seamless ' +
+  'from an IDE agent such as Claude Code opened on the test project; give them the run command meanwhile. Never repeat a ' +
+  'credential the user typed (a password, a PIN) in your answers or files: the test reads it from environment variables.';
+
 export function registerBoilerplateTools(server: McpServer): void {
   server.tool(
     'get_test_boilerplate',
@@ -1711,6 +1717,8 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
         const structured = {
           appUnderTest,
           runnable: demo,
+          // Desktop test 2026-11-27: the agent could not run the test it wrote (a cloud sandbox) and said only that.
+          ...(isLocalClient() ? {} : { runNote: RUN_NOTE }),
           framework: {
             language, choice: choice.note,
             ...(choice.addToExisting ? { addedToExistingFramework: true, note: 'The project already has this framework: only test/screen files are returned; compare referenceFiles with your build files for missing dependencies.' } : {}),
@@ -1773,6 +1781,7 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
           demo ? `# DEMO — ExperiBank sample app: ${platformLabel} — ${langLabel[language]} (${serverModeLabel})` : `# ${platformLabel} — ${langLabel[language]} framework structure (${serverModeLabel})`,
           '',
           `> **Framework:** ${choice.note}`,
+          ...(isLocalClient() ? [] : [`> **Running it:** ${RUN_NOTE}`]),
           `> **Setup:** ${setupNote(language, isAppiumOss, projectType, resolved.filter((f) => !f.isInstructions).map((f) => f.filename))}`,
           `> **App:** ${appNote(platform, vars.packageName, vars.bundleIdentifier, vars.mainActivity, resolvedFromAppId, demo)}`,
           `> **Device query:** ${regionLabel}${region ? '' : ' — re-call with region=<value> from find_available_device to scope to healthy devices only.'}`,

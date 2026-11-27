@@ -520,3 +520,15 @@ The user chooses the test framework once per project (see
   when the server runs on your machine (the npm install) and the client shares its workspace folder with the server
   (Claude Code, VS Code). Claude Desktop does not share a folder, and a server in Docker cannot read your disk, so there
   the recommendation comes from the cloud project alone.
+
+## 41. App Exploration (Beta): What It Does Not Do Yet
+
+`start_app_exploration` maps an app's screens in the background. In this beta:
+
+- **Verified on Android (Appium Server) only.** iOS and Appium Grid projects are not yet verified.
+- **Web content is not crawled.** Screens inside a web view are listed as they appear in the native tree; the crawler does not switch contexts.
+- **Nothing is typed.** Forms are opened (when write paths are allowed) but never filled or submitted, so screens behind a filled form are not reached.
+- **Logins come from environment variables** named in the call. Storing test logins in the OS keychain is planned.
+- **Destructive actions are never tapped**, whatever the session setting: they are listed for you to confirm one by one.
+- **An exploration lives in the server process.** Restarting the server or the AI client ends it.
+- **Screens are told apart by structure.** Two visits to one screen in different states (an expanded list, a filled field) can appear as two screens.
