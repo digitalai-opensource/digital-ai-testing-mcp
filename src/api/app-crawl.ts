@@ -8,7 +8,7 @@
  * taps always need the user's confirmation one by one. A login is done only with a test login the user named.
  */
 import { createInspectionSession, quitInspectionSession, getPageSource, findFirstElementId, tapElement, typeIntoElement, clearElement, pressBack, launchApp, appControl, getForegroundActivity, getForegroundPackage, getForegroundBundleId, adbShell } from './webdriver.js';
-import { parseScreen, screenSignature, isLoading, hasWords, similarScreen, baseLabel, distinctTitle, containerOf, backControl, systemDialogAnswer, versionFromDumpsys, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
+import { parseScreen, screenSignature, isLoading, hasWords, similarScreen, baseLabel, distinctTitle, containerOf, backControl, systemDialogAnswer, versionFromDumpsys, crashDialog, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
 
 export interface ExploreTarget {
   platform: ExplorePlatform;
@@ -271,13 +271,15 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   // 2026-11-27) a session started on the launcher and a launch sometimes left it there.
   // Whether a read is of the app under test. Nothing outside it is ever recorded or tapped: on one phone the app left the
   // screen right after the login, and an earlier build recorded the launcher as the home screen and tapped its icons.
-  const inApp = (r: { pkg: string | null }) => !r.pkg || r.pkg === target.appId;
+  // A crash dialog over the app's window is not the app either (it can carry the app's package).
+  const inApp = (r: { pkg: string | null; els?: ScreenElement[] }) => (!r.pkg || r.pkg === target.appId) && !(r.els && crashDialog(r.els));
   const launchInFront = async (): Promise<Read> => {
     let s: Read | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       await launchApp(h, target.appId, target.activity).catch(() => undefined);
       s = await settle(SETTLE_LAUNCH_MS);
-      if (!s.pkg || s.pkg === target.appId) return s;
+      if (inApp(s)) return s;
+      if (crashDialog(s.els)) await appControl(h, 'terminate', target.appId).catch(() => undefined);
     }
     return s!;
   };
@@ -302,7 +304,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   };
 
   const record = (s: Awaited<ReturnType<typeof read>> & Partial<Pick<Read, 'settleMs' | 'settled'>>, path: ManifestStep[], login?: ManifestScreen['login']): ManifestScreen => {
-    if (!inApp(s)) throw new Error(`refused to record a screen of ${s.pkg}: not the app under test`);
+    if (!inApp(s)) throw new Error(crashDialog(s.els) ? `the app crashed ("${crashDialog(s.els)}") on ${manifest.device.name}` : `refused to record a screen of ${s.pkg}: not the app under test`);
     const { taps, unvisited } = candidateTaps(s.els, opts.allowWritePaths);
     const assertable = s.els.filter((e) => (e.id || (e.text && e.text.length <= 60)) && !/EditText|TextField/.test(e.type))
       .map((e) => ({ label: labelOf(e), locator: locatorFor(e, p) })).filter((a): a is { label: string; locator: Locator } => !!a.locator).slice(0, 25);
@@ -354,6 +356,14 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
       if (!next) { nav.note = 'not found when tapped'; continue; }
       nav.settleMs = next.settleMs;
       if (!next.settled) nav.note = `the screen kept changing for ${Math.round(next.settleMs / 1000)} s (animation or endless loader): recorded as it was then`;
+      const crashed = crashDialog(next.els);
+      if (crashed) {
+        nav.note = `crashes the app ("${crashed}"): not followed`;
+        manifest.notes.push(`Tapping "${nav.label}" on "${screen.title}" crashed the app ("${crashed}").`);
+        await appControl(h, 'terminate', target.appId).catch(() => undefined);
+        await relaunch(screen.path);
+        continue;
+      }
       if (next.pkg && next.pkg !== target.appId) {
         nav.note = `opens another app (${next.pkg}): not followed`;
         await relaunch(screen.path);
@@ -399,11 +409,16 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     let first: Awaited<ReturnType<typeof read>> = await settle(SETTLE_LAUNCH_MS);
     // The app must be in front before anything is recorded: one live run (2026-11-27) read the phone's launcher at the
     // start. Launch it once more; if it is still not in front, stop rather than map another app.
-    if (first.pkg && first.pkg !== target.appId) {
-      manifest.notes.push(`At the start ${first.pkg} was in front, not the app; it was launched again.`);
+    if (!inApp(first)) {
+      const crashed = crashDialog(first.els);
+      manifest.notes.push(crashed ? `At the start the phone showed "${crashed}"; the app was launched again.` : `At the start ${first.pkg} was in front, not the app; it was launched again.`);
+      if (crashed) await appControl(h, 'terminate', target.appId).catch(() => undefined);
       first = await launchInFront();
-      if (first.pkg && first.pkg !== target.appId) {
-        manifest.stoppedBecause = `the app did not come to the front (${first.pkg} stayed in front): it may have crashed at start; try another device`;
+      if (!inApp(first)) {
+        const again = crashDialog(first.els);
+        manifest.stoppedBecause = again
+          ? `the app crashed on ${manifest.device.name} ("${again}")${manifest.app.version ? ` with version ${manifest.app.version}` : ''}: try another phone or another build`
+          : `the app did not come to the front (${first.pkg} stayed in front): it may have crashed at start; try another device`;
         return manifest;
       }
     }

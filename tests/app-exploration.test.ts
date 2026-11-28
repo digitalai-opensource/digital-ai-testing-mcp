@@ -459,3 +459,14 @@ describe('action rows are not tab bars', () => {
     assert.equal(bar.find((e) => e.text === 'Search')!.inNavigation, 'tabs');
   });
 });
+
+describe('crash dialogs', () => {
+  it('recognises Android crash and not-responding dialogs, not ordinary text', async () => {
+    const { crashDialog } = await import('../src/utils/app-exploration.js');
+    const t = (s: string) => parseScreen(`<hierarchy><android.widget.TextView class="android.widget.TextView" text="${s}" bounds="[0,0][500,90]" clickable="false" enabled="true"/></hierarchy>`, 'android');
+    assert.equal(crashDialog(t('Maps keeps stopping')), 'Maps keeps stopping');
+    assert.equal(crashDialog(t('Bank isn’t responding')), 'Bank isn’t responding');
+    assert.equal(crashDialog(t('Your transfer has stopped at the limit for today')), undefined);
+    assert.equal(crashDialog(t('Welcome')), undefined);
+  });
+});

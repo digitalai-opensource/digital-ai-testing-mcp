@@ -355,6 +355,15 @@ export function systemDialogAnswer(elements: ScreenElement[], foreground: string
   return pick ? { element: pick, answer: label(pick) } : undefined;
 }
 
+/**
+ * Android's crash / not-responding dialog ("Maps keeps stopping", "… has stopped", "… isn't responding"). It sits over the
+ * app's own window, so the foreground package can still be the app's (Google Maps 11.45 on a Galaxy S20, 2026-11-27: the
+ * crawl recorded the crash dialog as the start screen). Returns the dialog's text, or undefined.
+ */
+export function crashDialog(elements: ScreenElement[]): string | undefined {
+  return elements.map((e) => (e.text ?? '').trim()).find((t) => /(keeps stopping|has stopped|isn.t responding|stopped working)$/i.test(t));
+}
+
 /** The versionName of an Android package from `dumpsys package <pkg>` output, if any. */
 export function versionFromDumpsys(output: string): string | undefined {
   return /versionName=([^\s]+)/.exec(output)?.[1];
