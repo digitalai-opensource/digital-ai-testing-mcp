@@ -146,6 +146,11 @@ const NAV_WORDS = /^(back|close|cancel|done|more|menu|settings|details|home|prof
 const DESTRUCTIVE = /\b(delete|remove|erase|reset|wipe|close account|deactivate|unsubscribe|uninstall|sign ?out|log ?out|logout)\b/i;
 const WRITE = /\b(pay|send|transfer|buy|purchase|order|checkout|save|submit|confirm|post|publish|call|dial|withdraw|deposit|book|subscribe|approve|accept|decline|share|install|update|apply)\b/i;
 
+/** Whether an element carries words a person reads (a label of only "▾", "." or "›" is no label). */
+export function hasWords(e: ScreenElement): boolean {
+  return /[\p{L}\p{N}]/u.test(e.text ?? e.description ?? e.innerText ?? '');
+}
+
 /**
  * A screen still loading: a progress bar / activity indicator, or a "Loading…" / "Please wait" text. The crawler keeps
  * reading until it is gone (or its settle limit passes), so a half-drawn screen is never recorded as a screen of its own.
@@ -159,7 +164,8 @@ const VIEW_PHRASE = /\b(tap|click|touch|press) (here )?to (view|see|open|show|re
 
 /** Whether the crawler may tap an element by itself, and why. */
 export function classifyTap(e: ScreenElement, allowWritePaths = false): { kind: TapClass; reason: string } {
-  const label = (e.text ?? e.description ?? e.innerText ?? '').trim();
+  // Punctuation only ("▾", ".") is no label: such a control's effect cannot be read from the screen.
+  const label = hasWords(e) ? (e.text ?? e.description ?? e.innerText ?? '').trim() : '';
   if (/EditText|TextField|SecureTextField|SearchField|TextView$/.test(e.type) && /Edit|Field/.test(e.type)) return { kind: 'input', reason: 'a text field: typing is never done without the user' };
   if (e.checkable) return { kind: 'action', reason: 'a switch or check box changes a setting' };
   if (!e.clickable || !e.enabled) return { kind: 'unknown', reason: 'not tappable' };

@@ -8,7 +8,7 @@
  * taps always need the user's confirmation one by one. A login is done only with a test login the user named.
  */
 import { createInspectionSession, quitInspectionSession, getPageSource, findFirstElementId, tapElement, typeIntoElement, pressBack, launchApp, appControl, getForegroundActivity, getForegroundPackage } from './webdriver.js';
-import { parseScreen, screenSignature, isLoading, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
+import { parseScreen, screenSignature, isLoading, hasWords, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
 
 export interface ExploreTarget {
   platform: ExplorePlatform;
@@ -19,6 +19,9 @@ export interface ExploreTarget {
   /** Repository app id and version, recorded in the manifest. */
   repositoryId?: number;
   version?: string;
+  /** Pins the installed build (the platform picks a build by package + these, never by repository id). */
+  appReleaseVersion?: string;
+  appBuildVersion?: string;
   deviceQuery?: string;
   region?: string;
 }
@@ -31,7 +34,13 @@ export interface ExploreOptions {
   allowWritePaths: boolean;
   /** A test login, read by the server (never through the model). */
   login?: { username: string; password: string; source: string };
+  /** Where the login comes from, by NAME only (kept in the manifest so a resume can read it again). */
+  loginRef?: LoginRef;
+  /** Continue this manifest: screens already mapped are kept; its open routes are followed. */
+  resume?: Manifest;
 }
+
+export interface LoginRef { testLogin?: string; userEnv?: string; passwordEnv?: string }
 
 export interface ManifestStep { label: string; locator: Locator }
 export interface ManifestScreen {
@@ -43,7 +52,7 @@ export interface ManifestScreen {
   elements: number;
   /** Locators worth asserting on: unique ids and visible texts. */
   assertable: Array<{ label: string; locator: Locator }>;
-  navigation: Array<{ label: string; locator: Locator | null; leadsTo?: string; note?: string; settleMs?: number }>;
+  navigation: Array<{ label: string; locator: Locator | null; leadsTo?: string; note?: string; settleMs?: number; unlabeled?: true }>;
   /** How long the screen took to stop changing after the tap that first reached it (ms). */
   settleMs?: number;
   /** It never stopped changing within the settle limit (animation, ticker, endless loader). */
@@ -52,8 +61,8 @@ export interface ManifestScreen {
   login?: 'done' | 'needed';
 }
 export interface Manifest {
-  app: { platform: ExplorePlatform; appId: string; activity?: string; repositoryId?: number; version?: string };
-  device: { name: string; os: string; version: string };
+  app: { platform: ExplorePlatform; appId: string; activity?: string; repositoryId?: number; version?: string; appReleaseVersion?: string; appBuildVersion?: string };
+  device: { name: string; os: string; version: string; serial?: string };
   startedAt: string;
   finishedAt?: string;
   stoppedBecause: string;
@@ -62,6 +71,12 @@ export interface Manifest {
   notes: string[];
   /** Settle times of every transition, for the wait timeouts of generated tests. */
   timing?: { transitions: number; medianSettleMs: number; slowestSettleMs: number; unstable: number };
+  /** Settings a resume reuses: login source (names only), write-path answer, depth. */
+  settings?: { allowWritePaths: boolean; maxDepth: number; loginRef?: LoginRef; deviceQuery?: string; region?: string };
+  /** Routes seen but not followed when the run stopped: what a resume continues with. */
+  frontier?: Array<{ screen: string; label: string }>;
+  /** How many runs built this manifest (1 + resumes). */
+  runs?: number;
 }
 
 /** Settle reads: first look after this long, then every poll until two reads match; give up after the max. */
@@ -82,22 +97,53 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   const deadline = started + opts.maxMinutes * 60_000;
   const p = target.platform;
   progress('starting an inspection session');
-  const session = await createInspectionSession({
-    platform: p, deviceQuery: target.deviceQuery, region: target.region, testName: `App exploration: ${target.appId}`,
+  // A resume asks for the phone of the earlier run first: another model or OS version draws other element trees, and
+  // the stored screens would not be recognised (live 2026-11-27: a resume on another phone mapped every screen again).
+  const sameDevice = opts.resume?.device.serial && !target.deviceQuery ? `@serialnumber='${opts.resume.device.serial.replace(/'/g, '')}'` : undefined;
+  const open = (deviceQuery: string | undefined) => createInspectionSession({
+    platform: p, deviceQuery, region: deviceQuery === sameDevice ? undefined : target.region, testName: `App exploration: ${target.appId}`,
     ...(p === 'android' ? { app: `cloud:${target.appId}${target.activity ? `/${target.activity}` : ''}`, appPackage: target.appId, ...(target.activity ? { appActivity: target.activity } : {}) } : { app: `cloud:${target.appId}`, appPackage: target.appId }),
+    appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion,
   });
+  let deviceNote: string | undefined;
+  let session;
+  if (sameDevice) {
+    session = await open(sameDevice).catch((e: Error) => { deviceNote = `The earlier run's phone was not available (${e.message.slice(0, 120)}); another phone was used, so some stored screens may be mapped again.`; return undefined; });
+  }
+  session ??= await open(target.deviceQuery);
   const h = session.handle;
-  const manifest: Manifest = {
-    app: { platform: p, appId: target.appId, activity: target.activity, repositoryId: target.repositoryId, version: target.version },
-    device: { name: session.deviceName, os: session.deviceOs, version: session.deviceVersion },
-    startedAt: new Date(started).toISOString(), stoppedBecause: 'finished: every reachable screen within the limits was visited', screens: [], taps: 0, notes: [],
+  const resuming = !!opts.resume;
+  const manifest: Manifest = opts.resume
+    ? { ...structuredClone(opts.resume), device: { name: session.deviceName, os: session.deviceOs, version: session.deviceVersion, ...(session.deviceUDID ? { serial: session.deviceUDID } : {}) }, stoppedBecause: 'finished: every reachable screen within the limits was visited', frontier: undefined, runs: (opts.resume.runs ?? 1) + 1 }
+    : {
+        app: { platform: p, appId: target.appId, activity: target.activity, repositoryId: target.repositoryId, version: target.version, appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion },
+        device: { name: session.deviceName, os: session.deviceOs, version: session.deviceVersion, ...(session.deviceUDID ? { serial: session.deviceUDID } : {}) },
+        startedAt: new Date(started).toISOString(), stoppedBecause: 'finished: every reachable screen within the limits was visited', screens: [], taps: 0, notes: [], runs: 1,
+      };
+  manifest.settings = { allowWritePaths: opts.allowWritePaths, maxDepth: opts.maxDepth, ...(opts.loginRef ? { loginRef: opts.loginRef } : {}), ...(target.deviceQuery ? { deviceQuery: target.deviceQuery } : {}), ...(target.region ? { region: target.region } : {}) };
+  if (opts.resume && opts.resume.device.name !== session.deviceName) manifest.notes.push(`Run ${manifest.runs} used ${session.deviceName} (earlier runs: ${opts.resume.device.name}).`);
+  if (deviceNote) manifest.notes.push(deviceNote);
+  const screensAtStart = manifest.screens.length;
+  const bySig = new Map<string, ManifestScreen>(manifest.screens.map((x) => [x.signature, x]));
+  // On a resume the same screen can have another structure (another phone, another OS build): it also counts as known
+  // when its title, its activity and its navigation labels match a stored screen. Only on a resume: within one run the
+  // structure is stable, and two screens with one title (two "Details") must stay apart.
+  const navKey = (els: ScreenElement[]) => candidateTaps(els, opts.allowWritePaths).taps.map((t) => labelOf(t.element)).sort().join('|');
+  const known = (r: { sig: string; els: ScreenElement[]; fg: string | null }): ManifestScreen | undefined => {
+    const exact = bySig.get(r.sig);
+    if (exact || !resuming) return exact;
+    const title = screenTitle(r.els);
+    const key = navKey(r.els);
+    const match = manifest.screens.find((x) => x.title === title && x.foreground === r.fg && x.navigation.map((n) => n.label.replace(/ \(\+\d+ similar rows\)$/, '')).sort().join('|') === key);
+    if (match) bySig.set(r.sig, match);
+    return match;
   };
-  const bySig = new Map<string, ManifestScreen>();
+  const isScreen = (r: { sig: string; els: ScreenElement[]; fg: string | null }, x: ManifestScreen) => r.sig === x.signature || known(r) === x;
   let stop: string | null = null;
   const overBudget = () => {
     if (signal.aborted) return 'cancelled';
     if (Date.now() > deadline) return `the time budget (${opts.maxMinutes} min) was reached`;
-    if (manifest.screens.length >= opts.maxScreens) return `the screen budget (${opts.maxScreens}) was reached`;
+    if (manifest.screens.length - screensAtStart >= opts.maxScreens) return `the screen budget (${opts.maxScreens}${resuming ? ' new screens in this run' : ''}) was reached`;
     return null;
   };
 
@@ -176,7 +222,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
       .map((e) => ({ label: labelOf(e), locator: locatorFor(e, p) })).filter((a): a is { label: string; locator: Locator } => !!a.locator).slice(0, 25);
     const screen: ManifestScreen = {
       signature: s.sig, title: screenTitle(s.els), foreground: s.fg, path, elements: s.els.length, assertable,
-      navigation: taps.map((t) => ({ label: labelOf(t.element) + (t.collapsed ? ` (+${t.collapsed} similar rows)` : ''), locator: locatorFor(t.element, p) })),
+      navigation: taps.map((t) => ({ label: labelOf(t.element) + (t.collapsed ? ` (+${t.collapsed} similar rows)` : ''), locator: locatorFor(t.element, p), ...(hasWords(t.element) ? {} : { unlabeled: true as const }) })),
       notVisited: unvisited.map((u) => ({ label: labelOf(u.element), kind: u.kind, reason: u.reason })).slice(0, 40),
       ...(login ? { login } : {}),
       ...(s.settleMs !== undefined && path.length ? { settleMs: s.settleMs } : {}),
@@ -191,12 +237,17 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   const visit = async (screen: ManifestScreen, depth: number): Promise<void> => {
     if (depth >= opts.maxDepth) { manifest.notes.push(`"${screen.title}": not explored further (depth limit ${opts.maxDepth})`); return; }
     for (const nav of screen.navigation) {
+      if (nav.leadsTo || nav.note) continue; // already followed (a resumed run)
       if ((stop = overBudget())) return;
       if (!nav.locator) { nav.note = 'no stable locator: not tapped'; continue; }
       let here: Awaited<ReturnType<typeof read>> = await read();
-      if (here.sig !== screen.signature) {
+      if (!isScreen(here, screen)) {
         const back = await relaunch(screen.path);
-        if (!back || back.sig !== screen.signature) { manifest.notes.push(`"${screen.title}" could not be reached again; its remaining taps were skipped`); return; }
+        if (!back || !isScreen(back, screen)) {
+          manifest.notes.push(`"${screen.title}" could not be reached again${resuming ? ' by its stored route (the app may have changed)' : ''}; its remaining taps were skipped`);
+          if (resuming) for (const n of screen.navigation) if (!n.leadsTo && !n.note) n.note = 'its screen could not be reached again by the stored route';
+          return;
+        }
         here = back;
       }
       const next = await tapBy(nav.locator);
@@ -208,9 +259,17 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
         await relaunch(screen.path);
         continue;
       }
-      if (next.sig === screen.signature) { nav.note = 'stays on this screen'; continue; }
-      const known = bySig.get(next.sig);
-      if (known) { nav.leadsTo = known.title; }
+      if (isScreen(next, screen)) { nav.note = 'stays on this screen'; continue; }
+      // An unlabelled control (a drop-down arrow, a menu button) that leaves the same screen title opened a STATE of this
+      // screen (Desktop test 2026-11-27: Transfer Funds and Bill Pay were each recorded twice), not a screen of its own.
+      if (nav.unlabeled && screenTitle(next.els) === screen.title) {
+        nav.note = 'opens a state of this screen (a drop-down or menu), not a screen of its own';
+        await pressBack(h).catch(() => undefined);
+        await settle();
+        continue;
+      }
+      const seen = known(next);
+      if (seen) { nav.leadsTo = seen.title; }
       else {
         const child = record(next, [...screen.path, { label: nav.label, locator: nav.locator }]);
         nav.leadsTo = child.title;
@@ -238,23 +297,29 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     let login: ManifestScreen['login'] | undefined;
     if (loginParts(first.els)) {
       if (opts.login && await doLogin(first.els)) {
-        record(first, [], 'done');
+        if (!known(first)) record(first, [], 'done');
         login = 'done';
         first = await settle();
         if (loginParts(first.els)) manifest.notes.push(`The test login (${opts.login.source}) did not get past the login screen: check it.`);
       } else {
-        record(first, [], 'needed');
+        if (!known(first)) record(first, [], 'needed');
         manifest.stoppedBecause = 'a login screen: the app could not be explored past it without a test login';
         manifest.notes.push('Give a test login to explore past the login screen (the login is read by the server, never typed through the chat).');
         return manifest;
       }
     }
-    const root = bySig.get(first.sig) ?? record(first, []);
+    const root = known(first) ?? record(first, []);
     if (login === 'done' && root.path.length === 0) root.path = [];
-    await visit(root, 0);
+    if (resuming) {
+      // Continue every screen that still has routes to follow, nearest the start screen first.
+      const open = manifest.screens.filter((x) => x.navigation.some((n) => n.locator && !n.leadsTo && !n.note)).sort((x, y) => x.path.length - y.path.length);
+      for (const scr of open) { await visit(scr, scr.path.length); if (stop) break; }
+    } else await visit(root, 0);
     if (stop) manifest.stoppedBecause = stop;
     return manifest;
   } finally {
+    const pending = manifest.screens.flatMap((x) => x.navigation.filter((n) => n.locator && !n.leadsTo && !n.note).map((n) => ({ screen: x.title, label: n.label })));
+    if (pending.length) manifest.frontier = pending;
     if (settleTimes.length) {
       const sorted = [...settleTimes].sort((x, y) => x - y);
       manifest.timing = { transitions: sorted.length, medianSettleMs: sorted[Math.floor(sorted.length / 2)], slowestSettleMs: sorted[sorted.length - 1], unstable: unstableCount };

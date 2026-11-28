@@ -47,6 +47,9 @@ export interface InspectionSessionOptions {
   instrumentCluster?: InstrumentClusterContent;
   /** Seconds without a command before the platform ends the session (appium:newCommandTimeout). */
   idleTimeoutSeconds?: number;
+  /** Which build of the app to install when several share its package (digitalai:appReleaseVersion / appBuildVersion). */
+  appReleaseVersion?: string;
+  appBuildVersion?: string;
 }
 
 /**
@@ -157,6 +160,8 @@ export async function createInspectionSession(
     desiredCapabilities[appIdCap] = opts.appPackage;
     if (opts.appActivity && platform !== 'ios') desiredCapabilities['appActivity'] = opts.appActivity;
   }
+  if (opts.app && opts.appReleaseVersion) desiredCapabilities['digitalai:appReleaseVersion'] = opts.appReleaseVersion;
+  if (opts.app && opts.appBuildVersion) desiredCapabilities['digitalai:appBuildVersion'] = opts.appBuildVersion;
   if (opts.automotiveProjection) desiredCapabilities['digitalai:automotiveProjection'] = opts.automotiveProjection;
   if (opts.instrumentCluster) desiredCapabilities['digitalai:instrumentCluster'] = opts.instrumentCluster;
   const timeout = sessionCreateTimeoutMs(query, !!opts.automotiveProjection);

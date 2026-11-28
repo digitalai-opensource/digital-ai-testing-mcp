@@ -1,5 +1,5 @@
 import { describe, it, assert } from 'vitest';
-import { parseScreen, screenSignature, classifyTap, isLoading, candidateTaps, locatorFor } from '../src/utils/app-exploration.js';
+import { parseScreen, screenSignature, classifyTap, isLoading, hasWords, candidateTaps, locatorFor } from '../src/utils/app-exploration.js';
 
 // Page sources shaped like three different customer apps (none is the sample app): rules that fit one app only fail here.
 
@@ -110,7 +110,10 @@ describe('candidateTaps: what the crawler visits and what it only records', () =
 });
 
 import { beforeAll, afterAll } from 'vitest';
-import { startStubApi, connectTools, type StubApi, type ToolClient } from './helpers/offline.js';
+import { startStubApi, connectTools, accountInfo, type StubApi, type ToolClient } from './helpers/offline.js';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { registerExplorationTools } from '../src/tools/exploration-tools.js';
 
 describe('start_app_exploration: the user\u2019s app, its version and its OS first; never a stand-in', () => {
@@ -216,5 +219,63 @@ describe('read-only navigation by wording, and loaders (DAI Bank live run 2026-1
     assert.equal(isLoading(screen('<android.widget.TextView class="android.widget.TextView" text="Loading accounts…" bounds="[60,420][400,500]" clickable="false" enabled="true"/>')), true);
     assert.equal(isLoading(screen('<android.widget.Spinner class="android.widget.Spinner" bounds="[60,420][400,500]" clickable="true" enabled="true"/>')), false);
     assert.equal(isLoading(screen(card('Checking'))), false);
+  });
+});
+
+describe('the exact build, resuming, and unlabelled controls (Desktop test 2026-11-27)', () => {
+  let stub: StubApi;
+  let t: ToolClient;
+  const dir = mkdtempSync(join(tmpdir(), 'dai-explore-'));
+  const saved = process.env.MCP_EXPLORATION_DIR;
+  beforeAll(async () => {
+    process.env.MCP_EXPLORATION_DIR = dir;
+    stub = await startStubApi((req) => {
+      if (req.path === '/api/v1/users/my-account-info') return accountInfo('Admin', 'Mobile QA');
+      if (req.path === '/api/v1/applications/8') return { id: 8, packageName: 'com.acme.shop', mainActivity: '.Main', releaseVersion: '4.3.0', buildVersion: '12', projectsInfo: [{ id: 9, name: 'Web Team' }] };
+      if (req.path === '/api/v1/applications') return [
+        { id: 8, packageName: 'com.acme.shop', releaseVersion: '4.3.0', buildVersion: '12', projectsInfo: [{ id: 9, name: 'Web Team' }] },
+        { id: 5, packageName: 'com.acme.shop', releaseVersion: '4.2.0', buildVersion: '11', projectsInfo: [{ id: 1, name: 'Mobile QA' }] },
+      ];
+      return undefined;
+    });
+    t = await connectTools(registerExplorationTools);
+  });
+  afterAll(async () => { await t.close(); await stub.close(); if (saved === undefined) delete process.env.MCP_EXPLORATION_DIR; else process.env.MCP_EXPLORATION_DIR = saved; rmSync(dir, { recursive: true, force: true }); });
+
+  it('a build of another project is refused, naming the builds the active project can install', async () => {
+    const r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', appId: 8 });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /assigned to Web Team, not to the active project Mobile QA/);
+    assert.match(r.text, /5: version 4\.2\.0 build 11/);
+  });
+
+  it('resumeFrom: an unknown run, a finished run and a run of another platform are refused; a run with open routes continues', async () => {
+    let r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', resumeFrom: 'explore-nothere' });
+    assert.match(r.text, /no saved exploration explore-nothere/);
+    const base = { app: { platform: 'android', appId: 'com.acme.shop', activity: '.Main', version: '4.2.0', appReleaseVersion: '4.2.0', appBuildVersion: '11' }, device: { name: 'Pixel', os: 'Android', version: '14' }, startedAt: '2026-11-27T00:00:00Z', stoppedBecause: 'x', screens: [], taps: 0, notes: [], settings: { allowWritePaths: false, maxDepth: 6, loginRef: { testLogin: 'shop' } } };
+    writeFileSync(join(dir, 'explore-done1.json'), JSON.stringify(base));
+    r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', resumeFrom: 'explore-done1' });
+    assert.match(r.text, /no routes left to follow/);
+    writeFileSync(join(dir, 'explore-open1.json'), JSON.stringify({ ...base, frontier: [{ screen: 'Home', label: 'Orders' }], settings: { allowWritePaths: false, maxDepth: 6 } }));
+    r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'ios', resumeFrom: 'explore-open1' });
+    assert.match(r.text, /android app, not ios/);
+    r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', resumeFrom: 'explore-open1', outputFormat: 'json' });
+    assert.notEqual(r.res.isError, true, r.text);
+    assert.match(r.text, /"resumes":"explore-open1"/);
+    assert.match(r.text, /"releaseVersion":"4\.2\.0","buildVersion":"11"/, 'the earlier run’s build is pinned');
+  });
+
+  it('a saved run whose login is no longer saved is refused on resume, never run without it', async () => {
+    const prev = JSON.parse(readFileSync(join(dir, 'explore-done1.json'), 'utf8'));
+    writeFileSync(join(dir, 'explore-open2.json'), JSON.stringify({ ...prev, frontier: [{ screen: 'Home', label: 'Orders' }] }));
+    const r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', resumeFrom: 'explore-open2' });
+    assert.equal(r.res.isError, true);
+    assert.match(r.text, /test login|credential store/);
+  });
+
+  it('a control labelled only with punctuation has no label', () => {
+    const els = parseScreen('<hierarchy><android.view.View class="android.view.View" bounds="[0,0][100,100]" clickable="true" enabled="true" text="▾"/></hierarchy>', 'android');
+    assert.equal(hasWords(els[0]), false);
+    assert.equal(classifyTap(els[0], false).kind, 'unknown');
   });
 });
