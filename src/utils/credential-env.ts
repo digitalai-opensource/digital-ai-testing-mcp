@@ -45,6 +45,24 @@ export const ENV_EXAMPLE_FILE = {
   ].join('\n'),
 };
 
+/**
+ * The .env.example of tests written from an exploration: every variable they read, EMPTY. Desktop test 2026-11-28: the
+ * file named only the access key, so the agent wrote its own and filled in amounts nobody chose.
+ */
+export function envExampleFor(required: string[], optional: string[] = []): { filename: string; content: string } {
+  return {
+    filename: '.env.example',
+    content: [
+      '# Environment the generated tests need. Never commit real values; the user fills these in, nobody else.',
+      `# Set them in your shell or CI secrets; if you copy this to .env, add .env to .gitignore first.`,
+      `${ACCESS_KEY_ENV}=`,
+      ...required.filter((v) => v !== ACCESS_KEY_ENV).map((v) => `${v}=`),
+      ...(optional.length ? ['', '# Optional: drop-downs keep the value they show unless set to the start of an option (e.g. Checking)', ...optional.map((v) => `# ${v}=`)] : []),
+      '',
+    ].join('\n'),
+  };
+}
+
 export interface CredentialSetup {
   envVar: string;
   bash: string;

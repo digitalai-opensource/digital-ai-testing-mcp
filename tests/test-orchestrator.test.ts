@@ -136,11 +136,11 @@ describe('addOrchestrationToGradle', () => {
 describe('addOrchestrationToMaven', () => {
   const out = addOrchestrationToMaven(mavenTemplate);
   it('leaves the base compile level alone and raises to 17 only inside the agent profile', () => {
-    assert.match(out, /<source>11<\/source>\s*<target>11<\/target>/, 'base compiler config must be untouched');
+    assert.match(out, /<release>11<\/release>[\s\S]*<release>17<\/release>/, 'base compiler config untouched (release 11), 17 only in the profile');
     const profileStart = out.indexOf('<id>digitalai-test-orchestrator</id>');
     assert.ok(profileStart > 0);
     assert.equal(out.indexOf('<release>17</release>') > profileStart, true, 'release 17 must be inside the profile');
-    assert.doesNotMatch(out.slice(0, profileStart), /<release>/);
+    assert.doesNotMatch(out.slice(0, profileStart), /<release>17/);
   });
   it('adds AND-activated profiles (jar exists + env key) before </project>, plus a default Build ID', () => {
     assert.match(out, /<exists>\$\{basedir\}\/lib\/smart-agent\.jar<\/exists>/);

@@ -74,8 +74,9 @@ export function registerExplorationTools(server: McpServer): void {
     'Use it to turn the placeholder steps of get_test_boilerplate into steps from the real app. The FIRST input is always the ' +
     'user\'s app, its version and its OS: ask for them; never explore a sample app unless the user is learning with the demo. ' +
     'Runs in the background (default budget 30 minutes / 40 screens, one device held meanwhile): answers at once with a jobId; ' +
-    'END YOUR TURN and check app_exploration_status later. BEFORE starting, ask the user ONE question for the whole session: may ' +
-    'it follow paths that could write data (allowWritePaths)? No (default): only navigation (tabs, menus, list rows, back) is ' +
+    'END YOUR TURN and check app_exploration_status later. Call it FIRST WITHOUT allowWritePaths: the server checks the app, the ' +
+    'build and the test login, and either names what is wrong or answers with the ONE question to ask the user for the whole ' +
+    'session: may it follow paths that could write data (allowWritePaths)? No: only navigation (tabs, menus, list rows, back) is ' +
     'tapped. Yes: buttons whose effect is unknown and write paths (pay, transfer, save) may be tapped too — but nothing is ever ' +
     'typed or submitted with data. Destructive actions (delete, remove, reset, sign out) are NEVER tapped by the crawl: each needs ' +
     'the user\'s own confirmation, so they are listed for the user. Switches and text fields are never touched. A login screen stops ' +
@@ -97,8 +98,8 @@ export function registerExplorationTools(server: McpServer): void {
       maxScreens: z.number().int().min(1).max(200).optional().describe('Stop after this many screens (default 40).'),
       maxMinutes: z.number().int().min(2).max(120).optional().describe('Stop after this many minutes (default 30, up to 120). For more, continue with resumeFrom.'),
       maxDepth: z.number().int().min(1).max(10).optional().describe('How many taps deep from the start screen (default 6).'),
-      resumeFrom: z.string().regex(/^explore-[a-z0-9]+$/).optional().describe('jobId of an earlier exploration of the SAME app to continue: its screens are kept and only the routes it did not follow are explored. The app and version come from it; give the same testLogin (or it is read from the earlier run).'),
-      allowWritePaths: z.boolean().describe('The USER\'s answer, asked once at the start: may the crawl follow paths that could write data? Never covers destructive actions.'),
+      resumeFrom: z.string().regex(/^explore-[a-z0-9]+$/).optional().describe('jobId of an earlier exploration of the SAME app to continue: its screens are kept and only the routes it did not follow are explored. The app and version come from it; give the same testLogin (or it is read from the earlier run). maxScreens / maxMinutes then count only THIS run (new screens), so keep the user\'s values: never raise a limit the user set without asking.'),
+      allowWritePaths: z.boolean().optional().describe('The USER\'s answer, asked once per session: may the crawl follow paths that could write data? Never covers destructive actions. Leave it out on the first call: the server checks the app and the login, then gives the question to ask; call again with the answer.'),
       testLogin: z.string().optional().describe('NAME of a test login the user saved with "setup app-login <name>" (e.g. "daibank"). The server reads it; the password is never returned.'),
       loginUserEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional().describe('NAME of the environment variable on the server that holds the test login\'s user name (e.g. "DAIBANK_USER"). With loginPasswordEnv.'),
       loginPasswordEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional().describe('NAME of the environment variable that holds its password. The value is read by the server and never returned.'),
@@ -137,7 +138,7 @@ export function registerExplorationTools(server: McpServer): void {
           const assigned = (app.projectsInfo ?? []).map((x) => x.name);
           if (project && assigned.length && !assigned.includes(project)) {
             const here = await getApplications({ packageName: appIdStr }).then((l) => l.filter((x) => (x.projectsInfo ?? []).some((q) => q.name === project))).catch(() => []);
-            throw new Error(`build ${a.appId} is assigned to ${assigned.join(', ')}, not to the active project ${project}: a session here can only install that project's builds${here.length ? ` (${here.map((x) => `${x.id}: version ${x.releaseVersion ?? '?'} build ${x.buildVersion ?? '?'}`).join('; ')})` : ' (it has none of this app)'}. Explore one of those, or switch_environment to a profile of ${assigned.join(' / ')}.`);
+            throw new Error(`build ${a.appId} is assigned to ${assigned.join(', ')}, not to the active project ${project}: a session here can only install that project's builds${here.length ? ` (${here.map((x) => `${x.id}: version ${x.releaseVersion ?? '?'} build ${x.buildVersion ?? '?'}`).join('; ')})` : ' (it has none of this app)'}. ASK THE USER which they want: explore one of those, or switch to a profile of ${assigned.join(' / ')}. Never switch_environment on your own: it changes the profile for everything that follows (Desktop test 2026-11-28: the agent switched silently and the profile stayed switched).`);
           }
           pin = { appReleaseVersion: app.releaseVersion ?? undefined, appBuildVersion: app.buildVersion ?? undefined };
           // The exact build: by its unique name when no other build of this app in the project has it (verified live
@@ -171,12 +172,24 @@ export function registerExplorationTools(server: McpServer): void {
           if (!u || !pw) throw new Error(`the test login needs both a user-name and a password variable; not set for this server (or empty): ${[!userEnv ? 'loginUserEnv (not given)' : !u ? userEnv : '', !passEnv ? 'loginPasswordEnv (not given)' : !pw ? passEnv : ''].filter(Boolean).join(', ')}. AI clients usually pass only variables named in the server's own configuration (its env block), not the whole system environment. Simpler: the user saves the login once in a terminal with "${setupCommand()} app-login <name>" and you pass testLogin. Never ask for the password in the chat.`);
           login = { username: u, password: pw, source: `${userEnv} / ${passEnv}` };
         }
+        // The write-paths question comes AFTER the app, build and login checks (Desktop test 2026-11-28: the agent asked it
+        // first, then learned the login did not exist).
+        if (a.allowWritePaths === undefined) {
+          const what = `${appIdStr}${version ? ` ${version}` : ''} (${a.platform})${login ? `, test login from ${login.source}` : ''}`;
+          const ask =
+            `Checked: ${what}. Nothing was started and no device is held. Now ask the user ONE question for this session: may the ` +
+            'exploration tap buttons that could write data (transfer, pay, save, buttons whose effect is unknown)? No: navigation ' +
+            'only (tabs, menus, list rows, back). Destructive actions (delete, sign out …) are never tapped either way, and nothing ' +
+            'is typed except the test login. Then call start_app_exploration again with the same arguments and allowWritePaths = ' +
+            'their answer.';
+          return respond(a.outputFormat, { status: 'needs_answer', app: what, question: 'allowWritePaths', nextStep: ask }, ask);
+        }
         const id = `explore-${Date.now().toString(36)}`;
         const abort = new AbortController();
         const job: Job = { id, status: 'running', startedAt: Date.now(), progress: 'starting', abort, label: `${appIdStr}${version ? ` ${version}` : ''}` };
         jobs.set(id, job);
         const opts = {
-          maxScreens: a.maxScreens ?? 40, maxMinutes: a.maxMinutes ?? 30, maxDepth: a.maxDepth ?? prev?.settings?.maxDepth ?? 6, login, allowWritePaths: a.allowWritePaths,
+          maxScreens: a.maxScreens ?? 40, maxMinutes: a.maxMinutes ?? 30, maxDepth: a.maxDepth ?? prev?.settings?.maxDepth ?? 6, login, allowWritePaths: a.allowWritePaths === true,
           ...(ref ? { loginRef: ref } : {}), ...(prev ? { resume: prev } : {}),
         };
         exploreApp({ platform: a.platform, appId: appIdStr, activity, repositoryId: prev?.app.repositoryId ?? a.appId, version, ...pin, ...(appRef ? { appRef } : {}), ...(a.installedApp || prev?.app.source === 'installed' ? { installed: true } : {}), deviceQuery: a.deviceQuery ?? prev?.settings?.deviceQuery, region: a.region ?? prev?.settings?.region }, opts, (t) => { job.progress = t; }, abort.signal)

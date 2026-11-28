@@ -418,7 +418,7 @@ npx.cmd -y digital-ai-testing-mcp@latest setup options
 | `setup doctor` | A report to send to support: install, profiles, keychain and AI clients. It never contains a key |
 | `setup path` · `setup repair` · `setup reset` | Where the profiles file is · restore it from its backup · delete every profile and its keys |
 
-Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--plain-file` · `--default` · `--skip-check` · `--yes` (answer yes to confirmations) · `--config <file>` (with `clients add`) · `--offline` (with `doctor`). `setup help` lists them all.
+Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--plain-file` · `--default` · `--skip-check` · `--yes` (answer yes to confirmations) · `--config <file>` and `--pin` (with `clients add`: `--pin` keeps the entry on exactly this version, e.g. a beta you are testing, instead of following `@latest` / `@next`) · `--offline` (with `doctor`). `setup help` lists them all.
 
 ### Where your key is kept
 
@@ -430,7 +430,7 @@ Options: `--url <url>` and `--key-stdin` (pipe the key in, for scripts) · `--pl
 
 ### How the server picks a connection
 
-- `DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY` and `DAI_PROFILE_*` variables — in the AI client's configuration or a `.env` file — **always take precedence**. The profiles you saved with `setup` are added alongside them; for a name both define, the variable wins.
+- `DIGITAL_AI_BASE_URL` / `DIGITAL_AI_ACCESS_KEY` and `DAI_PROFILE_*` variables — in the AI client's configuration or a `.env` file — **always take precedence**. The profiles you saved with `setup` are added alongside them; for a name both define, the variable wins. `DIGITAL_AI_ACCESS_KEY` on its own (no `DIGITAL_AI_BASE_URL`), which is what generated tests read, does not replace your saved profile: the server starts on the saved profile and `get_server_info` says it left the variable out.
 - The server starts on your default saved profile only when neither `DIGITAL_AI_BASE_URL` nor `DIGITAL_AI_ACCESS_KEY` is set.
 - `list_environments` shows every profile and where it comes from, and `switch_environment` switches between all of them.
 - A Docker container cannot reach your computer's keychain, so with Docker keep using the `.env` file.

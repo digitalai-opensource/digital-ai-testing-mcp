@@ -124,6 +124,15 @@ describe('buildLaunchEntry', () => {
     expect(fallback.args).toEqual(['-y', 'digital-ai-testing-mcp@next']);
   });
 
+  it('--pin: the entry starts exactly the running version, beta or release', () => {
+    const present = ['/opt/homebrew/lib/node_modules/npm/bin/npx-cli.js'];
+    const beta = buildLaunchEntry({ ...fakeCtx('darwin', '/opt/homebrew/bin/node', present), version: '2.6.0-beta.8', pin: true });
+    expect(beta.args).toEqual([present[0], '-y', 'digital-ai-testing-mcp@2.6.0-beta.8']);
+    expect(beta.notes[0]).toMatch(/^Pinned to 2\.6\.0-beta\.8/);
+    const rel = buildLaunchEntry({ ...fakeCtx('win32', 'D:\\odd\\node.exe', []), version: '2.5.2', pin: true });
+    expect(rel.args).toEqual(['/c', 'npx', '-y', 'digital-ai-testing-mcp@2.5.2']);
+  });
+
   it('nvm: versioned path with a note; npx-cli.js missing: plain npx from the client PATH', () => {
     const nvm = buildLaunchEntry(fakeCtx('darwin', '/Users/u/.nvm/versions/node/v22.1.0/bin/node', ['/Users/u/.nvm/versions/node/v22.1.0/lib/node_modules/npm/bin/npx-cli.js']));
     expect(nvm.notes[0]).toMatch(/version-specific path/);

@@ -129,9 +129,27 @@ export function profileCount(): number {
   return Object.keys(getProfiles()).length;
 }
 
-/** The store profile that starts the session when the environment sets neither default variable. */
+/**
+ * DIGITAL_AI_ACCESS_KEY set WITHOUT DIGITAL_AI_BASE_URL: the variable every generated test reads. Desktop/VS Code test
+ * 2026-11-28: the user set it to run the tests, started VS Code from that terminal, and the server Claude Code started
+ * inherited it and came up in setup mode. Alone, it says nothing about which cloud to use, so it is not a connection:
+ * the credential store starts the session (never a mix of the variable with a store URL) and the note says so.
+ */
+export function loneAccessKeyInEnv(): boolean {
+  return !process.env.DIGITAL_AI_BASE_URL?.trim() && !!process.env.DIGITAL_AI_ACCESS_KEY?.trim();
+}
+
+/** The note shown (get_server_info, doctor) when a lone DIGITAL_AI_ACCESS_KEY was left out. Never carries a value. */
+export function loneAccessKeyNote(): string | undefined {
+  const start = loneAccessKeyInEnv() ? storeStartingName() : undefined;
+  return start
+    ? `DIGITAL_AI_ACCESS_KEY is set in this environment without DIGITAL_AI_BASE_URL (generated tests read it), so the server ignores it and starts on the saved profile "${start}".`
+    : undefined;
+}
+
+/** The store profile that starts the session when the environment sets neither default variable (or only a lone key). */
 function storeStartingName(): string | undefined {
-  if (DEFAULT_VARS.some((k) => process.env[k]?.trim())) return undefined;
+  if (process.env.DIGITAL_AI_BASE_URL?.trim()) return undefined;
   const { profiles, store } = getLoaded();
   // A default that names a profile the environment also defines starts on the environment's version (env wins).
   if (store.defaultProfile && store.defaultProfile in profiles) return store.defaultProfile;
@@ -174,8 +192,9 @@ export interface StartupCredentialProblem {
  */
 export function startupCredentialProblem(): StartupCredentialProblem | null {
   const missing = DEFAULT_VARS.filter((k) => !process.env[k]?.trim());
-  // Exactly one default variable set: report it rather than fall back to the store behind the user's back.
-  if (missing.length === 1) return { missing };
+  // Only the URL set: report the missing key rather than fall back to the store behind the user's back. Only the key
+  // set: that is the generated tests' variable; the store starts the session when it can (loneAccessKeyInEnv).
+  if (missing.length === 1 && !(loneAccessKeyInEnv() && getStartingProfile())) return { missing };
   if (getStartingProfile()) return null;
 
   const { profiles, store } = getLoaded();

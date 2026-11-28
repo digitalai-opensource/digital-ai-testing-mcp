@@ -50,6 +50,8 @@ export interface ClientContext {
   execPath: string;
   /** The version of the running setup (package.json) — a prerelease selects the `next` channel. */
   version?: string;
+  /** `setup clients add --pin`: the entry starts exactly `version`, never the @latest / @next channel. */
+  pin?: boolean;
   exists(path: string): boolean;
   /** Folder listing (default readdirSync); tests fake it to check Windows layouts on any OS. */
   listDir?(path: string): string[];
@@ -166,8 +168,14 @@ function systemPath(ctx: ClientContext): string[] {
 export function buildLaunchEntry(ctx: ClientContext): LaunchEntry {
   const win = ctx.platform === 'win32';
   const notes: string[] = [];
-  const spec = packageSpec(ctx.version);
-  if (spec.endsWith('@next')) {
+  // --pin: a tester running a named beta must get THAT beta; @next moved to the following beta overnight (2026-11-28).
+  const pinned = !!ctx.pin && !!ctx.version;
+  const spec = pinned ? `${PACKAGE_NAME}@${ctx.version}` : packageSpec(ctx.version);
+  if (pinned) {
+    notes.push(
+      `Pinned to ${ctx.version}: the entry never updates. "${npxCommand(ctx.platform)} -y ${PACKAGE_NAME}@latest setup clients add --yes" moves it back to releases.`
+    );
+  } else if (spec.endsWith('@next')) {
     notes.push(
       `This is a beta (${ctx.version}), so the entry starts the beta channel (${spec}) and updates with each beta. ` +
         `Once a release includes setup, "${npxCommand(ctx.platform)} -y ${PACKAGE_NAME}@latest setup clients add --yes" moves the entries back to releases.`

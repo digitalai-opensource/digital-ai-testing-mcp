@@ -10,7 +10,7 @@ import { serverOptionsStatusLine } from '../utils/server-options.js';
 import { getAccessInfo, resolveProfileAccess, primeAccessInfoFromAccount } from '../api/access-level.js';
 import { describeLevel, isKnownNotCloudAdmin } from '../utils/access-level.js';
 import { getServerVersion } from '../utils/version.js';
-import { listProfiles, getProfileCredentials, profileCount, getStoreStatus } from '../utils/profile-loader.js';
+import { listProfiles, getProfileCredentials, profileCount, getStoreStatus, loneAccessKeyNote } from '../utils/profile-loader.js';
 import { computeWorkflowReadiness, WORKFLOW_DEPS } from '../utils/tool-registry.js';
 import { staleBuildRemedy } from '../utils/locality.js';
 import { updateStatusLine } from '../utils/update-check.js';
@@ -248,9 +248,12 @@ export function registerMetaTools(server: McpServer): void {
         : active.source === 'store'
           ? ` · from the credential store (key in ${active.keyStore === 'os' ? 'the OS keychain' : 'the profiles file'})`
           : ' · from environment variables';
-      const envLine = envCount > 1
+      const loneKey = loneAccessKeyNote();
+      const envLine0 = envCount > 1
         ? `Active profile:   "${activeProfile}" — ${keyLabel}${from} (${envCount} profiles — use list_environments / switch_environment)`
         : `Active profile:   "${activeProfile}" — ${keyLabel}${from}`;
+      const envLine = loneKey ? `${envLine0}
+                  Note: ${loneKey}` : envLine0;
 
       const lines = [
         `Server:           ${name} v${version}`,

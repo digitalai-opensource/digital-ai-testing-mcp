@@ -34,6 +34,7 @@ import {
   listProfiles,
   resetProfilesForTests,
   startupCredentialProblem,
+  loneAccessKeyNote,
 } from '../src/utils/profile-loader.js';
 import { getActiveAccessKey, getActiveProfileName, getActiveUrl } from '../src/api/client.js';
 import { registerMetaTools } from '../src/tools/meta-tools.js';
@@ -249,6 +250,23 @@ describe('profile-loader with the store', () => {
     process.env.DIGITAL_AI_BASE_URL = 'https://env.example.com';
     store(twoProfiles({ default: 'bravo' }));
     expect(startupCredentialProblem()).toEqual({ missing: ['DIGITAL_AI_ACCESS_KEY'] });
+  });
+
+  it('only DIGITAL_AI_ACCESS_KEY set (the generated tests\' variable): the store starts the session, with a note', () => {
+    process.env.DIGITAL_AI_ACCESS_KEY = KEY_ENV;
+    store(twoProfiles({ default: 'bravo' }));
+    expect(startupCredentialProblem()).toBeNull();
+    expect(getStartingProfile()).toMatchObject({ name: 'bravo', source: 'store' });
+    expect(getActiveAccessKey()).toBe(KEY_B);
+    expect(loneAccessKeyNote()).toMatch(/without DIGITAL_AI_BASE_URL[\s\S]*saved profile "bravo"/);
+    expect(loneAccessKeyNote()).not.toContain(KEY_ENV);
+  });
+
+  it('only DIGITAL_AI_ACCESS_KEY set and no usable store profile: setup mode names the URL', () => {
+    process.env.DIGITAL_AI_ACCESS_KEY = KEY_ENV;
+    store(twoProfiles({}));
+    expect(startupCredentialProblem()).toEqual({ missing: ['DIGITAL_AI_BASE_URL'] });
+    expect(loneAccessKeyNote()).toBeUndefined();
   });
 
   it('one store profile and no "default": starts on it', () => {

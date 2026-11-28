@@ -28,6 +28,7 @@ import {
   ensurePythonImportOs,
   addJsKeyGuard,
   ENV_EXAMPLE_FILE,
+  envExampleFor,
   CREDENTIAL_SETUP,
   CREDENTIAL_SETUP_TEXT,
 } from '../utils/credential-env.js';
@@ -1771,9 +1772,9 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
             tests: flowTests.flows.map((f) => ({ flow: f.id, title: f.title, kind: f.kind })),
             ...(flowSkipped.length ? { skipped: flowSkipped } : {}),
             testData: envVarsFor(flowTests.flows, flowTests.login),
-            ...(optionalEnvVarsFor(flowTests.flows).length ? { optionalTestData: optionalEnvVarsFor(flowTests.flows), optionalTestDataNote: 'Drop-downs: each keeps the value it shows unless its variable is set to the text of one of its options (app_exploration_flows lists the options the exploration read).' } : {}),
+            ...(optionalEnvVarsFor(flowTests.flows).length ? { optionalTestData: optionalEnvVarsFor(flowTests.flows), optionalTestDataNote: 'Drop-downs: each keeps the value it shows unless its variable is set to the start of one of its options, e.g. "Checking" for "Checking ($1,000.00)" (app_exploration_flows lists the options the exploration read).' } : {}),
             reportKey: `digitalai:explorationRun = ${explorationJobId}`,
-            next: 'Set the testData variables (never write their values into the test), run the tests, then call app_exploration_flows with this jobId: it lists the runs (found by the report key) and their results.' + (flowTests.flows.some((f) => f.kind === 'form') ? ' Form flows: the exploration never submitted the form, so confirm the expected result with the user and add that assertion.' : ''),
+            next: 'First check which testData variables are already set in your shell (names only, never print values); ask the user only for the missing ones, and never choose test data (amounts, payees) yourself or write it into a file. Then run the tests, then call app_exploration_flows with this jobId: it lists the runs (found by the report key) and their results.' + (flowTests.flows.some((f) => f.kind === 'form') ? ' Form flows: the exploration never submitted the form, so confirm the expected result with the user and add that assertion.' : ''),
           } } : {}),
           // Desktop test 2026-11-27: the agent could not run the test it wrote (a cloud sandbox) and said only that.
           ...(isLocalClient() ? {} : { runNote: RUN_NOTE }),
@@ -1803,7 +1804,7 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
           projectType: projectType ?? 'standalone-gradle',
           structure: pageObjectsApplied ? 'page-objects' : 'flat',
           ...(structureNote ? { structureNote } : {}),
-          files: [...resolved.map(f => ({ filename: f.filename, content: f.content })), ...(choice.addToExisting ? [] : [ENV_EXAMPLE_FILE])],
+          files: [...resolved.map(f => ({ filename: f.filename, content: f.content })), ...(choice.addToExisting ? [] : [flowTests ? envExampleFor(envVarsFor(flowTests.flows, flowTests.login), optionalEnvVarsFor(flowTests.flows)) : ENV_EXAMPLE_FILE])],
           ...(reference.length ? { referenceFiles: reference.map((f) => ({ filename: f.filename, content: f.content })) } : {}),
           orchestration: orchestrationInfo,
           ...(automotive ? { automotive } : {}),

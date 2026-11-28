@@ -56,7 +56,8 @@ describe('renderFlowTests: one test per flow in every Appium Server template', (
       if (lang === 'nodejs') assert.match(out!, /async function freshSession\(\)[\s\S]*?require\('\.\.\/\.\.\/wdio\.conf\.js'\)[\s\S]*?await freshSession\(\)/, 'a new session goes through the hub, not the device agent');
       // A drop-down: its option is picked only when TEST_DATA_PAYEE is set, by the option's text; otherwise it stays.
       assert.match(out!, /TEST_DATA_PAYEE/);
-      assert.match(out!, lang === 'robot' ? /IF {4}os\.environ\.get\('TEST_DATA_PAYEE'\)\n[\s\S]*?@text="%\{TEST_DATA_PAYEE\}"[\s\S]*?\n {4}END/ : lang === 'python' ? /if os\.environ\.get\("TEST_DATA_PAYEE"\):/ : lang === 'nodejs' ? /if \(process\.env\['TEST_DATA_PAYEE'\]\)[\s\S]*?replaceAll\('%s'/ : /if \(System\.getenv\("TEST_DATA_PAYEE"\) != null\)/);
+      assert.match(out!, lang === 'robot' ? /IF {4}os\.environ\.get\('TEST_DATA_PAYEE'\)\n[\s\S]*?starts-with\(@text,"%\{TEST_DATA_PAYEE\}"\)[\s\S]*?\n {4}END/ : lang === 'python' ? /if os\.environ\.get\("TEST_DATA_PAYEE"\):/ : lang === 'nodejs' ? /if \(process\.env\['TEST_DATA_PAYEE'\]\)[\s\S]*?replaceAll\('%s'/ : /if \(System\.getenv\("TEST_DATA_PAYEE"\) != null\)/);
+      assert.match(out!, /not\(contains\(@class,\\?"EditText\\?"\)\)\]\[starts-with\(@text,/, 'an option is picked by the start of its text, never the field itself');
       const tests = lang === 'python' ? out!.match(/def test_/g) : lang === 'nodejs' ? out!.match(/it\('/g) : lang === 'robot' ? out!.match(/^\S.*\n {4}Start Steps Group/gm) : out!.match(/@Test/g);
       assert.equal(tests?.length, 2, 'one test per flow');
       if (lang.startsWith('java')) assert.match(out!, /import io\.appium\.java_client\.AppiumBy;/);
@@ -120,6 +121,9 @@ describe('get_test_boilerplate with explorationJobId', () => {
     assert.equal((test.match(/def test_/g) ?? []).length, 3);
     assert.doesNotMatch(test, /ExperiBank|PLACEHOLDER TEST BODY/);
     assert.deepEqual(detectFabricationIssues(test).filter((i) => i.severity === 'high'), [], 'the finished file passes validate_test_script');
+    const env = j.files.find((f: { filename: string }) => f.filename === '.env.example').content as string;
+    for (const v of ['DIGITAL_AI_ACCESS_KEY=', 'APP_TEST_USER=', 'APP_TEST_PASSWORD=', 'TEST_DATA_AMOUNT=']) assert.match(env, new RegExp(`^${v}$`, 'm'), `${v} listed, empty`);
+    assert.match(j.exploration.next, /already set in your shell[\s\S]*never choose test data/);
   });
 
   it('refuses flows nobody accepted, another app, a Grid project, and a run with no accepted flow', async () => {

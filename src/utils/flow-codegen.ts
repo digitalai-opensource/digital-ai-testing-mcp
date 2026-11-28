@@ -105,8 +105,13 @@ const FRESH_SESSION = [
   '}',
 ].join('\n');
 
-/** The option of an open drop-down, by its text (Android) or label (iOS); %s = the value. */
-const OPTION_XPATH = '//*[@text="%s" or @label="%s"]';
+/**
+ * The option of an open drop-down whose text (Android) or label (iOS) STARTS WITH the value; %s = the value. Options can
+ * carry live values ("Checking ($1,000.00)" on DAI Bank, Desktop test 2026-11-28), so TEST_DATA_FROM_ACCOUNT=Checking
+ * must match, and an exact match would break after the first transfer. The field itself (an EditText showing the current
+ * value) is excluded so the tap lands on the list.
+ */
+const OPTION_XPATH = '//*[not(contains(@class,"EditText"))][starts-with(@text,"%s") or starts-with(@label,"%s")]';
 
 const clip = (s: string) => s.replace(/\s+/g, ' ').replace(/\*\//g, '').slice(0, 70);
 

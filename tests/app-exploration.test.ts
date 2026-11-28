@@ -214,6 +214,23 @@ describe('start_app_exploration: the user\u2019s app, its version and its OS fir
     assert.match(r.text, /not both/);
   });
 
+  it('without allowWritePaths: the app and login are checked first, then the question comes back, nothing started', async () => {
+    let r = await t.call('start_app_exploration', { platform: 'android', appId: 7, testLogin: 'nosuch' });
+    assert.equal(r.res.isError, true, 'a missing login is named before the write-paths question');
+    assert.match(r.text, /app-login nosuch|credential store is switched off/);
+    process.env.EXPLORE_Q_USER = 'qa-user-88'; process.env.EXPLORE_Q_PASS = 'q-Pass!';
+    try {
+      r = await t.call('start_app_exploration', { platform: 'android', appId: 7, loginUserEnv: 'EXPLORE_Q_USER', loginPasswordEnv: 'EXPLORE_Q_PASS', outputFormat: 'json' });
+      assert.notEqual(r.res.isError, true, r.text);
+      const j = JSON.parse(r.text);
+      assert.equal(j.status, 'needs_answer');
+      assert.equal(j.jobId, undefined, 'no job, no device');
+      assert.notMatch(r.text, /qa-user-88|q-Pass!/);
+      r = await t.call('start_app_exploration', { platform: 'android', appId: 7, loginUserEnv: 'EXPLORE_Q_USER', loginPasswordEnv: 'EXPLORE_Q_PASS' });
+      assert.match(r.text, /ask the user ONE question[\s\S]*allowWritePaths = their answer/);
+    } finally { delete process.env.EXPLORE_Q_USER; delete process.env.EXPLORE_Q_PASS; }
+  });
+
   it('the start answer never contains the test login’s values, only where they come from', async () => {
     process.env.EXPLORE_T_USER = 'qa-user-77'; process.env.EXPLORE_T_PASS = 's3cret-Pass!';
     try {
@@ -304,6 +321,7 @@ describe('the exact build, resuming, and unlabelled controls (Desktop test 2026-
     assert.equal(r.res.isError, true);
     assert.match(r.text, /assigned to Web Team, not to the active project Mobile QA/);
     assert.match(r.text, /5: version 4\.2\.0 build 11/);
+    assert.match(r.text, /ASK THE USER[\s\S]*Never switch_environment on your own/, 'the agent asks before changing the profile');
   });
 
   it('resumeFrom: an unknown run, a finished run and a run of another platform are refused; a run with open routes continues', async () => {

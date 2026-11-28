@@ -39,7 +39,7 @@ import { getServerVersion } from '../utils/version.js';
 import { getDeploymentMode, runningInContainer } from '../utils/deployment-mode.js';
 import { installKind } from '../utils/update-check.js';
 import { redact } from '../utils/remediation.js';
-import { credentialEnvPresence } from '../utils/profile-loader.js';
+import { credentialEnvPresence, loneAccessKeyNote } from '../utils/profile-loader.js';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import * as ui from './ui.js';
 import {
@@ -115,6 +115,7 @@ Options for add:
   --skip-check        Save without checking the key against the API
 Options for clients add:
   --config <file>     The config file to edit, for ONE named client (Claude Desktop on Windows, when setup cannot tell)
+  --pin               Start exactly this version (e.g. a beta under test) instead of following @latest / @next
 Options for doctor:
   --offline           Skip checking each profile against the API
 Options for every command:
@@ -308,6 +309,7 @@ interface Flags {
   default?: boolean;
   'skip-check'?: boolean;
   config?: string;
+  pin?: boolean;
   yes?: boolean;
 }
 
@@ -776,6 +778,8 @@ async function cmdDoctor(io: SetupIO, flags: Flags): Promise<boolean> {
   const env = credentialEnvPresence();
   say(`  DIGITAL_AI_BASE_URL: ${env.baseUrl ?? 'not set'} · DIGITAL_AI_ACCESS_KEY: ${env.accessKeySet ? 'set' : 'not set'}`);
   say(`  DAI_PROFILE_* profiles: ${env.namedProfiles.length ? env.namedProfiles.join(', ') : 'none'}`);
+  const loneKey = loneAccessKeyNote();
+  if (loneKey) say(`  Note: ${loneKey}`);
   const settings = Object.keys(process.env).filter((k) => /^MCP_/.test(k) && !/(KEY|TOKEN|SECRET|PASSWORD)/i.test(k)).sort();
   say(`  MCP_* settings: ${settings.length ? settings.map((k) => `${k}=${process.env[k]}`).join(' ') : 'none'}`);
 
@@ -1358,7 +1362,9 @@ async function warmNote(io: SetupIO, ctx: ClientContext, entry: LaunchEntry) {
 }
 
 async function cmdClients(io: SetupIO, sub: string | undefined, ids: string[], flags: Flags) {
-  const ctx = io.clients ?? defaultClientContext();
+  const base = io.clients ?? defaultClientContext();
+  const ctx: ClientContext = flags.pin ? Object.assign(Object.create(base) as ClientContext, { pin: true }) : base;
+  if (flags.pin && sub !== 'add') throw new SetupError('--pin applies to "clients add" only.', 2);
   if (sub === undefined || sub === 'list') {
     if (ids.length) throw new SetupError(`Unexpected argument: ${ids[0]}`, 2);
     cmdClientsList(io, ctx);
@@ -1445,6 +1451,7 @@ export async function runSetupCli(argv: string[], io: SetupIO = terminalIO()): P
           default: { type: 'boolean' },
           'skip-check': { type: 'boolean' },
           config: { type: 'string' },
+          pin: { type: 'boolean' },
           offline: { type: 'boolean' },
           yes: { type: 'boolean', short: 'y' },
           help: { type: 'boolean', short: 'h' },

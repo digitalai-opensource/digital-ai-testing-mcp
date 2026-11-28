@@ -15,4 +15,6 @@ dependencies {
     // selenium-java pins the drivers and support classes explicitly
     testImplementation group: 'io.appium', name: 'java-client', version: '11.0.0'
     testImplementation group: 'org.seleniumhq.selenium', name: 'selenium-java', version: '4.51.0'
+    // The Appium client logs through SLF4J; without a provider it prints "No SLF4J providers were found" on every run
+    testRuntimeOnly group: 'org.slf4j', name: 'slf4j-nop', version: '2.0.20'
 }
