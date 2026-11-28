@@ -252,7 +252,7 @@ describe('the exact build, resuming, and unlabelled controls (Desktop test 2026-
   it('resumeFrom: an unknown run, a finished run and a run of another platform are refused; a run with open routes continues', async () => {
     let r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', resumeFrom: 'explore-nothere' });
     assert.match(r.text, /no saved exploration explore-nothere/);
-    const base = { app: { platform: 'android', appId: 'com.acme.shop', activity: '.Main', version: '4.2.0', appReleaseVersion: '4.2.0', appBuildVersion: '11' }, device: { name: 'Pixel', os: 'Android', version: '14' }, startedAt: '2026-11-27T00:00:00Z', stoppedBecause: 'x', screens: [], taps: 0, notes: [], settings: { allowWritePaths: false, maxDepth: 6, loginRef: { testLogin: 'shop' } } };
+    const base = { app: { platform: 'android', appId: 'com.acme.shop', activity: '.Main', version: '4.2.0', appReleaseVersion: '4.2.0', appBuildVersion: '11' }, device: { name: 'Pixel', os: 'Android', version: '14' }, startedAt: '2026-11-27T00:00:00Z', stoppedBecause: 'x', screens: [{ signature: 's1', title: 'Home', foreground: null, path: [], elements: 3, assertable: [], navigation: [], notVisited: [] }], taps: 0, notes: [], settings: { allowWritePaths: false, maxDepth: 6, loginRef: { testLogin: 'shop' } } };
     writeFileSync(join(dir, 'explore-done1.json'), JSON.stringify(base));
     r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', resumeFrom: 'explore-done1' });
     assert.match(r.text, /no routes left to follow/);
@@ -277,5 +277,26 @@ describe('the exact build, resuming, and unlabelled controls (Desktop test 2026-
     const els = parseScreen('<hierarchy><android.view.View class="android.view.View" bounds="[0,0][100,100]" clickable="true" enabled="true" text="▾"/></hierarchy>', 'android');
     assert.equal(hasWords(els[0]), false);
     assert.equal(classifyTap(els[0], false).kind, 'unknown');
+  });
+});
+
+describe('resuming a run that mapped nothing', () => {
+  it('says to start again on another phone instead of claiming the run is complete', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dai-explore-empty-'));
+    const saved = process.env.MCP_EXPLORATION_DIR;
+    process.env.MCP_EXPLORATION_DIR = dir;
+    const stub = await startStubApi(() => undefined);
+    const t = await connectTools(registerExplorationTools);
+    try {
+      writeFileSync(join(dir, 'explore-empty1.json'), JSON.stringify({ app: { platform: 'android', appId: 'com.acme.shop' }, device: { name: 'Phone X', os: 'Android', version: '13' }, startedAt: '', stoppedBecause: 'the app did not come to the front (com.android.chrome stayed in front)', screens: [], taps: 0, notes: [] }));
+      const r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', resumeFrom: 'explore-empty1' });
+      assert.equal(r.res.isError, true);
+      assert.match(r.text, /mapped no screens/);
+      assert.match(r.text, /another phone \(it ran on Phone X\)/);
+    } finally {
+      await t.close(); await stub.close();
+      if (saved === undefined) delete process.env.MCP_EXPLORATION_DIR; else process.env.MCP_EXPLORATION_DIR = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
