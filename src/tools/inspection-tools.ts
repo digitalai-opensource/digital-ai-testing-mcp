@@ -1303,7 +1303,8 @@ export function registerInspectionTools(server: McpServer): void {
   server.tool(
     'press_back',
     'Navigate back one screen. Android: presses the Back button (also dismisses keyboards and dialogs). ' +
-    'iOS: performs the left-edge back swipe (the platform convention — iOS has no Back button).',
+    'iOS (no Back button): taps the navigation-bar button labelled Back / Close / Cancel, else the first one unless it ' +
+    'is a logout, sign-out or delete, else the left-edge back swipe.',
     {
       handle: z.string().describe('Session handle from start_inspection_session.'),
     },

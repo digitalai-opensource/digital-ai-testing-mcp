@@ -113,8 +113,10 @@ export function registerExplorationTools(server: McpServer): void {
         let version = a.appVersion;
         let pin: { appReleaseVersion?: string; appBuildVersion?: string } = a.appVersion ? { appReleaseVersion: a.appVersion } : {};
         const buildNotes: string[] = [];
+        let appRef: string | undefined;
         if (prev) {
           activity = prev.app.activity;
+          appRef = prev.app.appRef;
           version = prev.app.version;
           pin = { appReleaseVersion: prev.app.appReleaseVersion, appBuildVersion: prev.app.appBuildVersion };
         } else if (a.appId !== undefined) {
@@ -133,10 +135,15 @@ export function registerExplorationTools(server: McpServer): void {
             throw new Error(`build ${a.appId} is assigned to ${assigned.join(', ')}, not to the active project ${project}: a session here can only install that project's builds${here.length ? ` (${here.map((x) => `${x.id}: version ${x.releaseVersion ?? '?'} build ${x.buildVersion ?? '?'}`).join('; ')})` : ' (it has none of this app)'}. Explore one of those, or switch_environment to a profile of ${assigned.join(' / ')}.`);
           }
           pin = { appReleaseVersion: app.releaseVersion ?? undefined, appBuildVersion: app.buildVersion ?? undefined };
-          if (project) {
-            const twins = await getApplications({ packageName: appIdStr }).then((l) => l.filter((x) => x.id !== a.appId && x.releaseVersion === app.releaseVersion && x.buildVersion === app.buildVersion && (x.projectsInfo ?? []).some((q) => q.name === project))).catch(() => []);
-            if (twins.length) buildNotes.push(`${twins.length + 1} builds in ${project} share version ${app.releaseVersion} build ${app.buildVersion} (${[a.appId, ...twins.map((x) => x.id)].join(', ')}): the platform installs one of them and cannot be told which.`);
-          }
+          // The exact build: by its unique name when no other build of this app in the project has it (verified live
+          // 2026-11-27: "cloud:uniqueName=DAI-Bankv1.0" installed that build; an unknown name is refused "… was not
+          // found"). Builds with one version can still differ (UICatalog: four signed variants of 1.0 build 11908, one of
+          // which never starts), so version alone is only the fallback.
+          const inProject = project ? await getApplications({ packageName: appIdStr }).then((l) => l.filter((x) => (x.projectsInfo ?? []).some((q) => q.name === project))).catch(() => []) : [];
+          const uniq = app.uniqueName?.trim();
+          if (uniq && !inProject.some((x) => x.id !== a.appId && x.uniqueName?.trim() === uniq)) appRef = `cloud:uniqueName=${uniq}`;
+          const twins = inProject.filter((x) => x.id !== a.appId && x.releaseVersion === app.releaseVersion && x.buildVersion === app.buildVersion);
+          if (twins.length && !appRef) buildNotes.push(`${twins.length + 1} builds in ${project} share version ${app.releaseVersion} build ${app.buildVersion} and have no unique name of their own (${[a.appId, ...twins.map((x) => x.id)].join(', ')}): the platform installs one of them and cannot be told which.`);
         }
         if (!appIdStr) throw new Error('name the app to explore: appId (repository), or packageName / bundleIdentifier with appVersion. Ask the user for their app, its version and its OS.');
         if (!prev && a.appId === undefined && !version) throw new Error('appVersion is required with packageName / bundleIdentifier: a manifest describes one version of the app.');
@@ -167,7 +174,7 @@ export function registerExplorationTools(server: McpServer): void {
           maxScreens: a.maxScreens ?? 40, maxMinutes: a.maxMinutes ?? 30, maxDepth: a.maxDepth ?? prev?.settings?.maxDepth ?? 6, login, allowWritePaths: a.allowWritePaths,
           ...(ref ? { loginRef: ref } : {}), ...(prev ? { resume: prev } : {}),
         };
-        exploreApp({ platform: a.platform, appId: appIdStr, activity, repositoryId: prev?.app.repositoryId ?? a.appId, version, ...pin, deviceQuery: a.deviceQuery ?? prev?.settings?.deviceQuery, region: a.region ?? prev?.settings?.region }, opts, (t) => { job.progress = t; }, abort.signal)
+        exploreApp({ platform: a.platform, appId: appIdStr, activity, repositoryId: prev?.app.repositoryId ?? a.appId, version, ...pin, ...(appRef ? { appRef } : {}), deviceQuery: a.deviceQuery ?? prev?.settings?.deviceQuery, region: a.region ?? prev?.settings?.region }, opts, (t) => { job.progress = t; }, abort.signal)
           .then((m) => {
             for (const n of buildNotes) if (!m.notes.includes(n)) m.notes.push(n);
             job.savedTo = saveManifest(id, m);
@@ -180,7 +187,7 @@ export function registerExplorationTools(server: McpServer): void {
             : 'Read-only: navigation only; anything that could write data is recorded, not tapped. ') +
           `END YOUR TURN now and tell the user it is running; check app_exploration_status with jobId ${id} when they come back.`;
         // Never the login itself: only where it comes from (the first trial echoed the password here, 2026-11-27).
-        return respond(a.outputFormat, { jobId: id, status: 'running', app: job.label, ...(prev ? { resumes: a.resumeFrom } : {}), ...(pin.appReleaseVersion ? { build: { releaseVersion: pin.appReleaseVersion, buildVersion: pin.appBuildVersion } } : {}), ...(buildNotes.length ? { buildNotes } : {}), budget: { maxScreens: opts.maxScreens, maxMinutes: opts.maxMinutes, maxDepth: opts.maxDepth }, allowWritePaths: opts.allowWritePaths, ...(login ? { testLogin: `from ${login.source}` } : {}) }, text);
+        return respond(a.outputFormat, { jobId: id, status: 'running', app: job.label, ...(prev ? { resumes: a.resumeFrom } : {}), ...(pin.appReleaseVersion ? { build: { releaseVersion: pin.appReleaseVersion, buildVersion: pin.appBuildVersion, ...(appRef ? { installedBy: appRef } : {}) } } : {}), ...(buildNotes.length ? { buildNotes } : {}), budget: { maxScreens: opts.maxScreens, maxMinutes: opts.maxMinutes, maxDepth: opts.maxDepth }, allowWritePaths: opts.allowWritePaths, ...(login ? { testLogin: `from ${login.source}` } : {}) }, text);
       } catch (e) {
         return { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true };
       }

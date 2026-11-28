@@ -7,8 +7,8 @@
  * recorded, never made, in stage 1 (a later stage asks once per session whether write paths may be pursued); destructive
  * taps always need the user's confirmation one by one. A login is done only with a test login the user named.
  */
-import { createInspectionSession, quitInspectionSession, getPageSource, findFirstElementId, tapElement, typeIntoElement, pressBack, launchApp, appControl, getForegroundActivity, getForegroundPackage } from './webdriver.js';
-import { parseScreen, screenSignature, isLoading, hasWords, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
+import { createInspectionSession, quitInspectionSession, getPageSource, findFirstElementId, tapElement, typeIntoElement, clearElement, pressBack, launchApp, appControl, getForegroundActivity, getForegroundPackage, getForegroundBundleId } from './webdriver.js';
+import { parseScreen, screenSignature, isLoading, hasWords, similarScreen, baseLabel, distinctTitle, containerOf, backControl, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
 
 export interface ExploreTarget {
   platform: ExplorePlatform;
@@ -22,6 +22,8 @@ export interface ExploreTarget {
   /** Pins the installed build (the platform picks a build by package + these, never by repository id). */
   appReleaseVersion?: string;
   appBuildVersion?: string;
+  /** The exact build by its repository reference ("cloud:uniqueName=…"); the version pin is not sent with it. */
+  appRef?: string;
   deviceQuery?: string;
   region?: string;
 }
@@ -46,6 +48,10 @@ export interface ManifestStep { label: string; locator: Locator }
 export interface ManifestScreen {
   signature: string;
   title: string;
+  /** The title as read from the screen, when `title` had to be made distinct from another screen's. */
+  rawTitle?: string;
+  /** The screen's named container, when the app names one (tells screens with one title apart). */
+  container?: string;
   foreground: string | null;
   /** How to get here from the start screen. */
   path: ManifestStep[];
@@ -61,7 +67,7 @@ export interface ManifestScreen {
   login?: 'done' | 'needed';
 }
 export interface Manifest {
-  app: { platform: ExplorePlatform; appId: string; activity?: string; repositoryId?: number; version?: string; appReleaseVersion?: string; appBuildVersion?: string };
+  app: { platform: ExplorePlatform; appId: string; activity?: string; repositoryId?: number; version?: string; appReleaseVersion?: string; appBuildVersion?: string; appRef?: string };
   device: { name: string; os: string; version: string; serial?: string };
   startedAt: string;
   finishedAt?: string;
@@ -84,6 +90,7 @@ const SETTLE_FIRST_MS = 400;
 const SETTLE_POLL_MS = 400;
 const SETTLE_MAX_MS = 10_000;
 const SETTLE_LAUNCH_MS = 20_000;
+const SETTLE_UNCHANGED_MS = 2_000;
 
 const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
   const t = setTimeout(resolve, ms);
@@ -104,8 +111,15 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   const sameDevice = opts.resume?.device.serial && !target.deviceQuery && !troubled ?`@serialnumber='${opts.resume.device.serial.replace(/'/g, '')}'` : undefined;
   const open = (deviceQuery: string | undefined) => createInspectionSession({
     platform: p, deviceQuery, region: deviceQuery === sameDevice ? undefined : target.region, testName: `App exploration: ${target.appId}`,
-    ...(p === 'android' ? { app: `cloud:${target.appId}${target.activity ? `/${target.activity}` : ''}`, appPackage: target.appId, ...(target.activity ? { appActivity: target.activity } : {}) } : { app: `cloud:${target.appId}`, appPackage: target.appId }),
-    appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion,
+    ...(p === 'android' ? { app: target.appRef ?? `cloud:${target.appId}${target.activity ? `/${target.activity}` : ''}`, appPackage: target.appId, ...(target.activity ? { appActivity: target.activity } : {}) } : { app: target.appRef ?? `cloud:${target.appId}`, appPackage: target.appId }),
+    ...(target.appRef ? {} : { appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion }),
+  }).catch((e: Error) => {
+    // An exact build that never starts answers an opaque 500 (UICatalog "autotrust", 2026-11-27: "Could not forward
+    // request" in three regions while another build of the same app started at once).
+    if (/could not forward request|HTTP 500(?!:)/i.test(e.message) && (target.appRef || target.appBuildVersion)) {
+      throw new Error(`${e.message.replace(/ Diagnostics:.*$/s, '')} — the platform could not start a session with this exact build (${target.appRef ?? `version ${target.appReleaseVersion} build ${target.appBuildVersion}`}). If it repeats, the build itself may not install or launch on these phones: try another build of the app, or retry later if the platform is busy.`);
+    }
+    throw e;
   });
   let deviceNote: string | undefined;
   let session;
@@ -118,7 +132,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   const manifest: Manifest = opts.resume
     ? { ...structuredClone(opts.resume), device: { name: session.deviceName, os: session.deviceOs, version: session.deviceVersion, ...(session.deviceUDID ? { serial: session.deviceUDID } : {}) }, stoppedBecause: 'finished: every reachable screen within the limits was visited', frontier: undefined, runs: (opts.resume.runs ?? 1) + 1 }
     : {
-        app: { platform: p, appId: target.appId, activity: target.activity, repositoryId: target.repositoryId, version: target.version, appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion },
+        app: { platform: p, appId: target.appId, activity: target.activity, repositoryId: target.repositoryId, version: target.version, appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion, ...(target.appRef ? { appRef: target.appRef } : {}) },
         device: { name: session.deviceName, os: session.deviceOs, version: session.deviceVersion, ...(session.deviceUDID ? { serial: session.deviceUDID } : {}) },
         startedAt: new Date(started).toISOString(), stoppedBecause: 'finished: every reachable screen within the limits was visited', screens: [], taps: 0, notes: [], runs: 1,
       };
@@ -127,22 +141,21 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   if (deviceNote) manifest.notes.push(deviceNote);
   const screensAtStart = manifest.screens.length;
   const bySig = new Map<string, ManifestScreen>(manifest.screens.map((x) => [x.signature, x]));
-  // On a resume the same screen can have another structure (another phone, another OS build): it also counts as known
-  // when its title, its activity and its navigation labels match a stored screen. Only on a resume: within one run the
-  // structure is stable, and two screens with one title (two "Details") must stay apart.
-  const navKey = (els: ScreenElement[]) => candidateTaps(els, opts.allowWritePaths).taps.map((t) => labelOf(t.element)).sort().join('|');
+  // A visit with an unseen structure can still be a known screen: iOS tables draw a varying set of cells, and a resume
+  // may run on another phone. similarScreen compares title, foreground and navigation labels (src/utils/app-exploration.ts).
+  const navLabels = (els: ScreenElement[]) => candidateTaps(els, opts.allowWritePaths).taps.map((t) => labelOf(t.element));
   const known = (r: { sig: string; els: ScreenElement[]; fg: string | null }): ManifestScreen | undefined => {
     const exact = bySig.get(r.sig);
-    if (exact || !resuming) return exact;
-    const title = screenTitle(r.els);
-    const key = navKey(r.els);
-    const match = manifest.screens.find((x) => x.title === title && x.foreground === r.fg && x.navigation.map((n) => n.label.replace(/ \(\+\d+ similar rows\)$/, '')).sort().join('|') === key);
+    if (exact) return exact;
+    const me = { title: screenTitle(r.els), fg: r.fg, labels: navLabels(r.els), container: containerOf(r.els) };
+    const match = manifest.screens.find((x) => similarScreen(me, { title: x.rawTitle ?? x.title, fg: x.foreground, labels: x.navigation.map((n) => n.label), container: x.container }));
     if (match) bySig.set(r.sig, match);
     return match;
   };
   const isScreen = (r: { sig: string; els: ScreenElement[]; fg: string | null }, x: ManifestScreen) => r.sig === x.signature || known(r) === x;
   let stop: string | null = null;
   let appLost = 0;
+  let startScreen: ManifestScreen | undefined;
   const overBudget = () => {
     if (signal.aborted) return 'cancelled';
     if (Date.now() > deadline) return `the time budget (${opts.maxMinutes} min) was reached`;
@@ -154,7 +167,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     const xml = await getPageSource(h);
     const els = parseScreen(xml, p);
     const fg = p === 'android' ? await getForegroundActivity(h).catch(() => null) : null;
-    const pkg = p === 'android' ? await getForegroundPackage(h).catch(() => null) : null;
+    const pkg = await (p === 'android' ? getForegroundPackage(h) : getForegroundBundleId(h)).catch(() => null);
     return { els, fg, pkg, sig: screenSignature(els, fg) };
   };
   type Read = Awaited<ReturnType<typeof read>> & { settleMs: number; settled: boolean };
@@ -164,7 +177,10 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   // a slow screen read half-drawn would be recorded as a screen of its own, and a fixed wait long enough for the
   // slowest screen wastes time on every fast one. A progress indicator that never goes away (a determinate bar) is
   // accepted once the rest has been the same for four reads. settleMs = when the final state was first seen.
-  const settle = async (maxMs = SETTLE_MAX_MS): Promise<Read> => {
+  // `before`: the screen's signature before a tap. A screen still equal to it is not accepted as settled until
+  // SETTLE_UNCHANGED_MS: two equal reads can come BEFORE a slow phone starts the transition (iPhone XS Max, iOS 15,
+  // 2026-11-27: most list taps were recorded as "stays on this screen", and route replays failed the same way).
+  const settle = async (maxMs = SETTLE_MAX_MS, before?: string): Promise<Read> => {
     const t0 = Date.now();
     await sleep(SETTLE_FIRST_MS, signal);
     let prev = await read();
@@ -175,18 +191,31 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
       const cur = await read();
       if (cur.sig === prev.sig) {
         same++;
-        if (!isLoading(cur.els) || same >= 4) { settleTimes.push(prevAt); return { ...cur, settleMs: prevAt, settled: true }; }
+        const unchanged = before !== undefined && cur.sig === before;
+        if (unchanged && Date.now() - t0 < SETTLE_UNCHANGED_MS) continue;
+        if (!isLoading(cur.els) || same >= 4) { if (!unchanged) settleTimes.push(prevAt); return { ...cur, settleMs: prevAt, settled: true }; }
       } else { same = 0; prev = cur; prevAt = Date.now() - t0; }
     }
     unstableCount++;
     return { ...prev, settleMs: Date.now() - t0, settled: false };
   };
-  const tapBy = async (loc: Locator): Promise<Read | null> => {
+  const tapBy = async (loc: Locator, before?: string): Promise<Read | null> => {
     const id = await findFirstElementId(h, loc.using, loc.value);
     if (!id) return null;
     await tapElement(h, id);
     manifest.taps++;
-    return settle();
+    return settle(SETTLE_MAX_MS, before);
+  };
+  // Back one screen. Android: the system back. iOS has none: only a control that says back / close / cancel and is not
+  // destructive is tapped (backControl); "the first nav-bar button" was Logout on one screen and logged the app out.
+  // Nothing suitable → the screen as it is (the caller relaunches when it must).
+  const goBack = async (): Promise<Read> => {
+    if (p === 'android') { await pressBack(h).catch(() => undefined); return settle(); }
+    const cur = await read();
+    const el = backControl(cur.els);
+    const loc = el ? locatorFor(el, p) : null;
+    if (!loc) return { ...cur, settleMs: 0, settled: true };
+    return (await tapBy(loc, cur.sig)) ?? { ...cur, settleMs: 0, settled: true };
   };
   // A text field's own locator is often empty in Compose / SwiftUI apps: fall back to its position among the fields
   // (used inside the crawl only, never written into a delivered test).
@@ -203,10 +232,15 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     const userId = await findFirstElementId(h, ...Object.values(fieldLocator(els, parts.user)) as [string, string]);
     const passId = await findFirstElementId(h, ...Object.values(fieldLocator(els, parts.password)) as [string, string]);
     if (!userId || !passId) return false;
+    // Clear first: an app can keep the user name from the last login, and typing then appends to it (ExperiBank iOS:
+    // every relaunch stayed on the login screen, 2026-11-27).
+    await clearElement(h, userId).catch(() => undefined);
     await typeIntoElement(h, userId, opts.login.username);
+    await clearElement(h, passId).catch(() => undefined);
     await typeIntoElement(h, passId, opts.login.password);
     const submit = parts.submit ? locatorFor(parts.submit, p) : null;
-    if (submit) await tapBy(submit);
+    // Wait for the login to LEAVE the screen: the plain settle could see the login screen twice before a slow phone moved on.
+    if (submit) { const pre = await read(); await tapBy(submit, pre.sig); }
     else await settle();
     return true;
   };
@@ -214,13 +248,13 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   // 2026-11-27) a session started on the launcher and a launch sometimes left it there.
   // Whether a read is of the app under test. Nothing outside it is ever recorded or tapped: on one phone the app left the
   // screen right after the login, and an earlier build recorded the launcher as the home screen and tapped its icons.
-  const inApp = (r: { pkg: string | null }) => p !== 'android' || !r.pkg || r.pkg === target.appId;
+  const inApp = (r: { pkg: string | null }) => !r.pkg || r.pkg === target.appId;
   const launchInFront = async (): Promise<Read> => {
     let s: Read | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       await launchApp(h, target.appId, target.activity).catch(() => undefined);
       s = await settle(SETTLE_LAUNCH_MS);
-      if (p !== 'android' || !s.pkg || s.pkg === target.appId) return s;
+      if (!s.pkg || s.pkg === target.appId) return s;
     }
     return s!;
   };
@@ -229,7 +263,18 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     let s: Read | null = await launchInFront();
     if (loginParts(s.els) && opts.login) { await doLogin(s.els); s = await settle(); }
     if (!inApp(s)) return s;
-    for (const step of path) { s = await tapBy(step.locator); if (!s || !inApp(s)) return s; }
+    // iOS can reopen an app on the screen it showed last (state restoration: UICatalog came back on an inner screen, live
+    // 2026-11-27); back up to the start screen before replaying the route.
+    for (let i = 0; i < 3 && startScreen && known(s) !== startScreen && inApp(s); i++) {
+      s = await goBack();
+    }
+    for (const step of path) {
+      const before: Read = s;
+      s = await tapBy(step.locator, before.sig);
+      // Right after a launch the first tap can land before the screen responds: one more try when nothing changed.
+      if (s && s.sig === before.sig) { await sleep(1500, signal); s = await tapBy(step.locator, before.sig); }
+      if (!s || !inApp(s)) return s;
+    }
     return s;
   };
 
@@ -239,13 +284,16 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     const assertable = s.els.filter((e) => (e.id || (e.text && e.text.length <= 60)) && !/EditText|TextField/.test(e.type))
       .map((e) => ({ label: labelOf(e), locator: locatorFor(e, p) })).filter((a): a is { label: string; locator: Locator } => !!a.locator).slice(0, 25);
     const screen: ManifestScreen = {
-      signature: s.sig, title: screenTitle(s.els), foreground: s.fg, path, elements: s.els.length, assertable,
+      signature: s.sig, title: distinctTitle(s.els, screenTitle(s.els), new Set(manifest.screens.map((x) => x.title)), taps[0] ? labelOf(taps[0].element) : undefined), foreground: s.fg, path, elements: s.els.length, assertable,
       navigation: taps.map((t) => ({ label: labelOf(t.element) + (t.collapsed ? ` (+${t.collapsed} similar rows)` : ''), locator: locatorFor(t.element, p), ...(hasWords(t.element) ? {} : { unlabeled: true as const }) })),
       notVisited: unvisited.map((u) => ({ label: labelOf(u.element), kind: u.kind, reason: u.reason })).slice(0, 40),
       ...(login ? { login } : {}),
       ...(s.settleMs !== undefined && path.length ? { settleMs: s.settleMs } : {}),
       ...(s.settled === false ? { unstable: true as const } : {}),
     };
+    if (screen.title !== screenTitle(s.els)) screen.rawTitle = screenTitle(s.els);
+    const box = containerOf(s.els);
+    if (box) screen.container = box;
     bySig.set(s.sig, screen);
     manifest.screens.push(screen);
     progress(`${manifest.screens.length} screen(s), ${manifest.taps} tap(s): ${screen.title}`);
@@ -259,24 +307,31 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
       if ((stop = overBudget())) return;
       if (!nav.locator) { nav.note = 'no stable locator: not tapped'; continue; }
       let here: Awaited<ReturnType<typeof read>> = await read();
+      // Back up the navigation stack first (cheap, and on iOS a relaunch can restore the app's last screen instead of the
+      // start: UICatalog came back on "Buttons", 2026-11-27); relaunch and replay the route only if that fails.
+      for (let i = 0; i < 3 && !isScreen(here, screen) && inApp(here); i++) {
+        here = await goBack();
+      }
       if (!isScreen(here, screen)) {
         const back = await relaunch(screen.path);
         if (!back || !isScreen(back, screen)) {
           // Say what WAS on screen: a launcher or another app in front points at the device, not the route.
           if (back && !inApp(back)) appLost++;
           if (appLost >= 2) { stop = `the app keeps leaving the front on ${manifest.device.name} (${back?.pkg} was in front): it may crash there; try another device`; return; }
-          const saw = back ? `${screenTitle(back.els)}${back.pkg && back.pkg !== target.appId ? ` in ${back.pkg}` : ''}` : 'a step of the route was not found';
+          const shown = back ? new Set(navLabels(back.els).map(baseLabel)) : new Set<string>();
+          const shared = screen.navigation.filter((n) => shown.has(baseLabel(n.label))).length;
+          const saw = back ? `${screenTitle(back.els)}${back.pkg && back.pkg !== target.appId ? ` in ${back.pkg}` : ''}, with ${shared} of this screen's ${screen.navigation.length} routes among its ${shown.size}${shown.size ? ` (e.g. ${[...shown].slice(0, 2).join("; ")})` : ""}` : 'a step of the route was not found';
           manifest.notes.push(`"${screen.title}" could not be reached again${resuming ? ' by its stored route' : ''} (after a relaunch the phone showed: ${saw}); its remaining taps were skipped`);
           if (resuming) for (const n of screen.navigation) if (!n.leadsTo && !n.note) n.note = 'its screen could not be reached again by the stored route';
           return;
         }
         here = back;
       }
-      const next = await tapBy(nav.locator);
+      const next = await tapBy(nav.locator, here.sig);
       if (!next) { nav.note = 'not found when tapped'; continue; }
       nav.settleMs = next.settleMs;
       if (!next.settled) nav.note = `the screen kept changing for ${Math.round(next.settleMs / 1000)} s (animation or endless loader): recorded as it was then`;
-      if (p === 'android' && next.pkg && next.pkg !== target.appId) {
+      if (next.pkg && next.pkg !== target.appId) {
         nav.note = `opens another app (${next.pkg}): not followed`;
         await relaunch(screen.path);
         continue;
@@ -284,10 +339,9 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
       if (isScreen(next, screen)) { nav.note = 'stays on this screen'; continue; }
       // An unlabelled control (a drop-down arrow, a menu button) that leaves the same screen title opened a STATE of this
       // screen (Desktop test 2026-11-27: Transfer Funds and Bill Pay were each recorded twice), not a screen of its own.
-      if (nav.unlabeled && screenTitle(next.els) === screen.title) {
+      if (nav.unlabeled && screenTitle(next.els) === (screen.rawTitle ?? screen.title)) {
         nav.note = 'opens a state of this screen (a drop-down or menu), not a screen of its own';
-        await pressBack(h).catch(() => undefined);
-        await settle();
+        await goBack();
         continue;
       }
       const seen = known(next);
@@ -298,8 +352,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
         await visit(child, depth + 1);
         if (stop) return;
       }
-      await pressBack(h).catch(() => undefined);
-      await settle();
+      await goBack();
     }
   };
 
@@ -307,7 +360,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     let first: Awaited<ReturnType<typeof read>> = await settle(SETTLE_LAUNCH_MS);
     // The app must be in front before anything is recorded: one live run (2026-11-27) read the phone's launcher at the
     // start. Launch it once more; if it is still not in front, stop rather than map another app.
-    if (p === 'android' && first.pkg && first.pkg !== target.appId) {
+    if (first.pkg && first.pkg !== target.appId) {
       manifest.notes.push(`At the start ${first.pkg} was in front, not the app; it was launched again.`);
       first = await launchInFront();
       if (first.pkg && first.pkg !== target.appId) {
@@ -339,6 +392,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
       }
     }
     const root = known(first) ?? record(first, []);
+    startScreen = root;
     if (login === 'done' && root.path.length === 0) root.path = [];
     if (resuming) {
       // Continue every screen that still has routes to follow, nearest the start screen first.

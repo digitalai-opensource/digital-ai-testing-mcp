@@ -525,7 +525,7 @@ The user chooses the test framework once per project (see
 
 `start_app_exploration` maps an app's screens in the background. In this beta:
 
-- **Verified on Android (Appium Server) only.** iOS and Appium Grid projects are not yet verified.
+- **Verified on Appium Server projects, Android and iOS.** Appium Grid projects are not yet verified. iOS apps can reopen on the screen they showed last; the crawler backs up to the start screen before replaying a route, and reports a screen it cannot reach again rather than guessing.
 - **Web content is not crawled.** Screens inside a web view are listed as they appear in the native tree; the crawler does not switch contexts.
 - **Nothing is typed.** Forms are opened (when write paths are allowed) but never filled or submitted, so screens behind a filled form are not reached.
 - **Test logins:** save one with `setup app-login <name>` (password in the OS keychain), or name two environment variables set in the server's entry in your AI client's configuration. AI clients usually pass only the variables in that entry, not your whole system environment, so `setx` alone does not reach the server. A login typed into the chat is not used.

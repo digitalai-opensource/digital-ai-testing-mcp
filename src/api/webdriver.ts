@@ -1281,11 +1281,13 @@ export async function pressBack(handle: string): Promise<string> {
     // (synthetic touches often don't trigger the system edge recognizer —
     // confirmed live on the Grid).
     try {
-      const backButton = await findFirstElementId(
-        handle,
-        'xpath',
-        '//XCUIElementTypeNavigationBar/XCUIElementTypeButton[1]'
-      );
+      // A button that says back / close / cancel first; the first nav-bar button only when it is not a logout, sign-out or
+      // delete (ExperiBank iOS, 2026-11-27: the first nav-bar button of a screen could be Logout, and "back" logged out).
+      const said = "contains(@name,'Back') or contains(@label,'Back') or @name='Close' or @label='Close' or @name='Cancel' or @label='Cancel'";
+      const harmful = ['ogout', 'og out', 'og Out', 'ign out', 'ign Out', 'elete', 'emove'].map((w) => `contains(@name,'${w}') or contains(@label,'${w}')`).join(' or ');
+      const backButton =
+        (await findFirstElementId(handle, 'xpath', `//XCUIElementTypeNavigationBar/XCUIElementTypeButton[${said}]`)) ??
+        (await findFirstElementId(handle, 'xpath', `//XCUIElementTypeNavigationBar/XCUIElementTypeButton[1][not(${harmful})]`));
       if (backButton) {
         await tapElement(handle, backButton);
         return 'Tapped the navigation bar back button';
@@ -2930,6 +2932,22 @@ export async function getForegroundActivity(handle: string): Promise<string | nu
     const res = await makeClient().get(`/session/${session.gridSessionId}/appium/device/current_activity`, { timeout: 15_000 });
     const activity = res.data?.value;
     return typeof activity === 'string' && activity ? activity : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The iOS bundle id in the foreground right now (`mobile: activeAppInfo`, Appium Server), or null when it cannot be read —
+ * always null on the Grid, which has no equivalent (never fatal).
+ */
+export async function getForegroundBundleId(handle: string): Promise<string | null> {
+  const session = requireSession(handle);
+  if (session.platform !== 'ios' || session.sessionFormat !== 'w3c') return null;
+  try {
+    const r = await execScript(makeClient(), session, 'mobile: activeAppInfo');
+    const id = (r.data?.value as { bundleId?: string } | null)?.bundleId;
+    return typeof id === 'string' && id ? id : null;
   } catch {
     return null;
   }

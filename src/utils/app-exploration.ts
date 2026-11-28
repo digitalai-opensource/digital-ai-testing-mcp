@@ -49,7 +49,10 @@ export interface ScreenElement {
 
 const attr = (attrs: string, name: string): string | null => {
   const m = attrs.match(new RegExp(`\\s${name.replace(/[-]/g, '\\-')}="([^"]*)"`));
-  return m ? m[1].replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : null;
+  if (!m) return null;
+  // Numeric references too: iOS page sources carry line breaks as &#13; / &#10; (UICatalog, 2026-11-27).
+  return m[1].replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d))).replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 };
 
 const LIST_TYPES = /RecyclerView|ListView|GridView|XCUIElementTypeTable$|XCUIElementTypeCollectionView$/;
@@ -146,6 +149,36 @@ const NAV_WORDS = /^(back|close|cancel|done|more|menu|settings|details|home|prof
 const DESTRUCTIVE = /\b(delete|remove|erase|reset|wipe|close account|deactivate|unsubscribe|uninstall|sign ?out|log ?out|logout)\b/i;
 const WRITE = /\b(pay|send|transfer|buy|purchase|order|checkout|save|submit|confirm|post|publish|call|dial|withdraw|deposit|book|subscribe|approve|accept|decline|share|install|update|apply)\b/i;
 
+/** A navigation label without its "(+N similar rows)" suffix, for comparing visits of one screen. */
+// Numbers are left out too: live values ("Current Memory Usage: 399091.0 MB", balances) change between reads of one screen.
+export const baseLabel = (label: string) => label.replace(/ \(\+\d+ similar rows\)$/, '').replace(/\d+([.,]\d+)*/g, '#');
+
+/**
+ * Whether two visits show the same screen when their structure differs: same title and foreground, and mostly the same
+ * navigation labels (Jaccard >= 0.6). iOS tables draw a varying set of cells (UICatalog "Buttons" had 7 similar rows on
+ * one visit and 9 on the next), and another phone draws another tree; two different screens with one title ("Details")
+ * still differ in what they lead to. An untitled screen is never matched this way.
+ */
+export function similarScreen(a: { title: string; fg: string | null; labels: string[]; container?: string }, b: { title: string; fg: string | null; labels: string[]; container?: string }): boolean {
+  if (a.fg !== b.fg) return false;
+  // Different named containers are different screens, however alike their routes (ExperiBank iOS: the mortgage screen was
+  // taken for the payment screen; both titled with the app's name).
+  if (a.container && b.container && a.container !== b.container) return false;
+  const x = new Set(a.labels.map(baseLabel));
+  const y = new Set(b.labels.map(baseLabel));
+  let both = 0;
+  for (const l of x) if (y.has(l)) both++;
+  const jaccard = x.size + y.size - both ? both / (x.size + y.size - both) : 1;
+  // A title read from the first text drawn can change between visits (UICatalog's start screen read "UICatalog", then
+  // "Buttons" after a relaunch): with a sizeable, nearly identical set of routes it is still the same screen.
+  if (a.title !== b.title) return x.size >= 3 && y.size >= 3 && jaccard >= 0.8;
+  if (a.title === '(untitled screen)') return false;
+  // Nothing to compare (no routes on either) is no evidence: a login screen and the home screen behind it shared a title
+  // and had no read-only routes (ExperiBank iOS, 2026-11-27), and were taken for one screen.
+  if (!x.size || !y.size) return false;
+  return jaccard >= 0.6;
+}
+
 /** Whether an element carries words a person reads (a label of only "▾", "." or "›" is no label). */
 export function hasWords(e: ScreenElement): boolean {
   return /[\p{L}\p{N}]/u.test(e.text ?? e.description ?? e.innerText ?? '');
@@ -162,6 +195,11 @@ export function isLoading(els: ScreenElement[]): boolean {
 
 const VIEW_PHRASE = /\b(tap|click|touch|press) (here )?to (view|see|open|show|read)\b|\b(view|see|show) (details|history|all|more|statements?|activity|transactions?)\b/i;
 
+/** Words of a label or id: "logoutButton" → "logout Button", "com.app:id/btn_sign_out" → "btn sign out". */
+export function asWords(text: string): string {
+  return text.replace(/^.*?:id\//, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_\-./:]+/g, ' ');
+}
+
 /** Whether the crawler may tap an element by itself, and why. */
 export function classifyTap(e: ScreenElement, allowWritePaths = false): { kind: TapClass; reason: string } {
   // Punctuation only ("▾", ".") is no label: such a control's effect cannot be read from the screen.
@@ -169,10 +207,15 @@ export function classifyTap(e: ScreenElement, allowWritePaths = false): { kind: 
   if (/EditText|TextField|SecureTextField|SearchField|TextView$/.test(e.type) && /Edit|Field/.test(e.type)) return { kind: 'input', reason: 'a text field: typing is never done without the user' };
   if (e.checkable) return { kind: 'action', reason: 'a switch or check box changes a setting' };
   if (!e.clickable || !e.enabled) return { kind: 'unknown', reason: 'not tappable' };
-  if (label && DESTRUCTIVE.test(label)) return { kind: 'destructive', reason: `"${label}" may delete or end something: needs the user’s confirmation each time` };
-  if (label && WRITE.test(label)) {
-    if (!allowWritePaths || !e.clickable || !e.enabled) return { kind: 'action', reason: `"${label}" may change data (write paths not allowed for this session)` };
-    return { kind: 'navigation', reason: `"${label}" may lead to a write path (allowed for this session; nothing is typed or submitted with data)` };
+  // The safety words are checked on the label AND the id, split into words: "logoutButton", "btn_delete",
+  // "com.app:id/sign_out" are destructive too (ExperiBank iOS names its logout control "logoutButton", which a plain word
+  // match missed, 2026-11-27).
+  const said = asWords(`${label} ${e.id ?? ''}`);
+  const shown = label || (e.id ?? '').split('/').pop() || '';
+  if (DESTRUCTIVE.test(said)) return { kind: 'destructive', reason: `"${shown}" may delete or end something: needs the user’s confirmation each time` };
+  if (WRITE.test(said)) {
+    if (!allowWritePaths || !e.clickable || !e.enabled) return { kind: 'action', reason: `"${shown}" may change data (write paths not allowed for this session)` };
+    return { kind: 'navigation', reason: `"${shown}" may lead to a write path (allowed for this session; nothing is typed or submitted with data)` };
   }
   if (e.inNavigation === 'tabs') return { kind: 'navigation', reason: 'a tab or bottom-navigation item' };
   if (e.inNavigation === 'drawer') return { kind: 'navigation', reason: 'a navigation-drawer item' };
@@ -246,6 +289,41 @@ export function loginParts(elements: ScreenElement[]): { user: ScreenElement; pa
 }
 
 /** A short title for a screen: the navigation bar title, else the first prominent text. */
+/**
+ * A title that tells this screen from others already mapped with the same one: apps that show their own name on every
+ * screen (ExperiBank iOS: eight screens all "SeeTestDemoApp") are told apart by the screen's container name (an id ending
+ * in View / Screen / Page / Controller, e.g. "makePaymentView"), else by its first route.
+ */
+/**
+ * The control an iOS crawl may use to go back: one that says back / close / cancel (by label or id), never a destructive
+ * one, preferring the navigation bar, then the leftmost. iOS has no system back, and "the first nav-bar button" was Logout
+ * on one screen (ExperiBank, 2026-11-27): the crawl logged the app out. None found → the crawl relaunches instead.
+ */
+export function backControl(elements: ScreenElement[]): ScreenElement | undefined {
+  const saysBack = (e: ScreenElement) => {
+    const words = `${e.text ?? ''} ${e.description ?? ''} ${e.innerText ?? ''} ${e.id ?? ''}`;
+    return /(^|\s)(back|close|cancel|done)\b|back(button)?(\s|$)|cancelbutton|closebutton|(^|\s)[<‹]/i.test(words);
+  };
+  const ok = elements.filter((e) => e.clickable && e.enabled && saysBack(e) && classifyTap(e, true).kind !== 'destructive');
+  const x = (e: ScreenElement) => e.bounds?.[0] ?? Number.MAX_SAFE_INTEGER;
+  return ok.sort((a, b) => Number(b.inNavigation === 'navbar') - Number(a.inNavigation === 'navbar') || x(a) - x(b))[0];
+}
+
+/** The screen's named container (an id ending in View / Screen / Page / Controller / Fragment), if the app names one. */
+export function containerOf(elements: ScreenElement[]): string | undefined {
+  return elements.find((e) => e.id && /(View|Screen|Page|Controller|Fragment)$/.test(e.id) && !/(^|[^a-z])(table|collection|scroll|web|image|stack|recycler|list)view$/i.test(e.id))?.id ?? undefined;
+}
+
+export function distinctTitle(elements: ScreenElement[], title: string, taken: Set<string>, firstRoute?: string): string {
+  if (!taken.has(title)) return title;
+  const container = containerOf(elements);
+  for (const hint of [container, firstRoute].filter((x): x is string => !!x)) {
+    const t = `${title} (${hint.split('/').pop()!.slice(0, 40)})`;
+    if (!taken.has(t)) return t;
+  }
+  for (let n = 2; ; n++) if (!taken.has(`${title} (${n})`)) return `${title} (${n})`;
+}
+
 export function screenTitle(elements: ScreenElement[]): string {
   const nav = elements.find((e) => e.inNavigation === 'navbar' && e.text && /StaticText|TextView|Title/.test(e.type));
   if (nav?.text) return nav.text;

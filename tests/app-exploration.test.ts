@@ -300,3 +300,94 @@ describe('resuming a run that mapped nothing', () => {
     }
   });
 });
+
+describe('page-source text', () => {
+  it('decodes numeric character references (iOS line breaks)', () => {
+    const els = parseScreen('<AppiumAUT><XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="a&#13;b &#x41;" label="a&#13;b &#x41;" enabled="true" visible="true" x="0" y="0" width="10" height="10"/></AppiumAUT>', 'ios');
+    assert.equal(els[0].description ?? els[0].text, 'a\rb A');
+  });
+});
+
+describe('similarScreen: one screen across visits, two screens apart', () => {
+  it('matches a table that drew more rows, never different screens with one title or untitled screens', async () => {
+    const { similarScreen } = await import('../src/utils/app-exploration.js');
+    const buttons = (n: number) => ({ title: 'Buttons', fg: null, labels: ['Back', `Gray (+${n} similar rows)`, 'Rounded', 'More info'] });
+    assert.equal(similarScreen(buttons(7), buttons(9)), true);
+    assert.equal(similarScreen({ title: 'Details', fg: null, labels: ['Back', 'Edit order', 'Track parcel'] }, { title: 'Details', fg: null, labels: ['Back', 'Play', 'Add to list'] }), false);
+    assert.equal(similarScreen({ title: '(untitled screen)', fg: null, labels: [] }, { title: '(untitled screen)', fg: null, labels: [] }), false);
+    assert.equal(similarScreen({ title: 'Home', fg: '.A', labels: ['X'] }, { title: 'Home', fg: '.B', labels: ['X'] }), false);
+  });
+});
+
+describe('similarScreen with a title that changed between visits', () => {
+  it('matches a sizeable, nearly identical set of routes; not a small or different one', async () => {
+    const { similarScreen } = await import('../src/utils/app-exploration.js');
+    const routes = ['Buttons', 'Controls', 'TextFields', 'SearchBar', 'Pickers', 'Map'];
+    assert.equal(similarScreen({ title: 'UICatalog', fg: null, labels: routes }, { title: 'Buttons', fg: null, labels: routes }), true);
+    assert.equal(similarScreen({ title: 'A', fg: null, labels: ['Back', 'Save'] }, { title: 'B', fg: null, labels: ['Back', 'Save'] }), false);
+    assert.equal(similarScreen({ title: 'A', fg: null, labels: routes }, { title: 'B', fg: null, labels: ['Buttons', 'Controls', 'Orders', 'Cart', 'Help', 'Map'] }), false);
+  });
+});
+
+describe('baseLabel', () => {
+  it('ignores live numbers and the similar-rows suffix', async () => {
+    const { baseLabel } = await import('../src/utils/app-exploration.js');
+    assert.equal(baseLabel('Current Memory Usage: 399091.0 MB'), baseLabel('Current Memory Usage: 401.5 MB'));
+    assert.equal(baseLabel('Checking $1,000.00 (+3 similar rows)'), baseLabel('Checking $975.50'));
+  });
+});
+
+describe('similarScreen without routes', () => {
+  it('never matches two screens that have nothing to compare (a login screen and the home screen behind it)', async () => {
+    const { similarScreen } = await import('../src/utils/app-exploration.js');
+    assert.equal(similarScreen({ title: 'Bank', fg: null, labels: [] }, { title: 'Bank', fg: null, labels: [] }), false);
+    assert.equal(similarScreen({ title: 'Bank', fg: null, labels: [] }, { title: 'Bank', fg: null, labels: ['Logout'] }), false);
+  });
+});
+
+describe('distinctTitle', () => {
+  it('tells screens with one title apart by their container name, else their first route, else a number', async () => {
+    const { distinctTitle } = await import('../src/utils/app-exploration.js');
+    const els = parseScreen('<AppiumAUT><XCUIElementTypeOther type="XCUIElementTypeOther" name="makePaymentView" enabled="true" visible="true" x="0" y="0" width="10" height="10"/></AppiumAUT>', 'ios');
+    const taken = new Set(['SeeTestDemoApp']);
+    assert.equal(distinctTitle(els, 'Home', taken), 'Home');
+    assert.equal(distinctTitle(els, 'SeeTestDemoApp', taken), 'SeeTestDemoApp (makePaymentView)');
+    assert.equal(distinctTitle([], 'SeeTestDemoApp', taken, 'Expense Report'), 'SeeTestDemoApp (Expense Report)');
+    assert.equal(distinctTitle([], 'SeeTestDemoApp', taken), 'SeeTestDemoApp (2)');
+  });
+});
+
+describe('similarScreen with named containers', () => {
+  it('keeps screens with different container names apart', async () => {
+    const { similarScreen } = await import('../src/utils/app-exploration.js');
+    const routes = ['countryButton', 'cancelButton', 'sendButton'];
+    assert.equal(similarScreen({ title: 'App', fg: null, labels: routes, container: 'makePaymentView' }, { title: 'App', fg: null, labels: routes, container: 'mortgageRequestView' }), false);
+    assert.equal(similarScreen({ title: 'App', fg: null, labels: routes, container: 'makePaymentView' }, { title: 'App', fg: null, labels: routes, container: 'makePaymentView' }), true);
+  });
+});
+
+describe('backControl: iOS back without ever tapping a destructive button', () => {
+  const ios = (inner: string) => parseScreen(`<AppiumAUT>${inner}</AppiumAUT>`, 'ios');
+  const btn = (name: string, x: number, nav = false) => `${nav ? '<XCUIElementTypeNavigationBar type="XCUIElementTypeNavigationBar" name="bar" enabled="true" visible="true" x="0" y="0" width="400" height="44">' : ''}<XCUIElementTypeButton type="XCUIElementTypeButton" name="${name}" label="${name}" enabled="true" visible="true" x="${x}" y="10" width="40" height="30"/>${nav ? '</XCUIElementTypeNavigationBar>' : ''}`;
+  it('picks a back-labelled control, never Logout, and nothing when only a destructive button is there', async () => {
+    const { backControl } = await import('../src/utils/app-exploration.js');
+    assert.equal(backControl(ios(btn('logoutButton', 5, true) + btn('backButton', 300)))?.id, 'backButton');
+    assert.equal(backControl(ios(btn('Logout', 5, true))), undefined);
+    assert.equal(backControl(ios(btn('Cancel', 20) + btn('Back', 5, true)))?.id, 'Back');
+  });
+});
+
+describe('safety words in ids and camelCase names', () => {
+  it('treats logoutButton, btn_delete and an id-only sign-out as destructive, payButton as a write path', async () => {
+    const { asWords } = await import('../src/utils/app-exploration.js');
+    assert.equal(asWords('logoutButton'), 'logout Button');
+    const el = (name: string) => parseScreen(`<AppiumAUT><XCUIElementTypeButton type="XCUIElementTypeButton" name="${name}" label="${name}" enabled="true" visible="true" x="0" y="0" width="40" height="30"/></AppiumAUT>`, 'ios')[0];
+    assert.equal(classifyTap(el('logoutButton'), true).kind, 'destructive');
+    assert.equal(classifyTap(el('btn_delete'), true).kind, 'destructive');
+    assert.equal(classifyTap(el('signOutButton'), true).kind, 'destructive');
+    assert.equal(classifyTap(el('makePaymentButton'), false).kind, 'unknown');
+    assert.equal(classifyTap(el('payButton'), false).kind, 'action');
+    const android = parseScreen('<hierarchy><android.widget.ImageButton class="android.widget.ImageButton" resource-id="com.acme:id/sign_out" bounds="[0,0][10,10]" clickable="true" enabled="true"/></hierarchy>', 'android')[0];
+    assert.equal(classifyTap(android, true).kind, 'destructive');
+  });
+});
