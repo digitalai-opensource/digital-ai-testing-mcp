@@ -65,7 +65,9 @@ export interface ManifestScreen {
   settleMs?: number;
   /** It never stopped changing within the settle limit (animation, ticker, endless loader). */
   unstable?: true;
-  notVisited: Array<{ label: string; kind: TapClass; reason: string }>;
+  notVisited: Array<{ label: string; kind: TapClass; reason: string; locator?: Locator }>;
+  /** The login screen's fields and submit control (for the tests generated in stage 3). */
+  loginLocators?: { user: Locator; password: Locator; submit?: Locator };
   login?: 'done' | 'needed';
 }
 export interface Manifest {
@@ -311,12 +313,14 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     const screen: ManifestScreen = {
       signature: s.sig, title: distinctTitle(s.els, screenTitle(s.els), new Set(manifest.screens.map((x) => x.title)), taps[0] ? labelOf(taps[0].element) : undefined), foreground: s.fg, path, elements: s.els.length, assertable,
       navigation: taps.map((t) => ({ label: labelOf(t.element) + (t.collapsed ? ` (+${t.collapsed} similar rows)` : ''), locator: locatorFor(t.element, p), ...(hasWords(t.element) ? {} : { unlabeled: true as const }) })),
-      notVisited: unvisited.map((u) => ({ label: labelOf(u.element), kind: u.kind, reason: u.reason })).slice(0, 40),
+      notVisited: unvisited.map((u) => { const loc = u.kind === 'input' ? fieldLocator(s.els, u.element) : locatorFor(u.element, p); return { label: labelOf(u.element), kind: u.kind, reason: u.reason, ...(loc ? { locator: loc } : {}) }; }).slice(0, 40),
       ...(login ? { login } : {}),
       ...(s.settleMs !== undefined && path.length ? { settleMs: s.settleMs } : {}),
       ...(s.settled === false ? { unstable: true as const } : {}),
     };
     if (screen.title !== screenTitle(s.els)) screen.rawTitle = screenTitle(s.els);
+    const lp = login ? loginParts(s.els) : null;
+    if (lp) { const sub = lp.submit ? locatorFor(lp.submit, p) : null; screen.loginLocators = { user: fieldLocator(s.els, lp.user), password: fieldLocator(s.els, lp.password), ...(sub ? { submit: sub } : {}) }; }
     const box = containerOf(s.els);
     if (box) screen.container = box;
     bySig.set(s.sig, screen);

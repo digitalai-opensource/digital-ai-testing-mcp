@@ -5,6 +5,7 @@
  */
 import type { Manifest } from '../api/app-crawl.js';
 import type { Locator } from './app-exploration.js';
+import type { CodegenFlow, CodegenLogin } from './flow-codegen.js';
 
 export type FlowKind = 'login' | 'navigate' | 'form' | 'destructive';
 
@@ -26,14 +27,23 @@ export interface ProposedFlow {
   caution?: string;
 }
 
-const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'screen';
+const SHOWS_VALUE = /[$€£¥]\s?\d|\(\s*[$€£¥]?\d[\d.,]*\s*\)/;
+const slug =(t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'screen';
 
 /** Flows proposed from a manifest: log in, open each screen, fill each form, and each destructive action (to confirm). */
 export function proposeFlows(m: Manifest): ProposedFlow[] {
   const flows: ProposedFlow[] = [];
   const used = new Set<string>();
   const id = (base: string) => { let k = base; for (let n = 2; used.has(k); n++) k = `${base}-${n}`; used.add(k); return k; };
-  const check = (s: Manifest['screens'][number]) => s.assertable.find((a) => a.label && !/^\(?untitled/i.test(a.label));
+  // What proves a flow reached its screen: the screen's own title text, else an element the screen before it does not
+  // have; never a framework container (android:id/content is on every screen: the first live test checked it).
+  const check = (s: Manifest['screens'][number]) => {
+    const prev = s.path.length ? m.screens.find((x) => !x.login && x.path.length === s.path.length - 1 && JSON.stringify(x.path) === JSON.stringify(s.path.slice(0, -1))) : undefined;
+    const before = new Set((prev?.assertable ?? []).map((a) => a.locator.value));
+    const usable = s.assertable.filter((a) => a.label && !/^\(?untitled/i.test(a.label) && !/^android:id\//.test(a.locator.value) && !before.has(a.locator.value));
+    const title = s.rawTitle ?? s.title;
+    return usable.find((a) => a.label === title) ?? usable.find((a) => a.locator.using !== 'xpath') ?? usable[0];
+  };
 
   const login = m.screens.find((s) => s.login === 'done');
   if (login) {
@@ -49,7 +59,8 @@ export function proposeFlows(m: Manifest): ProposedFlow[] {
     if (s.path.length) {
       flows.push({ id: id(`open-${slug(s.title)}`), kind: 'navigate', title: `Open ${s.title}`, screen: s.title, steps: s.path, ...(check(s) ? { check: check(s) } : {}) });
     }
-    const fields = s.notVisited.filter((n) => n.kind === 'input').map((n) => n.label);
+    // A field that already shows a value ("Checking ($1,000.00)") is a selection, not an entry field: the test keeps it.
+    const fields = s.notVisited.filter((n) => n.kind === 'input' && !SHOWS_VALUE.test(n.label)).map((n) => n.label);
     const submit = s.notVisited.find((n) => n.kind === 'action' || (n.kind === 'unknown' && /submit|send|pay|save|transfer|deposit|confirm|next|done|sign|apply|book|order/i.test(n.label)));
     if (fields.length && submit) {
       flows.push({
@@ -66,4 +77,48 @@ export function proposeFlows(m: Manifest): ProposedFlow[] {
     }
   }
   return flows;
+}
+
+/**
+ * The accepted flows of a manifest in the shape the code generator takes (src/utils/flow-codegen.ts), with the login
+ * done at the start of every test when the exploration logged in. A flow whose controls have no verified locator is
+ * left out and named in `skipped` (never written with a guessed one).
+ */
+export function codegenInput(m: Manifest, ids: string[]): { flows: CodegenFlow[]; login?: CodegenLogin; skipped: string[] } {
+  const proposed = proposeFlows(m);
+  const loginScreen = m.screens.find((s) => s.login === 'done' && s.loginLocators);
+  const login = loginScreen?.loginLocators;
+  const flows: CodegenFlow[] = [];
+  const skipped: string[] = [];
+  // Every flow starts behind the login: without its locators (an exploration from before they were kept) no test could
+  // get past it, so none is written.
+  if (m.screens.some((s) => s.login === 'done') && !login) {
+    return { flows, skipped: ids.map((id) => `${id} (the exploration logged in, but its login fields were not recorded: run the exploration again with this version)`) };
+  }
+  for (const id of ids) {
+    const f = proposed.find((x) => x.id === id);
+    if (!f) { skipped.push(`${id} (not a flow of this exploration)`); continue; }
+    const screen = m.screens.find((s) => s.title === f.screen);
+    const loc = (label: string | undefined) => (label ? screen?.notVisited.find((n) => n.label === label)?.locator : undefined);
+    if (f.kind === 'login') {
+      if (!login) { skipped.push(`${f.id} (the login fields have no verified locators)`); continue; }
+      flows.push({ id: f.id, title: f.title, kind: 'login', steps: [], ...(f.check ? { check: f.check } : {}) });
+      continue;
+    }
+    if (f.kind === 'form') {
+      const fields = (f.needsData ?? []).map((label) => ({ label, locator: loc(label) }));
+      const action = loc(f.action);
+      if (fields.some((x) => !x.locator) || !action) { skipped.push(`${f.id} (a field or the submit control has no verified locator)`); continue; }
+      flows.push({ id: f.id, title: f.title, kind: 'form', steps: f.steps, fields: fields as CodegenFlow['fields'], action: { label: f.action!, locator: action } });
+      continue;
+    }
+    if (f.kind === 'destructive') {
+      const action = loc(f.action);
+      if (!action) { skipped.push(`${f.id} (the control has no verified locator)`); continue; }
+      flows.push({ id: f.id, title: f.title, kind: 'destructive', steps: f.steps, action: { label: f.action!, locator: action } });
+      continue;
+    }
+    flows.push({ id: f.id, title: f.title, kind: 'navigate', steps: f.steps, ...(f.check ? { check: f.check } : {}) });
+  }
+  return { flows, ...(login ? { login } : {}), skipped };
 }

@@ -115,7 +115,8 @@
     "test:toolsets": "vitest run tests/toolsets.test.ts",
     "test:fidelity-score": "vitest run tests/fidelity-score.test.ts",
     "test:fidelity": "npm run build && tsx tests/fidelity/run.ts",
-    "test:exploration-flows": "vitest run tests/exploration-flows.test.ts"
+    "test:exploration-flows": "vitest run tests/exploration-flows.test.ts",
+    "test:flow-codegen": "vitest run tests/flow-codegen.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",

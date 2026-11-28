@@ -34,3 +34,7 @@ class DigitalAiReport:
         """Set the platform report status from Robot's ${TEST STATUS}: PASS → Passed, SKIP → Skipped, else Failed."""
         mapped = {'PASS': 'Passed', 'SKIP': 'Skipped'}.get(str(status).upper(), 'Failed')
         self._driver().execute_script('seetest:client.setReportStatus', mapped, (message or 'All steps completed')[:500])
+
+    def add_test_property(self, name, value):
+        """Add a property (a filterable column) to the platform report, e.g. the exploration flow a test came from."""
+        self._driver().execute_script('seetest:client.addTestProperty', name, value)

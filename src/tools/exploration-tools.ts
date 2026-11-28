@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { proposeFlows, type ProposedFlow } from '../utils/exploration-flows.js';
+import { explorationRuns } from '../api/exploration-runs.js';
 import { respond, outputFormatParam } from '../utils/output-format.js';
 import { resolveAppLogin } from '../utils/app-logins.js';
 import { setupCommand } from '../cli/clients.js';
@@ -36,7 +37,7 @@ function saveManifest(id: string, m: Manifest): string | undefined {
     return file;
   } catch { return undefined; }
 }
-function loadManifest(id: string): Manifest | undefined {
+export function loadManifest(id: string): Manifest | undefined {
   const inMemory = jobs.get(id)?.manifest;
   if (inMemory) return inMemory;
   if (!/^explore-[a-z0-9]+$/.test(id)) return undefined;
@@ -242,8 +243,23 @@ export function registerExplorationTools(server: McpServer): void {
       const line = (f: ProposedFlow) => `- ${f.id}: ${f.title}${f.steps.length ? ` — ${f.steps.map((x) => x.label).join(' → ')}` : ''}${f.needsData ? ` — needs test data: ${f.needsData.join(', ')}` : ''}${f.caution ? ` (${f.caution})` : ''}`;
       if (!accept) {
         const accepted = new Set((m.acceptedFlows ?? []).map((a) => a.id));
-        const text = [`${flows.length} proposed flow(s) for ${m.app.appId}${m.app.version ? ` ${m.app.version}` : ''}. Ask the user which to keep, then call again with accept: [ids].`, '', ...flows.map((f) => line(f) + (accepted.has(f.id) ? '  [accepted]' : ''))].join('\n');
-        return respond(outputFormat, { jobId, flows, ...(m.acceptedFlows ? { acceptedFlows: m.acceptedFlows } : {}) }, text);
+        // Stage 3: the runs of the generated tests, found by their report key (only once flows were accepted).
+        let runs: Awaited<ReturnType<typeof explorationRuns>> = [];
+        let runsNote: string | undefined;
+        if (accepted.size) {
+          const since = Date.parse(m.finishedAt ?? m.startedAt) || Date.now() - 7 * 86_400_000;
+          runs = await explorationRuns(jobId, since).catch((e: Error) => { runsNote = `runs could not be read: ${e.message}`; return []; });
+        }
+        const latest = new Map<string, (typeof runs)[number]>();
+        for (const r of runs) if (r.flow && !latest.has(r.flow)) latest.set(r.flow, r);
+        const runLine = (id: string) => { const r = latest.get(id); const n = runs.filter((x) => x.flow === id).length; return r ? `  [accepted; last run ${r.status}, ${n} run(s)]` : '  [accepted; not run yet]'; };
+        const text = [
+          `${flows.length} proposed flow(s) for ${m.app.appId}${m.app.version ? ` ${m.app.version}` : ''}. ${accepted.size ? 'Accepted flows show their runs (tests generated with get_test_boilerplate explorationJobId).' : 'Ask the user which to keep, then call again with accept: [ids].'}`,
+          '', ...flows.map((f) => line(f) + (accepted.has(f.id) ? runLine(f.id) : '')),
+          ...(runs.length ? ['', `Runs of the generated tests (report key explorationRun = ${jobId}): ${runs.length}, ${runs.filter((r) => /pass/i.test(r.status)).length} passed. Newest: ${runs.slice(0, 5).map((r) => `#${r.testId} ${r.flow ?? r.name} ${r.status}`).join('; ')}.`] : []),
+          ...(runsNote ? ['', runsNote] : []),
+        ].join('\n');
+        return respond(outputFormat, { jobId, flows, ...(m.acceptedFlows ? { acceptedFlows: m.acceptedFlows } : {}), ...(accepted.size ? { runs } : {}), ...(runsNote ? { runsNote } : {}) }, text);
       }
       const unknown = accept.filter((a) => !flows.some((f) => f.id === a));
       if (unknown.length) return { content: [{ type: 'text', text: `Error: unknown flow id(s): ${unknown.join(', ')}. List the proposals first (no accept).` }], isError: true };

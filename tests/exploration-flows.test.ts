@@ -53,6 +53,6 @@ describe('app_exploration_flows', () => {
     const stored = JSON.parse(readFileSync(join(dir, 'explore-bank1.json'), 'utf8'));
     assert.deepEqual(stored.acceptedFlows.map((a: { id: string }) => a.id), ['login', 'open-transfer']);
     r = await t.call('app_exploration_flows', { jobId: 'explore-bank1', outputFormat: 'human' });
-    assert.match(r.text, /open-transfer: .*\[accepted\]/);
+    assert.match(r.text, /open-transfer: .*\[accepted; (not run yet|last run)/);
   });
 });

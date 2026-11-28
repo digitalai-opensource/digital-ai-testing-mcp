@@ -13,6 +13,9 @@ import { outputFormatParam, respond } from '../utils/output-format.js';
 import { staleBuildRemedy, serverFsInstallNotice, serverFsProjectDirParam } from '../utils/locality.js';
 import { isLocalFilesystem } from '../utils/deployment-mode.js';
 import { validateOutputPath } from '../utils/path-guard.js';
+import { loadManifest } from './exploration-tools.js';
+import { codegenInput } from '../utils/exploration-flows.js';
+import { renderFlowTests, envVarsFor, type CodegenFlow, type CodegenLogin, type CodegenLanguage } from '../utils/flow-codegen.js';
 import { decideFramework, MOBILE_LANGUAGES, WEB_LANGUAGES } from '../utils/framework-choice.js';
 import { isLocalClient } from './report-tools.js';
 import {
@@ -784,6 +787,8 @@ function substitute(
     keepAppData?: boolean;
     /** The test is the page-object variant (placeholder refers to the screen class). */
     pageObjects?: boolean;
+    /** Stage 3 of app exploration: one test per accepted flow, from verified locators (replaces the placeholder). */
+    flowTests?: { flows: CodegenFlow[]; login?: CodegenLogin };
   }
 ): string {
   let result = content;
@@ -803,7 +808,11 @@ function substitute(
       if (vars.reportStatus) content = wrapWithReporting(language, indent, content, !!vars.isAppiumOss);
       return content;
     };
-    if (vars.clearTestBody) {
+    if (vars.flowTests) {
+      const rendered = renderFlowTests(result, { language: language as CodegenLanguage, flows: vars.flowTests.flows, login: vars.flowTests.login, decorate: (b) => decorate(b) });
+      if (!rendered) throw new Error(`this ${language} template has no test method the exploration flows can replace`);
+      result = rendered;
+    } else if (vars.clearTestBody) {
       result = result.replace(DEMO_STEP_PATTERN, () => decorate(buildPlaceholder(language, platform, indent, vars.isAppiumOss !== false, vars.pageObjects === true)));
       // Node page objects: the placeholder variant ships PlaceholderScreen instead of LoginScreen, so the spec must
       // require the file that is actually generated (a missing module fails at load, before the fail-guard runs).
@@ -1192,6 +1201,10 @@ export function registerBoilerplateTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe('true only when the user asks to build against the ExperiBank sample app (training, trying the platform): returns its runnable test with verified steps. Never for the user\'s own app.'),
+      explorationJobId: z.string().regex(/^explore-[a-z0-9]+$/).optional()
+        .describe('Stage 3 of app exploration: an exploration whose flows THE USER accepted (app_exploration_flows). Returns one test per accepted flow, with steps from the locators the exploration verified (no placeholder), the app taken from the exploration, and the report key digitalai:explorationRun so the run can be found afterwards. Appium Server projects.'),
+      flows: z.array(z.string()).optional()
+        .describe('With explorationJobId: only these accepted flow ids (default: every accepted flow).'),
       appId: z
         .number()
         .optional()
@@ -1412,11 +1425,37 @@ export function registerBoilerplateTools(server: McpServer): void {
         ),
       outputFormat: outputFormatParam,
     },
-    async ({ platform, language: requestedLanguage, confirmedByUser, newFramework, demo: demoRequested, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, structure, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, appReset, deviceLanguage, autoAcceptAlerts, platformOptions, automotiveProjection, orchestration, orchestrationMaxRetries, outputFormat }) => {
+    async ({ platform, language: requestedLanguage, confirmedByUser, newFramework, demo: demoRequested, explorationJobId, flows: flowIds, appId, deviceCategory, testName, packageName, mainActivity, bundleIdentifier, structure, projectType, region, includePerformanceTransactions, includeAxeScan, reportStatus, appiumVersion, newSessionWaitTimeout, reportKeys, appReset, deviceLanguage, autoAcceptAlerts, platformOptions, automotiveProjection, orchestration, orchestrationMaxRetries, outputFormat }) => {
       // ── The framework is the USER's choice, once per project (owner decision 2026-11-27) ──
       const choice = await decideFramework({ kind: 'mobile', options: MOBILE_LANGUAGES, requested: requestedLanguage, confirmedByUser, newFramework, tool: 'get_test_boilerplate' });
       if (!choice.ok) return respond(outputFormat, choice.answer, choice.text);
       const language = choice.language as Language;
+
+      // ── Stage 3: tests from an exploration's accepted flows ─────────────────────
+      let flowTests: { flows: CodegenFlow[]; login?: CodegenLogin } | undefined;
+      let flowSkipped: string[] = [];
+      let explorationApp: string | undefined;
+      if (explorationJobId) {
+        const fail = (t: string) => ({ content: [{ type: 'text' as const, text: `Error: ${t} Nothing was generated.` }], isError: true });
+        const m = loadManifest(explorationJobId);
+        if (!m) return fail(`no saved exploration ${explorationJobId}.`);
+        if (m.app.platform !== platform) return fail(`exploration ${explorationJobId} is of a ${m.app.platform} app, not ${platform}.`);
+        if (demoRequested) return fail('demo cannot be combined with an exploration of the user\'s app.');
+        const accepted = (m.acceptedFlows ?? []).map((a) => a.id);
+        if (!accepted.length) return fail(`no flow of ${explorationJobId} has been accepted yet: list them with app_exploration_flows, let the USER choose, and record the choice with accept.`);
+        const notAccepted = (flowIds ?? []).filter((f) => !accepted.includes(f));
+        if (notAccepted.length) return fail(`only flows the user accepted can be generated; not accepted: ${notAccepted.join(', ')}.`);
+        const given = platform === 'android' ? packageName : bundleIdentifier;
+        if (given && given !== m.app.appId) return fail(`the exploration is of ${m.app.appId}, not ${given}.`);
+        const ci = codegenInput(m, flowIds ?? accepted);
+        if (!ci.flows.length) return fail(`none of the chosen flows has verified locators for every step: ${ci.skipped.join('; ')}.`);
+        flowTests = { flows: ci.flows, ...(ci.login ? { login: ci.login } : {}) };
+        flowSkipped = ci.skipped;
+        explorationApp = m.app.appId;
+        if (appId === undefined && !given) {
+          if (platform === 'android') { packageName = m.app.appId; mainActivity = mainActivity ?? m.app.activity; } else bundleIdentifier = m.app.appId;
+        }
+      }
 
       // ── Which app ─────────────────────────────────────────────────────────────
       // The ExperiBank demo ONLY when the user asked for it (demo: true, or they named ExperiBank). A customer app gets
@@ -1448,6 +1487,9 @@ export function registerBoilerplateTools(server: McpServer): void {
         // don't fail boilerplate generation on lookup error
       }
       const isAppiumOss = detectedAppiumOss ?? false;
+      if (flowTests && !isAppiumOss) {
+        return { content: [{ type: 'text', text: `Error: tests from an exploration are generated for Appium Server projects first; ${detectedAppiumOss === undefined ? 'this project\'s mode could not be determined' : 'this project runs on Appium Grid'}. Nothing was generated.` }], isError: true };
+      }
 
       // Automotive projection is verified on Appium Server only; Grid sessions run a different execute layer.
       let automotive: { resolution: AutomotiveResolution; applied: boolean; note: string } | undefined;
@@ -1488,6 +1530,8 @@ export function registerBoilerplateTools(server: McpServer): void {
       }
       if (newSessionWaitTimeout !== undefined) extraCaps['digitalai:newSessionWaitTimeout'] = newSessionWaitTimeout;
       for (const [k, v] of Object.entries(reportKeys ?? {})) extraCaps[`digitalai:${k}`] = v;
+      // Ties every run of a generated test back to its exploration (a report column the MCP can filter on).
+      if (explorationJobId && flowTests) extraCaps['digitalai:explorationRun'] = explorationJobId;
       // Session options verified on Appium Server only (2026-11-12) — a Grid project gets the classic output with a note.
       const serverOnly = [
         appReset === 'keep-data' && 'appReset',
@@ -1556,6 +1600,9 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
         }
         appIsDemo = isDemoId(id);
         resolvedFromAppId = true;
+        if (explorationApp && id !== explorationApp) {
+          return { content: [{ type: 'text', text: `Error: application ${appId} is ${id}, but the exploration is of ${explorationApp}. Nothing was generated.` }], isError: true };
+        }
       }
 
       // The demo only when the user asked for it: demo: true, or they named ExperiBank (its package, bundle id or app id).
@@ -1564,7 +1611,8 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
       }
       const demo = demoRequested === true || namesDemo || appIsDemo;
       const clearTestBody = !demo;
-      const pageObjectsRequested = structure === 'page-objects';
+      const placeholder = clearTestBody && !flowTests;
+      const pageObjectsRequested = structure === 'page-objects' && !flowTests;
       const pageObjectsApplied = pageObjectsRequested && (language === 'nodejs' || ((language === 'java-junit5' || language === 'java-testng') && isAppiumOss));
       const structureNote = pageObjectsRequested && !pageObjectsApplied
         ? (language === 'python' || language === 'robot'
@@ -1592,6 +1640,7 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
         extraCaps,
         keepAppData,
         pageObjects: pageObjectsApplied,
+        ...(flowTests ? { flowTests } : {}),
       };
 
       const files = getFilesForVariant(platform, language, isAppiumOss, projectType, pageObjectsApplied ? 'page-objects' : 'flat', clearTestBody);
@@ -1646,7 +1695,7 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
         if (decision.enabled) {
           const retries = resolveMaxRetryAttempts({
             requested: orchestrationMaxRetries,
-            placeholderBody: clearTestBody,
+            placeholderBody: placeholder,
             performanceTransactions: includePerformanceTransactions === true,
           });
           const prefix = projectType === 'android-gradle-submodule' ? 'e2e-tests/' : '';
@@ -1716,7 +1765,15 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
             : { kind: 'unspecified', note: 'No app was given: ask the user which app, and fill the <your app …> placeholders.' };
         const structured = {
           appUnderTest,
-          runnable: demo,
+          runnable: demo || !!flowTests,
+          ...(flowTests ? { exploration: {
+            jobId: explorationJobId,
+            tests: flowTests.flows.map((f) => ({ flow: f.id, title: f.title, kind: f.kind })),
+            ...(flowSkipped.length ? { skipped: flowSkipped } : {}),
+            testData: envVarsFor(flowTests.flows, flowTests.login),
+            reportKey: `digitalai:explorationRun = ${explorationJobId}`,
+            next: 'Set the testData variables (never write their values into the test), run the tests, then call app_exploration_flows with this jobId: it lists the runs (found by the report key) and their results.' + (flowTests.flows.some((f) => f.kind === 'form') ? ' Form flows: the exploration never submitted the form, so confirm the expected result with the user and add that assertion.' : ''),
+          } } : {}),
           // Desktop test 2026-11-27: the agent could not run the test it wrote (a cloud sandbox) and said only that.
           ...(isLocalClient() ? {} : { runNote: RUN_NOTE }),
           framework: {
@@ -1755,8 +1812,8 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
           parallelNote: parallelNote(language, isAppiumOss),
           credentialSetup: CREDENTIAL_SETUP,
           // v38: when a custom app is targeted the test body is a placeholder, NOT a finished test.
-          requiresVerifiedSelectors: clearTestBody,
-          ...(clearTestBody && {
+          requiresVerifiedSelectors: placeholder,
+          ...(placeholder && {
             placeholderWarning:
               'THIS IS NOT A RUNNABLE TEST. The test body is a placeholder with a deliberate fail()/raise guard and ' +
               'non-real <…> example selectors. Before this is usable you MUST replace the placeholder block with steps ' +
@@ -1808,7 +1865,10 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
             : `> ⚠️ **Automotive projection requested but not applied:** ${automotive.note} Generated the classic boilerplate instead.`, '');
         }
         for (const note of capNotes) lines.push(`> **Capabilities:** ${note}`, '');
-        if (clearTestBody) {
+        if (flowTests) {
+          lines.push(`> ✅ **Tests from exploration ${explorationJobId}:** one test per flow the user accepted (${flowTests.flows.map((f) => f.title).join('; ')}), steps from verified locators. Test data from: ${envVarsFor(flowTests.flows, flowTests.login).join(', ') || 'none'}. Runs carry digitalai:explorationRun = ${explorationJobId}; afterwards app_exploration_flows lists them.${flowSkipped.length ? ` Skipped: ${flowSkipped.join('; ')}.` : ''}`, '');
+        }
+        if (placeholder) {
           lines.push(
             '> ⛔ **NOT A FINISHED TEST.** The test body is a placeholder with a deliberate fail-guard and ' +
             'non-real `<…>` example selectors. Replace it with steps using element IDs from a live inspection ' +
