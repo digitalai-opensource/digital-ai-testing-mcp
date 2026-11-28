@@ -99,7 +99,9 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   progress('starting an inspection session');
   // A resume asks for the phone of the earlier run first: another model or OS version draws other element trees, and
   // the stored screens would not be recognised (live 2026-11-27: a resume on another phone mapped every screen again).
-  const sameDevice = opts.resume?.device.serial && !target.deviceQuery ? `@serialnumber='${opts.resume.device.serial.replace(/'/g, '')}'` : undefined;
+  // …unless that phone was the trouble: a run that could not get back to its screens there is resumed elsewhere.
+  const troubled = (opts.resume?.notes ?? []).some((n) => /could not be reached again|did not come to the front/.test(n));
+  const sameDevice = opts.resume?.device.serial && !target.deviceQuery && !troubled ?`@serialnumber='${opts.resume.device.serial.replace(/'/g, '')}'` : undefined;
   const open = (deviceQuery: string | undefined) => createInspectionSession({
     platform: p, deviceQuery, region: deviceQuery === sameDevice ? undefined : target.region, testName: `App exploration: ${target.appId}`,
     ...(p === 'android' ? { app: `cloud:${target.appId}${target.activity ? `/${target.activity}` : ''}`, appPackage: target.appId, ...(target.activity ? { appActivity: target.activity } : {}) } : { app: `cloud:${target.appId}`, appPackage: target.appId }),
@@ -140,6 +142,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   };
   const isScreen = (r: { sig: string; els: ScreenElement[]; fg: string | null }, x: ManifestScreen) => r.sig === x.signature || known(r) === x;
   let stop: string | null = null;
+  let appLost = 0;
   const overBudget = () => {
     if (signal.aborted) return 'cancelled';
     if (Date.now() > deadline) return `the time budget (${opts.maxMinutes} min) was reached`;
@@ -207,16 +210,31 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     else await settle();
     return true;
   };
+  // Launches the app and checks it is really in front, twice at most: on one phone (Galaxy S21 Ultra, Android 13,
+  // 2026-11-27) a session started on the launcher and a launch sometimes left it there.
+  // Whether a read is of the app under test. Nothing outside it is ever recorded or tapped: on one phone the app left the
+  // screen right after the login, and an earlier build recorded the launcher as the home screen and tapped its icons.
+  const inApp = (r: { pkg: string | null }) => p !== 'android' || !r.pkg || r.pkg === target.appId;
+  const launchInFront = async (): Promise<Read> => {
+    let s: Read | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await launchApp(h, target.appId, target.activity).catch(() => undefined);
+      s = await settle(SETTLE_LAUNCH_MS);
+      if (p !== 'android' || !s.pkg || s.pkg === target.appId) return s;
+    }
+    return s!;
+  };
   const relaunch = async (path: ManifestStep[]) => {
     await appControl(h, 'terminate', target.appId).catch(() => undefined);
-    await launchApp(h, target.appId, target.activity);
-    let s: Read | null = await settle(SETTLE_LAUNCH_MS);
+    let s: Read | null = await launchInFront();
     if (loginParts(s.els) && opts.login) { await doLogin(s.els); s = await settle(); }
-    for (const step of path) { s = await tapBy(step.locator); if (!s) return null; }
+    if (!inApp(s)) return s;
+    for (const step of path) { s = await tapBy(step.locator); if (!s || !inApp(s)) return s; }
     return s;
   };
 
   const record = (s: Awaited<ReturnType<typeof read>> & Partial<Pick<Read, 'settleMs' | 'settled'>>, path: ManifestStep[], login?: ManifestScreen['login']): ManifestScreen => {
+    if (!inApp(s)) throw new Error(`refused to record a screen of ${s.pkg}: not the app under test`);
     const { taps, unvisited } = candidateTaps(s.els, opts.allowWritePaths);
     const assertable = s.els.filter((e) => (e.id || (e.text && e.text.length <= 60)) && !/EditText|TextField/.test(e.type))
       .map((e) => ({ label: labelOf(e), locator: locatorFor(e, p) })).filter((a): a is { label: string; locator: Locator } => !!a.locator).slice(0, 25);
@@ -244,7 +262,11 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
       if (!isScreen(here, screen)) {
         const back = await relaunch(screen.path);
         if (!back || !isScreen(back, screen)) {
-          manifest.notes.push(`"${screen.title}" could not be reached again${resuming ? ' by its stored route (the app may have changed)' : ''}; its remaining taps were skipped`);
+          // Say what WAS on screen: a launcher or another app in front points at the device, not the route.
+          if (back && !inApp(back)) appLost++;
+          if (appLost >= 2) { stop = `the app keeps leaving the front on ${manifest.device.name} (${back?.pkg} was in front): it may crash there; try another device`; return; }
+          const saw = back ? `${screenTitle(back.els)}${back.pkg && back.pkg !== target.appId ? ` in ${back.pkg}` : ''}` : 'a step of the route was not found';
+          manifest.notes.push(`"${screen.title}" could not be reached again${resuming ? ' by its stored route' : ''} (after a relaunch the phone showed: ${saw}); its remaining taps were skipped`);
           if (resuming) for (const n of screen.navigation) if (!n.leadsTo && !n.note) n.note = 'its screen could not be reached again by the stored route';
           return;
         }
@@ -287,8 +309,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     // start. Launch it once more; if it is still not in front, stop rather than map another app.
     if (p === 'android' && first.pkg && first.pkg !== target.appId) {
       manifest.notes.push(`At the start ${first.pkg} was in front, not the app; it was launched again.`);
-      await launchApp(h, target.appId, target.activity).catch(() => undefined);
-      first = await settle(SETTLE_LAUNCH_MS);
+      first = await launchInFront();
       if (first.pkg && first.pkg !== target.appId) {
         manifest.stoppedBecause = `the app did not come to the front (${first.pkg} stayed in front): it may have crashed at start; try another device`;
         return manifest;
@@ -300,6 +321,15 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
         if (!known(first)) record(first, [], 'done');
         login = 'done';
         first = await settle();
+        if (!inApp(first)) {
+          manifest.notes.push(`After the login ${first.pkg} was in front, not the app; it was launched again.`);
+          first = await launchInFront();
+          if (inApp(first) && loginParts(first.els)) { await doLogin(first.els); first = await settle(); }
+          if (!inApp(first)) {
+            manifest.stoppedBecause = `the app does not stay in front on ${manifest.device.name} (after the login ${first.pkg} was in front): it may crash there; try another device`;
+            return manifest;
+          }
+        }
         if (loginParts(first.els)) manifest.notes.push(`The test login (${opts.login.source}) did not get past the login screen: check it.`);
       } else {
         if (!known(first)) record(first, [], 'needed');

@@ -106,6 +106,7 @@ export function registerExplorationTools(server: McpServer): void {
         const prev = a.resumeFrom ? loadManifest(a.resumeFrom) : undefined;
         if (a.resumeFrom && !prev) throw new Error(`no saved exploration ${a.resumeFrom} (looked in this server run and in ${explorationDir()}). Start a new exploration instead.`);
         if (prev && prev.app.platform !== a.platform) throw new Error(`exploration ${a.resumeFrom} is of a ${prev.app.platform} app, not ${a.platform}.`);
+        if (prev && !prev.screens.length) throw new Error(`exploration ${a.resumeFrom} mapped no screens (${prev.stoppedBecause}), so there is nothing to continue: start a new exploration${/front|crash/.test(prev.stoppedBecause) ? ` on another phone (it ran on ${prev.device.name})` : ''}.`);
         if (prev && !prev.frontier?.length) throw new Error(`exploration ${a.resumeFrom} has no routes left to follow: it is complete within its depth limit${prev.settings ? ` (${prev.settings.maxDepth} taps)` : ''}. A larger maxDepth needs a new exploration.`);
         let appIdStr = prev ? prev.app.appId : a.platform === 'android' ? a.packageName : a.bundleIdentifier;
         let activity = a.mainActivity;
