@@ -83,7 +83,7 @@ describe('classifyTap: an allow-list of navigation, never a guess', () => {
     const login = parseScreen(loginForm, 'android');
     assert.equal(classifyTap(byId(login, 'org.example.bank:id/user')).kind, 'input');
     assert.equal(classifyTap(byId(login, 'org.example.bank:id/remember')).kind, 'action');
-    assert.equal(classifyTap(byId(login, 'org.example.bank:id/signin')).kind, 'unknown', 'a sign-in button is not navigation: it needs the user');
+    assert.equal(classifyTap(byId(login, 'org.example.bank:id/signin')).kind, 'action', 'a sign-in button is a write path (accounts), never navigation');
     assert.equal(classifyTap(byId(login, 'Help')).kind, 'navigation', 'a whole-label navigation word');
   });
   it('iOS: tab buttons, cells and the navigation bar’s Back are navigation; Delete All and a switch are not; invisible elements are ignored', () => {
@@ -389,5 +389,73 @@ describe('safety words in ids and camelCase names', () => {
     assert.equal(classifyTap(el('payButton'), false).kind, 'action');
     const android = parseScreen('<hierarchy><android.widget.ImageButton class="android.widget.ImageButton" resource-id="com.acme:id/sign_out" bounds="[0,0][10,10]" clickable="true" enabled="true"/></hierarchy>', 'android')[0];
     assert.equal(classifyTap(android, true).kind, 'destructive');
+  });
+});
+
+describe('apps already on the phone (Google Maps, Apple Maps)', () => {
+  it('answers a system permission dialog with the most temporary choice, else a refusal, never a lasting grant', async () => {
+    const { systemDialogAnswer } = await import('../src/utils/app-exploration.js');
+    const dialog = (buttons: string[]) => parseScreen(`<hierarchy>${buttons.map((b, i) => `<android.widget.Button class="android.widget.Button" text="${b}" bounds="[0,${i * 100}][500,${i * 100 + 90}]" clickable="true" enabled="true"/>`).join('')}</hierarchy>`, 'android');
+    const pkg = 'com.google.android.permissioncontroller';
+    assert.equal(systemDialogAnswer(dialog(['While using the app', 'Only this time', 'Don’t allow']), pkg, 'android')?.answer, 'Only this time');
+    assert.equal(systemDialogAnswer(dialog(['Allow', 'Don’t allow']), pkg, 'android')?.answer, 'Don’t allow');
+    assert.equal(systemDialogAnswer(dialog(['Only this time']), 'com.acme.shop', 'android'), undefined, 'the app’s own screen is not a system dialog');
+    const ios = parseScreen('<AppiumAUT><XCUIElementTypeAlert type="XCUIElementTypeAlert" name="Allow Maps to use your location?" enabled="true" visible="true" x="0" y="0" width="300" height="200"><XCUIElementTypeButton type="XCUIElementTypeButton" name="Allow Once" label="Allow Once" enabled="true" visible="true" x="0" y="100" width="300" height="40"/><XCUIElementTypeButton type="XCUIElementTypeButton" name="Allow While Using App" label="Allow While Using App" enabled="true" visible="true" x="0" y="140" width="300" height="40"/></XCUIElementTypeAlert></AppiumAUT>', 'ios');
+    assert.equal(systemDialogAnswer(ios, 'com.apple.Maps', 'ios')?.answer, 'Allow Once');
+  });
+
+  it('reads the installed version from dumpsys', async () => {
+    const { versionFromDumpsys } = await import('../src/utils/app-exploration.js');
+    assert.equal(versionFromDumpsys('  Package [com.google.android.apps.maps]\n    versionCode=1062 minSdk=28\n    versionName=26.47.03.123 (build)\n'), '26.47.03.123');
+    assert.equal(versionFromDumpsys(''), undefined);
+  });
+});
+
+describe('start_app_exploration installedApp', () => {
+  it('needs a package or bundle id, not a repository id', async () => {
+    const stub = await startStubApi(() => undefined);
+    const t = await connectTools(registerExplorationTools);
+    try {
+      let r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', installedApp: true, appId: 7 });
+      assert.match(r.text, /NOT in the repository/);
+      r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', installedApp: true });
+      assert.match(r.text, /installedApp needs packageName/);
+      r = await t.call('start_app_exploration', { allowWritePaths: false, platform: 'android', installedApp: true, packageName: 'com.google.android.apps.maps', outputFormat: 'json' });
+      assert.notEqual(r.res.isError, true, r.text);
+    } finally { await t.close(); await stub.close(); }
+  });
+});
+
+describe('bottom navigation drawn with plain views', () => {
+  it('a row of labelled controls at the bottom is navigation, so read-only crawls follow it', () => {
+    const els = parseScreen(`<hierarchy><android.widget.FrameLayout class="android.widget.FrameLayout" bounds="[0,0][1080,2400]" clickable="false" enabled="true">
+      <android.widget.Button class="android.widget.Button" text="Search here" bounds="[0,1000][1080,1100]" clickable="true" enabled="true"/>
+      <android.widget.FrameLayout class="android.widget.FrameLayout" content-desc="You" resource-id="com.google.android.apps.maps:id/saved_tab_strip_button" bounds="[360,2105][720,2274]" clickable="true" enabled="true"/>
+      <android.widget.FrameLayout class="android.widget.FrameLayout" content-desc="Contribute" resource-id="com.google.android.apps.maps:id/contribute_tab_strip_button" bounds="[720,2105][1080,2274]" clickable="true" enabled="true"/>
+    </android.widget.FrameLayout></hierarchy>`, 'android');
+    const you = els.find((e) => e.description === 'You')!;
+    assert.equal(you.inNavigation, 'tabs');
+    assert.equal(classifyTap(you, false).kind, 'navigation');
+    assert.equal(els.find((e) => e.text === 'Search here')!.inNavigation, null);
+  });
+});
+
+describe('prompts at start', () => {
+  it('dismissing a promo or permission prompt is navigation; Continue is not', () => {
+    const b = (t: string) => parseScreen(`<hierarchy><android.widget.Button class="android.widget.Button" text="${t}" bounds="[0,500][500,600]" clickable="true" enabled="true"/></hierarchy>`, 'android')[0];
+    for (const t of ['Got it', 'Not now', 'No thanks', 'Skip', 'Dismiss']) assert.equal(classifyTap(b(t), false).kind, 'navigation', t);
+    assert.notEqual(classifyTap(b('OK'), false).kind, 'navigation', 'OK can accept a notice or terms');
+    assert.notEqual(classifyTap(b('Continue'), false).kind, 'navigation');
+  });
+});
+
+describe('action rows are not tab bars', () => {
+  it('two buttons at the bottom of a sheet (Start, Add stops) are not tabs; a full-width bar of three is', () => {
+    const screen = (inner: string) => parseScreen(`<hierarchy><android.widget.FrameLayout class="android.widget.FrameLayout" bounds="[0,0][1080,2400]" clickable="false" enabled="true">${inner}</android.widget.FrameLayout></hierarchy>`, 'android');
+    const btn = (t: string, x1: number, x2: number, y1: number, y2: number) => `<android.widget.Button class="android.widget.Button" text="${t}" bounds="[${x1},${y1}][${x2},${y2}]" clickable="true" enabled="true"/>`;
+    const sheet = screen(btn('Start', 40, 400, 2000, 2120) + btn('Add stops', 420, 800, 2000, 2120));
+    assert.equal(sheet.find((e) => e.text === 'Start')!.inNavigation, null);
+    const bar = screen(btn('Home', 0, 360, 2260, 2400) + btn('Search', 360, 720, 2260, 2400) + btn('Library', 720, 1080, 2260, 2400));
+    assert.equal(bar.find((e) => e.text === 'Search')!.inNavigation, 'tabs');
   });
 });

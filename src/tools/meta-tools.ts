@@ -110,7 +110,7 @@ export const REGISTERED_TOOLS = [
   'get_remote_debug_command',
   // Inspection sessions — mobile (WebDriver-based native inspection)
   'start_inspection_session', 'stop_inspection_session',
-  'start_app_exploration', 'app_exploration_status',
+  'start_app_exploration', 'app_exploration_status', 'app_exploration_flows',
   'take_inspection_screenshot', 'get_element_tree', 'find_elements',
   'tap_element', 'type_into_element', 'clear_element',
   'swipe_screen', 'launch_app', 'press_back',

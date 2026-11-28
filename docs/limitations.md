@@ -533,5 +533,8 @@ The user chooses the test framework once per project (see
 - **Only the app under test is recorded or tapped (Android).** If the app is not in front (a phone that starts sessions on its launcher, an app that crashes after login), it is launched again; if it still does not stay in front, the run stops and names the phone. Try another phone with `deviceQuery`. On iOS the foreground app is not yet checked.
 - **A running exploration lives in the server process.** Restarting the server or the AI client ends it; a FINISHED one is saved and can be resumed.
 - **Resuming relies on the app returning to the same screens by the same taps.** A route that no longer reaches its screen (the app changed, or another phone draws it differently) is reported and skipped, not guessed.
+- **Apps whose screens are live content** (maps, feeds, store listings) change between visits: a stored route to a place or a listing may not exist on the next relaunch. Such routes are named as not reachable again, not guessed.
+- **An app already on the phone (`installedApp`)** must be on the phone the platform picks; a phone without it stops the run with that reason. Its version is read from the phone on Android only.
+- **System permission dialogs** are answered with the most temporary choice ("Only this time" / "Allow Once", else "Don't allow"), so screens that need a lasting permission may look different than for a real user.
 - **Two builds with the same package, release and build version in one project cannot be told apart:** the platform installs one of them, and the manifest says so.
 - **Screens are told apart by structure.** Two visits to one screen in different states (an expanded list, a filled field) can appear as two screens.

@@ -7,8 +7,8 @@
  * recorded, never made, in stage 1 (a later stage asks once per session whether write paths may be pursued); destructive
  * taps always need the user's confirmation one by one. A login is done only with a test login the user named.
  */
-import { createInspectionSession, quitInspectionSession, getPageSource, findFirstElementId, tapElement, typeIntoElement, clearElement, pressBack, launchApp, appControl, getForegroundActivity, getForegroundPackage, getForegroundBundleId } from './webdriver.js';
-import { parseScreen, screenSignature, isLoading, hasWords, similarScreen, baseLabel, distinctTitle, containerOf, backControl, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
+import { createInspectionSession, quitInspectionSession, getPageSource, findFirstElementId, tapElement, typeIntoElement, clearElement, pressBack, launchApp, appControl, getForegroundActivity, getForegroundPackage, getForegroundBundleId, adbShell } from './webdriver.js';
+import { parseScreen, screenSignature, isLoading, hasWords, similarScreen, baseLabel, distinctTitle, containerOf, backControl, systemDialogAnswer, versionFromDumpsys, candidateTaps, locatorFor, loginParts, screenTitle, type ExplorePlatform, type Locator, type ScreenElement, type TapClass } from '../utils/app-exploration.js';
 
 export interface ExploreTarget {
   platform: ExplorePlatform;
@@ -24,6 +24,8 @@ export interface ExploreTarget {
   appBuildVersion?: string;
   /** The exact build by its repository reference ("cloud:uniqueName=…"); the version pin is not sent with it. */
   appRef?: string;
+  /** The app is already on the phone (preinstalled, or installed outside the repository): launched, never installed. */
+  installed?: boolean;
   deviceQuery?: string;
   region?: string;
 }
@@ -67,7 +69,7 @@ export interface ManifestScreen {
   login?: 'done' | 'needed';
 }
 export interface Manifest {
-  app: { platform: ExplorePlatform; appId: string; activity?: string; repositoryId?: number; version?: string; appReleaseVersion?: string; appBuildVersion?: string; appRef?: string };
+  app: { platform: ExplorePlatform; appId: string; activity?: string; repositoryId?: number; version?: string; appReleaseVersion?: string; appBuildVersion?: string; appRef?: string; source?: 'repository' | 'installed' };
   device: { name: string; os: string; version: string; serial?: string };
   startedAt: string;
   finishedAt?: string;
@@ -81,6 +83,8 @@ export interface Manifest {
   settings?: { allowWritePaths: boolean; maxDepth: number; loginRef?: LoginRef; deviceQuery?: string; region?: string };
   /** Routes seen but not followed when the run stopped: what a resume continues with. */
   frontier?: Array<{ screen: string; label: string }>;
+  /** Stage 2: the flows the USER accepted for test generation (app_exploration_flows), with when. */
+  acceptedFlows?: Array<{ id: string; title: string; acceptedAt: string }>;
   /** How many runs built this manifest (1 + resumes). */
   runs?: number;
 }
@@ -111,8 +115,8 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   const sameDevice = opts.resume?.device.serial && !target.deviceQuery && !troubled ?`@serialnumber='${opts.resume.device.serial.replace(/'/g, '')}'` : undefined;
   const open = (deviceQuery: string | undefined) => createInspectionSession({
     platform: p, deviceQuery, region: deviceQuery === sameDevice ? undefined : target.region, testName: `App exploration: ${target.appId}`,
-    ...(p === 'android' ? { app: target.appRef ?? `cloud:${target.appId}${target.activity ? `/${target.activity}` : ''}`, appPackage: target.appId, ...(target.activity ? { appActivity: target.activity } : {}) } : { app: target.appRef ?? `cloud:${target.appId}`, appPackage: target.appId }),
-    ...(target.appRef ? {} : { appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion }),
+    ...(target.installed ? {} : p === 'android' ? { app: target.appRef ?? `cloud:${target.appId}${target.activity ? `/${target.activity}` : ''}`, appPackage: target.appId, ...(target.activity ? { appActivity: target.activity } : {}) } : { app: target.appRef ?? `cloud:${target.appId}`, appPackage: target.appId }),
+    ...(target.appRef || target.installed ? {} : { appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion }),
   }).catch((e: Error) => {
     // An exact build that never starts answers an opaque 500 (UICatalog "autotrust", 2026-11-27: "Could not forward
     // request" in three regions while another build of the same app started at once).
@@ -132,7 +136,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   const manifest: Manifest = opts.resume
     ? { ...structuredClone(opts.resume), device: { name: session.deviceName, os: session.deviceOs, version: session.deviceVersion, ...(session.deviceUDID ? { serial: session.deviceUDID } : {}) }, stoppedBecause: 'finished: every reachable screen within the limits was visited', frontier: undefined, runs: (opts.resume.runs ?? 1) + 1 }
     : {
-        app: { platform: p, appId: target.appId, activity: target.activity, repositoryId: target.repositoryId, version: target.version, appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion, ...(target.appRef ? { appRef: target.appRef } : {}) },
+        app: { platform: p, appId: target.appId, activity: target.activity, repositoryId: target.repositoryId, version: target.version, appReleaseVersion: target.appReleaseVersion, appBuildVersion: target.appBuildVersion, ...(target.appRef ? { appRef: target.appRef } : {}), source: target.installed ? 'installed' : 'repository' },
         device: { name: session.deviceName, os: session.deviceOs, version: session.deviceVersion, ...(session.deviceUDID ? { serial: session.deviceUDID } : {}) },
         startedAt: new Date(started).toISOString(), stoppedBecause: 'finished: every reachable screen within the limits was visited', screens: [], taps: 0, notes: [], runs: 1,
       };
@@ -180,7 +184,26 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   // `before`: the screen's signature before a tap. A screen still equal to it is not accepted as settled until
   // SETTLE_UNCHANGED_MS: two equal reads can come BEFORE a slow phone starts the transition (iPhone XS Max, iOS 15,
   // 2026-11-27: most list taps were recorded as "stays on this screen", and route replays failed the same way).
+  // System permission dialogs over the app are answered with the most temporary choice (systemDialogAnswer) and noted
+  // once each; up to three in a row (an app can ask for several permissions at start).
+  const dialogsAnswered = new Set<string>();
   const settle = async (maxMs = SETTLE_MAX_MS, before?: string): Promise<Read> => {
+    let r = await settleScreen(maxMs, before);
+    for (let i = 0; i < 3; i++) {
+      const d = systemDialogAnswer(r.els, r.pkg, p);
+      if (!d) break;
+      const loc = locatorFor(d.element, p);
+      const id = loc ? await findFirstElementId(h, loc.using, loc.value) : null;
+      if (!id) break;
+      await tapElement(h, id);
+      const asked = d.element.text ? (r.els.find((e) => e.text && e.text.length > 20 && !e.clickable)?.text ?? 'a system dialog') : 'a system dialog';
+      const key = `${asked}→${d.answer}`;
+      if (!dialogsAnswered.has(key)) { dialogsAnswered.add(key); manifest.notes.push(`System dialog "${asked.slice(0, 100)}" answered "${d.answer}" (${/allow once|only this time/i.test(d.answer) ? "the most temporary choice; nothing permanent is granted" : "refused; nothing is granted"}).`); }
+      r = await settleScreen(maxMs, r.sig);
+    }
+    return r;
+  };
+  const settleScreen = async (maxMs = SETTLE_MAX_MS, before?: string): Promise<Read> => {
     const t0 = Date.now();
     await sleep(SETTLE_FIRST_MS, signal);
     let prev = await read();
@@ -357,6 +380,22 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   };
 
   try {
+    if (target.installed) {
+      // The app is not installed by the session: check it is on this phone, read its version, then launch it.
+      if (p === 'android') {
+        const where = await adbShell(h, 'pm', ['path', target.appId], 20_000).catch(() => '');
+        if (!/package:/.test(where)) {
+          manifest.stoppedBecause = `the app (${target.appId}) is not installed on ${manifest.device.name}: choose a phone that has it (deviceQuery), or upload the app to the repository so the session installs it`;
+          return manifest;
+        }
+        const v = versionFromDumpsys(await adbShell(h, 'dumpsys', ['package', target.appId], 30_000).catch(() => ''));
+        if (v) {
+          if (target.version && target.version !== v) manifest.notes.push(`Version ${target.version} was named; the phone has ${v}, which is what was explored.`);
+          manifest.app.version = v;
+        }
+      } else if (!target.version) manifest.notes.push('The installed version could not be read from the iPhone: the manifest names no version.');
+      await launchApp(h, target.appId, target.activity).catch(() => undefined);
+    }
     let first: Awaited<ReturnType<typeof read>> = await settle(SETTLE_LAUNCH_MS);
     // The app must be in front before anything is recorded: one live run (2026-11-27) read the phone's launcher at the
     // start. Launch it once more; if it is still not in front, stop rather than map another app.
@@ -389,6 +428,17 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
         manifest.stoppedBecause = 'a login screen: the app could not be explored past it without a test login';
         manifest.notes.push('Give a test login to explore past the login screen (the login is read by the server, never typed through the chat).');
         return manifest;
+      }
+    }
+    // An app that opens on a prompt with nothing safe to tap (Google Maps' theme chooser offered only theme options and
+    // Save, 2026-11-27) is closed with Android's back, at most twice, and the crawl starts from what is underneath.
+    if (!resuming && p === 'android') {
+      for (let i = 0; i < 2 && !candidateTaps(first.els, opts.allowWritePaths).taps.length; i++) {
+        const promptTitle = screenTitle(first.els);
+        const under = await goBack();
+        if (!inApp(under) || under.sig === first.sig) break;
+        manifest.notes.push(`The app opened on "${promptTitle}" with nothing safe to tap; it was closed with Back.`);
+        first = under;
       }
     }
     const root = known(first) ?? record(first, []);

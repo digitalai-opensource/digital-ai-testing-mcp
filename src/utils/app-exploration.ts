@@ -114,7 +114,30 @@ export function parseScreen(xml: string, platform: ExplorePlatform): ScreenEleme
     }
     if (!selfClosing) stack.push({ type, list: LIST_TYPES.test(type), nav, el: visible ? el : null });
   }
+  markBottomTabs(out);
   return out;
+}
+
+/**
+ * Bottom navigation drawn with plain views (Google Maps: clickable frames "You", "Contribute" with ids like
+ * "saved_tab_strip_button", 2026-11-27) is not a tab widget: a row of two or more labelled, tappable controls of one height
+ * across the bottom of the screen, or a control whose id says "tab", is marked as tabs.
+ */
+function markBottomTabs(els: ScreenElement[]): void {
+  const bottom = Math.max(0, ...els.map((e) => e.bounds?.[3] ?? 0));
+  if (!bottom) return;
+  const labelled = (e: ScreenElement) => e.clickable && e.enabled && !!e.bounds && !e.inNavigation && hasWords(e);
+  const right = Math.max(0, ...els.map((e) => e.bounds?.[2] ?? 0));
+  const low = els.filter((e) => labelled(e) && e.bounds![1] >= bottom * 0.8);
+  for (const e of low) {
+    const [, y1, , y2] = e.bounds!;
+    // A tab bar hugs the bottom edge and spans the width; an action row in a sheet ("Start", "Add stops" on Google Maps'
+    // route sheet, taken for tabs by a looser rule, 2026-11-27) does not.
+    const row = low.filter((o) => Math.abs(o.bounds![1] - y1) <= 12 && Math.abs((o.bounds![3] - o.bounds![1]) - (y2 - y1)) <= 12);
+    const span = row.length ? Math.max(...row.map((o) => o.bounds![2])) - Math.min(...row.map((o) => o.bounds![0])) : 0;
+    const tabBar = row.length >= 3 && y2 >= bottom * 0.94 && span >= right * 0.75;
+    if (tabBar || /(^|\s)(tab|tabs|bottom nav|navigation bar|nav bar)(\s|$)/i.test(asWords(e.id ?? '').toLowerCase())) e.inNavigation = 'tabs';
+  }
 }
 
 /** Strips what changes per visit from a structural path: list row positions are already gone (paths hold types only). */
@@ -142,12 +165,16 @@ export function screenSignature(elements: ScreenElement[], foreground?: string |
 export type TapClass = 'navigation' | 'input' | 'action' | 'destructive' | 'unknown';
 
 // Words that name a navigation target in many apps; matched on the WHOLE label, case-insensitive.
-const NAV_WORDS = /^(back|close|cancel|done|more|menu|settings|details|home|profile|account|help|about|next|previous|see all|view all|show more|open)$/i;
+// Dismissing a promo, tip or permission prompt is navigation (Google Maps and Apple Maps opened on such prompts and a
+// read-only crawl had nothing to tap, 2026-11-27). Not "continue" (it can submit) and not "OK" (it accepted Google Maps'
+// navigation-data notice in a read-only run).
+const NAV_WORDS = /^(back|close|cancel|done|more|menu|settings|details|home|profile|account|help|about|next|previous|see all|view all|show more|open|got it|dismiss|not now|no thanks|no, thanks|skip|later|maybe later|not right now)$/i;
 // A second net only: a label with any of these is never tapped, whatever the structure says.
 // DESTRUCTIVE: always needs the user's confirmation, one by one (owner decision 2026-11-27; a session-wide yes never
 // covers it). WRITE: tapped only when the user allowed write paths for the session. Both are a second net only.
 const DESTRUCTIVE = /\b(delete|remove|erase|reset|wipe|close account|deactivate|unsubscribe|uninstall|sign ?out|log ?out|logout)\b/i;
-const WRITE = /\b(pay|send|transfer|buy|purchase|order|checkout|save|submit|confirm|post|publish|call|dial|withdraw|deposit|book|subscribe|approve|accept|decline|share|install|update|apply)\b/i;
+// Account controls (sign in, add account) touch the phone's accounts, not only app data (Google Maps, 2026-11-27): write paths only.
+const WRITE = /\b(sign ?in|sign ?up|log ?in|register|create account|add account|switch account|pay|send|transfer|buy|purchase|order|checkout|save|submit|confirm|post|publish|call|dial|withdraw|deposit|book|subscribe|approve|accept|decline|share|install|update|apply)\b/i;
 
 /** A navigation label without its "(+N similar rows)" suffix, for comparing visits of one screen. */
 // Numbers are left out too: live values ("Current Memory Usage: 399091.0 MB", balances) change between reads of one screen.
@@ -307,6 +334,30 @@ export function backControl(elements: ScreenElement[]): ScreenElement | undefine
   const ok = elements.filter((e) => e.clickable && e.enabled && saysBack(e) && classifyTap(e, true).kind !== 'destructive');
   const x = (e: ScreenElement) => e.bounds?.[0] ?? Number.MAX_SAFE_INTEGER;
   return ok.sort((a, b) => Number(b.inNavigation === 'navbar') - Number(a.inNavigation === 'navbar') || x(a) - x(b))[0];
+}
+
+/** Android packages that show system dialogs over an app (runtime permissions, installs, system alerts). */
+export const SYSTEM_DIALOG_PACKAGE = /permissioncontroller|packageinstaller|^android$|^com\.android\.systemui$/;
+
+/**
+ * A system permission dialog over the app, and the answer the crawl gives it: the most temporary one ("Only this time" /
+ * "Allow Once", which the OS drops when the app closes), else a refusal ("Don't allow"). Never "While using the app" or
+ * "Allow always": nothing permanent changes on a shared phone. Google Maps opened on its location dialog (2026-11-27).
+ */
+export function systemDialogAnswer(elements: ScreenElement[], foreground: string | null, platform: ExplorePlatform): { element: ScreenElement; answer: string } | undefined {
+  const isDialog = platform === 'android' ? !!foreground && SYSTEM_DIALOG_PACKAGE.test(foreground) : elements.some((e) => /Alert$/.test(e.type));
+  if (!isDialog) return undefined;
+  const label = (e: ScreenElement) => (e.text ?? e.description ?? '').trim();
+  const buttons = elements.filter((e) => e.clickable && e.enabled && label(e));
+  const temporary = buttons.find((e) => /^(only this time|allow once)$/i.test(label(e)));
+  const refuse = buttons.find((e) => /^(don.?t allow|deny|not now)$/i.test(label(e)));
+  const pick = temporary ?? refuse;
+  return pick ? { element: pick, answer: label(pick) } : undefined;
+}
+
+/** The versionName of an Android package from `dumpsys package <pkg>` output, if any. */
+export function versionFromDumpsys(output: string): string | undefined {
+  return /versionName=([^\s]+)/.exec(output)?.[1];
 }
 
 /** The screen's named container (an id ending in View / Screen / Page / Controller / Fragment), if the app names one. */

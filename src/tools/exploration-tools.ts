@@ -6,6 +6,7 @@ import { exploreApp, type Manifest, type LoginRef } from '../api/app-crawl.js';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { proposeFlows, type ProposedFlow } from '../utils/exploration-flows.js';
 import { respond, outputFormatParam } from '../utils/output-format.js';
 import { resolveAppLogin } from '../utils/app-logins.js';
 import { setupCommand } from '../cli/clients.js';
@@ -88,6 +89,7 @@ export function registerExplorationTools(server: McpServer): void {
       packageName: z.string().optional().describe('Android package, when there is no repository id. Needs appVersion.'),
       mainActivity: z.string().optional().describe('Android launch activity, with packageName.'),
       bundleIdentifier: z.string().optional().describe('iOS bundle id, when there is no repository id. Needs appVersion.'),
+      installedApp: z.boolean().optional().describe('The app is already on the phones (preinstalled like Google Maps or Apple Maps, or installed outside the repository): give packageName / bundleIdentifier; it is launched, never installed, and its version is read from the phone (Android). A phone without it stops the run with that reason.'),
       appVersion: z.string().optional().describe('The version being explored (from the record when appId is given).'),
       deviceQuery: z.string().optional().describe('Device query, e.g. "@os=\'android\' and @model=\'SM-G981U\'". Default: a free phone of the platform.'),
       region: z.string().optional().describe('Region code from find_available_device.'),
@@ -103,6 +105,8 @@ export function registerExplorationTools(server: McpServer): void {
     },
     async (a) => {
       try {
+        if (a.installedApp && a.appId !== undefined) throw new Error('installedApp is for an app that is NOT in the repository: give packageName / bundleIdentifier instead of appId (a repository app is installed by the session).');
+        if (a.installedApp && !(a.platform === 'android' ? a.packageName : a.bundleIdentifier)) throw new Error('installedApp needs packageName (Android) or bundleIdentifier (iOS).');
         const prev = a.resumeFrom ? loadManifest(a.resumeFrom) : undefined;
         if (a.resumeFrom && !prev) throw new Error(`no saved exploration ${a.resumeFrom} (looked in this server run and in ${explorationDir()}). Start a new exploration instead.`);
         if (prev && prev.app.platform !== a.platform) throw new Error(`exploration ${a.resumeFrom} is of a ${prev.app.platform} app, not ${a.platform}.`);
@@ -111,7 +115,7 @@ export function registerExplorationTools(server: McpServer): void {
         let appIdStr = prev ? prev.app.appId : a.platform === 'android' ? a.packageName : a.bundleIdentifier;
         let activity = a.mainActivity;
         let version = a.appVersion;
-        let pin: { appReleaseVersion?: string; appBuildVersion?: string } = a.appVersion ? { appReleaseVersion: a.appVersion } : {};
+        let pin: { appReleaseVersion?: string; appBuildVersion?: string } = a.appVersion && !a.installedApp ? { appReleaseVersion: a.appVersion } : {};
         const buildNotes: string[] = [];
         let appRef: string | undefined;
         if (prev) {
@@ -146,7 +150,7 @@ export function registerExplorationTools(server: McpServer): void {
           if (twins.length && !appRef) buildNotes.push(`${twins.length + 1} builds in ${project} share version ${app.releaseVersion} build ${app.buildVersion} and have no unique name of their own (${[a.appId, ...twins.map((x) => x.id)].join(', ')}): the platform installs one of them and cannot be told which.`);
         }
         if (!appIdStr) throw new Error('name the app to explore: appId (repository), or packageName / bundleIdentifier with appVersion. Ask the user for their app, its version and its OS.');
-        if (!prev && a.appId === undefined && !version) throw new Error('appVersion is required with packageName / bundleIdentifier: a manifest describes one version of the app.');
+        if (!prev && a.appId === undefined && !version && !a.installedApp) throw new Error('appVersion is required with packageName / bundleIdentifier: a manifest describes one version of the app.');
         let login: { username: string; password: string; source: string } | undefined;
         if (a.testLogin && (a.loginUserEnv || a.loginPasswordEnv)) throw new Error('give testLogin OR loginUserEnv / loginPasswordEnv, not both.');
         // A resume reads the login the earlier run named (names only are kept), unless the caller names one.
@@ -174,7 +178,7 @@ export function registerExplorationTools(server: McpServer): void {
           maxScreens: a.maxScreens ?? 40, maxMinutes: a.maxMinutes ?? 30, maxDepth: a.maxDepth ?? prev?.settings?.maxDepth ?? 6, login, allowWritePaths: a.allowWritePaths,
           ...(ref ? { loginRef: ref } : {}), ...(prev ? { resume: prev } : {}),
         };
-        exploreApp({ platform: a.platform, appId: appIdStr, activity, repositoryId: prev?.app.repositoryId ?? a.appId, version, ...pin, ...(appRef ? { appRef } : {}), deviceQuery: a.deviceQuery ?? prev?.settings?.deviceQuery, region: a.region ?? prev?.settings?.region }, opts, (t) => { job.progress = t; }, abort.signal)
+        exploreApp({ platform: a.platform, appId: appIdStr, activity, repositoryId: prev?.app.repositoryId ?? a.appId, version, ...pin, ...(appRef ? { appRef } : {}), ...(a.installedApp || prev?.app.source === 'installed' ? { installed: true } : {}), deviceQuery: a.deviceQuery ?? prev?.settings?.deviceQuery, region: a.region ?? prev?.settings?.region }, opts, (t) => { job.progress = t; }, abort.signal)
           .then((m) => {
             for (const n of buildNotes) if (!m.notes.includes(n)) m.notes.push(n);
             job.savedTo = saveManifest(id, m);
@@ -215,6 +219,45 @@ export function registerExplorationTools(server: McpServer): void {
       if (job.status === 'running') return respond(outputFormat, { jobId, status: 'running', progress: job.progress, minutes: mins }, `Still exploring ${job.label} (${mins} min): ${job.progress}. Check again later.`);
       if (job.status !== 'done') return respond(outputFormat, { jobId, status: job.status, error: job.error }, `Exploration ${job.status}${job.error ? `: ${job.error}` : ''}.`);
       return respond(outputFormat, { jobId, status: 'done', manifest: job.manifest, ...(job.savedTo ? { savedTo: job.savedTo } : {}) }, summary(job.manifest!) + (job.savedTo ? `\nSaved to ${job.savedTo} (no login values in it).` : ''));
+    }
+  );
+
+  server.tool(
+    'app_exploration_flows',
+    'Stage 2 of app exploration: the test flows a finished exploration suggests (log in, open each screen, fill and submit ' +
+    'each form, and each destructive action), for the USER to choose. Show the list to the user, ask which flows matter, ' +
+    'and pass ONLY the ids the user chose in accept — never accept on the user\'s behalf, and a destructive flow only when the ' +
+    'user explicitly asks for it. Accepted flows are saved with the exploration; test steps are then written only for them, ' +
+    'from the locators the exploration verified. A form flow needs test data from the user (never invent it, never a real ' +
+    'customer\'s).',
+    {
+      jobId: z.string().describe('From start_app_exploration (a finished run, in this server run or saved).'),
+      accept: z.array(z.string()).optional().describe('The flow ids THE USER chose. Omit to list the proposals.'),
+      outputFormat: outputFormatParam,
+    },
+    async ({ jobId, accept, outputFormat }) => {
+      const m = loadManifest(jobId);
+      if (!m) return { content: [{ type: 'text', text: `Error: no finished exploration ${jobId} (in this server run or in ${explorationDir()}).` }], isError: true };
+      const flows = proposeFlows(m);
+      const line = (f: ProposedFlow) => `- ${f.id}: ${f.title}${f.steps.length ? ` — ${f.steps.map((x) => x.label).join(' → ')}` : ''}${f.needsData ? ` — needs test data: ${f.needsData.join(', ')}` : ''}${f.caution ? ` (${f.caution})` : ''}`;
+      if (!accept) {
+        const accepted = new Set((m.acceptedFlows ?? []).map((a) => a.id));
+        const text = [`${flows.length} proposed flow(s) for ${m.app.appId}${m.app.version ? ` ${m.app.version}` : ''}. Ask the user which to keep, then call again with accept: [ids].`, '', ...flows.map((f) => line(f) + (accepted.has(f.id) ? '  [accepted]' : ''))].join('\n');
+        return respond(outputFormat, { jobId, flows, ...(m.acceptedFlows ? { acceptedFlows: m.acceptedFlows } : {}) }, text);
+      }
+      const unknown = accept.filter((a) => !flows.some((f) => f.id === a));
+      if (unknown.length) return { content: [{ type: 'text', text: `Error: unknown flow id(s): ${unknown.join(', ')}. List the proposals first (no accept).` }], isError: true };
+      const now = new Date().toISOString();
+      const kept = new Map((m.acceptedFlows ?? []).map((a) => [a.id, a]));
+      for (const id of accept) if (!kept.has(id)) kept.set(id, { id, title: flows.find((f) => f.id === id)!.title, acceptedAt: now });
+      m.acceptedFlows = [...kept.values()];
+      const job = jobs.get(jobId);
+      if (job?.manifest) job.manifest.acceptedFlows = m.acceptedFlows;
+      const savedTo = saveManifest(jobId, m);
+      const chosen = flows.filter((f) => kept.has(f.id));
+      const text = [`Accepted ${chosen.length} flow(s)${savedTo ? ` (saved with the exploration: ${savedTo})` : ''}:`, ...chosen.map(line), '',
+        'Next: write test steps for these flows only, from their verified locators (outputFormat json gives every locator), into the framework structure from get_test_boilerplate, and validate_test_script. Form flows need the user\'s test data.'].join('\n');
+      return respond(outputFormat, { jobId, accepted: chosen, ...(savedTo ? { savedTo } : {}) }, text);
     }
   );
 }
