@@ -97,6 +97,63 @@ describe('classifyTap: an allow-list of navigation, never a guess', () => {
   });
 });
 
+describe('drop-downs are picked, never typed (DAI Bank Bill Pay, live tree 2026-11-28)', () => {
+  // Compose's drop-down: a clickable EditText showing the value, its caption and a Spinner inside; a plain text field has none.
+  const node = (cls: string, a: string, inner = '') => `<${cls} class="${cls}" ${a}>${inner}</${cls}>`;
+  const billPay = `<hierarchy>${node('android.widget.ScrollView', 'clickable="false" bounds="[0,0][1080,2340]"', [
+    node('android.widget.TextView', 'text="Bill Pay" clickable="false" bounds="[45,299][249,371]"'),
+    node('android.widget.EditText', 'text="Electric Company" clickable="true" bounds="[45,416][1035,597]"',
+      node('android.widget.TextView', 'text="Payee" clickable="false" bounds="[90,417][189,462]"') + node('android.widget.Spinner', 'text="" clickable="true" bounds="[900,451][1000,586]"')),
+    node('android.widget.ImageView', 'text="" package="com.android.systemui" resource-id="com.android.systemui:id/recent_apps" clickable="true" bounds="[700,2210][900,2340]"'),
+    node('android.widget.EditText', 'text="" clickable="true" bounds="[45,868][1035,1049]"', node('android.widget.TextView', 'text="Amount" clickable="false" bounds="[90,869][250,910]"')),
+    node('android.widget.Spinner', 'text="" resource-id="com.acme:id/when" clickable="true" bounds="[45,1100][1035,1200]"', node('android.widget.TextView', 'text="Today" clickable="false" bounds="[90,1110][250,1190]"')),
+  ].join(''))}</hierarchy>`;
+  it('a field with a Spinner inside, and a Spinner itself, are drop-downs with their caption; a plain field stays a text field', () => {
+    const els = parseScreen(billPay, 'android');
+    const payee = els.find((e) => e.text === 'Electric Company')!;
+    assert.equal(payee.choice, true);
+    assert.equal(payee.caption, 'Payee');
+    assert.equal(classifyTap(payee).kind, 'choice');
+    assert.equal(classifyTap(payee, true).kind, 'choice', 'write paths do not make a drop-down something to type into');
+    const amount = els.find((e) => e.type === 'android.widget.EditText' && !e.text)!;
+    assert.equal(amount.choice, undefined);
+    assert.equal(classifyTap(amount).kind, 'input');
+    assert.equal(amount.caption, 'Amount');
+    assert.equal(classifyTap(els.find((e) => e.id === 'com.acme:id/when')!).kind, 'choice');
+    assert.equal(els.filter((e) => e.choice).length, 2, 'the arrow inside a drop-down is part of it, not a second one');
+    // The Appium Grid's tree holds the phone's navigation bar: never the app's, never a route.
+    assert.equal(els.some((e) => e.id?.includes('recent_apps')), false);
+    assert.equal(parseScreen(billPay, 'android', { keepSystemUi: true }).some((e) => e.id?.includes('recent_apps')), true, 'kept when the system UI is in front (its dialog)');
+    // Another app's overlay (Samsung's edge panel handle) is left out while the app is in front; Android's own dialogs stay.
+    const overlay = billPay.replace('</hierarchy>', '<android.widget.FrameLayout class="android.widget.FrameLayout" package="com.samsung.android.app.cocktailbarservice" content-desc="Edge panels" clickable="true" bounds="[1060,600][1080,900]"></android.widget.FrameLayout><android.widget.Button class="android.widget.Button" package="android" text="Close app" clickable="true" bounds="[100,1000][900,1100]"></android.widget.Button></hierarchy>');
+    const own = parseScreen(overlay, 'android', { appPackage: 'com.acme' });
+    assert.equal(own.some((e) => e.description === 'Edge panels'), false);
+    assert.equal(own.some((e) => e.text === 'Close app'), true);
+    assert.equal(parseScreen(overlay, 'android').some((e) => e.description === 'Edge panels'), true, 'kept when the app in front is not known');
+  });
+  it('a form flow lists its drop-downs apart from the fields to type, with the options the crawl read', async () => {
+    const { proposeFlows } = await import('../src/utils/exploration-flows.js');
+    const x = (v: string) => ({ using: 'xpath' as const, value: v });
+    const m = {
+      app: { platform: 'android', appId: 'com.acme.bank' }, device: { name: 'P', os: 'Android', version: '14' }, startedAt: '', stoppedBecause: '', taps: 1, notes: [],
+      screens: [{ signature: 's', title: 'Bill Pay', foreground: null, path: [{ label: 'Bill Pay', locator: x("//*[@text='Bill Pay']") }], elements: 9, assertable: [], navigation: [],
+        notVisited: [
+          { label: 'Electric Company', field: 'Payee', kind: 'choice', reason: '', locator: x("(//*[contains(@class,'EditText')])[1]"), options: ['Electric Company', 'Water Utility'] },
+          { label: 'Amount', kind: 'input', reason: '', locator: x("(//*[contains(@class,'EditText')])[2]") },
+          { label: 'Pay Bill', kind: 'unknown', reason: '', locator: x("//*[@text='Pay Bill']") },
+        ] }],
+    };
+    const form = proposeFlows(m as never).find((f) => f.kind === 'form')!;
+    assert.deepEqual(form.needsData, ['Amount']);
+    assert.deepEqual(form.choices, [{ field: 'Payee', shown: 'Electric Company', options: ['Electric Company', 'Water Utility'] }]);
+    const { codegenInput } = await import('../src/utils/exploration-flows.js');
+    const ci = codegenInput(m as never, [form.id]);
+    assert.deepEqual(ci.skipped, []);
+    assert.equal(ci.flows[0].choices?.[0].label, 'Payee');
+    assert.equal(ci.flows[0].fields?.[0].locator.value, "(//*[contains(@class,'EditText')])[2]");
+  });
+});
+
 describe('candidateTaps: what the crawler visits and what it only records', () => {
   it('collapses the rows of one list template and records the rest as unvisited with a reason', () => {
     const { taps, unvisited } = candidateTaps(parseScreen(shopHome('Jacket', '$1'), 'android'));

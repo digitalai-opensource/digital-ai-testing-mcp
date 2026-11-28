@@ -65,7 +65,8 @@ export interface ManifestScreen {
   settleMs?: number;
   /** It never stopped changing within the settle limit (animation, ticker, endless loader). */
   unstable?: true;
-  notVisited: Array<{ label: string; kind: TapClass; reason: string; locator?: Locator }>;
+  /** `field` = the control's caption ("Payee"), `options` = a drop-down's choices as read by the crawl (Android). */
+  notVisited: Array<{ label: string; kind: TapClass; reason: string; locator?: Locator; field?: string; options?: string[] }>;
   /** The login screen's fields and submit control (for the tests generated in stage 3). */
   loginLocators?: { user: Locator; password: Locator; submit?: Locator };
   login?: 'done' | 'needed';
@@ -171,10 +172,21 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
 
   const read = async () => {
     const xml = await getPageSource(h);
-    const els = parseScreen(xml, p);
     const fg = p === 'android' ? await getForegroundActivity(h).catch(() => null) : null;
-    const pkg = await (p === 'android' ? getForegroundPackage(h) : getForegroundBundleId(h)).catch(() => null);
+    let pkg = await (p === 'android' ? getForegroundPackage(h) : getForegroundBundleId(h)).catch(() => null);
+    if (p === 'ios' && !pkg) pkg = iosAppFromSource(xml);
+    const els = parseScreen(xml, p, { keepSystemUi: pkg === 'com.android.systemui', ...(pkg && pkg === target.appId ? { appPackage: pkg } : {}) });
     return { els, fg, pkg, sig: screenSignature(els, fg) };
+  };
+  // The Appium Grid reports no bundle id on iOS: the page source's root names the app in front instead. The home screen
+  // is SpringBoard; another app is told apart by a name other than the one the app under test showed first.
+  let iosAppName: string | null = null;
+  const iosAppFromSource = (xml: string): string | null => {
+    const name = /<XCUIElementTypeApplication\b[^>]*?\sname="([^"]*)"/.exec(xml)?.[1] ?? null;
+    if (!name) return null;
+    if (name === 'SpringBoard') return 'com.apple.springboard';
+    iosAppName ??= name;
+    return name === iosAppName ? null : `another app ("${name}")`;
   };
   type Read = Awaited<ReturnType<typeof read>> & { settleMs: number; settled: boolean };
   const settleTimes: number[] = [];
@@ -224,10 +236,19 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     unstableCount++;
     return { ...prev, settleMs: Date.now() - t0, settled: false };
   };
+  // A tap the platform refuses (the Appium Grid answers 500 "found but not visible on Screen") is a control that cannot
+  // be tapped, not the end of the run: the caller treats it as not found and notes why.
+  let lastTapError = '';
   const tapBy = async (loc: Locator, before?: string): Promise<Read | null> => {
+    lastTapError = '';
     const id = await findFirstElementId(h, loc.using, loc.value);
     if (!id) return null;
-    await tapElement(h, id);
+    try { await tapElement(h, id); } catch (e) {
+      const msg = String((e as { response?: { data?: { value?: { message?: string } } } }).response?.data?.value?.message ?? (e as Error).message);
+      if (/invalid session id|session .*(not found|terminated)|no such session/i.test(msg)) throw e;
+      lastTapError = (/found but not visible/i.test(msg) ? 'not visible on the screen' : msg.replace(/\s+/g, ' ')).slice(0, 160);
+      return null;
+    }
     manifest.taps++;
     return settle(SETTLE_MAX_MS, before);
   };
@@ -250,6 +271,37 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     const fields = els.filter((x) => /EditText|TextField|SecureTextField/.test(x.type));
     const cls = p === 'android' ? "contains(@class,'EditText')" : "(self::XCUIElementTypeTextField or self::XCUIElementTypeSecureTextField)";
     return { using: 'xpath', value: `(//*[${cls}])[${fields.indexOf(e) + 1}]` };
+  };
+  // A drop-down's text is the value it shows, which a test changes: locate it by id, else by its position among the
+  // fields (Compose draws it as an EditText) or among the drop-downs, never by the value.
+  const choiceLocator = (els: ScreenElement[], e: ScreenElement): Locator => {
+    if (e.id) { const own = locatorFor(e, p); if (own) return own; }
+    if (/EditText|TextField/.test(e.type)) return fieldLocator(els, e);
+    const same = els.filter((x) => x.type === e.type);
+    return { using: 'xpath', value: `(//${p === 'android' ? `*[@class='${e.type}']` : e.type})[${same.indexOf(e) + 1}]` };
+  };
+  /**
+   * The options of each drop-down on a screen (Android): open it, read the list, close it with Back. Nothing is picked.
+   * Stops at the first drop-down that does not close back onto the screen (the visit's own recovery takes over).
+   */
+  const readOptions = async (screen: ManifestScreen): Promise<void> => {
+    if (p !== 'android') return;
+    const choices = screen.notVisited.filter((n) => n.kind === 'choice' && n.locator && !n.options).slice(0, 4);
+    if (!choices.length) return;
+    let here = await read();
+    if (!isScreen(here, screen)) return;
+    const at = (e: ScreenElement) => `${(e.text ?? '').trim()}@${e.bounds?.join(',') ?? ''}`;
+    const onScreen = new Set(here.els.map(at));
+    for (const c of choices) {
+      const open = await tapBy(c.locator!, here.sig);
+      if (!open || open.sig === here.sig || !inApp(open) || crashDialog(open.els)) { if (open && open.sig !== here.sig) await goBack(); break; }
+      // The options are the texts the open list ADDED: by text AND position, since the Appium Grid's tree keeps the screen
+      // under the list (Transfer's "Savings" option was dropped because the To Account field also showed it, 2026-11-28).
+      const opts = [...new Set(open.els.filter((e) => !onScreen.has(at(e))).map((e) => (e.text ?? '').trim()).filter((t) => t && t.length <= 60 && /[\p{L}\p{N}]/u.test(t)))].slice(0, 25);
+      if (opts.length) c.options = opts;
+      here = await goBack();
+      if (!isScreen(here, screen)) { manifest.notes.push(`"${screen.title}": the drop-down "${c.field ?? c.label}" did not close back onto the screen; its other drop-downs were not read`); return; }
+    }
   };
   const doLogin = async (els: ScreenElement[]): Promise<boolean> => {
     const parts = loginParts(els);
@@ -313,7 +365,11 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
     const screen: ManifestScreen = {
       signature: s.sig, title: distinctTitle(s.els, screenTitle(s.els), new Set(manifest.screens.map((x) => x.title)), taps[0] ? labelOf(taps[0].element) : undefined), foreground: s.fg, path, elements: s.els.length, assertable,
       navigation: taps.map((t) => ({ label: labelOf(t.element) + (t.collapsed ? ` (+${t.collapsed} similar rows)` : ''), locator: locatorFor(t.element, p), ...(hasWords(t.element) ? {} : { unlabeled: true as const }) })),
-      notVisited: unvisited.map((u) => { const loc = u.kind === 'input' ? fieldLocator(s.els, u.element) : locatorFor(u.element, p); return { label: labelOf(u.element), kind: u.kind, reason: u.reason, ...(loc ? { locator: loc } : {}) }; }).slice(0, 40),
+      notVisited: unvisited.map((u) => {
+        const loc = u.kind === 'input' ? fieldLocator(s.els, u.element) : u.kind === 'choice' ? choiceLocator(s.els, u.element) : locatorFor(u.element, p);
+        const field = (u.kind === 'input' || u.kind === 'choice') && u.element.caption && u.element.caption !== labelOf(u.element) ? u.element.caption.slice(0, 60) : undefined;
+        return { label: labelOf(u.element), kind: u.kind, reason: u.reason, ...(loc ? { locator: loc } : {}), ...(field ? { field } : {}) };
+      }).slice(0, 40),
       ...(login ? { login } : {}),
       ...(s.settleMs !== undefined && path.length ? { settleMs: s.settleMs } : {}),
       ...(s.settled === false ? { unstable: true as const } : {}),
@@ -330,6 +386,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   };
 
   const visit = async (screen: ManifestScreen, depth: number): Promise<void> => {
+    await readOptions(screen);
     if (depth >= opts.maxDepth) { manifest.notes.push(`"${screen.title}": not explored further (depth limit ${opts.maxDepth})`); return; }
     for (const nav of screen.navigation) {
       if (nav.leadsTo || nav.note) continue; // already followed (a resumed run)
@@ -357,7 +414,7 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
         here = back;
       }
       const next = await tapBy(nav.locator, here.sig);
-      if (!next) { nav.note = 'not found when tapped'; continue; }
+      if (!next) { nav.note = lastTapError ? `the tap was refused (${lastTapError})` : 'not found when tapped'; continue; }
       nav.settleMs = next.settleMs;
       if (!next.settled) nav.note = `the screen kept changing for ${Math.round(next.settleMs / 1000)} s (animation or endless loader): recorded as it was then`;
       const crashed = crashDialog(next.els);
@@ -396,7 +453,10 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
   try {
     if (target.installed) {
       // The app is not installed by the session: check it is on this phone, read its version, then launch it.
-      if (p === 'android') {
+      if (p === 'android' && session.sessionFormat !== 'w3c') {
+        // The Appium Grid runs no shell: the app is launched, and the in-front check below tells whether it is there.
+        manifest.notes.push('On the Appium Grid the installed version cannot be read from the phone: the manifest names no version.');
+      } else if (p === 'android') {
         const where = await adbShell(h, 'pm', ['path', target.appId], 20_000).catch(() => '');
         if (!/package:/.test(where)) {
           manifest.stoppedBecause = `the app (${target.appId}) is not installed on ${manifest.device.name}: choose a phone that has it (deviceQuery), or upload the app to the repository so the session installs it`;
@@ -422,7 +482,9 @@ export async function exploreApp(target: ExploreTarget, opts: ExploreOptions, pr
         const again = crashDialog(first.els);
         manifest.stoppedBecause = again
           ? `the app crashed on ${manifest.device.name} ("${again}")${manifest.app.version ? ` with version ${manifest.app.version}` : ''}: try another phone or another build`
-          : `the app did not come to the front (${first.pkg} stayed in front): it may have crashed at start; try another device`;
+          : target.installed && session.sessionFormat !== 'w3c'
+            ? `the app (${target.appId}) did not come to the front (${first.pkg} stayed in front): it may not be installed on ${manifest.device.name}; choose a phone that has it (deviceQuery), or upload the app to the repository`
+            : `the app did not come to the front (${first.pkg} stayed in front): it may have crashed at start; try another device`;
         return manifest;
       }
     }

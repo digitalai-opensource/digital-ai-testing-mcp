@@ -20,6 +20,8 @@ export interface CodegenFlow {
   check?: FlowStep;
   /** Form fields, typed from environment variables. */
   fields?: FlowStep[];
+  /** Drop-downs: an option is picked only when TEST_DATA_<FIELD> is set (its text); otherwise the value shown stays. */
+  choices?: FlowStep[];
   /** The submit (form) or destructive control. */
   action?: FlowStep;
 }
@@ -68,11 +70,13 @@ function robotLoc(l: Locator): string {
   return `xpath=${v}`;
 }
 
-type Op = { kind: 'tap' | 'check'; at: Locator; note: string } | { kind: 'type'; at: Locator; env: string; note: string };
+type Op = { kind: 'tap' | 'check'; at: Locator; note: string } | { kind: 'type' | 'choose'; at: Locator; env: string; note: string };
 
 /** The operations of one test, in order: login, the route, the form, the check. */
 export function flowOps(f: CodegenFlow, login?: CodegenLogin): Op[] {
   const ops: Op[] = [];
+  // No "bring the app to the front" step: on a phone that opens sessions on its launcher (Galaxy S21 Ultra DE0058) the
+  // app WAS in front once and activate_app sent it to the launcher and a wallpaper app (2026-11-28); no phone showed a gain.
   if (login) {
     ops.push({ kind: 'type', at: login.user, env: LOGIN_USER_ENV, note: 'log in (user name)' });
     ops.push({ kind: 'type', at: login.password, env: LOGIN_PASSWORD_ENV, note: 'log in (password)' });
@@ -80,10 +84,29 @@ export function flowOps(f: CodegenFlow, login?: CodegenLogin): Op[] {
   }
   for (const s of f.steps) ops.push({ kind: 'tap', at: s.locator, note: s.label });
   for (const fld of f.fields ?? []) ops.push({ kind: 'type', at: fld.locator, env: dataEnv(fld.label), note: fld.label });
+  for (const c of f.choices ?? []) ops.push({ kind: 'choose', at: c.locator, env: dataEnv(c.label), note: `${c.label} (drop-down)` });
   if (f.action) ops.push({ kind: 'tap', at: f.action.locator, note: f.action.label });
   if (f.check) ops.push({ kind: 'check', at: f.check.locator, note: f.check.label });
   return ops;
 }
+
+/**
+ * WebdriverIO: a new session for the next flow. The cloud answers a session request with the device agent's own address
+ * (direct connect) and wdio then sends every request there, including the new-session request of reloadSession, which
+ * the agent refuses ("Bad Request", verified live 2026-11-28). Point wdio back at the hub from wdio.conf.js first.
+ */
+const FRESH_SESSION = [
+  '// A fresh session for each flow after the first, created through the hub in wdio.conf.js (the running session talks',
+  '// to the device agent directly, and an agent does not create sessions).',
+  'async function freshSession() {',
+  "  const { config } = require('../../wdio.conf.js');",
+  '  Object.assign(browser.options, { protocol: config.protocol, hostname: config.hostname, port: config.port, path: config.path });',
+  '  await browser.reloadSession();',
+  '}',
+].join('\n');
+
+/** The option of an open drop-down, by its text (Android) or label (iOS); %s = the value. */
+const OPTION_XPATH = '//*[@text="%s" or @label="%s"]';
 
 const clip = (s: string) => s.replace(/\s+/g, ' ').replace(/\*\//g, '').slice(0, 70);
 
@@ -104,16 +127,30 @@ function body(lang: CodegenLanguage, ops: Op[], indent: string, f: CodegenFlow):
       case 'java-testng':
         if (op.kind === 'tap') out.push(`${indent}find(${javaBy(op.at)}).click(); // ${note}`);
         else if (op.kind === 'type') out.push(`${indent}find(${javaBy(op.at)}).sendKeys(java.util.Objects.requireNonNull(System.getenv(${jstr(op.env)}), ${jstr(`Set ${op.env} (test data; never written into the test)`)})); // ${note}`);
+        else if (op.kind === 'choose') out.push(
+          `${indent}if (System.getenv(${jstr(op.env)}) != null) { // ${note}: pick the option named in ${op.env}, else keep the value shown`,
+          `${indent}    find(${javaBy(op.at)}).click();`,
+          `${indent}    find(By.xpath(${jstr(OPTION_XPATH)}.replace("%s", System.getenv(${jstr(op.env)})))).click();`,
+          `${indent}}`);
         else out.push(`${indent}find(${javaBy(op.at)}); // ${note} is shown (waits until visible)`);
         break;
       case 'python':
         if (op.kind === 'tap') out.push(`${indent}self.find(${pyBy(op.at)}).click()  # ${note}`);
         else if (op.kind === 'type') out.push(`${indent}self.find(${pyBy(op.at)}).send_keys(os.environ[${pystr(op.env)}])  # ${note}`);
+        else if (op.kind === 'choose') out.push(
+          `${indent}if os.environ.get(${pystr(op.env)}):  # ${note}: pick the option named in ${op.env}, else keep the value shown`,
+          `${indent}    self.find(${pyBy(op.at)}).click()`,
+          `${indent}    self.find(By.XPATH, ${pystr(OPTION_XPATH)}.replace("%s", os.environ[${pystr(op.env)}])).click()`);
         else out.push(`${indent}self.find(${pyBy(op.at)})  # ${note} is shown (waits until visible)`);
         break;
       case 'nodejs':
         if (op.kind === 'tap') out.push(`${indent}await (await find(${jsSel(op.at)})).click(); // ${note}`);
         else if (op.kind === 'type') out.push(`${indent}await (await find(${jsSel(op.at)})).setValue(testData(${jsstr(op.env)})); // ${note}`);
+        else if (op.kind === 'choose') out.push(
+          `${indent}if (process.env[${jsstr(op.env)}]) { // ${note}: pick the option named in ${op.env}, else keep the value shown`,
+          `${indent}  await (await find(${jsSel(op.at)})).click();`,
+          `${indent}  await (await find(${jsstr(OPTION_XPATH)}.replaceAll('%s', process.env[${jsstr(op.env)}]))).click();`,
+          `${indent}}`);
         else out.push(`${indent}await find(${jsSel(op.at)}); // ${note} is shown (waits until displayed)`);
         break;
       case 'robot':
@@ -121,6 +158,12 @@ function body(lang: CodegenLanguage, ops: Op[], indent: string, f: CodegenFlow):
         // Input Text writes the text into log.html; the password goes through Input Password, which does not.
         else if (op.kind === 'type' && op.env === LOGIN_PASSWORD_ENV) out.push(`${indent}Wait Until Element Is Visible    ${robotLoc(op.at)}    20s`, `${indent}Input Password    ${robotLoc(op.at)}    %{${op.env}}`);
         else if (op.kind === 'type') out.push(`${indent}Wait And Input    ${robotLoc(op.at)}    %{${op.env}}`);
+        else if (op.kind === 'choose') out.push(
+          `${indent}# ${note}: pick the option named in ${op.env}, else keep the value shown`,
+          `${indent}IF    os.environ.get('${op.env}')`,
+          `${indent}    Wait And Click    ${robotLoc(op.at)}`,
+          `${indent}    Wait And Click    xpath=${OPTION_XPATH.split('%s').join(`%{${op.env}}`)}`,
+          `${indent}END`);
         else out.push(`${indent}Wait Until Element Is Visible    ${robotLoc(op.at)}    20s`);
         break;
     }
@@ -149,6 +192,11 @@ export function envVarsFor(flows: CodegenFlow[], login?: CodegenLogin): string[]
   if (login) { names.add(LOGIN_USER_ENV); names.add(LOGIN_PASSWORD_ENV); }
   for (const f of flows) for (const fld of f.fields ?? []) names.add(dataEnv(fld.label));
   return [...names];
+}
+
+/** Optional variables: a drop-down keeps the value it shows unless its variable names an option. */
+export function optionalEnvVarsFor(flows: CodegenFlow[]): string[] {
+  return [...new Set(flows.flatMap((f) => (f.choices ?? []).map((c) => dataEnv(c.label))))];
 }
 
 /**
@@ -190,10 +238,11 @@ export function renderFlowTests(template: string, input: CodegenInput): string |
     const ind = m[1];
     const names = flows.map((f) => methodName(language, f.title, used));
     const its = names.map((n, i) => `it(${jsstr(n)}, flow${i + 1})`).join('\n    ');
-    const helper = `${ind}// Test data from the environment, never written into the test.\n${ind}function testData(name) {\n${ind}  const v = process.env[name];\n${ind}  if (!v) throw new Error(\`Set \${name} (test data; never written into the test)\`);\n${ind}  return v;\n${ind}}\n`;
+    const helper = `${ind}// Test data from the environment, never written into the test.\n${ind}function testData(name) {\n${ind}  const v = process.env[name];\n${ind}  if (!v) throw new Error(\`Set \${name} (test data; never written into the test)\`);\n${ind}  return v;\n${ind}}\n`
+      + (flows.length > 1 ? FRESH_SESSION.split('\n').map((l) => `${ind}${l}`).join('\n') + '\n' : '');
     const fns = flows.map((f, i) => {
       // One session per spec file in wdio: every flow after the first starts a fresh session (fresh install, start screen).
-      const reload = i ? `${ind}  await browser.reloadSession(); // a fresh session: this flow starts from the app's start screen\n` : '';
+      const reload = i ? `${ind}  await freshSession(); // a fresh session: this flow starts from the app's start screen\n` : '';
       return `${ind}async function flow${i + 1}() {\n${reload}${decorate(body(language, flowOps(f, login), ind + '  ', f), ind + '  ')}\n${ind}}`;
     }).join('\n');
     out = out.replace(itRe, () => its).replace(fnRe, () => `${helper}${fns}`);

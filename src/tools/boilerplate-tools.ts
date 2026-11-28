@@ -15,7 +15,7 @@ import { isLocalFilesystem } from '../utils/deployment-mode.js';
 import { validateOutputPath } from '../utils/path-guard.js';
 import { loadManifest } from './exploration-tools.js';
 import { codegenInput } from '../utils/exploration-flows.js';
-import { renderFlowTests, envVarsFor, type CodegenFlow, type CodegenLogin, type CodegenLanguage } from '../utils/flow-codegen.js';
+import { renderFlowTests, envVarsFor, optionalEnvVarsFor, type CodegenFlow, type CodegenLogin, type CodegenLanguage } from '../utils/flow-codegen.js';
 import { decideFramework, MOBILE_LANGUAGES, WEB_LANGUAGES } from '../utils/framework-choice.js';
 import { isLocalClient } from './report-tools.js';
 import {
@@ -1771,6 +1771,7 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
             tests: flowTests.flows.map((f) => ({ flow: f.id, title: f.title, kind: f.kind })),
             ...(flowSkipped.length ? { skipped: flowSkipped } : {}),
             testData: envVarsFor(flowTests.flows, flowTests.login),
+            ...(optionalEnvVarsFor(flowTests.flows).length ? { optionalTestData: optionalEnvVarsFor(flowTests.flows), optionalTestDataNote: 'Drop-downs: each keeps the value it shows unless its variable is set to the text of one of its options (app_exploration_flows lists the options the exploration read).' } : {}),
             reportKey: `digitalai:explorationRun = ${explorationJobId}`,
             next: 'Set the testData variables (never write their values into the test), run the tests, then call app_exploration_flows with this jobId: it lists the runs (found by the report key) and their results.' + (flowTests.flows.some((f) => f.kind === 'form') ? ' Form flows: the exploration never submitted the form, so confirm the expected result with the user and add that assertion.' : ''),
           } } : {}),
@@ -1866,7 +1867,7 @@ Verify the app with list_applications, or ask the user which app to use. Nothing
         }
         for (const note of capNotes) lines.push(`> **Capabilities:** ${note}`, '');
         if (flowTests) {
-          lines.push(`> ✅ **Tests from exploration ${explorationJobId}:** one test per flow the user accepted (${flowTests.flows.map((f) => f.title).join('; ')}), steps from verified locators. Test data from: ${envVarsFor(flowTests.flows, flowTests.login).join(', ') || 'none'}. Runs carry digitalai:explorationRun = ${explorationJobId}; afterwards app_exploration_flows lists them.${flowSkipped.length ? ` Skipped: ${flowSkipped.join('; ')}.` : ''}`, '');
+          lines.push(`> ✅ **Tests from exploration ${explorationJobId}:** one test per flow the user accepted (${flowTests.flows.map((f) => f.title).join('; ')}), steps from verified locators. Test data from: ${envVarsFor(flowTests.flows, flowTests.login).join(', ') || 'none'}.${optionalEnvVarsFor(flowTests.flows).length ? ` Optional (drop-downs keep the value shown unless set to an option's text): ${optionalEnvVarsFor(flowTests.flows).join(', ')}.` : ''} Runs carry digitalai:explorationRun = ${explorationJobId}; afterwards app_exploration_flows lists them.${flowSkipped.length ? ` Skipped: ${flowSkipped.join('; ')}.` : ''}`, '');
         }
         if (placeholder) {
           lines.push(

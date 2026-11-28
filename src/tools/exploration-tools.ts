@@ -240,7 +240,7 @@ export function registerExplorationTools(server: McpServer): void {
       const m = loadManifest(jobId);
       if (!m) return { content: [{ type: 'text', text: `Error: no finished exploration ${jobId} (in this server run or in ${explorationDir()}).` }], isError: true };
       const flows = proposeFlows(m);
-      const line = (f: ProposedFlow) => `- ${f.id}: ${f.title}${f.steps.length ? ` — ${f.steps.map((x) => x.label).join(' → ')}` : ''}${f.needsData ? ` — needs test data: ${f.needsData.join(', ')}` : ''}${f.caution ? ` (${f.caution})` : ''}`;
+      const line = (f: ProposedFlow) => `- ${f.id}: ${f.title}${f.steps.length ? ` — ${f.steps.map((x) => x.label).join(' → ')}` : ''}${f.needsData ? ` — needs test data: ${f.needsData.join(', ')}` : ''}${f.choices ? ` — drop-downs: ${f.choices.map((c) => `${c.field} (shows ${c.shown}${c.options ? `; options: ${c.options.slice(0, 6).join(', ')}${c.options.length > 6 ? ', …' : ''}` : ''})`).join('; ')}` : ''}${f.caution ? ` (${f.caution})` : ''}`;
       if (!accept) {
         const accepted = new Set((m.acceptedFlows ?? []).map((a) => a.id));
         // Stage 3: the runs of the generated tests, found by their report key (only once flows were accepted).

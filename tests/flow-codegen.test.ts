@@ -37,7 +37,7 @@ const TEMPLATES: Array<[CodegenLanguage, 'android' | 'ios', string]> = [
 const id = (v: string) => ({ using: 'id' as const, value: v });
 const flows: CodegenFlow[] = [
   { id: 'open-transfer', title: 'Open Transfer Funds', kind: 'navigate', steps: [{ label: 'Transfer', locator: { using: 'xpath' as const, value: "//*[@text='Transfer']" } }], check: { label: 'Amount', locator: id('com.acme.bank:id/amount') } },
-  { id: 'submit-transfer', title: 'Fill and submit Transfer Funds', kind: 'form', steps: [{ label: 'Transfer', locator: { using: 'xpath' as const, value: "//*[@text='Transfer']" } }], fields: [{ label: 'Amount', locator: id('com.acme.bank:id/amount') }], action: { label: 'Send', locator: { using: 'accessibility id' as const, value: 'Send money' } } },
+  { id: 'submit-transfer', title: 'Fill and submit Transfer Funds', kind: 'form', steps: [{ label: 'Transfer', locator: { using: 'xpath' as const, value: "//*[@text='Transfer']" } }], fields: [{ label: 'Amount', locator: id('com.acme.bank:id/amount') }], choices: [{ label: 'Payee', locator: { using: 'xpath' as const, value: "(//*[contains(@class,'EditText')])[1]" } }], action: { label: 'Send', locator: { using: 'accessibility id' as const, value: 'Send money' } } },
 ];
 const login = { user: id('com.acme.bank:id/user'), password: id('com.acme.bank:id/pass'), submit: id('com.acme.bank:id/signin') };
 
@@ -52,6 +52,11 @@ describe('renderFlowTests: one test per flow in every Appium Server template', (
       assert.match(out!, /APP_TEST_PASSWORD/);
       assert.match(out!, /TEST_DATA_AMOUNT/);
       assert.match(out!, /confirm the expected result with the user/, 'a form flow says its outcome is not known');
+      assert.doesNotMatch(out!, /activateApp|activate_app|Activate Application/, 'no app activation (it sent the app away on one phone)');
+      if (lang === 'nodejs') assert.match(out!, /async function freshSession\(\)[\s\S]*?require\('\.\.\/\.\.\/wdio\.conf\.js'\)[\s\S]*?await freshSession\(\)/, 'a new session goes through the hub, not the device agent');
+      // A drop-down: its option is picked only when TEST_DATA_PAYEE is set, by the option's text; otherwise it stays.
+      assert.match(out!, /TEST_DATA_PAYEE/);
+      assert.match(out!, lang === 'robot' ? /IF {4}os\.environ\.get\('TEST_DATA_PAYEE'\)\n[\s\S]*?@text="%\{TEST_DATA_PAYEE\}"[\s\S]*?\n {4}END/ : lang === 'python' ? /if os\.environ\.get\("TEST_DATA_PAYEE"\):/ : lang === 'nodejs' ? /if \(process\.env\['TEST_DATA_PAYEE'\]\)[\s\S]*?replaceAll\('%s'/ : /if \(System\.getenv\("TEST_DATA_PAYEE"\) != null\)/);
       const tests = lang === 'python' ? out!.match(/def test_/g) : lang === 'nodejs' ? out!.match(/it\('/g) : lang === 'robot' ? out!.match(/^\S.*\n {4}Start Steps Group/gm) : out!.match(/@Test/g);
       assert.equal(tests?.length, 2, 'one test per flow');
       if (lang.startsWith('java')) assert.match(out!, /import io\.appium\.java_client\.AppiumBy;/);

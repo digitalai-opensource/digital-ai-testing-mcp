@@ -21,6 +21,8 @@ export interface ProposedFlow {
   check?: { label: string; locator: Locator };
   /** Fields a form flow fills: the test data is the user's to give; the crawl never typed into them. */
   needsData?: string[];
+  /** Drop-downs a form flow can set: the test keeps the value shown unless TEST_DATA_<FIELD> names an option. */
+  choices?: Array<{ field: string; shown: string; options?: string[] }>;
   /** The control that submits a form or performs a destructive action. Never tapped by the crawl. */
   action?: string;
   /** What the user must know before accepting. */
@@ -60,12 +62,14 @@ export function proposeFlows(m: Manifest): ProposedFlow[] {
       flows.push({ id: id(`open-${slug(s.title)}`), kind: 'navigate', title: `Open ${s.title}`, screen: s.title, steps: s.path, ...(check(s) ? { check: check(s) } : {}) });
     }
     // A field that already shows a value ("Checking ($1,000.00)") is a selection, not an entry field: the test keeps it.
-    const fields = s.notVisited.filter((n) => n.kind === 'input' && !SHOWS_VALUE.test(n.label)).map((n) => n.label);
+    // (Explorations before drop-downs were recognised recorded them as text fields: the value test still applies there.)
+    const fields = s.notVisited.filter((n) => n.kind === 'input' && !SHOWS_VALUE.test(n.label)).map((n) => n.field ?? n.label);
+    const choices = s.notVisited.filter((n) => n.kind === 'choice').map((n) => ({ field: n.field ?? n.label, shown: n.label, ...(n.options ? { options: n.options } : {}) }));
     const submit = s.notVisited.find((n) => n.kind === 'action' || (n.kind === 'unknown' && /submit|send|pay|save|transfer|deposit|confirm|next|done|sign|apply|book|order/i.test(n.label)));
-    if (fields.length && submit) {
+    if ((fields.length || choices.length) && submit) {
       flows.push({
         id: id(`submit-${slug(s.title)}`), kind: 'form', title: `Fill and submit ${s.title}`, screen: s.title, steps: s.path,
-        needsData: fields, action: submit.label,
+        ...(fields.length ? { needsData: fields } : {}), ...(choices.length ? { choices } : {}), action: submit.label,
         caution: 'Submitting may change data in the app (the crawl never submitted it): use test data and a test account.',
       });
     }
@@ -99,17 +103,21 @@ export function codegenInput(m: Manifest, ids: string[]): { flows: CodegenFlow[]
     const f = proposed.find((x) => x.id === id);
     if (!f) { skipped.push(`${id} (not a flow of this exploration)`); continue; }
     const screen = m.screens.find((s) => s.title === f.screen);
-    const loc = (label: string | undefined) => (label ? screen?.notVisited.find((n) => n.label === label)?.locator : undefined);
+    const loc = (label: string | undefined, kind?: string) => (label ? screen?.notVisited.find((n) => (!kind || n.kind === kind) && ((n.field ?? n.label) === label || n.label === label))?.locator : undefined);
     if (f.kind === 'login') {
       if (!login) { skipped.push(`${f.id} (the login fields have no verified locators)`); continue; }
       flows.push({ id: f.id, title: f.title, kind: 'login', steps: [], ...(f.check ? { check: f.check } : {}) });
       continue;
     }
     if (f.kind === 'form') {
-      const fields = (f.needsData ?? []).map((label) => ({ label, locator: loc(label) }));
+      const fields = (f.needsData ?? []).map((label) => ({ label, locator: loc(label, 'input') }));
+      const choices = (f.choices ?? []).map((c) => ({ label: c.field, locator: loc(c.field, 'choice') }));
       const action = loc(f.action);
-      if (fields.some((x) => !x.locator) || !action) { skipped.push(`${f.id} (a field or the submit control has no verified locator)`); continue; }
-      flows.push({ id: f.id, title: f.title, kind: 'form', steps: f.steps, fields: fields as CodegenFlow['fields'], action: { label: f.action!, locator: action } });
+      if (fields.some((x) => !x.locator) || choices.some((x) => !x.locator) || !action) { skipped.push(`${f.id} (a field or the submit control has no verified locator)`); continue; }
+      flows.push({
+        id: f.id, title: f.title, kind: 'form', steps: f.steps, fields: fields as CodegenFlow['fields'],
+        ...(choices.length ? { choices: choices as CodegenFlow['choices'] } : {}), action: { label: f.action!, locator: action },
+      });
       continue;
     }
     if (f.kind === 'destructive') {

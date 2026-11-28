@@ -45,6 +45,14 @@ export interface ScreenElement {
   inList: boolean;
   /** Inside a tab bar / bottom navigation / navigation drawer / navigation bar. */
   inNavigation: 'tabs' | 'drawer' | 'navbar' | null;
+  /**
+   * A drop-down or picker: an Android Spinner, a field with a Spinner inside (Compose's drop-down draws an EditText with
+   * a Spinner child: DAI Bank's Payee field, verified live 2026-11-28), an iOS pop-up button or picker. Its value is
+   * picked, never typed.
+   */
+  choice?: boolean;
+  /** The first text inside a tappable element other than its own (a field's caption: "Payee" above "Electric Company"). */
+  caption?: string | null;
 }
 
 const attr = (attrs: string, name: string): string | null => {
@@ -59,9 +67,10 @@ const LIST_TYPES = /RecyclerView|ListView|GridView|XCUIElementTypeTable$|XCUIEle
 const TAB_TYPES = /BottomNavigationView|TabLayout|TabWidget|XCUIElementTypeTabBar$/;
 const DRAWER_TYPES = /NavigationView|DrawerLayout/;
 const NAVBAR_TYPES = /XCUIElementTypeNavigationBar$|Toolbar$|ActionBar/;
+const CHOICE_TYPES = /(^|\.)Spinner$|XCUIElementType(PopUpButton|ComboBox|Picker|PickerWheel)$/;
 
 /** Elements of one page source, with their tree position. */
-export function parseScreen(xml: string, platform: ExplorePlatform): ScreenElement[] {
+export function parseScreen(xml: string, platform: ExplorePlatform, opts: { keepSystemUi?: boolean; appPackage?: string } = {}): ScreenElement[] {
   const out: ScreenElement[] = [];
   const stack: Array<{ type: string; list: boolean; nav: ScreenElement['inNavigation']; el: ScreenElement | null }> = [];
   const tagRe = /<(\/?)([\w.]+)((?:\s[^>]*?)?)(\/?)>/g;
@@ -82,7 +91,14 @@ export function parseScreen(xml: string, platform: ExplorePlatform): ScreenEleme
       const [x, y, w, h] = ['x', 'y', 'width', 'height'].map((k) => attr(attrs, k));
       if (x != null && y != null && w != null && h != null) bounds = [Number(x), Number(y), Number(x) + Number(w), Number(y) + Number(h)];
     }
-    const visible = platform === 'ios' ? attr(attrs, 'visible') !== 'false' : true;
+    // The Appium Grid's Android page source also holds the phone's status and navigation bars (package
+    // com.android.systemui): the crawler took the bar's "recent apps" button for a route (2026-11-28). They are not the
+    // app's; kept only when the system UI itself is in front (a dialog it draws).
+    // With the app in front (appPackage), other apps' overlays are left out too: Samsung's edge-panel handle
+    // ("Edge panels", 2026-11-28) was tapped as a route. Android's own package stays: its crash dialog sits over the app.
+    const elPkg = platform === 'android' ? attr(attrs, 'package') : null;
+    const systemUi = platform === 'android' && ((!opts.keepSystemUi && elPkg === 'com.android.systemui') || (!!opts.appPackage && !!elPkg && elPkg !== opts.appPackage && elPkg !== 'android'));
+    const visible = platform === 'ios' ? attr(attrs, 'visible') !== 'false' : !systemUi;
     const el: ScreenElement = {
       type,
       id: platform === 'android' ? attr(attrs, 'resource-id') || null : attr(attrs, 'name') || null,
@@ -99,14 +115,24 @@ export function parseScreen(xml: string, platform: ExplorePlatform): ScreenEleme
       path: [...stack.map((s) => s.type.split('.').pop()), type.split('.').pop()].join('/'),
       inList: parentList,
       inNavigation: parentNav,
+      ...(CHOICE_TYPES.test(type) ? { choice: true } : {}),
     };
     if (visible) out.push(el);
+    // A Spinner inside a tappable field makes that field a drop-down (Compose's ExposedDropdownMenu).
+    if (platform === 'android' && /(^|\.)Spinner$/.test(type)) {
+      for (let i = stack.length - 1; i >= 0; i--) {
+        const anc = stack[i].el;
+        // The field is the drop-down; its arrow is part of it, not a second one (DAI Bank listed "Spinner" twice, 2026-11-28).
+        if (anc && anc.clickable) { anc.choice = true; delete el.choice; break; }
+      }
+    }
     // Compose / SwiftUI: a tappable container has no words of its own; give it its first child texts.
     const words = el.text ?? el.description;
     if (words && visible) {
       for (let i = stack.length - 1; i >= 0; i--) {
         const anc = stack[i].el;
         if (anc && anc.clickable) {
+          if (!anc.caption && words !== anc.text && words !== anc.description) anc.caption = words;
           if (!anc.text && !anc.description && anc.innerParts.length < 4 && !anc.innerParts.includes(words)) { anc.innerParts.push(words); anc.innerText = anc.innerParts.join(' '); }
           break;
         }
@@ -162,7 +188,7 @@ export function screenSignature(elements: ScreenElement[], foreground?: string |
   return createHash('sha256').update(`${foreground ?? ''}\n${body}`).digest('hex').slice(0, 16);
 }
 
-export type TapClass = 'navigation' | 'input' | 'action' | 'destructive' | 'unknown';
+export type TapClass = 'navigation' | 'input' | 'choice' | 'action' | 'destructive' | 'unknown';
 
 // Words that name a navigation target in many apps; matched on the WHOLE label, case-insensitive.
 // Dismissing a promo, tip or permission prompt is navigation (Google Maps and Apple Maps opened on such prompts and a
@@ -231,6 +257,7 @@ export function asWords(text: string): string {
 export function classifyTap(e: ScreenElement, allowWritePaths = false): { kind: TapClass; reason: string } {
   // Punctuation only ("▾", ".") is no label: such a control's effect cannot be read from the screen.
   const label = hasWords(e) ? (e.text ?? e.description ?? e.innerText ?? '').trim() : '';
+  if (e.choice) return { kind: 'choice', reason: 'a drop-down or picker: a test picks its value; the crawl only reads the options, never picks one' };
   if (/EditText|TextField|SecureTextField|SearchField|TextView$/.test(e.type) && /Edit|Field/.test(e.type)) return { kind: 'input', reason: 'a text field: typing is never done without the user' };
   if (e.checkable) return { kind: 'action', reason: 'a switch or check box changes a setting' };
   if (!e.clickable || !e.enabled) return { kind: 'unknown', reason: 'not tappable' };
